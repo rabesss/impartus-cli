@@ -73,9 +73,11 @@ type versionPayload struct {
 }
 
 type downloadResult struct {
-	Status       string   `json:"status"`
-	OutputPaths  []string `json:"outputPaths"`
-	LectureCount int      `json:"lectureCount"`
+	Status        string   `json:"status"`
+	OutputPaths   []string `json:"outputPaths"`
+	LectureCount  int      `json:"lectureCount"`
+	FilteredCount int      `json:"filteredCount,omitempty"`
+	TotalLectures int      `json:"totalLectures,omitempty"`
 }
 
 func Execute(version, date string) error {
@@ -343,6 +345,8 @@ func validateDownloadArgs(args []string) error {
 	format := fs.String("format", "", "Audio format override")
 	output := fs.String("output", "", "Output directory override")
 	fs.StringVar(output, "o", "", "Output directory override")
+	skipNoAudio := fs.Bool("skip-no-audio", false, "Skip lectures with no audio track")
+	includeNoAudio := fs.Bool("include-noaudio", false, "Include lectures with no audio track")
 	_ = start
 	_ = end
 	_ = quality
@@ -350,6 +354,8 @@ func validateDownloadArgs(args []string) error {
 	_ = audioOnly
 	_ = format
 	_ = output
+	_ = skipNoAudio
+	_ = includeNoAudio
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -379,6 +385,8 @@ func executeDownload(args []string) (downloadResult, error) {
 	format := fs.String("format", "", "Audio format override")
 	output := fs.String("output", "", "Output directory override")
 	fs.StringVar(output, "o", "", "Output directory override")
+	skipNoAudio := fs.Bool("skip-no-audio", false, "Skip lectures with no audio track")
+	includeNoAudio := fs.Bool("include-noaudio", false, "Include lectures with no audio track (overrides --skip-no-audio)")
 
 	if err := fs.Parse(args); err != nil {
 		return downloadResult{}, err
@@ -401,9 +409,15 @@ func executeDownload(args []string) (downloadResult, error) {
 	}
 
 	// Apply flag overrides and validate
-	cfg, err = applyAndValidateFlags(cfg, *quality, *views, *audioOnly, *format, *output)
+	// Note: include-noaudio is handled separately below as it overrides skip behavior
+	cfg, err = applyAndValidateFlags(cfg, *quality, *views, *audioOnly, *format, *output, *skipNoAudio)
 	if err != nil {
 		return downloadResult{}, err
+	}
+
+	// Handle include-noaudio: it overrides skip-noaudio and config setting
+	if *includeNoAudio {
+		cfg.SkipNoAudio = false
 	}
 
 	lectures, err := apiClient.GetLectures(ctx, cfg, client.Course{SubjectID: *subject, SessionID: *session})
@@ -416,16 +430,35 @@ func executeDownload(args []string) (downloadResult, error) {
 		return downloadResult{}, err
 	}
 
+	// Count noaudio lectures for warning
+	noaudioCount := countNoAudioLectures(selected)
+	if noaudioCount > 0 && !cfg.SkipNoAudio {
+		fmt.Printf("[WARNING] %d lecture(s) in selection have no audio track (noaudio=1)\n", noaudioCount)
+		fmt.Printf("[INFO] Use --skip-no-audio to filter these out, or --include-noaudio to include anyway\n")
+	}
+
+	// Apply noaudio filter if flag is set
+	totalLectures := len(selected)
+	if cfg.SkipNoAudio {
+		selected = filterNoAudioLectures(selected)
+	}
+
+	if len(selected) == 0 {
+		return downloadResult{}, fmt.Errorf("no lectures available after filtering (all lectures have noaudio=1 in the selected range)")
+	}
+
 	result, err := downloadLectures(ctx, cfg, apiClient, selected)
 	if err != nil {
 		return downloadResult{}, err
 	}
+	result.FilteredCount = totalLectures - len(selected)
+	result.TotalLectures = totalLectures
 	return result, nil
 }
 
 // applyAndValidateFlags applies CLI flag overrides to the config and validates them.
 // This ensures invalid flag values fail early, before any remote API calls.
-func applyAndValidateFlags(cfg *config.Config, quality, views string, audioOnly bool, format, output string) (*config.Config, error) {
+func applyAndValidateFlags(cfg *config.Config, quality, views string, audioOnly bool, format, output string, skipNoAudio bool) (*config.Config, error) {
 	// Apply flag overrides
 	if quality != "" {
 		cfg.Quality = quality
@@ -441,6 +474,9 @@ func applyAndValidateFlags(cfg *config.Config, quality, views string, audioOnly 
 	}
 	if output != "" {
 		cfg.DownloadLocation = output
+	}
+	if skipNoAudio {
+		cfg.SkipNoAudio = true
 	}
 
 	// Validate flag override values
@@ -509,9 +545,38 @@ func runInteractive() error {
 		return err
 	}
 
+	skipNoAudio, err := promptYesNo(reader, "Skip lectures without audio track? [Y/n]: ", true)
+	if err != nil {
+		return err
+	}
+
 	selected := append(client.Lectures(nil), reversed[start-1:end]...)
+
+	// Track filtering counts for error message
+	totalBeforeFilter := len(selected)
+	emptyFiltered := 0
+	noaudioFiltered := 0
+
 	if skipEmpty {
+		before := len(selected)
 		selected = filterEmptyLectures(selected)
+		emptyFiltered = before - len(selected)
+	}
+	if skipNoAudio {
+		before := len(selected)
+		selected = filterNoAudioLectures(selected)
+		noaudioFiltered = before - len(selected)
+	}
+
+	if len(selected) == 0 {
+		var reasons []string
+		if emptyFiltered > 0 {
+			reasons = append(reasons, fmt.Sprintf("%d empty", emptyFiltered))
+		}
+		if noaudioFiltered > 0 {
+			reasons = append(reasons, fmt.Sprintf("%d noaudio", noaudioFiltered))
+		}
+		return fmt.Errorf("no lectures remaining after filtering: %s filtered out", strings.Join(reasons, ", "))
 	}
 
 	_, err = downloadLectures(ctx, cfg, apiClient, selected)
@@ -681,6 +746,27 @@ func filterEmptyLectures(lectures client.Lectures) client.Lectures {
 	return filtered
 }
 
+func filterNoAudioLectures(lectures client.Lectures) client.Lectures {
+	filtered := make(client.Lectures, 0, len(lectures))
+	for _, lecture := range lectures {
+		if lecture.Noaudio == 1 {
+			continue
+		}
+		filtered = append(filtered, lecture)
+	}
+	return filtered
+}
+
+func countNoAudioLectures(lectures client.Lectures) int {
+	count := 0
+	for _, lecture := range lectures {
+		if lecture.Noaudio == 1 {
+			count++
+		}
+	}
+	return count
+}
+
 func countChunks(playlists []downloader.ParsedPlaylist, views string) int {
 	total := 0
 	for _, playlist := range playlists {
@@ -747,15 +833,17 @@ func showHelp(version, date string) {
 	fmt.Println("  version                              Show version")
 	fmt.Println("  help                                 Show help")
 	fmt.Println("\nDownload Flags:")
-	fmt.Println("  --subject,-s   Subject ID")
-	fmt.Println("  --session,-S   Session ID")
-	fmt.Println("  --start        Start lecture index (1-based)")
-	fmt.Println("  --end          End lecture index (1-based)")
-	fmt.Println("  --quality      Quality override")
-	fmt.Println("  --views        Views override")
-	fmt.Println("  --audio-only   Audio-only mode")
-	fmt.Println("  --format       Audio format override")
-	fmt.Println("  --output,-o    Output directory")
+	fmt.Println("  --subject,-s        Subject ID")
+	fmt.Println("  --session,-S        Session ID")
+	fmt.Println("  --start             Start lecture index (1-based)")
+	fmt.Println("  --end               End lecture index (1-based)")
+	fmt.Println("  --quality           Quality override")
+	fmt.Println("  --views             Views override")
+	fmt.Println("  --audio-only        Audio-only mode")
+	fmt.Println("  --format            Audio format override")
+	fmt.Println("  --output,-o         Output directory")
+	fmt.Println("  --skip-no-audio     Skip lectures with no audio track")
+	fmt.Println("  --include-noaudio   Include noaudio lectures (overrides --skip-no-audio)")
 	fmt.Println("\nNo command starts interactive download mode.")
 }
 
