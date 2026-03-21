@@ -1,0 +1,50 @@
+{
+  "featureId": "api-openclaw-parity-and-observability-contract",
+  "reviewedAt": "2026-03-17T01:45:00Z",
+  "commitId": "7860d16",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The worker implemented a targeted fix for VAL-INTEGRATION-007 (cross-origin request ID correlation) by adding X-Request-ID to CORS Access-Control-Allow-Headers and adding Access-Control-Expose-Headers. The implementation is correct, minimal, and properly verified. However, the feature's scope was very broad (11 VAL-INTEGRATION assertions covering routes, error codes, response shapes, websocket lifecycle, etc.) but only one specific gap was addressed. The existing openclaw-validation-report.md shows most assertions were already satisfied by prior work - the worker correctly identified and fixed the remaining gap but should have clarified this scope interpretation in the handoff.",
+    "issues": [
+      {
+        "file": "internal/server/server.go",
+        "line": 400,
+        "severity": "non_blocking",
+        "description": "CORS configuration (Access-Control-Allow-Headers, Access-Control-Expose-Headers) is not documented in openclaw-manifest.json or any docs files. Cross-origin clients need to know which headers are allowed/exposed. Recommend adding a CORS section to the manifest or api-reference.md."
+      },
+      {
+        "file": "internal/server/server_test.go",
+        "line": 1,
+        "severity": "non_blocking",
+        "description": "No automated tests added for CORS preflight behavior or X-Request-ID in expose headers. Manual curl verification was performed but not captured in tests. The existing TestRequestIDMiddlewareAddsHeader and TestRequestIDMiddlewarePropagatesExistingID test the request ID middleware but not the CORS layer."
+      },
+      {
+        "file": "handoff",
+        "line": 1,
+        "severity": "non_blocking",
+        "description": "Feature scope clarification needed in handoff: The feature description covers 11 VAL-INTEGRATION assertions (routes, error codes, response shapes, websocket lifecycle, etc.) but the handoff only addresses VAL-INTEGRATION-007. The handoff's 'whatWasLeftUndone' is empty, implying completeness, but the other 10 assertions appear to have been satisfied by prior work (per openclaw-validation-report.md showing all checks pass). The handoff should have explicitly stated that the other assertions were already satisfied."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "CORS middleware configuration is not documented in the OpenClaw manifest or API documentation. The implementation allows 'Authorization, Content-Type, X-Request-ID' as request headers and exposes 'X-Request-ID' in responses, but this isn't captured in client-facing docs.",
+      "evidence": "docs/openclaw-manifest.json has no 'cors' section; docs/ directory has no files mentioning 'Access-Control' or 'CORS'; internal/server/server.go:397-403 sets these headers in corsMiddleware()"
+    },
+    {
+      "area": "knowledge",
+      "observation": "The docs/openclaw-validation-report.md provides excellent documentation of the manifest-to-implementation alignment work done previously. This is a good example of documenting validation results for future reference.",
+      "evidence": "docs/openclaw-validation-report.md shows comprehensive checklist of route/auth/response shape validation with resolution status for previously reported gaps"
+    },
+    {
+      "area": "skills",
+      "observation": "Worker followed go-integration-worker skill procedure correctly: read docs, identified the specific integration gap (VAL-INTEGRATION-007), made targeted change, ran validators (make test, make lint, go build), and performed manual verification on port 8080. No skill procedure gaps identified.",
+      "evidence": "Transcript shows skill invocation → doc reading → test/lint runs → manual curl verification → commit with co-authorship format"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS with minor observations. The CORS fix for cross-origin request ID correlation (VAL-INTEGRATION-007) is correctly implemented with a minimal 3-line change. All validators pass. The implementation enables browser clients to send and read X-Request-ID headers for request correlation. Minor gaps: (1) CORS configuration should be documented in the OpenClaw manifest or API docs, (2) handoff should have clarified that the other 10 VAL-INTEGRATION assertions were already satisfied by prior work rather than implying the broad feature scope was fully addressed in this session."
+}

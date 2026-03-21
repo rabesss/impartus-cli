@@ -1,0 +1,62 @@
+{
+  "featureId": "cleanup-unused-t1",
+  "reviewedAt": "2026-03-20T12:45:00Z",
+  "commitId": "d896c95",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Worker marked 35 desloppify unused findings as false_positive but produced no git commit for this feature. The referenced commit d896c95 is for a different feature (user-testing synthesis). Currently 2 open T3 unused import findings remain in downloader.go. Build/test/lint pass.",
+    "issues": [
+      {
+        "file": "N/A - no source code changes",
+        "line": 0,
+        "severity": "blocking",
+        "description": "Handoff references commit d896c95 but that commit is for 'User testing Round 2: all validation-agent-integration-hardening assertions pass' - a completely different feature. The cleanup-unused-t1 feature produced NO git commits. All changes were to .desloppify state files (gitignored), so the work is not preserved in git history."
+      },
+      {
+        "file": "internal/downloader/downloader.go",
+        "line": 19,
+        "severity": "non_blocking",
+        "description": "desloppify reports 'Unused import: com/vbauerster/mpb/v8/decor' but code review confirms decor IS used on lines 359, 372, 377 (decor.Name, decor.CountersNoUnit, decor.Percentage, decor.WCSyncWidth). This is a desloppify false positive, correctly identified by worker."
+      },
+      {
+        "file": "internal/downloader/downloader.go",
+        "line": 21,
+        "severity": "non_blocking",
+        "description": "desloppify reports 'Unused import: com/rabesss/impartus-cli/internal/client' but code review confirms client IS used throughout (d.client.GetAuthorizedWithToken, client.ParseStreamInfosFromBody). This is a desloppify false positive, correctly identified by worker."
+      },
+      {
+        "file": "N/A",
+        "line": 0,
+        "severity": "non_blocking",
+        "description": "Feature description says 'Fix tier-1 unused code issues' but desloppify shows T3 [medium] findings, not T1. Worker treated all findings as false positives without distinguishing tier. Current state still shows 2 open 'unused' findings."
+      },
+      {
+        "file": "N/A",
+        "line": 0,
+        "severity": "non_blocking",
+        "description": "Skill used (go-cli-worker) is for CLI contract features, but this task is about desloppify cleanup. The skill procedure (write tests first, verify JSON mode) does not apply to unused code cleanup."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "Worker modified only gitignored .desloppify state files, producing no git commit for the feature. Mission AGENTS.md says 'Commit after each batch of related fixes' but worker made no commits. This pattern (suppressing desloppify findings rather than fixing code) may become a convention if not addressed.",
+      "evidence": "git show d896c95 shows only user-testing synthesis changes, not cleanup-unused-t1. Git status shows .desloppify/ not tracked."
+    },
+    {
+      "area": "skills",
+      "observation": "go-cli-worker skill was applied to a desloppify cleanup task. The skill is designed for CLI contract features (JSON output, flag behavior, config precedence) and its procedure (write failing tests first, verify JSON mode) doesn't match desloppify cleanup work. Workers may need guidance on when to use which skill.",
+      "evidence": "Feature id='cleanup-unused-t1' uses skillName='go-cli-worker' but task is desloppify unused code cleanup, not CLI contract work."
+    },
+    {
+      "area": "knowledge",
+      "observation": "Desloppify produces false positives for 'unused import' when imports ARE used (verified by manual code inspection). The 'unused' detector may have a bug or configuration issue. golangci-lint does not flag these as unused. Workers should be aware that desloppify unused detection may need cross-verification with golangci-lint.",
+      "evidence": "desloppify shows unused imports but golangci-lint passes. Manual code review confirms imports are actually used."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The worker correctly identified that desloppify's 'unused import' findings were false positives (verified by golangci-lint and manual code inspection), but the handoff references the wrong commit (d896c95 is for user-testing synthesis, not this feature). No source code changes were made - only gitignored .desloppify state files were modified. Build/test/lint pass. The approach of marking false positives is valid, but the feature produced no git-tracked artifact and the commit reference is incorrect."
+}

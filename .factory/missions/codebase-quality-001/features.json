@@ -1,0 +1,185 @@
+{
+  "features": [
+    {
+      "id": "triage-review-backlog",
+      "description": "Complete the pending review triage workflow with the repo-local desloppify binary. Use `.venv/bin/desloppify plan triage --run-stages --runner codex` or the minimum staged subset still required by `desloppify next` so the live queue becomes executor-ready.",
+      "skillName": "quality-gate-worker",
+      "preconditions": [],
+      "expectedBehavior": [
+        "The pending planning stages in `.venv/bin/desloppify next` are completed",
+        "The queue reflects current review findings rather than stale planning debt",
+        "No code changes are required unless the queue explicitly calls for them"
+      ],
+      "verificationSteps": [
+        ".venv/bin/desloppify next",
+        ".venv/bin/desloppify plan triage --run-stages --runner codex",
+        ".venv/bin/desloppify plan queue"
+      ],
+      "fulfills": [
+        "VAL-TRIAGE-001"
+      ],
+      "milestone": "milestone-1",
+      "status": "pending"
+    },
+    {
+      "id": "refresh-priority-queue",
+      "description": "Inspect the refreshed queue and backlog with `.venv/bin/desloppify plan queue`, `.venv/bin/desloppify next`, and `.venv/bin/desloppify backlog`. Reorder or focus the plan only if it materially improves execution order, then capture the selected top fixes for the next milestone.",
+      "skillName": "quality-gate-worker",
+      "preconditions": [
+        "triage-review-backlog"
+      ],
+      "expectedBehavior": [
+        "The top execution slice is explicit and justified",
+        "High-confidence fixes are identified from the refreshed queue",
+        "Queue changes are documented in the mission handoff"
+      ],
+      "verificationSteps": [
+        ".venv/bin/desloppify plan queue",
+        ".venv/bin/desloppify next",
+        ".venv/bin/desloppify backlog"
+      ],
+      "fulfills": [
+        "VAL-TRIAGE-002"
+      ],
+      "milestone": "milestone-1",
+      "status": "pending"
+    },
+    {
+      "id": "scrutiny-validator-milestone-1",
+      "description": "Validate that milestone-1 completed the planning refresh correctly and that the mission is now executing against the repo-local desloppify queue.",
+      "skillName": "quality-gate-worker",
+      "preconditions": [
+        "triage-review-backlog",
+        "refresh-priority-queue"
+      ],
+      "expectedBehavior": [
+        "The queue is executor-ready",
+        "The repo-local `.venv/bin/desloppify` state is authoritative",
+        "No accidental regressions were introduced during planning work"
+      ],
+      "verificationSteps": [
+        ".venv/bin/desloppify status",
+        ".venv/bin/desloppify next",
+        ".venv/bin/desloppify plan queue"
+      ],
+      "milestone": "milestone-1",
+      "status": "pending"
+    },
+    {
+      "id": "fix-cli-prompt-default-contract",
+      "description": "If it remains in the refreshed queue, fix the `promptYesNo` blank-default behavior in `internal/cli/cli.go` so blank input follows `defaultYes` instead of always resolving to yes. Add or tighten CLI tests around both default branches.",
+      "skillName": "go-cli-worker",
+      "preconditions": [
+        "refresh-priority-queue"
+      ],
+      "expectedBehavior": [
+        "Blank yes/no input respects `defaultYes`",
+        "CLI tests lock the behavior down for both true and false defaults",
+        "No unrelated CLI contract regressions are introduced"
+      ],
+      "verificationSteps": [
+        "go test ./internal/cli",
+        "go test ./...",
+        "make lint",
+        "go build ./..."
+      ],
+      "fulfills": [
+        "VAL-CLI-PROMPT-001",
+        "VAL-PRESERVE-CLI-001"
+      ],
+      "milestone": "milestone-2",
+      "status": "pending"
+    },
+    {
+      "id": "cover-streamutils-module",
+      "description": "If it remains in the refreshed queue, add meaningful tests for `internal/client/streamutils.go` and any adjacent helpers the refreshed test-health queue prioritizes. Use the repo-local queue as the source of truth for scope.",
+      "skillName": "go-cli-worker",
+      "preconditions": [
+        "refresh-priority-queue"
+      ],
+      "expectedBehavior": [
+        "Targeted test-health findings are resolved with real tests",
+        "Coverage for the selected module increases measurably",
+        "All tests, lint, and build pass"
+      ],
+      "verificationSteps": [
+        "go test ./internal/client -cover",
+        "go test ./...",
+        "make lint",
+        "go build ./..."
+      ],
+      "fulfills": [
+        "VAL-TEST-REFRESH-001"
+      ],
+      "milestone": "milestone-2",
+      "status": "pending"
+    },
+    {
+      "id": "scrutiny-validator-milestone-2",
+      "description": "Validate the high-leverage follow-on fixes selected from the refreshed queue, with attention to CLI contract behavior and test-health regressions.",
+      "skillName": "quality-gate-worker",
+      "preconditions": [
+        "fix-cli-prompt-default-contract",
+        "cover-streamutils-module"
+      ],
+      "expectedBehavior": [
+        "Relevant tests pass",
+        "Lint passes",
+        "Build succeeds",
+        "The touched queue items are honestly resolved"
+      ],
+      "verificationSteps": [
+        "go test ./...",
+        "make lint",
+        "go build ./...",
+        ".venv/bin/desloppify next"
+      ],
+      "milestone": "milestone-2",
+      "status": "pending"
+    },
+    {
+      "id": "refresh-priority-subjective-review",
+      "description": "Refresh the highest-value subjective review dimensions with the repo-local desloppify workflow. Start from the current recommended set (`ai_generated_debt`, `test_strategy`, `authorization_consistency`) and include stale dimensions if the refreshed queue still flags them.",
+      "skillName": "quality-gate-worker",
+      "preconditions": [
+        "scrutiny-validator-milestone-2"
+      ],
+      "expectedBehavior": [
+        "Priority subjective dimensions are re-reviewed with the current codebase",
+        "Review imports refresh stale or missing subjective coverage",
+        "The refreshed review output is captured in desloppify state"
+      ],
+      "verificationSteps": [
+        ".venv/bin/desloppify review --run-batches --runner codex --parallel --scan-after-import --dimensions ai_generated_debt,test_strategy,authorization_consistency",
+        ".venv/bin/desloppify status"
+      ],
+      "fulfills": [
+        "VAL-REVIEW-REFRESH-001"
+      ],
+      "milestone": "milestone-3",
+      "status": "pending"
+    },
+    {
+      "id": "final-quality-scan",
+      "description": "Run the final repo-local quality scan after the refreshed queue work is complete. Record whether the strict score improved beyond 83.3 and summarize any remaining plateau causes honestly.",
+      "skillName": "quality-gate-worker",
+      "preconditions": [
+        "refresh-priority-subjective-review"
+      ],
+      "expectedBehavior": [
+        "A final `.venv/bin/desloppify scan --path .` is recorded",
+        "Strict/objective/verified scores are summarized",
+        "Remaining blockers are documented without gaming the score"
+      ],
+      "verificationSteps": [
+        ".venv/bin/desloppify scan --path .",
+        ".venv/bin/desloppify status"
+      ],
+      "fulfills": [
+        "VAL-SCORE-001"
+      ],
+      "milestone": "milestone-3",
+      "status": "pending"
+    }
+  ]
+}

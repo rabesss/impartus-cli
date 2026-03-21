@@ -1,0 +1,62 @@
+{
+  "milestone": "milestone-2",
+  "round": 3,
+  "status": "fail",
+  "validatorsRun": {
+    "test": { "passed": true, "command": "go test ./...", "exitCode": 0 },
+    "typecheck": { "passed": true, "command": "go build ./...", "exitCode": 0 },
+    "lint": { "passed": true, "command": "make lint", "exitCode": 0 }
+  },
+  "reviewsSummary": {
+    "total": 2,
+    "passed": 0,
+    "failed": 2,
+    "failedFeatures": ["review-structural-issues", "improve-responsibility-cohesion"]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "review-structural-issues",
+      "severity": "blocking",
+      "description": "RE-RUN (round 3): No new commits or fix features since round 2. The feature produced NO git commits. All work stored in gitignored .desloppify/state-go.json. Defer rationale preserved only in transcript skeleton, not in git-tracked files."
+    },
+    {
+      "featureId": "improve-responsibility-cohesion",
+      "severity": "blocking",
+      "description": "RE-RUN (round 3): No new commits or fix features since round 2. Feature produced NO git commits. All work stored in gitignored .desloppify/state-go.json. Same persistent systemic issue as round 2."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add guidance for 'review-only' or 'analysis' features: When no source code changes are needed but defer rationale must be documented, workers should create or update a milestone-specific review document (e.g., .factory/validation/<milestone>/review-notes.md) to preserve findings in git.",
+      "evidence": "Both review-structural-issues and improve-responsibility-cohesion correctly analyzed findings but preserved only in gitignored desloppify state and transcript skeletons. Milestone-1 synthesis for cleanup-unused-t1 already flagged this issue - it remains systemic across multiple milestones.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add boundary: quality improvement features (desloppify triage, structural review) are NOT appropriate for go-cli-worker skill. These features analyze existing code quality and should not expect CLI contract verification. The go-cli-worker skill procedure (write failing tests first, verify JSON mode) does not apply.",
+      "evidence": "Both milestone-2 features used go-cli-worker skill for desloppify analysis tasks. Neither performed CLI contract work or JSON mode verification. Skill mismatch was already noted in milestone-1 synthesis.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Clarify 'Commit Hygiene' section: Workers should verify `git status` shows actual source code changes before claiming a feature is complete. If only .desloppify/ state files were modified (gitignored), the feature has NOT produced a durable artifact.",
+      "evidence": "Both features modified only gitignored .desloppify/state-go.json. Handoffs incorrectly claimed commit e9398e7 which is unrelated. Workers should be trained to verify their own git history.",
+      "isSystemic": true
+    },
+    {
+      "target": "go-cli-worker skill",
+      "suggestion": "Add guidance: If feature description involves desloppify analysis (structural, cohesion, boilerplate, unused), this is NOT a CLI contract feature. Workers should NOT run CLI contract verification steps (JSON mode, command signature tests) unless explicitly required.",
+      "evidence": "Features review-structural-issues and improve-responsibility-cohesion are desloppify analysis tasks but used go-cli-worker. Transcript shows no CLI testing performed.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "Suggestion to modify .desloppify/ state file to be git-tracked",
+      "reason": "Ambiguous - changing .gitignore for desloppify state would affect local development workflow, not within this team's scope to change desloppify tool behavior"
+    }
+  ],
+  "previousRound": ".factory/validation/milestone-2/scrutiny/synthesis.json (round 2)"
+}

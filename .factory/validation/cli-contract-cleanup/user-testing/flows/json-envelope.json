@@ -1,0 +1,92 @@
+{
+  "groupId": "json-envelope",
+  "testedAt": "2026-03-17T00:00:00Z",
+  "isolation": {
+    "workingDirectory": "/home/ravish/Desktop/clawds-code-crib/impartus-go/impartus",
+    "cliBinary": "./impartus",
+    "noSharedState": true
+  },
+  "toolsUsed": ["Execute"],
+  "assertions": [
+    {
+      "id": "VAL-CLI-001",
+      "title": "JSON help envelope is deterministic",
+      "status": "pass",
+      "steps": [
+        { "action": "Run ./impartus --json", "expected": "Stable JSON object with success, data, error, meta keys", "observed": "JSON output with success=true, data containing commands/name/description, error=null, meta with command=help and mode=json" },
+        { "action": "Run ./impartus --json again for determinism check", "expected": "Same output structure", "observed": "Identical output structure on second run" }
+      ],
+      "evidence": {
+        "terminalOutput": "cli-contract-cleanup/json-envelope/VAL-CLI-001-help-envelope.json",
+        "consoleErrors": "none",
+        "notes": "All required top-level keys present: success, data, error, meta. meta.command identifies the help contract."
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CLI-002",
+      "title": "Global --json flag is order-independent",
+      "status": "pass",
+      "steps": [
+        { "action": "Run ./impartus --json version", "expected": "JSON envelope with version info", "observed": "JSON output with success=true, data.name=impartus, data.version=dev, meta.command=version" },
+        { "action": "Run ./impartus version --json", "expected": "Same JSON envelope semantics", "observed": "Identical output structure and values" }
+      ],
+      "evidence": {
+        "terminalOutput": [
+          "cli-contract-cleanup/json-envelope/VAL-CLI-002-json-before.txt",
+          "cli-contract-cleanup/json-envelope/VAL-CLI-002-json-after.txt"
+        ],
+        "consoleErrors": "none",
+        "notes": "Both orderings produce identical machine-readable envelope semantics"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CLI-003",
+      "title": "Unknown commands fail predictably in JSON mode",
+      "status": "pass",
+      "steps": [
+        { "action": "Run ./impartus nope --json", "expected": "JSON error envelope with success=false, data=null", "observed": "JSON output with success=false, data=null, error.message='unknown command: nope', meta.command=nope" }
+      ],
+      "evidence": {
+        "terminalOutput": "cli-contract-cleanup/json-envelope/VAL-CLI-003-unknown-command.json",
+        "consoleErrors": "none",
+        "notes": "Deterministic error text that agents can branch on without parsing help output"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CLI-004",
+      "title": "JSON mode never falls back to interactive prompts",
+      "status": "pass",
+      "steps": [
+        { "action": "Run ./impartus lectures --json with empty stdin and 3s timeout", "expected": "Structured error, no prompt", "observed": "JSON error envelope with message 'lectures requires --subject/-s and --session/-S', exit code 1" },
+        { "action": "Run ./impartus download --json with empty stdin and 3s timeout", "expected": "Structured error, no prompt", "observed": "JSON error envelope with message 'download requires --subject/-s and --session/-S', exit code 1" }
+      ],
+      "evidence": {
+        "terminalOutput": "cli-contract-cleanup/json-envelope/VAL-CLI-004-no-prompt.txt",
+        "consoleErrors": "none",
+        "notes": "Both commands returned structured JSON errors immediately without waiting for stdin input"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CLI-005",
+      "title": "serve --json is declarative and non-blocking",
+      "status": "pass",
+      "steps": [
+        { "action": "Run ./impartus serve --json --port 8080 with 3s timeout", "expected": "JSON metadata, immediate exit", "observed": "JSON output with success=true, data.baseURL, data.health, data.port=8080, data.status=ready, data.note explaining non-blocking behavior. Exit code 0." },
+        { "action": "Verify no server process started", "expected": "Process did not block", "observed": "Command exited immediately with exit code 0, no foreground blocking" }
+      ],
+      "evidence": {
+        "terminalOutput": "cli-contract-cleanup/json-envelope/VAL-CLI-005-serve-metadata.json",
+        "processCheck": "Command exited immediately, no blocking server process started",
+        "consoleErrors": "none"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 5 assertions: all 5 passed. CLI JSON envelope contract is fully implemented and working as specified."
+}

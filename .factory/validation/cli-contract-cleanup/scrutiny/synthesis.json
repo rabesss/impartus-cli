@@ -1,0 +1,41 @@
+{
+  "milestone": "cli-contract-cleanup",
+  "round": 3,
+  "status": "pass",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "go test ./... -v -cover -parallel 3",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "go build ./...",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "make lint",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "nonBlockingIssues": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [],
+  "rejectedObservations": [],
+  "previousRound": ".factory/validation/cli-contract-cleanup/scrutiny/synthesis.json",
+  "fixReviewSummary": {
+    "fixFeatureId": "cli-flag-override-validation-fix",
+    "fixCommitId": "88c1f84",
+    "addressesBlockingIssue": "CLI flag overrides (--quality, --views, --audio-only, --format) were applied after initClient() validated config, allowing invalid values to bypass validation and reach remote API calls",
+    "fixAdequatelyAddressesOriginalFailure": true,
+    "resolutionDetails": "The fix adds applyAndValidateFlags() which validates quality (144/450/720), views (first/second/both/left/right), and audioFormat (mp3/m4a/aac/opus) immediately after CLI flag overrides are applied, before any download-related remote calls. This satisfies VAL-CLI-007 and VAL-CLI-011. The non-blocking views inconsistency is also resolved by accepting both canonical and legacy values."
+  }
+}

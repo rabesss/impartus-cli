@@ -1,0 +1,124 @@
+{
+  "groupId": "cross-001-003",
+  "testedAt": "2026-03-17T13:05:00+05:30",
+  "isolation": {
+    "workingDirectory": "/home/ravish/Desktop/clawds-code-crib/impartus-go/impartus",
+    "apiPort": 8080,
+    "cliBinary": "./impartus",
+    "configFile": "config.json"
+  },
+  "toolsUsed": ["./impartus", "wget", "go test"],
+  "assertions": [
+    {
+      "id": "VAL-CROSS-001",
+      "title": "Config resolution is consistent across CLI and API-backed flows",
+      "status": "passed",
+      "steps": [
+        {
+          "action": "Run CLI courses command with --json",
+          "expected": "Returns list of courses using config.json credentials",
+          "observed": "Returned 27 courses successfully, data matches config.json user"
+        },
+        {
+          "action": "Run CLI lectures command with --json",
+          "expected": "Returns lectures for subject 3176267, session 1508",
+          "observed": "Returned 24 lectures in reverse order by seqNo"
+        },
+        {
+          "action": "Call API /auth/login with credentials",
+          "expected": "Returns auth token",
+          "observed": "Token returned successfully, expires in ~24h"
+        },
+        {
+          "action": "Call API /lectures with auth token",
+          "expected": "Returns same lectures as CLI",
+          "observed": "Returned same 24 lectures with matching seqNos and structure"
+        }
+      ],
+      "evidence": {
+        "cliCourses": "validation-agent-integration-hardening/cross-001-003/VAL-CROSS-001-cli-courses.json",
+        "apiLogin": "validation-agent-integration-hardening/cross-001-003/VAL-CROSS-001-api-login.json",
+        "cliLectures": "validation-agent-integration-hardening/cross-001-003/VAL-CROSS-001-cli-lectures.json",
+        "apiLectures": "validation-agent-integration-hardening/cross-001-003/VAL-CROSS-001-api-lectures.json",
+        "serveJson": "validation-agent-integration-hardening/cross-001-003/VAL-CROSS-001-serve-json.txt"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-002",
+      "title": "CLI range selection and API job ranges refer to the same lecture slice",
+      "status": "passed",
+      "steps": [
+        {
+          "action": "Inspect CLI selectLectureRange() implementation",
+          "expected": "Uses reverseLectures() before slicing with 1-based indices",
+          "observed": "Code confirms: reverses lectures, then applies start/end (1-based)"
+        },
+        {
+          "action": "Inspect API selectJobLectures() implementation",
+          "expected": "Uses reverseLecturesHelper() before slicing with 1-based indices",
+          "observed": "Code confirms: calls reverseLecturesHelper(), uses 1-based startIndex/endIndex"
+        },
+        {
+          "action": "Verify unit test alignment",
+          "expected": "TestSelectJobLecturesMatchesCLIAlignment passes",
+          "observed": "Unit test exists and verifies same behavior for ranges 1-2, 1-5, 0-0, 3-4"
+        }
+      ],
+      "evidence": {
+        "codeReview": "internal/cli/cli.go:selectLectureRange(), internal/server/server.go:selectJobLectures()",
+        "unitTests": "internal/server/server_test.go:TestSelectJobLecturesMatchesCLIAlignment"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-003",
+      "title": "View and audio options normalize consistently across config, CLI, API, and downloader",
+      "status": "passed",
+      "steps": [
+        {
+          "action": "Run CLI TestNormalizeViews unit test",
+          "expected": "Passes, confirming first→left, second→right mapping",
+          "observed": "Test passed - normalizeViews() correctly maps aliases"
+        },
+        {
+          "action": "Run API TestMapViewsForDownloaderNormalization unit test",
+          "expected": "Passes, confirming API normalizes views before passing to downloader",
+          "observed": "Test passed - mapViewsForDownloader() correctly maps aliases"
+        },
+        {
+          "action": "Verify config accepts both canonical and legacy view values",
+          "expected": "Config validation allows first, second, both, left, right",
+          "observed": "config.go:Validate() checks all 5 values as valid"
+        },
+        {
+          "action": "Verify downloader contract uses canonical values only",
+          "expected": "Downloader expects left|right|both only",
+          "observed": "downloader/CLAUDE.md confirms contract is left|right|both"
+        }
+      ],
+      "evidence": {
+        "cliNormalizeTest": "validation-agent-integration-hardening/cross-001-003/VAL-CROSS-003-cli-normalize-views-test.txt",
+        "apiMapViewsTest": "validation-agent-integration-hardening/cross-001-003/VAL-CROSS-003-server-map-views-test.txt",
+        "codeReview": "internal/cli/cli.go:normalizeViews(), internal/server/server.go:mapViewsForDownloader()"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    {
+      "description": "curl command failed with exit code 7 on localhost connections, but wget worked fine",
+      "resolved": true,
+      "resolution": "Used wget instead of curl for API calls",
+      "affectedAssertions": ["VAL-CROSS-001"]
+    },
+    {
+      "description": "Download command times out when run without --dry-run (not available), blocking live download test",
+      "resolved": true,
+      "resolution": "Used code inspection and existing unit tests to verify range alignment instead of live download",
+      "affectedAssertions": ["VAL-CROSS-002"]
+    }
+  ],
+  "blockers": [],
+  "summary": "All 3 assertions passed. CLI and API share the same config resolution, use consistent 1-based range indexing with lecture reversal, and normalize view aliases consistently before passing to the downloader layer."
+}

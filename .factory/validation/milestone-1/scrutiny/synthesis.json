@@ -1,0 +1,64 @@
+{
+  "milestone": "milestone-1",
+  "round": 2,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "go test ./... -cover -parallel 3",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "go build ./...",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "make lint",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 3,
+    "passed": 2,
+    "failed": 1,
+    "failedFeatures": ["cleanup-unused-t1"]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "cleanup-unused-t1",
+      "severity": "blocking",
+      "description": "Re-run: The cleanup-unused-t1 feature still produces no git commits. All work remains in gitignored .desloppify/ state files. The handoff references worker session 63707c3c but that session produced no commit. This is a persistent procedural issue from round 1."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Clarify skill selection: go-cli-worker is for CLI contract features (JSON output, flag behavior). Desloppify cleanup tasks should use a different skill or procedure. The current go-cli-worker procedure (write failing tests first, verify JSON mode) does not apply to unused code cleanup.",
+      "evidence": "Feature cleanup-unused-t1 (desloppify cleanup task) used skillName='go-cli-worker' which is designed for CLI contract features. Skill mismatch observed.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add guidance on desloppify false positive handling: when desloppify reports 'unused import' but golangci-lint passes, workers should verify with manual code inspection. The desloppify unused detector may have bugs for certain import patterns.",
+      "evidence": "cleanup-unused-t1 correctly identified 2 desloppify false positives (com/vbauerster/mpb/v8/decor and internal/client imports) that are actually used. golangci-lint passes.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add explicit guidance that quality improvement work must produce git commits. When only gitignored state files are modified, the work is not preserved and cannot be reviewed for commit quality. Workers should commit even minor cleanup work.",
+      "evidence": "cleanup-unused-t1 has worker session ID but no commit. All work is lost in gitignored files.",
+      "isSystemic": true
+    },
+    {
+      "target": "skills/go-cli-worker",
+      "suggestion": "Add note that desloppify cleanup tasks (unused code, boilerplate, signature) are not CLI contract features and may need adapted procedures. The skill's 'write failing tests first' approach doesn't apply.",
+      "evidence": "cleanup-unused-t1, fix-signature-consistency, extract-boilerplate-helpers all used go-cli-worker but are desloppify quality tasks.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": ".factory/validation/milestone-1/scrutiny/synthesis.json (round 1, same findings)"
+}

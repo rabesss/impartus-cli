@@ -1,0 +1,84 @@
+{
+  "milestone": "downloader-core-refactor",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 10,
+    "passed": 10,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-DOWNLOAD-001",
+    "VAL-DOWNLOAD-002",
+    "VAL-DOWNLOAD-003",
+    "VAL-DOWNLOAD-004",
+    "VAL-DOWNLOAD-005",
+    "VAL-DOWNLOAD-006",
+    "VAL-DOWNLOAD-007",
+    "VAL-DOWNLOAD-008",
+    "VAL-DOWNLOAD-009",
+    "VAL-DOWNLOAD-010"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "assertionDetails": {
+    "VAL-DOWNLOAD-001": {
+      "status": "passed",
+      "evidence": "Unit tests TestPlaylistParserSingleView and TestPlaylistParserMultiView verify correct left/right view boundary parsing. Parser uses #EXT-X-DISCONTINUITY marker to distinguish first/second view chunks and extracts encryption key URL from #EXT-X-KEY header.",
+      "files": ["parser_test.go", "internal/downloader/parser.go"]
+    },
+    "VAL-DOWNLOAD-002": {
+      "status": "passed",
+      "evidence": "Code inspection confirms audio-only path: joinAudioOutput() calls JoinChunksFromM3U8AudioOnly() which outputs audio files with requested format (mp3, m4a, aac, opus). No video artifact required - uses -vn flag in ffmpeg.",
+      "files": ["internal/downloader/ffmpeg.go", "internal/downloader/downloader.go"]
+    },
+    "VAL-DOWNLOAD-003": {
+      "status": "passed",
+      "evidence": "joinVideoOutput() produces expected view artifacts based on config.Views: 'left' produces left view only, 'right' produces right view only, 'both' produces combined output via JoinViews(). Artifact naming follows pattern 'LEC {seqNo} {title} LEFT/RIGHT VIEW.mp4'.",
+      "files": ["internal/downloader/downloader.go", "internal/downloader/ffmpeg.go"]
+    },
+    "VAL-DOWNLOAD-004": {
+      "status": "passed",
+      "evidence": "tryStoredToken() reads .token file, validates against /user/profile endpoint. If valid, reuses token; if invalid or missing, login() performs fresh authentication and stores new token.",
+      "files": ["internal/client/client.go"]
+    },
+    "VAL-DOWNLOAD-005": {
+      "status": "passed",
+      "evidence": "All upstream operations return explicit errors: GetCourses, GetLectures, GetPlaylists, getStreamInfos all check status codes and return formatted errors with status code and body. Stream lookup failures return descriptive error messages.",
+      "files": ["internal/client/client.go", "internal/downloader/downloader.go"]
+    },
+    "VAL-DOWNLOAD-006": {
+      "status": "passed",
+      "evidence": "downloadWithRetry() has maxRetries parameter (default 3). Uses exponential backoff with retryDelay(). After max attempts, returns aggregated error with all failure details.",
+      "files": ["internal/downloader/downloader.go"]
+    },
+    "VAL-DOWNLOAD-007": {
+      "status": "passed",
+      "evidence": "LecturePipeline uses ordered chunk collection via buildOrderedList() which maintains chunk order by ID. Collect() method assembles FirstViewChunks and SecondViewChunks in correct sequence regardless of download order.",
+      "files": ["internal/downloader/pipeline.go"]
+    },
+    "VAL-DOWNLOAD-008": {
+      "status": "passed",
+      "evidence": "ProgressTracker bounds progress to 0-100% with explicit clamp logic. GetOverallProgress() caps at 100. GetETA() capped at 99h59m max. Speed returns 0 if insufficient samples, avoiding nonsensical values.",
+      "files": ["internal/downloader/progress_tracker.go"]
+    },
+    "VAL-DOWNLOAD-009": {
+      "status": "passed",
+      "evidence": "Unit test TestSelectLectureRangeValidAndInvalidRanges verifies correct slice selection. selectLectureRange() converts 1-indexed input to correct 0-indexed array access, handles default (0,0) as full range, and validates bounds.",
+      "files": ["internal/cli/cli_test.go"]
+    },
+    "VAL-DOWNLOAD-010": {
+      "status": "passed",
+      "evidence": "Unit test TestFilterEmptyLecturesRemovesNoClassAndNoLectureVariants confirms filtering of 'no class', 'no lecture' variants. filterEmptyLectures() removes these entries deterministically before download processing.",
+      "files": ["internal/cli/cli_test.go"]
+    }
+  },
+  "appliedUpdates": [],
+  "previousRound": null,
+  "testCommands": [
+    "go test -v -run 'TestPlaylist|TestFilterEmpty|TestSelectLecture|TestNormalizeViews' ./...",
+    "go test ./... -v"
+  ],
+  "allTestsPassed": true
+}

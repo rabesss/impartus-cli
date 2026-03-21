@@ -1,0 +1,49 @@
+{
+  "groupId": "quality-gate-group",
+  "testedAt": "2026-03-17T07:25:00Z",
+  "isolation": {
+    "repoRoot": "/home/ravish/Desktop/clawds-code-crib/impartus-go/impartus",
+    "missionDir": "/home/ravish/.factory/missions/a4b22737-aa6b-47fd-8b2b-0ba1372de7e2"
+  },
+  "toolsUsed": ["desloppify", "grep", "cat"],
+  "assertions": [
+    {
+      "id": "VAL-INTEGRATION-012",
+      "title": "Desloppify is integrated as a required quality gate",
+      "status": "fail",
+      "steps": [
+        { "action": "Check desloppify installed", "expected": "Installed", "observed": "Version 0.7.7 installed via pip" },
+        { "action": "Check .desloppify state", "expected": "State directory exists", "observed": ".desloppify/ with query.json and state-go.json" },
+        { "action": "Check Makefile targets", "expected": "quality-gate-scan and quality-gate-next", "observed": "Makefile has desloppify targets" },
+        { "action": "Run desloppify scan", "expected": "Score > 80", "observed": "Score 26.6 - below target" }
+      ],
+      "evidence": { 
+        "scanOutput": "Overall score: 26.6 (File health 90%, Code quality 76.7%, Duplication 89.3%, Security 100%, Test health 19.7%)",
+        "mainIssues": "Test health at 19.7%, subjective review items need attention"
+      },
+      "notes": "FAIL: Desloppify is integrated and configured, but score (26.6) is below 80 target. Main issues: test coverage (19.7%), design coherence, abstraction fit."
+    },
+    {
+      "id": "VAL-CROSS-006",
+      "title": "Post-change desloppify review covers refactors across touched areas",
+      "status": "fail",
+      "steps": [
+        { "action": "Check desloppify scan coverage", "expected": "Covers all touched areas", "observed": "Scan runs on entire repo including CLI, downloader, API, config" },
+        { "action": "Check score across areas", "expected": "Score > 80", "observed": "Score 26.6 overall" }
+      ],
+      "evidence": { "scanOutput": "Same as VAL-INTEGRATION-012" },
+      "notes": "FAIL: Same issue as VAL-INTEGRATION-012 - score below 80"
+    }
+  ],
+  "frictions": [
+    "Test health at 19.7% is very low - need more test coverage",
+    "Subjective review items (design coherence, abstraction fit) need attention"
+  ],
+  "blockers": [
+    {
+      "description": "Desloppify score (26.6) is below 80 target",
+      "suggestion": "Add tests for uncovered files, run desloppify review for subjective items"
+    }
+  ],
+  "summary": "Tested 2 assertions: both FAILED. Desloppify is integrated but score is 26.6, below 80 target."
+}

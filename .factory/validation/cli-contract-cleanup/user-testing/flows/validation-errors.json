@@ -1,0 +1,104 @@
+{
+  "groupId": "validation-errors",
+  "testedAt": "2026-03-17T00:00:00Z",
+  "isolation": {
+    "workingDirectory": "/home/ravish/Desktop/clawds-code-crib/impartus-go/impartus",
+    "cliBinary": "./impartus",
+    "testType": "stateless CLI invocations"
+  },
+  "toolsUsed": ["Execute"],
+  "assertions": [
+    {
+      "id": "VAL-CLI-006",
+      "title": "Required command flags fail with deterministic validation errors",
+      "status": "pass",
+      "steps": [
+        { "action": "Run ./impartus lectures --json without --subject/--session", "expected": "Structured JSON error with message about missing flags", "observed": "{\"success\":false,\"data\":null,\"error\":{\"message\":\"lectures requires --subject/-s and --session/-S\"},\"meta\":{\"command\":\"lectures\",\"mode\":\"json\"}}" },
+        { "action": "Run ./impartus download --json without --subject/--session", "expected": "Structured JSON error with message about missing flags", "observed": "{\"success\":false,\"data\":null,\"error\":{\"message\":\"download requires --subject/-s and --session/-S\"},\"meta\":{\"command\":\"download\",\"mode\":\"json\"}}" }
+      ],
+      "evidence": {
+        "terminalOutputs": [
+          "cli-contract-cleanup/validation-errors/VAL-CLI-006-lectures-missing-flags.json",
+          "cli-contract-cleanup/validation-errors/VAL-CLI-006-download-missing-flags.json"
+        ],
+        "format": "Structured JSON envelope with success=false, error.message containing fixed text"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CLI-007",
+      "title": "Invalid command-specific arguments surface as structured JSON errors",
+      "status": "pass",
+      "steps": [
+        { "action": "Run ./impartus download --json --subject 1 --session 2 --quality invalid", "expected": "Structured JSON error envelope, not raw stderr", "observed": "{\"success\":false,\"data\":null,\"error\":{\"message\":\"invalid quality value \\\"invalid\\\": must be one of: 144, 450, 720\"},\"meta\":{\"command\":\"download\",\"mode\":\"json\"}}" },
+        { "action": "Run ./impartus serve --json --port invalid", "expected": "Structured JSON error envelope", "observed": "{\"success\":false,\"data\":null,\"error\":{\"message\":\"invalid value \\\"invalid\\\" for flag -port: parse error\"},\"meta\":{\"command\":\"serve\",\"mode\":\"json\"}}" }
+      ],
+      "evidence": {
+        "terminalOutputs": [
+          "cli-contract-cleanup/validation-errors/VAL-CLI-007-invalid-quality.json",
+          "cli-contract-cleanup/validation-errors/VAL-CLI-007-invalid-port.json"
+        ],
+        "format": "Both returned structured JSON envelopes with success=false and error.message"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CLI-008",
+      "title": "Download range semantics are explicit and bounded",
+      "status": "pass",
+      "steps": [
+        { "action": "Review selectLectureRange() implementation in internal/cli/cli.go", "expected": "Bounded range validation", "observed": "Code validates: start < 1 -> error, end > len -> error, start > end -> error with message 'invalid lecture range: start=%d end=%d (available 1-%d)'" },
+        { "action": "Run ./impartus download --json --subject 1 --session 2 --start 5 --end 3", "expected": "Error for inverted range (would need valid auth)", "observed": "\"no lectures found\" - cannot fully test without valid credentials" },
+        { "action": "Run ./impartus download --json --subject 1 --session 2 --start -1", "expected": "Negative start handled", "observed": "\"no lectures found\" - range validation occurs after API call" },
+        { "action": "Review unit tests in cli_test.go", "expected": "Test coverage for range validation", "observed": "Tests confirm: 'start greater than end' -> 'invalid lecture range', 'end out of bounds' -> 'invalid lecture range', 'no lectures' -> 'no lectures found', default (0,0) -> full range" }
+      ],
+      "evidence": {
+        "terminalOutputs": [
+          "cli-contract-cleanup/validation-errors/VAL-CLI-008-inverted-range.json",
+          "cli-contract-cleanup/validation-errors/VAL-CLI-008-negative-start.json",
+          "cli-contract-cleanup/validation-errors/VAL-CLI-008-start-zero.json",
+          "cli-contract-cleanup/validation-errors/VAL-CLI-008-empty-range-2-1.json"
+        ],
+        "codeReview": "internal/cli/cli.go:641-658 implements bounded range validation with deterministic error messages",
+        "unitTests": "internal/cli/cli_test.go:345-362 covers inverted, out-of-bounds, and empty lecture list cases"
+      },
+      "issues": null,
+      "notes": "Live validation requires valid Impartus credentials. Code-level validation and unit tests confirm correct bounded behavior."
+    },
+    {
+      "id": "VAL-CLI-009",
+      "title": "Extra positional arguments are either rejected or documented as accepted behavior",
+      "status": "fail",
+      "steps": [
+        { "action": "Run ./impartus version extra_arg --json", "expected": "Either reject extra arg or document acceptance", "observed": "{\"success\":true,...} - extra_arg silently ignored" },
+        { "action": "Run ./impartus serve extra_arg --json", "expected": "Either reject extra arg or document acceptance", "observed": "{\"success\":true,...} - extra_arg silently ignored" },
+        { "action": "Run ./impartus lectures extra_arg --json --subject 1 --session 2", "expected": "Reject extra arg", "observed": "{\"success\":false,\"error\":{\"message\":\"lectures does not accept positional arguments\"},...}" },
+        { "action": "Run ./impartus download extra_arg --json --subject 1 --session 2", "expected": "Reject extra arg", "observed": "{\"success\":false,\"error\":{\"message\":\"download does not accept positional arguments\"},...}" },
+        { "action": "Run ./impartus courses extra_arg --json", "expected": "Reject extra arg", "observed": "{\"success\":false,\"error\":{\"message\":\"courses does not accept positional arguments\"},...}" }
+      ],
+      "evidence": {
+        "terminalOutputs": [
+          "cli-contract-cleanup/validation-errors/VAL-CLI-009-version-extra-arg.json",
+          "cli-contract-cleanup/validation-errors/VAL-CLI-009-version-extra-arg-order2.json",
+          "cli-contract-cleanup/validation-errors/VAL-CLI-009-serve-extra-arg.json",
+          "cli-contract-cleanup/validation-errors/VAL-CLI-009-lectures-extra-arg.json",
+          "cli-contract-cleanup/validation-errors/VAL-CLI-009-download-extra-arg.json",
+          "cli-contract-cleanup/validation-errors/VAL-CLI-009-courses-extra-arg.json",
+          "cli-contract-cleanup/validation-errors/VAL-CLI-009-unknown-extra-arg.json"
+        ],
+        "codeReview": "internal/cli/cli.go:118-123 (version), 512-522 (serve) do not check for extra args; courses/lectures/download all have explicit len(args)/fs.NArg() checks"
+      },
+      "issues": [
+        {
+          "severity": "medium",
+          "description": "'version' and 'serve' commands silently ignore extra positional arguments, which could mask caller mistakes. Other commands (courses, lectures, download) properly reject them.",
+          "affectedCommands": ["version", "serve"],
+          "recommendation": "Either add positional argument validation to version/serve commands, or document this as accepted behavior in the manifest/help"
+        }
+      ]
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 4 assertions: 3 passed (VAL-CLI-006, VAL-CLI-007, VAL-CLI-008), 1 failed (VAL-CLI-009). VAL-CLI-008 range validation confirmed via code review and unit tests (live testing requires credentials). VAL-CLI-009 reveals inconsistent handling: version/serve silently ignore extra args while courses/lectures/download properly reject them."
+}

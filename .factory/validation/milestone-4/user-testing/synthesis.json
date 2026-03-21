@@ -1,0 +1,29 @@
+{
+  "milestone": "milestone-4",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 2,
+    "passed": 2,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-BREAKTHROUGH-CLI-001",
+    "VAL-BREAKTHROUGH-API-001"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "evidence": {
+    "VAL-BREAKTHROUGH-CLI-001": {
+      "command": "./impartus --json",
+      "result": "Valid JSON envelope with success:true, proper meta.command and meta.mode fields"
+    },
+    "VAL-BREAKTHROUGH-API-001": {
+      "command": "curl -i http://localhost:8080/api/v1/health",
+      "result": "HTTP 200, {\"status\":\"ok\"}, X-Request-ID header present, proper CORS headers, Content-Type: application/json"
+    }
+  },
+  "previousRound": null
+}

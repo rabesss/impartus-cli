@@ -1,0 +1,69 @@
+{
+  "featureId": "review-structural-issues",
+  "reviewedAt": "2026-03-20T07:20:00Z",
+  "commitId": "e9398e7",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The worker performed a thorough review of all 9 structural issues and provided sound defer rationale for each. However, there is a critical issue: the handoff claims commit e9398e7 is the feature's commit, but e9398e7 is actually 'scrutiny: milestone-1 validation synthesis (round 2)' which ONLY modifies .factory/validation/milestone-1/scrutiny/synthesis.json. The review-structural-issues feature produced NO git commits. The defer rationale exists only in the transcript skeleton, not in any durable git-tracked location.",
+    "issues": [
+      {
+        "file": "N/A - no code changes",
+        "line": 0,
+        "severity": "blocking",
+        "description": "Handoff references commit e9398e7 but that commit is milestone-1 synthesis (round 2), not the review-structural-issues feature. The review-structural-issues feature produced NO commits. This mirrors the same failure mode as cleanup-unused-t1 in milestone-1. The defer rationale for all 9 structural issues is preserved only in the transcript skeleton (worker-transcripts.jsonl), not in git history."
+      },
+      {
+        "file": "internal/cli/cli.go",
+        "line": 0,
+        "severity": "non_blocking",
+        "description": "Worker correctly deferred: 818 LOC, 75 complexity. Command dispatch, JSON handling, and interactive mode are tightly coupled. Extraction of helpers does not reduce the flagged complexity metrics. Defer rationale is sound."
+      },
+      {
+        "file": "internal/server/server.go",
+        "line": 0,
+        "severity": "non_blocking",
+        "description": "Worker correctly deferred: 1086 LOC, 103 complexity. Job execution, WebSocket, and handlers are deeply intertwined sharing state. Splitting would require separating tightly coupled concerns - high-risk refactoring."
+      },
+      {
+        "file": "internal/downloader/downloader.go",
+        "line": 0,
+        "severity": "non_blocking",
+        "description": "Worker correctly deferred: 650 LOC, 55 complexity. File already has sub-modules (pipeline.go, ffmpeg.go, progress_tracker.go). Remaining code coordinates modules - further split would increase coupling."
+      },
+      {
+        "file": "internal/config/config.go",
+        "line": 0,
+        "severity": "non_blocking",
+        "description": "Worker correctly deferred: complexity 37. The validation map patterns are tied to Config type. Extraction would not reduce complexity metrics - the complexity is inherent to the validation logic."
+      },
+      {
+        "file": "internal/client/client.go",
+        "line": 0,
+        "severity": "non_blocking",
+        "description": "Worker correctly deferred: complexity 50. Cohesive API client where splitting would add package complexity without reducing flagged complexity."
+      },
+      {
+        "file": "internal/cli/cli_test.go, internal/client/client_test.go, internal/downloader/downloader_test.go, internal/downloader/progress_tracker_test.go",
+        "line": 0,
+        "severity": "non_blocking",
+        "description": "Worker correctly deferred all 4 test files. Test file organization changes don't improve runtime structure or reduce complexity metrics."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "AGENTS.md 'Commit Hygiene' section says to commit after each batch of fixes but doesn't address what to commit when no code fixes are made but documentation of defer rationale is required. The feature description says 'Document rationale for deferred items' but there's no guidance on WHERE to document this.",
+      "evidence": "Feature description: 'Only fix items where split is clearly beneficial and low-risk. Document rationale for deferred items.' The defer rationale was never placed in a git-tracked file - only in transcript skeleton."
+    },
+    {
+      "area": "skills",
+      "observation": "Skill feedback says followedProcedure: true, but the skill procedure doesn't explicitly require documenting defer rationale in a durable location. The go-cli-worker SKILL.md step 6 says to run validators before handoff, but doesn't address what to commit when no code changes are made.",
+      "evidence": "go-cli-worker SKILL.md procedure focuses on implementing CLI changes and running verification. For a review-only feature, there's no guidance on how to preserve the review output in git."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The review of all 9 structural issues was thorough and the defer rationale is sound - none of the issues can be safely fixed without high-risk refactoring. However, this feature FAILED to produce a git commit (same issue as cleanup-unused-t1 in milestone-1). The handoff claims commit e9398e7 but that is a milestone-1 synthesis update, not this feature's work. The defer rationale exists only in the transcript, not in git-tracked files. All verification commands passed and skill procedure was followed, but the blocking issue is the missing git history for the review work."
+}

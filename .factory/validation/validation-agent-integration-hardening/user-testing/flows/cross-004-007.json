@@ -1,0 +1,98 @@
+{
+  "groupId": "cross-004-007",
+  "testedAt": "2026-03-17T13:15:00Z",
+  "isolation": {
+    "apiPort": 8080,
+    "workingDirectory": "/home/ravish/Desktop/clawds-code-crib/impartus-go/impartus",
+    "cliBinary": "./impartus",
+    "configFile": "config.json"
+  },
+  "toolsUsed": ["curl", "./impartus", "desloppify"],
+  "assertions": [
+    {
+      "id": "VAL-CROSS-004",
+      "title": "End-to-end download flow produces observable outputs without interactive fallback",
+      "status": "pass",
+      "steps": [
+        { "action": "Run ./impartus --json", "expected": "JSON help envelope without prompts", "observed": "Stable JSON with success/data/error/meta keys, no interactive prompt" },
+        { "action": "Run ./impartus courses --json", "expected": "JSON course list", "observed": "JSON array of courses with success envelope" },
+        { "action": "Run ./impartus lectures --subject 3176268 --session 1508 --json", "expected": "JSON lecture list", "observed": "JSON array of lectures with metadata" },
+        { "action": "Run ./impartus download --json (missing flags)", "expected": "Structured error without prompt", "observed": "JSON error: 'download requires --subject/-s and --session/-S'" },
+        { "action": "Run download with valid params (30s timeout)", "expected": "Process starts without interactive fallback", "observed": "Download process started, no stdin prompts observed" }
+      ],
+      "evidence": {
+        "cliOutputs": [
+          "./impartus --json -> {success:true, data:{...}, error:null, meta:{command:help, mode:json}}",
+          "./impartus courses --json -> success:true with 27 courses",
+          "./impartus download (missing flags) -> success:false, error:{message:'download requires --subject/-s and --session/-S'}"
+        ],
+        "networkSummary": "CLI communicates with Impartus API using cached token, no auth prompts"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-005",
+      "title": "CLI JSON and API response contracts are both machine-consumable together",
+      "status": "pass",
+      "steps": [
+        { "action": "Check CLI JSON envelope structure", "expected": "Consistent top-level keys", "observed": "All CLI JSON outputs have: success, data, error, meta" },
+        { "action": "Check API health endpoint", "expected": "JSON response", "observed": "{\"status\":\"ok\"}" },
+        { "action": "Check API error format", "expected": "Structured error with code and message", "observed": "{\"error\":{\"code\":\"MISSING_TOKEN\",\"message\":\"Authorization header required\"},\"success\":false}" },
+        { "action": "Check API auth error format", "expected": "Structured error with code and message", "observed": "{\"error\":{\"code\":\"AUTH_FAILED\",\"message\":\"Invalid username or password\"},\"success\":false}" },
+        { "action": "Verify docs match runtime", "expected": "Error codes documented", "observed": "docs/error-codes.md contains AUTH_FAILED, MISSING_TOKEN, INVALID_TOKEN, etc." }
+      ],
+      "evidence": {
+        "cliContract": "CLI JSON mode returns {success:bool, data:any, error:object|null, meta:{command:string, mode:string}}",
+        "apiContract": "API returns {success:bool, error:{code:string, message:string}} or {status:string} for health",
+        "docsReference": "docs/error-codes.md documents all error codes with trigger conditions"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-006",
+      "title": "Post-change desloppify review covers refactors across touched areas",
+      "status": "fail",
+      "steps": [
+        { "action": "Check desloppify installation", "expected": "desloppify available", "observed": "desloppify 0.7.7 installed at /home/ravish/.local/bin/desloppify" },
+        { "action": "Run desloppify scan", "expected": "Score report generated", "observed": "Scan complete with 240 findings, overall score 26.6/100" },
+        { "action": "Check score threshold", "expected": "Score > 80", "observed": "Score 26.6/100 - BELOW THRESHOLD" },
+        { "action": "Check CI workflow integration", "expected": "desloppify in CI pipeline", "observed": "CI workflow (.github/workflows/ci.yml) has lint/test/build but NO desloppify step" }
+      ],
+      "evidence": {
+        "desloppifyScan": "desloppify scan -> 240 findings, overall 26.6/100, objective 66.4/100",
+        "scorecard": "File health 90%, Code quality 76.7%, Duplication 89.3%, Security 100%, Test health 19.7%",
+        "ciWorkflow": "CI has: review (reviewdog), lint (golangci-lint), test (go test), build (go build) - NO desloppify"
+      },
+      "issues": "desloppify score is 26.6/100, below target of 80. CI workflow does not include desloppify as a required quality gate."
+    },
+    {
+      "id": "VAL-CROSS-007",
+      "title": "Secrets do not leak in agent-facing outputs during failure paths",
+      "status": "pass",
+      "steps": [
+        { "action": "Test CLI missing flags error", "expected": "No credential exposure", "observed": "Error message: 'download requires --subject/-s and --session/-S' - no secrets" },
+        { "action": "Test CLI invalid IDs error", "expected": "No credential exposure", "observed": "Error: 'no lectures found' - no secrets" },
+        { "action": "Test API auth failure", "expected": "Generic error message", "observed": "'Invalid username or password' - does NOT echo submitted credentials" },
+        { "action": "Check logs for password leakage", "expected": "No password strings", "observed": "grep -i 'password' api.log returned no results" },
+        { "action": "Check logs for token leakage", "expected": "No raw token values", "observed": "Logs show 'Token set from .token with length 200' - only length, not value" },
+        { "action": "Check CLI help for secret mentions", "expected": "No secrets in help output", "observed": "grep for password/token/secret/credential returned nothing" }
+      ],
+      "evidence": {
+        "cliErrors": "Error messages contain descriptive text but no credential values",
+        "apiErrors": "API returns generic 'Invalid username or password' without echoing input",
+        "logInspection": "api.log shows token length (200) not actual token value; no password strings found"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    {
+      "description": "API server was not running when testing started - needed to restart with ./impartus serve --port 8080",
+      "resolved": true,
+      "resolution": "Started API server manually before testing API endpoints",
+      "affectedAssertions": ["VAL-CROSS-005", "VAL-CROSS-007"]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 4 assertions: 3 passed, 1 failed (VAL-CROSS-006: desloppify score 26.6/100 below target 80, and CI workflow lacks desloppify integration)"
+}

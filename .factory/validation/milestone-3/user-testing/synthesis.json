@@ -1,0 +1,67 @@
+{
+  "milestone": "milestone-3",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 19,
+    "passed": 19,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-BASELINE-CLI-001",
+    "VAL-BASELINE-API-001",
+    "VAL-BASELINE-TEST-001",
+    "VAL-TRIAGE-001",
+    "VAL-TRIAGE-002",
+    "VAL-PRESERVE-CLI-001",
+    "VAL-PRESERVE-API-001",
+    "VAL-EXECUTION-BATCH-001",
+    "VAL-EXECUTION-BATCH-002",
+    "VAL-TEST-HEALTH-001",
+    "VAL-PRESERVE-TEST-002",
+    "VAL-PRESERVE-CLI-002",
+    "VAL-PRESERVE-API-002",
+    "VAL-CROSS-CLI-001",
+    "VAL-REVIEW-REFRESH-001",
+    "VAL-SCORE-001",
+    "VAL-PLATEAU-001",
+    "VAL-PRESERVE-CLI-003",
+    "VAL-PRESERVE-API-003",
+    "VAL-CROSS-API-001"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "previousRound": null,
+  "finalValidationEvidence": {
+    "cliJson": {
+      "command": "./impartus --json",
+      "output": "{\"success\":true,\"data\":{\"name\":\"impartus\",\"description\":\"CLI and interactive downloader for Impartus lectures\",\"defaultMode\":\"interactive\",\"flags\":[\"--json\"],\"commands\":[...],\"error\":null,\"meta\":{\"command\":\"help\",\"mode\":\"json\"}}",
+      "status": "pass"
+    },
+    "apiHealth": {
+      "command": "curl -s http://localhost:8080/api/v1/health",
+      "output": "{\"status\":\"ok\"}",
+      "status": "pass"
+    },
+    "apiContract": {
+      "command": "curl -s -i http://localhost:8080/api/v1/health",
+      "headers": ["X-Request-Id", "Access-Control-Allow-Origin", "Content-Type: application/json"],
+      "status": "pass"
+    },
+    "deterministicGates": {
+      "goTest": "passed (11 packages)",
+      "makeLint": "passed",
+      "goBuild": "passed"
+    },
+    "desloppifyScore": {
+      "strict": 74.7,
+      "objective": 69.6,
+      "verified": 69.6,
+      "baseline": 74.7,
+      "delta": 0.0
+    }
+  },
+  "plateauExplanation": "Strict score plateaued at 74.7 (no delta from baseline). The main blocker is test health at 33.2%, which requires significant test coverage improvements. 50 subjective review items remain in the queue. The objective mechanical queue is complete. Only subjective review work remains."
+}

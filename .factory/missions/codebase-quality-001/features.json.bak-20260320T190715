@@ -1,0 +1,236 @@
+{
+  "features": [
+    {
+      "id": "cleanup-unused-t1",
+      "description": "Fix tier-1 unused code issues identified by desloppify. These are high-confidence removals: unused imports, unused variables, unused functions with no callers. Run `desloppify show unused --tier 1 --status open` to list items.",
+      "skillName": "go-cli-worker",
+      "preconditions": [],
+      "expectedBehavior": [
+        "desloppify shows fewer tier-1 unused issues",
+        "go build ./... succeeds",
+        "go test ./... passes",
+        "make lint passes"
+      ],
+      "verificationSteps": [
+        "desloppify show unused --tier 1 --status open",
+        "Fix issues one by one, verifying build after each",
+        "go build ./...",
+        "go test ./...",
+        "make lint"
+      ],
+      "fulfills": ["VAL-CLEANUP-001"],
+      "milestone": "milestone-1",
+      "status": "pending"
+    },
+    {
+      "id": "fix-signature-consistency",
+      "description": "Fix the single signature consistency issue. Run `desloppify show signature --status open` to identify the problematic function signature and align it with conventions.",
+      "skillName": "go-cli-worker",
+      "preconditions": [],
+      "expectedBehavior": [
+        "desloppify shows 0 signature issues",
+        "All callers updated if signature changed",
+        "go build ./... succeeds",
+        "go test ./... passes"
+      ],
+      "verificationSteps": [
+        "desloppify show signature --status open",
+        "Identify and fix the inconsistency",
+        "go build ./...",
+        "go test ./...",
+        "make lint"
+      ],
+      "fulfills": ["VAL-SIGNATURE-001"],
+      "milestone": "milestone-1",
+      "status": "pending"
+    },
+    {
+      "id": "extract-boilerplate-helpers",
+      "description": "Address 4 boilerplate duplication issues. Run `desloppify show boilerplate_duplication --status open` to identify repeated patterns. Extract into shared helpers only where duplication is clear and stable.",
+      "skillName": "go-cli-worker",
+      "preconditions": [],
+      "expectedBehavior": [
+        "Boilerplate duplication count decreases",
+        "New helper functions are well-named and focused",
+        "go build ./... succeeds",
+        "go test ./... passes"
+      ],
+      "verificationSteps": [
+        "desloppify show boilerplate_duplication --status open",
+        "Identify safe extraction opportunities",
+        "Create helpers, update callers",
+        "go build ./...",
+        "go test ./...",
+        "make lint"
+      ],
+      "fulfills": ["VAL-BOILERPLATE-001"],
+      "milestone": "milestone-1",
+      "status": "pending"
+    },
+    {
+      "id": "scrutiny-validator-milestone-1",
+      "description": "Scrutiny validation for milestone-1. Runs test suite, lint, build. Verifies no behavioral regressions.",
+      "skillName": "quality-gate-worker",
+      "preconditions": ["cleanup-unused-t1", "fix-signature-consistency", "extract-boilerplate-helpers"],
+      "expectedBehavior": [
+        "go test ./... passes",
+        "make lint passes",
+        "go build ./... succeeds",
+        "desloppify scan shows improved scores"
+      ],
+      "verificationSteps": [
+        "go test ./... -v",
+        "make lint",
+        "go build ./...",
+        "desloppify scan"
+      ],
+      "milestone": "milestone-1",
+      "status": "pending"
+    },
+    {
+      "id": "review-structural-issues",
+      "description": "Review 9 structural issues. Run `desloppify show structural --status open`. Only fix items where split is clearly beneficial and low-risk. Defer ambiguous cases.",
+      "skillName": "go-cli-worker",
+      "preconditions": [],
+      "expectedBehavior": [
+        "Structural issues reviewed and categorized",
+        "Only safe fixes applied",
+        "go build ./... succeeds",
+        "go test ./... passes"
+      ],
+      "verificationSteps": [
+        "desloppify show structural --status open",
+        "Categorize each issue: safe-fix vs defer",
+        "Apply safe fixes only",
+        "go build ./...",
+        "go test ./..."
+      ],
+      "fulfills": ["VAL-STRUCTURAL-001"],
+      "milestone": "milestone-2",
+      "status": "pending"
+    },
+    {
+      "id": "improve-responsibility-cohesion",
+      "description": "Address 4 responsibility cohesion issues. Run `desloppify show responsibility_cohesion --status open`. Extract focused sub-modules where responsibilities are clearly separable.",
+      "skillName": "go-cli-worker",
+      "preconditions": [],
+      "expectedBehavior": [
+        "Cohesion issues decrease",
+        "New modules have single clear responsibility",
+        "go build ./... succeeds",
+        "go test ./... passes"
+      ],
+      "verificationSteps": [
+        "desloppify show responsibility_cohesion --status open",
+        "Identify clear extraction opportunities",
+        "Create focused sub-modules",
+        "go build ./...",
+        "go test ./..."
+      ],
+      "fulfills": ["VAL-COHESION-001"],
+      "milestone": "milestone-2",
+      "status": "pending"
+    },
+    {
+      "id": "scrutiny-validator-milestone-2",
+      "description": "Scrutiny validation for milestone-2. Runs test suite, lint, build. Verifies no behavioral regressions.",
+      "skillName": "quality-gate-worker",
+      "preconditions": ["review-structural-issues", "improve-responsibility-cohesion"],
+      "expectedBehavior": [
+        "go test ./... passes",
+        "make lint passes",
+        "go build ./... succeeds",
+        "desloppify scan shows improved scores"
+      ],
+      "verificationSteps": [
+        "go test ./... -v",
+        "make lint",
+        "go build ./...",
+        "desloppify scan"
+      ],
+      "milestone": "milestone-2",
+      "status": "pending"
+    },
+    {
+      "id": "test-coverage-client",
+      "description": "Improve test coverage for internal/client package. Focus on critical paths: auth, HTTP helpers, types. Target: measurable coverage increase.",
+      "skillName": "go-cli-worker",
+      "preconditions": [],
+      "expectedBehavior": [
+        "go test ./internal/client -cover shows increase",
+        "All tests pass",
+        "No behavioral changes"
+      ],
+      "verificationSteps": [
+        "go test ./internal/client -cover",
+        "Add tests for uncovered critical paths",
+        "go test ./internal/client -cover",
+        "go test ./..."
+      ],
+      "fulfills": ["VAL-TEST-001"],
+      "milestone": "milestone-3",
+      "status": "pending"
+    },
+    {
+      "id": "test-coverage-downloader",
+      "description": "Improve test coverage for internal/downloader package. Focus on pipeline, progress tracking, rate limiting. Target: measurable coverage increase.",
+      "skillName": "go-downloader-worker",
+      "preconditions": [],
+      "expectedBehavior": [
+        "go test ./internal/downloader -cover shows increase",
+        "All tests pass",
+        "No behavioral changes"
+      ],
+      "verificationSteps": [
+        "go test ./internal/downloader -cover",
+        "Add tests for uncovered critical paths",
+        "go test ./internal/downloader -cover",
+        "go test ./..."
+      ],
+      "fulfills": ["VAL-TEST-002"],
+      "milestone": "milestone-3",
+      "status": "pending"
+    },
+    {
+      "id": "test-coverage-server",
+      "description": "Improve test coverage for internal/server package. Focus on auth middleware, job management, websocket. Target: measurable coverage increase.",
+      "skillName": "go-integration-worker",
+      "preconditions": [],
+      "expectedBehavior": [
+        "go test ./internal/server -cover shows increase",
+        "All tests pass",
+        "No behavioral changes"
+      ],
+      "verificationSteps": [
+        "go test ./internal/server -cover",
+        "Add tests for uncovered critical paths",
+        "go test ./internal/server -cover",
+        "go test ./..."
+      ],
+      "fulfills": ["VAL-TEST-003"],
+      "milestone": "milestone-3",
+      "status": "pending"
+    },
+    {
+      "id": "scrutiny-validator-milestone-3",
+      "description": "Scrutiny validation for milestone-3. Runs test suite with coverage, lint, build. Verifies test health improvement.",
+      "skillName": "quality-gate-worker",
+      "preconditions": ["test-coverage-client", "test-coverage-downloader", "test-coverage-server"],
+      "expectedBehavior": [
+        "go test ./... -cover passes",
+        "make lint passes",
+        "go build ./... succeeds",
+        "Test health score increases in desloppify"
+      ],
+      "verificationSteps": [
+        "go test ./... -cover -coverprofile=coverage.out",
+        "go tool cover -func=coverage.out | tail -1",
+        "make lint",
+        "go build ./...",
+        "desloppify scan"
+      ],
+      "milestone": "milestone-3",
+      "status": "pending"
+    }
+  ]
+}

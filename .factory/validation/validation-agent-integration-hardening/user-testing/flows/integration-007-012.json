@@ -1,0 +1,132 @@
+{
+  "groupId": "integration-007-012",
+  "testedAt": "2026-03-17T13:05:00+05:30",
+  "isolation": {
+    "apiPort": 8080,
+    "healthEndpoint": "http://localhost:8080/api/v1/health",
+    "websocketEndpoint": "ws://localhost:8080/api/v1/ws",
+    "workingDirectory": "/home/ravish/Desktop/clawds-code-crib/impartus-go/impartus"
+  },
+  "toolsUsed": ["curl", "python3-websocket", "desloppify", "jq"],
+  "assertions": [
+    {
+      "id": "VAL-INTEGRATION-007",
+      "title": "Request ID behavior is usable cross-origin",
+      "status": "pass",
+      "steps": [
+        { "action": "OPTIONS preflight request with Origin and Access-Control headers", "expected": "CORS headers allow X-Request-ID", "observed": "Access-Control-Allow-Headers includes X-Request-ID, Access-Control-Expose-Headers includes X-Request-ID" },
+        { "action": "GET request with X-Request-ID header", "expected": "Request ID echoed in response", "observed": "X-Request-Id header returned with value test-request-123" }
+      ],
+      "evidence": {
+        "files": [
+          "validation-agent-integration-hardening/integration-007-012/VAL-INTEGRATION-007-preflight.txt",
+          "validation-agent-integration-hardening/integration-007-012/VAL-INTEGRATION-007-cors-get.txt"
+        ],
+        "corsHeaders": "Access-Control-Allow-Headers: Authorization, Content-Type, X-Request-ID",
+        "exposeHeaders": "Access-Control-Expose-Headers: X-Request-ID"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-INTEGRATION-008",
+      "title": "WebSocket lifecycle events are schema-stable",
+      "status": "pass",
+      "steps": [
+        { "action": "Connect to WebSocket with auth token", "expected": "Connection opens successfully", "observed": "Connection opened, auth accepted" },
+        { "action": "Create download job while connected", "expected": "job.started, job.progress events with stable schema", "observed": "job.started with {type, jobId, status, timestamp}, job.progress with {type, jobId, progress, status, phase, details, timestamp}" },
+        { "action": "Verify event schema matches documentation", "expected": "Event fields match docs/websocket-events.md", "observed": "All events match documented schema - type, jobId, status, timestamp are consistent; progress events include phase and details" }
+      ],
+      "evidence": {
+        "files": [
+          "validation-agent-integration-hardening/integration-007-012/VAL-INTEGRATION-008-websocket-connect.txt",
+          "validation-agent-integration-hardening/integration-007-012/VAL-INTEGRATION-008-websocket-events.json"
+        ],
+        "eventsCaptured": ["job.started", "job.progress", "job.cancelled"],
+        "schemaVerified": "All event types have stable fields matching docs/websocket-events.md"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-INTEGRATION-009",
+      "title": "Cancelation events are not ambiguous",
+      "status": "pass",
+      "steps": [
+        { "action": "Create job and cancel via DELETE /api/v1/jobs/{id}", "expected": "Deterministic cancelled status", "observed": "DELETE returns {success:true, data:{status:'canceled'}}" },
+        { "action": "Verify WebSocket receives job.cancelled event", "expected": "Single unambiguous cancelled event", "observed": "job.cancelled event with {type, jobId, progress, status:'canceled', timestamp}" },
+        { "action": "Poll job status after cancellation", "expected": "Terminal status visible to polling clients", "observed": "Job status='canceled' visible via GET /jobs/{id}" }
+      ],
+      "evidence": {
+        "files": [
+          "validation-agent-integration-hardening/integration-007-012/VAL-INTEGRATION-008-websocket-events.json"
+        ],
+        "cancelResponse": "status='canceled' in DELETE response",
+        "websocketEvent": "job.cancelled with status:'canceled' - single deterministic event"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-INTEGRATION-010",
+      "title": "Failed jobs preserve meaningful terminal state",
+      "status": "pass",
+      "steps": [
+        { "action": "Create job with invalid subject/session IDs (99999999)", "expected": "Job should fail gracefully", "observed": "Job created with status='pending', then transitioned to status='failed'" },
+        { "action": "Poll job status after failure", "expected": "Meaningful terminal status with error info", "observed": "Job shows status='failed', error='no lectures found', progress=0, all config preserved" },
+        { "action": "Verify all job fields are accessible", "expected": "Polling clients can see full context", "observed": "id, subjectId, sessionId, status, progress, error, config, createdAt, updatedAt all present" }
+      ],
+      "evidence": {
+        "files": [
+          "validation-agent-integration-hardening/integration-007-012/VAL-INTEGRATION-010-failed-job-status.json"
+        ],
+        "terminalState": {
+          "status": "failed",
+          "error": "no lectures found",
+          "progress": 0,
+          "fieldsPreserved": ["id", "subjectId", "sessionId", "status", "progress", "error", "config", "createdAt", "updatedAt"]
+        }
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-INTEGRATION-011",
+      "title": "OpenClaw-facing config and manifest surfaces stay in sync",
+      "status": "pass",
+      "steps": [
+        { "action": "Compare manifest endpoints with runtime", "expected": "Manifest matches actual API paths", "observed": "health, auth/login, courses, lectures, jobs all match manifest" },
+        { "action": "Verify CLI --json capability metadata", "expected": "CLI returns machine-readable capability info", "observed": "CLI returns success=true, meta.command='help', data.commands lists all documented commands" },
+        { "action": "Test response schemas match manifest", "expected": "Job, course, lecture schemas match manifest", "observed": "All response fields match openclaw-manifest.json definitions" }
+      ],
+      "evidence": {
+        "files": [
+          "validation-agent-integration-hardening/integration-007-012/VAL-INTEGRATION-011-manifest-sync.txt"
+        ],
+        "cliJsonMode": "Verified capability metadata structure",
+        "apiRoutes": "All documented routes tested and match manifest",
+        "responseSchemas": "courses, lectures, jobs response fields verified"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-INTEGRATION-012",
+      "title": "Desloppify is integrated as required quality gate",
+      "status": "fail",
+      "steps": [
+        { "action": "Check for desloppify in CI workflow", "expected": "Non-optional desloppify scan step", "observed": "CI workflow (.github/workflows/ci.yml) contains lint, test, review jobs but NO desloppify step" },
+        { "action": "Run desloppify status to check score", "expected": "Score exceeds 80", "observed": "Overall score is 26.6/100 - significantly below 80 target" },
+        { "action": "Check desloppify configuration", "expected": "Tool installed and configured", "observed": "desloppify is installed and .desloppify/ state exists, but not integrated into CI" }
+      ],
+      "evidence": {
+        "files": [
+          "validation-agent-integration-hardening/integration-007-012/VAL-INTEGRATION-012-desloppify-status.txt"
+        ],
+        "ciWorkflow": ".github/workflows/ci.yml does not include desloppify step",
+        "currentScore": 26.6,
+        "requiredScore": 80,
+        "mainIssues": "Test health 19.7%, Design coherence 0%, Abstraction fit 0%, Error consistency 0%"
+      },
+      "issues": "Two failures: (1) No desloppify step in CI workflow, (2) Score 26.6 is below required 80"
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 6 assertions: 5 passed, 1 failed. VAL-INTEGRATION-012 (desloppify quality gate) failed because: (1) CI workflow does not include a desloppify scan step, and (2) current desloppify score (26.6/100) is significantly below the required 80 target. Main issues per desloppify: test health at 19.7%, design coherence at 0%, abstraction fit at 0%, and error consistency at 0%."
+}

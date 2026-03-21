@@ -1,0 +1,70 @@
+# Pull Request
+
+## Description
+<!-- Provide a clear and concise description of your changes -->
+
+**What does this PR do?**
+<!-- Explain the purpose of this change -->
+
+**Related Issue(s):**
+<!-- Link to any related issues: Fixes #123, Addresses #456 -->
+-
+
+## Type of Change
+<!-- Mark the relevant option with an 'x' -->
+- [ ] 🐛 Bug fix (non-breaking change that fixes an issue)
+- [ ] ✨ New feature (non-breaking change that adds functionality)
+- [ ] 💥 Breaking change (fix or feature that would cause existing functionality to not work as expected)
+- [ ] 📚 Documentation update
+- [ ] 🔧 Configuration/infrastructure change
+- [ ] ♻️ Refactoring (no functional changes)
+
+## Testing Done
+<!-- Describe the testing you've done to validate your changes -->
+
+**Unit Tests:**
+- [ ] Added new tests
+- [ ] Updated existing tests
+- [ ] All tests pass locally (`go test ./...`)
+
+**Manual Testing:**
+<!-- Describe what you tested manually -->
+```bash
+# Commands you ran to test:
+go test ./...
+go build ./...
+./impartus version
+```
+
+**Test Coverage:**
+<!-- If applicable, note coverage impact -->
+- Coverage before: N/A
+- Coverage after: N/A
+
+## Code Quality Checklist
+<!-- Mark completed items with an 'x' -->
+- [ ] Code follows the project's naming conventions (PascalCase/camelCase)
+- [ ] No new linting errors (`golangci-lint run` passes)
+- [ ] No hardcoded secrets or credentials
+- [ ] Complex logic is documented with comments
+- [ ] Error messages are clear and actionable
+
+## Documentation
+- [ ] README.md updated (if needed)
+- [ ] AGENTS.md updated (if workflow/tooling changed)
+- [ ] API documentation updated (if endpoints changed)
+- [ ] Changelog entry added (if user-facing change)
+
+## Screenshots (if applicable)
+<!-- Add screenshots for UI-related changes -->
+
+## Additional Context
+<!-- Add any other context about the PR here -->
+
+---
+<!-- For maintainers: Review checklist -->
+**Reviewer Checklist:**
+- [ ] Code is readable and maintainable
+- [ ] Tests are comprehensive and meaningful
+- [ ] No security vulnerabilities introduced
+- [ ] Backward compatible (or breaking change is documented)

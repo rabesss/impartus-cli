@@ -1,0 +1,20 @@
+{
+  "sessionDefaultSettings": {
+    "model": "custom:ZAI-GLM-5",
+    "reasoningEffort": "max",
+    "autonomyMode": "auto-high",
+    "specModeModel": "custom:ZAI-GLM-5",
+    "specModeReasoningEffort": "max",
+    "interactionMode": "auto",
+    "autonomyLevel": "high"
+  },
+  "missionModelSettings": {
+    "workerModel": "custom:MiniMax-M2.7",
+    "workerReasoningEffort": "max",
+    "validationWorkerModel": "custom:MiniMax-M2.7",
+    "validationWorkerReasoningEffort": "max"
+  },
+  "enabledPlugins": {
+    "core@factory-plugins": true
+  }
+}

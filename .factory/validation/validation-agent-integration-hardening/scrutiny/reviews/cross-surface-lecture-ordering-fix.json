@@ -1,0 +1,31 @@
+{
+  "featureId": "cross-surface-lecture-ordering-fix",
+  "milestone": "validation-agent-integration-hardening",
+  "status": "pass",
+  "summary": "PASS: Both Round 2 blocking issues have been adequately addressed. The fix adds reverseLecturesHelper() to selectJobLectures() matching CLI's reversal behavior, and includes TestSelectJobLecturesMatchesCLIAlignment that verifies cross-surface alignment across multiple index ranges.",
+  "blockingIssues": [],
+  "nonBlockingIssues": [
+    {
+      "file": "internal/server/server_test.go",
+      "line": 207,
+      "severity": "non_blocking",
+      "description": "The test manually encodes CLI's expected behavior (reversed order) rather than directly importing and calling the CLI's selectLectureRange() function for a true side-by-side comparison. While the test correctly verifies the expected behavior, a direct function call comparison would be more robust against future changes to either function. This is a minor improvement opportunity, not a blocker."
+    },
+    {
+      "file": "internal/server/server.go",
+      "line": 794,
+      "severity": "non_blocking",
+      "description": "reverseLecturesHelper() is a duplicate of CLI's reverseLectures() function. Consider extracting this to a shared utility package to avoid code duplication. Non-blocking as both implementations are correct and identical."
+    }
+  ],
+  "sharedStateObservations": [],
+  "addressesFailureFrom": "cross-surface-agent-flow-alignment",
+  "codeReview": {
+    "summary": "The fix correctly addresses both Round 2 blocking issues. selectJobLectures() now calls reverseLecturesHelper() to match CLI's lecture ordering semantics. The test TestSelectJobLecturesMatchesCLIAlignment comprehensively verifies alignment across multiple index ranges (1-2, 1-5, 0-0 default, 3-4) and confirms that the same index values select identical lectures between CLI and API surfaces.",
+    "issues": []
+  },
+  "diffReviewed": true,
+  "transcriptSkeletonReviewed": false,
+  "commitId": "574469252b83db37840cec39a089afd871aad47f",
+  "reviewedAt": "2026-03-17T02:30:00Z"
+}

@@ -1,0 +1,28 @@
+{
+  "featureId": "fix-signature-consistency",
+  "reviewedAt": "2026-03-20T13:45:00Z",
+  "commitId": "e8faa47",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Signature consistency fixed successfully. metrics.Init() now returns error only, aligning with alerts.Init() and sentryhook.Init() conventions. Build, tests, and lint all pass. desloppify shows no open signature issues.",
+    "issues": [
+      {
+        "file": "internal/metrics/metrics.go",
+        "line": 268,
+        "severity": "non_blocking",
+        "description": "RecordAPIRequest method accepts `method` and `path` string parameters but does not add them to metric.WithAttributes(). The attributes slice is empty. This is pre-existing incomplete code in the original implementation, not introduced by this signature change. The method and path should likely be added as attributes: metric.WithAttributes(semconv.HTTPMethod(method), semconv.HTTPTarget(path)) or similar."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "AGENTS.md documentation (both at repo root and mission dir) shows metrics.Init(ctx) with the old signature. The correct signature is metrics.Init() error. Worker correctly identified this as outside scope but did not document it as a follow-up task.",
+      "evidence": "repo root AGENTS.md:125 shows metrics.Init(ctx) - should be metrics.Init()"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Feature successfully completes the signature consistency fix. metrics.Init() now returns error only, matching alerts.Init() and sentryhook.Init(). All verification steps pass (go build, go test, make lint, desloppify signature check). One pre-existing code issue noted in RecordAPIRequest where method/path parameters are not used. Documentation in AGENTS.md still shows old signature but was correctly identified as outside scope."
+}

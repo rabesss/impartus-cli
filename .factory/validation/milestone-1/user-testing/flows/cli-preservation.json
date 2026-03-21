@@ -1,0 +1,31 @@
+{
+  "assertions": ["VAL-PRESERVE-CLI-001"],
+  "surface": "CLI",
+  "status": "pass",
+  "evidence": {
+    "command": "./impartus --json",
+    "output": {
+      "success": true,
+      "data": {
+        "name": "impartus",
+        "description": "CLI and interactive downloader for Impartus lectures",
+        "defaultMode": "interactive",
+        "flags": ["--json"],
+        "commands": [
+          {"name": "help", "usage": "impartus help"},
+          {"name": "version", "usage": "impartus version"},
+          {"name": "courses", "usage": "impartus courses"},
+          {"name": "lectures", "usage": "impartus lectures --subject <id> --session <id>"},
+          {"name": "download", "usage": "impartus download --subject <id> --session <id> [--start <n>] [--end <n>]"},
+          {"name": "serve", "usage": "impartus serve [--port <port>]"}
+        ]
+      },
+      "error": null,
+      "meta": {"command": "help", "mode": "json"}
+    }
+  },
+  "frictions": [],
+  "blockers": [],
+  "toolsUsed": ["Execute"],
+  "timestamp": "2026-03-20T00:00:00Z"
+}

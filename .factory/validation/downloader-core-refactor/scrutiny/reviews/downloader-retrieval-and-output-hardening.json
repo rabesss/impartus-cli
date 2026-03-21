@@ -1,0 +1,60 @@
+{
+  "featureId": "downloader-retrieval-and-output-hardening",
+  "status": "pass",
+  "issues": [],
+  "sharedStateObservations": [
+    {
+      "observation": "The downloader package uses rate limiting via golang.org/x/time/rate with configurable RPS limits. Workers spawning download tasks should be aware of the RateLimiter.WaitForDownload and RateLimiter.WaitForAPI calls that may block.",
+      "suggestedTarget": "library",
+      "reason": "Future workers modifying downloader behavior should understand the rate limiting mechanism to avoid overwhelming the Impartus API"
+    },
+    {
+      "observation": "The pipeline.go implements a worker pool pattern with separate download and decrypt workers. The buildOrderedList function ensures correct chunk ordering despite concurrent processing.",
+      "suggestedTarget": "library",
+      "reason": "Architectural knowledge useful for workers extending or modifying concurrent download behavior"
+    }
+  ],
+  "assertionCoverage": {
+    "VAL-DOWNLOAD-001": {
+      "satisfied": true,
+      "evidence": "PlaylistParser in parser.go correctly handles #EXT-X-DISCONTINUITY markers to separate first and second view chunks. Lines 29-30 toggle isFirstView flag when discontinuity is encountered."
+    },
+    "VAL-DOWNLOAD-002": {
+      "satisfied": true,
+      "evidence": "Audio-only mode handled in getStreamURL (selects 144p stream), joinAudioOutput calls JoinChunksFromM3U8AudioOnly, and audio format is configurable via config.AudioFormat."
+    },
+    "VAL-DOWNLOAD-003": {
+      "satisfied": true,
+      "evidence": "Video downloads use joinVideoOutput which produces left/right/both outputs based on config.Views setting. joinIfPresent helper ensures requested views are processed."
+    },
+    "VAL-DOWNLOAD-004": {
+      "satisfied": true,
+      "evidence": "Client.LoginAndSetToken calls tryStoredToken before attempting fresh login. validateStoredToken validates cached token before reuse."
+    },
+    "VAL-DOWNLOAD-005": {
+      "satisfied": true,
+      "evidence": "All fetch operations (getStreamInfos, fetchDecryptionKey, downloadURL) return explicit errors with context. Download failures propagate through downloadWithRetry."
+    },
+    "VAL-DOWNLOAD-006": {
+      "satisfied": true,
+      "evidence": "downloadWithRetry uses maxRetries parameter (default 3) with exponential backoff via retryDelay function. Returns final error after all retries exhausted."
+    },
+    "VAL-DOWNLOAD-007": {
+      "satisfied": true,
+      "evidence": "LecturePipeline.buildOrderedList iterates chunk IDs 0 to maxID in order, ensuring correct assembly despite concurrent download/decrypt completion order."
+    },
+    "VAL-DOWNLOAD-008": {
+      "satisfied": true,
+      "evidence": "ProgressTracker.GetOverallProgress caps at 100% via explicit checks. ETA calculation returns 0 when no valid estimate. Speed samples limited to maxSamples."
+    },
+    "VAL-DOWNLOAD-009": {
+      "satisfied": true,
+      "evidence": "selectLectureRange validates start/end bounds, rejects start > end, rejects out of bounds indices. TestSelectLectureRangeValidAndInvalidRanges covers validation."
+    },
+    "VAL-DOWNLOAD-010": {
+      "satisfied": true,
+      "evidence": "filterEmptyLectures removes 'No Class', 'No Lecture', 'There is no lecture today' variants. TestFilterEmptyLecturesRemovesNoClassAndNoLectureVariants covers filtering."
+    }
+  },
+  "summary": "The downloader-retrieval-and-output-hardening feature is well implemented. All 10 VAL-DOWNLOAD assertions are satisfied with appropriate code coverage. The implementation includes clean separation of concerns (parser, downloader, pipeline, progress tracker, rate limiter), proper error handling with context, bounded retries with exponential backoff, correct concurrent processing with ordering guarantees, and bounded progress reporting. No blocking issues identified."
+}

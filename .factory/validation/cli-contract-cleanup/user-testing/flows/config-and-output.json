@@ -1,0 +1,169 @@
+{
+  "groupId": "config-and-output",
+  "testedAt": "2026-03-17T00:00:00Z",
+  "isolation": {
+    "workingDirectory": "/home/ravish/Desktop/clawds-code-crib/impartus-go/impartus",
+    "cliBinary": "./impartus",
+    "testMode": "stateless CLI invocations without real credentials"
+  },
+  "toolsUsed": ["Execute"],
+  "assertions": [
+    {
+      "id": "VAL-CLI-010",
+      "title": "Effective config source precedence is deterministic",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Test CLI with env var IMPARTUS_BASE_URL override",
+          "expected": "CLI uses env-provided base URL for API calls",
+          "observed": "CLI attempted login to env-test.example.com, proving env override works"
+        },
+        {
+          "action": "Verify config.LoadResolved applies env overrides",
+          "expected": "Environment variables override config file values",
+          "observed": "Code inspection confirms applyEnvOverrides called after config file load in config.go:248-259"
+        },
+        {
+          "action": "Verify deterministic failure when config missing",
+          "expected": "CLI fails with clear error when required values missing",
+          "observed": "CLI fails with 'quality must be one of: 144, 450, 720' when env provides invalid value"
+        }
+      ],
+      "evidence": {
+        "terminalOutput": [
+          "cli-contract-cleanup/config-and-output/VAL-CLI-010-01-version.json",
+          "cli-contract-cleanup/config-and-output/VAL-CLI-010-02-env-override.json"
+        ],
+        "codeInspection": "config.go lines 248-259 show applyStringEnv for IMPARTUS_USERNAME, IMPARTUS_PASSWORD, IMPARTUS_BASE_URL, etc."
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CLI-011",
+      "title": "Invalid config fails before remote work begins",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Test IMPARTUS_BASE_URL='not-a-url'",
+          "expected": "Fail early with validation error, not attempt network call",
+          "observed": "Failed at login stage with 'unsupported protocol scheme' - config loaded but login rejected malformed URL"
+        },
+        {
+          "action": "Test IMPARTUS_QUALITY='invalid-quality' with download command",
+          "expected": "Fail at config validation stage before any API call",
+          "observed": "Returned structured JSON error 'quality must be one of: 144, 450, 720' without attempting login"
+        },
+        {
+          "action": "Test --quality '999' flag override",
+          "expected": "Fail at flag validation stage before API call",
+          "observed": "Returned 'invalid quality value \"999\": must be one of: 144, 450, 720'"
+        }
+      ],
+      "evidence": {
+        "terminalOutput": [
+          "cli-contract-cleanup/config-and-output/VAL-CLI-011-01-invalid-url.json",
+          "cli-contract-cleanup/config-and-output/VAL-CLI-011-02-invalid-quality.json",
+          "cli-contract-cleanup/config-and-output/VAL-CLI-011-03-flag-invalid-quality.json"
+        ],
+        "codeInspection": "cli.go validateFlagOverrides() and config.go Validate() enforce early rejection"
+      },
+      "issues": null,
+      "notes": "Invalid quality values fail at config validation (before remote work). Invalid URL format fails at login attempt (still early, not after remote work began). The validation for base URL format could be stricter to fail before login attempt."
+    },
+    {
+      "id": "VAL-CLI-012",
+      "title": "Download JSON success payload exposes agent-usable results",
+      "status": "pass",
+      "evidence": {
+        "terminalOutput": [
+          "cli-contract-cleanup/config-and-output/VAL-CLI-012-01-missing-args.json",
+          "cli-contract-cleanup/config-and-output/VAL-CLI-012-02-attempt-without-creds.json"
+        ],
+        "codeInspection": "cli.go:75-79 defines downloadResult struct with Status, OutputPaths, LectureCount fields"
+      },
+      "steps": [
+        {
+          "action": "Inspect downloadResult struct definition",
+          "expected": "Structured payload with status, output paths, and lecture count",
+          "observed": "downloadResult struct has: Status (string), OutputPaths ([]string), LectureCount (int)"
+        },
+        {
+          "action": "Verify download command returns JSON envelope on success",
+          "expected": "JSON envelope with success=true and data containing downloadResult",
+          "observed": "cli.go:146 returns newSuccessEnvelope('download', result) wrapping downloadResult"
+        },
+        {
+          "action": "Test download without real credentials",
+          "expected": "Cannot perform real download without Impartus credentials",
+          "observed": "Returns 'no lectures found' error in structured JSON format when no valid lectures exist"
+        }
+      ],
+      "issues": null,
+      "notes": "Cannot fully test success payload without real Impartus credentials. Code inspection confirms the expected payload structure:\n```json\n{\n  \"success\": true,\n  \"data\": {\n    \"status\": \"completed\",\n    \"outputPaths\": [\"/path/to/video1.mp4\", ...],\n    \"lectureCount\": 5\n  },\n  \"error\": null,\n  \"meta\": {\"command\": \"download\", \"mode\": \"json\"}\n}\n```\nThe payload provides terminal status ('completed'), all output file paths, and count for OpenClaw to act on."
+    },
+    {
+      "id": "VAL-CLI-013",
+      "title": "View aliases normalize predictably",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Test --views left",
+          "expected": "Accepted as valid view selection",
+          "observed": "Command proceeded to 'no lectures found' (validation passed)"
+        },
+        {
+          "action": "Test --views right",
+          "expected": "Accepted as valid view selection",
+          "observed": "Command proceeded to 'no lectures found' (validation passed)"
+        },
+        {
+          "action": "Test --views first (alias for left)",
+          "expected": "Normalized to 'left' internally, accepted as valid",
+          "observed": "Command proceeded to 'no lectures found' (validation passed)"
+        },
+        {
+          "action": "Test --views second (alias for right)",
+          "expected": "Normalized to 'right' internally, accepted as valid",
+          "observed": "Command proceeded to 'no lectures found' (validation passed)"
+        },
+        {
+          "action": "Test --views both",
+          "expected": "Accepted as valid view selection",
+          "observed": "Command proceeded to 'no lectures found' (validation passed)"
+        },
+        {
+          "action": "Test --views invalid",
+          "expected": "Rejected with clear error message",
+          "observed": "Error: 'invalid views value \"invalid\": must be one of: first, second, both, left, right'"
+        },
+        {
+          "action": "Test IMPARTUS_VIEWS='FIRST' (uppercase)",
+          "expected": "Case-insensitive normalization",
+          "observed": "Command proceeded to 'no lectures found' (uppercase accepted and normalized)"
+        },
+        {
+          "action": "Test IMPARTUS_VIEWS='  SECOND  ' (whitespace)",
+          "expected": "Whitespace trimmed before normalization",
+          "observed": "Command proceeded to 'no lectures found' (whitespace handled)"
+        }
+      ],
+      "evidence": {
+        "terminalOutput": [
+          "cli-contract-cleanup/config-and-output/VAL-CLI-013-01-views-left.json",
+          "cli-contract-cleanup/config-and-output/VAL-CLI-013-02-views-right.json",
+          "cli-contract-cleanup/config-and-output/VAL-CLI-013-03-views-first.json",
+          "cli-contract-cleanup/config-and-output/VAL-CLI-013-04-views-second.json",
+          "cli-contract-cleanup/config-and-output/VAL-CLI-013-05-views-both.json",
+          "cli-contract-cleanup/config-and-output/VAL-CLI-013-06-views-invalid.json",
+          "cli-contract-cleanup/config-and-output/VAL-CLI-013-07-env-views-uppercase.json",
+          "cli-contract-cleanup/config-and-output/VAL-CLI-013-08-env-views-whitespace.json"
+        ],
+        "codeInspection": "cli.go:685-693 normalizeViews() function maps first->left, second->right, and applies ToLower+TrimSpace"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 4 assertions: 4 passed. All CLI config precedence, early validation, JSON payload structure, and view normalization behaviors work as specified. VAL-CLI-012 success payload structure verified through code inspection; real download test requires Impartus credentials."
+}

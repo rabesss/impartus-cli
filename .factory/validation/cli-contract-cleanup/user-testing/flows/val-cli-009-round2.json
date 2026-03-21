@@ -1,0 +1,45 @@
+{
+  "flowId": "val-cli-009-round2",
+  "assertionId": "VAL-CLI-009",
+  "description": "Extra positional arguments are consistently rejected across all commands",
+  "timestamp": "2025-03-17T00:30:00Z",
+  "round": 2,
+  "previousStatus": "failed",
+  "currentStatus": "pass",
+  "testResults": [
+    {
+      "command": "./impartus version extra --json",
+      "expectedBehavior": "Return structured error: 'version does not accept positional arguments'",
+      "actualOutput": "{\"success\":false,\"data\":null,\"error\":{\"message\":\"version does not accept positional arguments\"},\"meta\":{\"command\":\"version\",\"mode\":\"json\"}}",
+      "result": "pass"
+    },
+    {
+      "command": "./impartus serve extra --json",
+      "expectedBehavior": "Return structured error: 'serve does not accept positional arguments'",
+      "actualOutput": "{\"success\":false,\"data\":null,\"error\":{\"message\":\"serve does not accept positional arguments\"},\"meta\":{\"command\":\"serve\",\"mode\":\"json\"}}",
+      "result": "pass"
+    },
+    {
+      "command": "./impartus lectures extra --json",
+      "expectedBehavior": "Return structured error: 'lectures does not accept positional arguments'",
+      "actualOutput": "{\"success\":false,\"data\":null,\"error\":{\"message\":\"lectures does not accept positional arguments\"},\"meta\":{\"command\":\"lectures\",\"mode\":\"json\"}}",
+      "result": "pass"
+    },
+    {
+      "command": "./impartus download extra --json",
+      "expectedBehavior": "Return structured error: 'download does not accept positional arguments'",
+      "actualOutput": "{\"success\":false,\"data\":null,\"error\":{\"message\":\"download does not accept positional arguments\"},\"meta\":{\"command\":\"download\",\"mode\":\"json\"}}",
+      "result": "pass"
+    },
+    {
+      "command": "./impartus courses extra --json",
+      "expectedBehavior": "Return structured error: 'courses does not accept positional arguments'",
+      "actualOutput": "{\"success\":false,\"data\":null,\"error\":{\"message\":\"courses does not accept positional arguments\"},\"meta\":{\"command\":\"courses\",\"mode\":\"json\"}}",
+      "result": "pass"
+    }
+  ],
+  "conclusion": "All commands now consistently reject extra positional arguments with the same structured error format. VAL-CLI-009 is satisfied.",
+  "toolsUsed": ["execute"],
+  "frictions": [],
+  "blockers": []
+}

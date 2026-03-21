@@ -1,0 +1,33 @@
+{
+  "missionId": "mis_codebase_quality_001",
+  "baseSessionId": null,
+  "state": "paused",
+  "workingDirectory": "/home/ravish/Desktop/clawds-code-crib/impartus-go/impartus",
+  "currentFeatureId": null,
+  "currentWorkerSessionId": null,
+  "currentWorkerPid": null,
+  "workerSessionIds": [],
+  "completedFeatures": 2,
+  "totalFeatures": 8,
+  "createdAt": "2026-03-20T11:10:00.000Z",
+  "updatedAt": "2026-03-20T19:45:00Z",
+  "milestonesWithValidationPlanned": [
+    "milestone-1",
+    "milestone-2",
+    "milestone-3"
+  ],
+  "orchestratorActedSinceReturn": false,
+  "lastReviewedHandoffCount": 0,
+  "baselineScores": {
+    "strict": 74.7,
+    "objective": 69.6,
+    "verified": 69.6,
+    "openIssues": 122,
+    "queuePlanningItems": 6
+  },
+  "notes": [
+    "Milestone-1 complete: Triage workflow refreshed with 10 clusters, 21 executor-ready steps.",
+    "Queue now contains actionable items from triage: cli-contract-polish, config-contract-canonicalization, etc.",
+    "Milestone-2: Execute high-leverage fixes from refreshed queue."
+  ]
+}

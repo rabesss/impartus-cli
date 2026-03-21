@@ -1,0 +1,16 @@
+{
+  "assertions": ["VAL-PRESERVE-API-001"],
+  "surface": "API",
+  "status": "pass",
+  "evidence": {
+    "serveCommand": "./impartus serve --port 8080",
+    "healthcheckCommand": "curl -s http://localhost:8080/api/v1/health",
+    "output": {
+      "status": "ok"
+    }
+  },
+  "frictions": [],
+  "blockers": [],
+  "toolsUsed": ["Execute"],
+  "timestamp": "2026-03-20T00:00:00Z"
+}

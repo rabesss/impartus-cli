@@ -1,0 +1,65 @@
+# Pre-commit hooks configuration
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  # Large file detection
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+        description: Prevent giant files from being committed
+      - id: check-file-size
+        args: ['--maxkb=500']
+        description: Check for files over 500KB
+      - id: trailing-whitespace
+        description: Trim trailing whitespace
+      - id: end-of-file-fixer
+        description: Fix end of file issues
+      - id: check-yaml
+        description: Check YAML files for syntax errors
+      - id: check-json
+        description: Check JSON files for syntax errors
+      - id: check-merge-conflict
+        description: Check for merge conflict markers
+      - id: check-case-conflict
+        description: Check for case conflicts in filenames
+      - id: detect-private-key
+        description: Detect private keys in files
+      - id: forbid-submodules
+        description: Forbid git submodules
+
+  # Go-specific checks
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-fmt
+        description: Run gofmt on Go files
+      - id: go-imports
+        description: Run goimports on Go files
+      - id: go-mod-tidy
+        description: Run go mod tidy
+      - id: go-unit-tests
+        description: Run Go unit tests
+        pass_filenames: false
+
+  # TODO/FIXME detection for tech debt tracking
+  - repo: https://github.com/thlorenz/doctoc
+    rev: v2.2.0
+    hooks:
+      - id: doctoc
+        description: Generate table of contents for markdown files
+
+# CI configuration
+ci:
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from pre-commit.com hooks
+
+    for more information, see https://pre-commit.ci
+  autofix_prs: true
+  autoupdate_branch: ''
+  autoupdate_commit_msg: '[pre-commit.ci] pre-commit autoupdate'
+  autoupdate_schedule: weekly
+  skip: []
+  submodules: false

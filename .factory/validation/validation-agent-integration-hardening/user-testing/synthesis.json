@@ -1,0 +1,45 @@
+{
+  "milestone": "validation-agent-integration-hardening",
+  "round": 2,
+  "status": "pass",
+  "testedAt": "2026-03-17T14:30:00Z",
+  "assertionsSummary": {
+    "total": 19,
+    "passed": 19,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-INTEGRATION-001",
+    "VAL-INTEGRATION-002",
+    "VAL-INTEGRATION-003",
+    "VAL-INTEGRATION-004",
+    "VAL-INTEGRATION-005",
+    "VAL-INTEGRATION-006",
+    "VAL-INTEGRATION-007",
+    "VAL-INTEGRATION-008",
+    "VAL-INTEGRATION-009",
+    "VAL-INTEGRATION-010",
+    "VAL-INTEGRATION-011",
+    "VAL-INTEGRATION-012",
+    "VAL-CROSS-001",
+    "VAL-CROSS-002",
+    "VAL-CROSS-003",
+    "VAL-CROSS-004",
+    "VAL-CROSS-005",
+    "VAL-CROSS-006",
+    "VAL-CROSS-007"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "flowReports": [
+    ".factory/validation/validation-agent-integration-hardening/user-testing/flows/integration-001-006.json",
+    ".factory/validation/validation-agent-integration-hardening/user-testing/flows/integration-007-012.json",
+    ".factory/validation/validation-agent-integration-hardening/user-testing/flows/cross-001-003.json",
+    ".factory/validation/validation-agent-integration-hardening/user-testing/flows/cross-004-007.json"
+  ],
+  "appliedUpdates": [],
+  "frictions": [],
+  "previousRound": ".factory/validation/validation-agent-integration-hardening/user-testing/synthesis.json",
+  "round2Note": "Re-run after fix features desloppify-score-improvement and ci-desloppify-integration. Desloppify score improved from 26.6 to 80.4, exceeding 80 target. CI workflow now includes desloppify quality gate with threshold enforcement."
+}

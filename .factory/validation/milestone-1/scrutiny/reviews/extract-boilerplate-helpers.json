@@ -1,0 +1,21 @@
+{
+  "featureId": "extract-boilerplate-helpers",
+  "reviewedAt": "2026-03-20T07:20:00Z",
+  "commitId": "32ab372",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Feature successfully extracts boilerplate helpers. Created streamutils.go with ParseStreamInfosFromBody and SelectStreamByQuality functions. Updated client.go to use both helpers. Updated downloader.go to use ParseStreamInfosFromBody with proper type conversion. Build, tests, and lint all pass.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The RNG-related fields (rng field, math/rand, sync, time imports) were removed from client.go as part of this refactor, but this structural change is not documented in the handoff. The randomUserAgent() function was also refactored to delegate to UserAgentProvider() instead of using the local RNG. While this is a valid improvement, it went beyond the stated boilerplate duplication scope.",
+      "evidence": "client.go diff shows rng field, rand.New, and related imports removed. randomUserAgent() now just returns c.UserAgentProvider()"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Feature passes review. Boilerplate helpers extracted successfully. Code compiles, tests pass, lint passes. Desloppify shows 0 open boilerplate duplication findings. The implementation correctly extracts stream parsing logic into shared helpers. Minor note: the handoff omits the RNG removal which was an incidental but valid improvement."
+}

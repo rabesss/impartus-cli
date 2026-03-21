@@ -1,0 +1,34 @@
+{
+  "featureId": "cli-agent-contract-and-config-precedence",
+  "reviewedAt": "2026-03-16T10:45:00.000000+00:00",
+  "commitId": "ebdab48",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature implements JSON-mode argument validation and config loading with precedence, but CLI flag overrides are still applied after config validation without re-validation. Invalid flag values bypass upfront validation and can proceed into remote work, violating the advertised 'invalid config fails before remote work begins' requirement.",
+    "issues": [
+      {
+        "file": "internal/cli/cli.go",
+        "line": 394,
+        "severity": "blocking",
+        "description": "In executeDownload(), CLI flag overrides for --quality, --views, --audio-only, --format, and --output are applied AFTER initClient() loads and validates the config. This means invalid flag values like --views sideways or --quality 1080 bypass validation and can reach remote API calls. The fix should either: (1) validate flag values before calling initClient, or (2) re-validate the config after applying flag overrides, or (3) parse and validate all flags first, merge with config, then validate the merged result."
+      },
+      {
+        "file": "internal/config/config.go",
+        "line": 127,
+        "severity": "non_blocking",
+        "description": "Views validation accepts only 'first', 'second', 'both' but normalizeViews() (cli.go:667) converts 'first' to 'left' and 'second' to 'right'. This creates an inconsistency where CLI flags like --views left bypass validation (return empty string from normalizeViews since 'left' doesn't match 'first'/'second' case) but would work at runtime. Consider either: (1) accepting 'left'/'right' in validation, or (2) documenting the canonical values clearly."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "Environment variable names are IMPARTUS_USERNAME, IMPARTUS_PASSWORD, IMPARTUS_BASE_URL, IMPARTUS_DOWNLOAD_LOCATION, IMPARTUS_NUM_WORKERS, IMPARTUS_QUALITY, IMPARTUS_VIEWS, IMPARTUS_AUDIO_ONLY, IMPARTUS_AUDIO_FORMAT as defined in internal/config/config.go applyEnvOverrides().",
+      "evidence": "internal/config/config.go:239-251"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Review failed: blocking issue remains from prior review. CLI flag overrides bypass validation because they are applied after config validation without re-validation. This violates VAL-CLI-007 (invalid arguments should return structured JSON errors) and VAL-CLI-011 (invalid config should fail before remote work begins)."
+}

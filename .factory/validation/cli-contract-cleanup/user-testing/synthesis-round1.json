@@ -1,0 +1,46 @@
+{
+  "milestone": "cli-contract-cleanup",
+  "round": 1,
+  "status": "fail",
+  "assertionsSummary": {
+    "total": 13,
+    "passed": 12,
+    "failed": 1,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-CLI-001",
+    "VAL-CLI-002",
+    "VAL-CLI-003",
+    "VAL-CLI-004",
+    "VAL-CLI-005",
+    "VAL-CLI-006",
+    "VAL-CLI-007",
+    "VAL-CLI-008",
+    "VAL-CLI-010",
+    "VAL-CLI-011",
+    "VAL-CLI-012",
+    "VAL-CLI-013"
+  ],
+  "failedAssertions": [
+    {
+      "id": "VAL-CLI-009",
+      "reason": "version and serve commands silently ignore extra positional arguments while courses/lectures/download properly reject them. This inconsistent behavior could mask caller mistakes. The assertion requires extra positional arguments to either be rejected or documented as accepted behavior - the current behavior is neither consistently rejected nor documented."
+    }
+  ],
+  "blockedAssertions": [],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added Flow Validator Guidance: CLI Surface section with isolation rules, testing tools, available commands, and evidence capture instructions",
+      "source": "setup"
+    }
+  ],
+  "previousRound": null,
+  "flowReports": [
+    "flows/json-envelope.json",
+    "flows/validation-errors.json",
+    "flows/config-and-output.json"
+  ],
+  "notes": "VAL-CLI-012 success payload structure verified via code inspection (downloadResult struct with Status, OutputPaths, LectureCount). Full live download test requires real Impartus credentials."
+}

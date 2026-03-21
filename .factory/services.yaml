@@ -1,0 +1,15 @@
+commands:
+  install: go mod download && python3 -m pip install --user "desloppify[full]"
+  test: go test ./... -v -cover -parallel 3
+  lint: make lint
+  build: go build ./...
+  desloppify_scan: desloppify scan --path .
+  desloppify_next: desloppify next
+
+services:
+  api:
+    start: ./impartus serve --port 8080
+    stop: lsof -ti :8080 | xargs -r kill
+    healthcheck: curl -sf http://localhost:8080/api/v1/health
+    port: 8080
+    depends_on: []

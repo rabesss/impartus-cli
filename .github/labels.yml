@@ -1,0 +1,112 @@
+# GitHub Labels Configuration
+# Labels are organized by category: priority, type, area, and status
+# Sync with: gh workflow run labels.yml (or push to this file)
+
+# === PRIORITY LABELS ===
+- name: "priority: critical"
+  color: "b60205"
+  description: "P0 - Critical/blocking issue requiring immediate attention"
+  
+- name: "priority: high"
+  color: "d93f0b"
+  description: "P1 - High priority, should be addressed soon"
+  
+- name: "priority: medium"
+  color: "fbca04"
+  description: "P2 - Normal priority, standard backlog item"
+  
+- name: "priority: low"
+  color: "0e8a16"
+  description: "P3 - Low priority, nice to have"
+  
+- name: "priority: needs-triage"
+  color: "bfd4f2"
+  description: "Needs initial assessment and priority assignment"
+
+# === TYPE LABELS ===
+- name: "type: bug"
+  color: "d73a4a"
+  description: "Something isn't working as expected"
+  
+- name: "type: feature"
+  color: "5319e7"
+  description: "New feature or enhancement request"
+  
+- name: "type: chore"
+  color: "cfd3d7"
+  description: "Maintenance, refactoring, or non-user-facing changes"
+  
+- name: "type: documentation"
+  color: "0075ca"
+  description: "Improvements or additions to documentation"
+  
+- name: "type: security"
+  color: "b60205"
+  description: "Security-related issue or vulnerability"
+  
+- name: "type: performance"
+  color: "1d76db"
+  description: "Performance improvement or optimization"
+
+# === AREA LABELS ===
+- name: "area: cli"
+  color: "fbca04"
+  description: "CLI commands and argument parsing"
+  
+- name: "area: api"
+  color: "fbca04"
+  description: "HTTP API server and endpoints"
+  
+- name: "area: downloader"
+  color: "fbca04"
+  description: "Download pipeline, chunk handling, ffmpeg"
+  
+- name: "area: config"
+  color: "fbca04"
+  description: "Configuration parsing and validation"
+  
+- name: "area: ci-cd"
+  color: "fbca04"
+  description: "GitHub Actions, workflows, automation"
+  
+- name: "area: tests"
+  color: "fbca04"
+  description: "Test coverage, test infrastructure"
+  
+- name: "area: docs"
+  color: "fbca04"
+  description: "Documentation and README"
+
+# === STATUS LABELS ===
+- name: "status: blocked"
+  color: "b60205"
+  description: "Blocked by another issue or external dependency"
+  
+- name: "status: in-progress"
+  color: "0e8a16"
+  description: "Currently being worked on"
+  
+- name: "status: needs-info"
+  color: "fbca04"
+  description: "Needs more information from reporter"
+  
+- name: "status: wontfix"
+  color: "cfd3d7"
+  description: "Will not be fixed (document reason in issue)"
+  
+- name: "status: duplicate"
+  color: "cfd3d7"
+  description: "Duplicate of another issue"
+
+# === SPECIAL LABELS ===
+- name: "good first issue"
+  color: "7057ff"
+  description: "Good for newcomers - clear scope and guidance"
+  
+- name: "help wanted"
+  color: "008672"
+  description: "Extra attention needed, community help welcome"
+  
+- name: "dependencies"
+  color: "0366d6"
+  description: "Pull requests that update a dependency file"

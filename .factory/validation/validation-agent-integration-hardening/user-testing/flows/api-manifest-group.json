@@ -1,0 +1,93 @@
+{
+  "groupId": "api-manifest-group",
+  "testedAt": "2026-03-17T02:45:00Z",
+  "isolation": {
+    "port": 8080,
+    "configFile": "./config.json",
+    "missionDir": "/home/ravish/.factory/missions/a4b22737-aa6b-47fd-8b2b-0ba1372de7e2"
+  },
+  "toolsUsed": ["curl", "go test"],
+  "assertions": [
+    {
+      "id": "VAL-INTEGRATION-001",
+      "title": "OpenClaw manifest matches implemented API routes",
+      "status": "pass",
+      "steps": [
+        { "action": "GET /health", "expected": "200, public", "observed": "200 OK, {\"status\":\"ok\"}, no auth required" },
+        { "action": "POST /auth/login with bad creds", "expected": "401, AUTH_FAILED", "observed": "401, {\"error\":{\"code\":\"AUTH_FAILED\",\"message\":\"Invalid username or password\"},\"success\":false}" },
+        { "action": "GET /courses without auth", "expected": "401, MISSING_TOKEN", "observed": "401, {\"error\":{\"code\":\"MISSING_TOKEN\",\"message\":\"Authorization header required\"},\"success\":false}" },
+        { "action": "GET /lectures without auth", "expected": "401, MISSING_TOKEN", "observed": "401, {\"error\":{\"code\":\"MISSING_TOKEN\",\"message\":\"Authorization header required\"},\"success\":false}" },
+        { "action": "POST /jobs without auth", "expected": "401, MISSING_TOKEN", "observed": "401, {\"error\":{\"code\":\"MISSING_TOKEN\",\"message\":\"Authorization header required\"},\"success\":false}" },
+        { "action": "GET /jobs without auth", "expected": "401, MISSING_TOKEN", "observed": "401, {\"error\":{\"code\":\"MISSING_TOKEN\",\"message\":\"Authorization header required\"},\"success\":false}" },
+        { "action": "GET /jobs/{id} without auth", "expected": "401, MISSING_TOKEN", "observed": "401, {\"error\":{\"code\":\"MISSING_TOKEN\",\"message\":\"Authorization header required\"},\"success\":false}" },
+        { "action": "DELETE /jobs/{id} without auth", "expected": "401, MISSING_TOKEN", "observed": "401, {\"error\":{\"code\":\"MISSING_TOKEN\",\"message\":\"Authorization header required\"},\"success\":false}" },
+        { "action": "Verify route registration in internal/server/server.go", "expected": "Routes match manifest", "observed": "Routes at lines 352-363 match manifest: health(GET), auth/login(POST), ws(GET), courses(GET), lectures(GET), jobs(POST/GET), jobs/{id}(GET/DELETE)" }
+      ],
+      "evidence": {
+        "curlOutput": "All routes respond with expected HTTP status codes and error codes",
+        "codeInspection": "internal/server/server.go lines 352-363",
+        "screenshots": [],
+        "consoleErrors": "none"
+      },
+      "notes": "All manifest-declared routes exist with correct methods. Public routes (/health, /auth/login) work without auth. Protected routes require Bearer token. Route registration matches openclaw-manifest.json exactly."
+    },
+    {
+      "id": "VAL-INTEGRATION-002",
+      "title": "API error-code contract matches runtime behavior",
+      "status": "pass",
+      "steps": [
+        { "action": "POST /auth/login with invalid JSON", "expected": "400 INVALID_REQUEST", "observed": "400, {\"error\":{\"code\":\"INVALID_REQUEST\",\"message\":\"Invalid request body\"},\"success\":false}" },
+        { "action": "GET /courses with malformed auth header", "expected": "401 INVALID_TOKEN_FORMAT", "observed": "401, {\"error\":{\"code\":\"INVALID_TOKEN_FORMAT\",\"message\":\"Expected 'Bearer <token>'\"},\"success\":false}" },
+        { "action": "GET /courses with invalid Bearer token", "expected": "401 INVALID_TOKEN", "observed": "401, {\"error\":{\"code\":\"INVALID_TOKEN\",\"message\":\"Token is invalid or expired\"},\"success\":false}" },
+        { "action": "POST /auth/login with wrong credentials", "expected": "401 AUTH_FAILED", "observed": "401, {\"error\":{\"code\":\"AUTH_FAILED\",\"message\":\"Invalid username or password\"},\"success\":false}" },
+        { "action": "Run server unit tests", "expected": "All error code tests pass", "observed": "Tests pass: TestMergeConfigWithJobOptionsAppliesOverridesAndValidatesInvalidValues, TestWebSocketRouteRequiresAuth, TestRequestIDMiddlewareAddsHeader, TestSelectJobLecturesMatchesCLIAlignment" }
+      ],
+      "evidence": {
+        "curlOutput": "All tested error codes match docs/error-codes.md",
+        "codeInspection": "docs/error-codes.md defines all error codes with correct HTTP status codes",
+        "testOutput": "go test -v ./internal/server/... - all tests pass"
+      },
+      "notes": "All documented error codes (INVALID_REQUEST, MISSING_TOKEN, INVALID_TOKEN_FORMAT, INVALID_TOKEN, AUTH_FAILED) match runtime behavior. HTTP status codes match documented values. Unit tests cover additional codes like JOB_NOT_FOUND, JOB_CANNOT_CANCEL, INVALID_JOB_CONFIG."
+    },
+    {
+      "id": "VAL-INTEGRATION-003",
+      "title": "API endpoint response shapes are explicitly consistent or intentionally mixed",
+      "status": "pass",
+      "steps": [
+        { "action": "GET /health", "expected": "Bare object {\"status\":\"ok\"}", "observed": "{\"status\":\"ok\"} - no envelope wrapper" },
+        { "action": "POST /auth/login (error case)", "expected": "respondWithError envelope", "observed": "{\"success\":false,\"error\":{\"code\":\"AUTH_FAILED\",\"message\":\"...\"}} - envelope format" },
+        { "action": "Review docs/api-reference.md response shapes", "expected": "Documented shapes match runtime", "observed": "Docs explicitly note: /health=bare object, /courses|/lectures|/jobs=bare arrays, /auth/login and DELETE /jobs=respondWithSuccess envelope, POST/GET jobs=Job object directly" },
+        { "action": "Verify X-Request-ID header present", "expected": "X-Request-Id in response", "observed": "X-Request-Id: eca6908c-3975-4446-bff1-3b4b519727ae present in /health response" },
+        { "action": "Verify CORS headers", "expected": "Access-Control-Allow-Origin, Allow-Headers, Expose-Headers", "observed": "CORS headers present: Access-Control-Allow-Origin: *, Access-Control-Allow-Headers: Authorization, Content-Type, X-Request-ID, Access-Control-Expose-Headers: X-Request-ID" }
+      ],
+      "evidence": {
+        "curlOutput": "Response shapes match documented behavior in api-reference.md",
+        "docsComparison": "docs/api-reference.md correctly documents mixed response shapes",
+        "headers": "X-Request-ID and CORS headers working correctly"
+      },
+      "notes": "The API uses intentionally mixed response shapes: bare objects/arrays for data endpoints, envelope format for errors and auth/delete responses. This is explicitly documented in api-reference.md under 'Response formats' section. X-Request-ID correlation works. CORS allows X-Request-ID header."
+    },
+    {
+      "id": "VAL-INTEGRATION-004",
+      "title": "CLI JSON automation contract matches runtime behavior",
+      "status": "pass",
+      "steps": [
+        { "action": "./impartus --json", "expected": "Capability envelope with success/data/error/meta", "observed": "{\"success\":true,\"data\":{\"name\":\"impartus\",\"description\":\"...\",\"commands\":[...]},\"error\":null,\"meta\":{\"command\":\"help\",\"mode\":\"json\"}}" },
+        { "action": "./impartus version --json", "expected": "Version envelope", "observed": "{\"success\":true,\"data\":{\"name\":\"impartus\",\"version\":\"dev\",\"buildDate\":\"\"},\"error\":null,\"meta\":{\"command\":\"version\",\"mode\":\"json\"}}" },
+        { "action": "./impartus --json version", "expected": "Same as version --json (order independent)", "observed": "Identical output to 'version --json' - flag order independence confirmed" },
+        { "action": "./impartus nope --json", "expected": "Error envelope with success=false", "observed": "{\"success\":false,\"data\":null,\"error\":{\"message\":\"unknown command: nope\"},\"meta\":{\"command\":\"nope\",\"mode\":\"json\"}}" },
+        { "action": "./impartus serve --json --port 9090", "expected": "Non-blocking metadata, no server start", "observed": "{\"success\":true,\"data\":{\"baseURL\":\"http://localhost:9090/api/v1\",\"health\":\"...\",\"note\":\"json mode is non-blocking...\",\"port\":9090,\"status\":\"ready\"},...}" },
+        { "action": "Run CLI unit tests", "expected": "All JSON envelope tests pass", "observed": "Tests pass: TestExecuteJSONNoSubcommandReturnsCapabilitiesEnvelope, TestExecuteJSONEnvelopeShapeForVersionAndErrors, TestExecuteJSONServeReturnsDeterministicMetadata, TestExecuteJSONValidationAndDownloadEnvelope" }
+      ],
+      "evidence": {
+        "terminalOutput": "CLI --json flag produces deterministic envelope structure",
+        "testOutput": "go test -v ./internal/cli/... - all 22 tests pass",
+        "docsComparison": "openclaw-manifest.json cli.jsonMode.envelope matches runtime"
+      },
+      "notes": "CLI JSON envelope is deterministic with success/data/error/meta structure. Flag order independence works. Unknown commands return structured error. serve --json is non-blocking as documented. Unit tests comprehensively verify envelope contracts."
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 4 assertions: all passed. OpenClaw manifest routes match implementation exactly. Error codes match runtime behavior with correct HTTP status codes. Response shapes are intentionally mixed and explicitly documented. CLI JSON automation contract is fully deterministic and matches both docs and unit tests."
+}

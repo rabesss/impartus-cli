@@ -1,0 +1,45 @@
+{
+  "featureId": "cross-surface-agent-flow-alignment",
+  "reviewedAt": "2026-03-17T01:30:00Z",
+  "commitId": "1119085",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The worker fixed VAL-CROSS-002 by aligning API job indices to use 1-based semantics matching CLI --start/--end flags. However, a critical cross-surface alignment issue remains: CLI and API use DIFFERENT lecture ordering. CLI's selectLectureRange() reverses the lecture order before slicing, while API's selectJobLectures() does not. This means CLI index 1 refers to a different lecture than API index 1, violating the feature's core requirement.",
+    "issues": [
+      {
+        "file": "internal/server/server.go",
+        "line": 762,
+        "severity": "blocking",
+        "description": "CRITICAL: selectJobLectures() does not reverse lecture order like CLI's selectLectureRange() does. CLI uses reversed lectures for range selection (cli.go:513 calls reverseLectures before selecting), but API uses lectures in their original order. This means startIndex=1 in API refers to the first lecture in original order, while --start=1 in CLI refers to the LAST lecture. This breaks VAL-CROSS-002 (CLI range selection and API job ranges should refer to the same lecture slice)."
+      },
+      {
+        "file": "internal/server/server_test.go",
+        "line": 0,
+        "severity": "blocking",
+        "description": "No test coverage for selectJobLectures() function to verify cross-surface alignment. The handoff claims cross-surface alignment was 'verified through existing tests', but those tests don't verify that CLI and API select the SAME lectures for the same indices."
+      },
+      {
+        "file": "docs/openclaw-manifest.json",
+        "line": 260,
+        "severity": "non_blocking",
+        "description": "The manifest was significantly expanded (667+ lines added) beyond the scope of this feature. While documentation improvements are valuable, the scope creep could have introduced inconsistencies. The manifest now documents 1-based indexing but does not mention the lecture ordering discrepancy with CLI."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "Lecture ordering convention is undocumented. CLI reverses lectures before selection (displaying newest first), but API uses original order. This fundamental difference should be documented in AGENTS.md or a library note.",
+      "evidence": "cli.go:513 calls reverseLectures() before selectLectureRange. server.go:762 selectJobLectures() operates on lectures in original order without reversal. No documentation exists explaining this difference."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The lecture ordering discrepancy between CLI (reversed) and API (original) is a known quirk that impacts cross-surface alignment but is not documented anywhere.",
+      "evidence": "CLI interactive mode shows reversed lectures (cli.go:464-465: reversed := reverseLectures(lectures) then displays i+1). CLI selectLectureRange also uses reversed order. API selectJobLectures uses original order."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "FAIL: The 1-based indexing fix is correct, but the implementation has a critical cross-surface bug - CLI and API select DIFFERENT lectures for the same index values due to lecture ordering mismatch. CLI reverses lectures before selection; API does not. This violates VAL-CROSS-002 (CLI and API ranges should refer to the same lecture slice). The feature cannot be considered complete until either: (1) API reverses lectures to match CLI semantics, or (2) the ordering difference is explicitly documented and indexed differently. Additionally, no tests exist to verify cross-surface lecture selection alignment."
+}

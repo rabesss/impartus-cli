@@ -1,0 +1,63 @@
+{
+  "milestone": "validation-agent-integration-hardening",
+  "round": 3,
+  "status": "pass",
+  "validatorsRun": {
+    "test": { "passed": true, "command": "go test ./... -v -cover -parallel 3", "exitCode": 0 },
+    "typecheck": { "passed": true, "command": "go build ./...", "exitCode": 0 },
+    "lint": { "passed": true, "command": "make lint", "exitCode": 0 }
+  },
+  "reviewsSummary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "nonBlockingIssues": [
+    {
+      "featureId": "cross-surface-lecture-ordering-fix",
+      "file": "internal/server/server_test.go",
+      "line": 207,
+      "severity": "non_blocking",
+      "description": "The test manually encodes CLI's expected behavior (reversed order) rather than directly importing and calling the CLI's selectLectureRange() function for a true side-by-side comparison. While the test correctly verifies the expected behavior, a direct function call comparison would be more robust against future changes to either function."
+    },
+    {
+      "featureId": "cross-surface-lecture-ordering-fix",
+      "file": "internal/server/server.go",
+      "line": 794,
+      "severity": "non_blocking",
+      "description": "reverseLecturesHelper() is a duplicate of CLI's reverseLectures() function. Consider extracting this to a shared utility package to avoid code duplication."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add boundary: When implementing cross-surface behavior (CLI + API), workers must verify both surfaces produce identical results for equivalent inputs, not just matching index semantics. The lecture ordering discrepancy (CLI reverses, API doesn't) is a cross-surface alignment bug pattern to watch for.",
+      "evidence": "cross-surface-agent-flow-alignment implemented 1-based indexing correctly but missed that CLI and API use different lecture orderings, violating VAL-CROSS-002. Fixed in cross-surface-lecture-ordering-fix by adding reverseLecturesHelper() to API.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": {
+    "round": 2,
+    "reviewedAt": "2026-03-17T02:00:00Z",
+    "status": "fail",
+    "commitId": "139b72e"
+  },
+  "roundDetails": {
+    "fixFeatureReviewed": "cross-surface-lecture-ordering-fix",
+    "originalFailedFeature": "cross-surface-agent-flow-alignment",
+    "resolvedBlockingIssues": [
+      {
+        "description": "Lecture ordering discrepancy between CLI and API",
+        "resolution": "Fixed by adding reverseLecturesHelper() call in selectJobLectures() (commit 5744692)"
+      },
+      {
+        "description": "No test coverage for cross-surface lecture alignment",
+        "resolution": "Fixed by adding TestSelectJobLecturesMatchesCLIAlignment test (commit 5744692)"
+      }
+    ]
+  }
+}

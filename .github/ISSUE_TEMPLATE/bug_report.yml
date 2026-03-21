@@ -1,0 +1,110 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in the Impartus CLI
+title: "[Bug]: "
+labels: ["type: bug", "priority: needs-triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report! Please provide as much detail as possible.
+        
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: "When I run ./impartus download, it fails with..."
+    validations:
+      required: true
+      
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior
+      placeholder: |
+        1. Run `./impartus serve --port 8080`
+        2. Make a request to `/api/v1/courses`
+        3. See error
+      value: |
+        1. 
+        2. 
+        3. 
+    validations:
+      required: true
+      
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: A clear and concise description of what you expected to happen.
+      placeholder: "The command should successfully download the lecture..."
+    validations:
+      required: true
+      
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened? Include any error messages.
+      placeholder: "Got error: context deadline exceeded..."
+    validations:
+      required: true
+      
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: What version of the CLI are you running?
+      placeholder: "Run `./impartus version` to check"
+    validations:
+      required: true
+      
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Please provide your environment details
+      placeholder: |
+        - OS: [e.g. Ubuntu 22.04, macOS 14, Windows 11]
+        - Go version: [e.g. 1.24.0]
+        - ffmpeg version: [e.g. 5.1.2]
+      value: |
+        - OS:
+        - Go version:
+        - ffmpeg version:
+    validations:
+      required: true
+      
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration (sanitized)
+      description: Your config.json (REMOVE passwords and sensitive data!)
+      placeholder: |
+        {
+          "baseUrl": "http://...",
+          "quality": "720",
+          "views": "both"
+        }
+      render: json
+      
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs
+      description: Please copy and paste any relevant log output. This will be automatically formatted.
+      render: shell
+      
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have searched existing issues to ensure this bug hasn't been reported
+          required: true
+        - label: I have removed sensitive information (passwords, tokens) from logs and config
+          required: true
+        - label: I am using the latest version of the CLI
+          required: false

@@ -1,0 +1,29 @@
+{
+  "missionId": "mis_codebase_quality_001",
+  "baseSessionId": null,
+  "state": "paused",
+  "workingDirectory": "/home/ravish/Desktop/clawds-code-crib/impartus-go/impartus",
+  "currentFeatureId": null,
+  "currentWorkerSessionId": null,
+  "currentWorkerPid": null,
+  "workerSessionIds": [],
+  "completedFeatures": 0,
+  "totalFeatures": 11,
+  "createdAt": "2026-03-20T11:10:00.000Z",
+  "updatedAt": "2026-03-20T11:10:00.000Z",
+  "milestonesWithValidationPlanned": ["milestone-1", "milestone-2", "milestone-3"],
+  "orchestratorActedSinceReturn": false,
+  "lastReviewedHandoffCount": 0,
+  "baselineScores": {
+    "strict": 74.8,
+    "objective": 69.9,
+    "subjective": 84.0,
+    "openIssues": 117,
+    "testHealth": 34.2
+  },
+  "notes": [
+    "Mission initialized and paused. Ready for manual resume.",
+    "First milestone: low-risk hygiene (unused, signature, boilerplate)",
+    "Workers should use desloppify commands to identify specific issues"
+  ]
+}

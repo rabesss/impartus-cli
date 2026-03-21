@@ -1,0 +1,128 @@
+# Codebase Quality Improvement Mission
+
+## Mission Goal
+
+Improve codebase quality in small iterative steps using the existing desloppify setup while keeping core CLI behavior, public API behavior, and main product direction intact. Focus on practical, high-signal improvements that make the repo easier for future agents to work on.
+
+## Current State (Baseline)
+
+**Desloppify Scores:**
+- Strict: 74.8/100 (target: 95.0)
+- Objective: 69.9/100
+- Subjective: 84.0/100
+
+**Open Issues:** 117 total
+- Tier 1: 46 open (critical)
+- Tier 2: 10 open (high)
+- Tier 3: 61 open (medium)
+
+**Key Dimensions:**
+- Strengths: Code quality (100%), Security (100%), Duplication (98.9%), Dependency health (94.0%)
+- Needs work: Test health (34.2%), Convention drift (72.0%), Error consistency (76.0%)
+
+**Work Lanes:**
+1. Structural (9 items) - large files, responsibility splits
+2. Test coverage (14 items) - gaps in critical modules
+3. Signature (1 item) - function signature inconsistency
+4. Responsibility cohesion (4 items) - modules with too many responsibilities
+5. Boilerplate duplication (4 items) - extract shared helpers
+6. Unused (31 items) - dead code cleanup
+7. Review (54 items) - AI-generated debt, elegance reviews
+
+## Constraints
+
+- Use workers for implementation; orchestrator delegates only
+- Prefer deterministic verification and lightweight validations
+- Be conservative about risky refactors
+- Respect existing repo instructions in AGENTS.md
+- Keep CLI behavior, public API, and product direction intact
+- All changes must pass: `make lint`, `go test ./...`, `go build ./...`
+
+## Milestones
+
+### Milestone 1: Low-Risk Hygiene (Deterministic Wins)
+
+Focus on unused code, signature consistency, and boilerplate cleanup. These are low-risk, high-signal changes.
+
+**Features:**
+1. `cleanup-unused-t1` - Fix tier-1 unused code issues (high confidence)
+2. `fix-signature-consistency` - Consolidate the single signature issue
+3. `extract-boilerplate-helpers` - Address boilerplate duplication
+
+**Validation:**
+- All tests pass
+- Lint passes
+- Build succeeds
+- No behavioral changes
+
+### Milestone 2: Structural Health (Careful Refactoring)
+
+Address large files and responsibility cohesion issues. Split only when responsibilities are clearly separable.
+
+**Features:**
+1. `review-structural-issues` - Assess 9 structural items, fix safe ones
+2. `improve-responsibility-cohesion` - Address 4 cohesion issues
+
+**Validation:**
+- All tests pass
+- Lint passes
+- Build succeeds
+- API contracts unchanged
+
+### Milestone 3: Test Coverage Foundation
+
+Improve test health from 34.2% toward target. Focus on critical modules first.
+
+**Features:**
+1. `test-coverage-client` - Add tests for internal/client
+2. `test-coverage-downloader` - Add tests for internal/downloader
+3. `test-coverage-server` - Add tests for internal/server
+
+**Validation:**
+- Coverage increases measurably
+- All tests pass
+- No regressions
+
+## Environment
+
+```bash
+# Working directory
+cd /home/ravish/Desktop/clawds-code-crib/impartus-go/impartus
+
+# Key commands
+make lint           # golangci-lint
+go test ./...       # run all tests
+go build ./...      # build all packages
+desloppify scan     # refresh desloppify state
+desloppify next     # get next actionable item
+```
+
+## Infrastructure
+
+**Local Services:**
+- API server: `./impartus serve --port 8080`
+
+**Skills Available:**
+- `go-cli-worker` - CLI contract implementation
+- `go-downloader-worker` - Downloader refactoring
+- `go-integration-worker` - API/integration work
+- `quality-gate-worker` - Quality gate integration
+
+**Off-limits:**
+- No changes to public API contracts (backwards compatible only)
+- No changes to CLI command interfaces
+- No changes to config.json schema
+
+## Testing Strategy
+
+1. **Unit Tests:** `go test ./...` must pass after every change
+2. **Lint:** `make lint` must pass
+3. **Build:** `go build ./...` must succeed
+4. **Desloppify:** Run `desloppify scan` after batches of fixes
+
+## Non-Functional Requirements
+
+- Changes must be incremental and reversible
+- Each feature should touch <= 5 files
+- Prefer local helper functions over new packages
+- Document any non-obvious decisions in commit messages

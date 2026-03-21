@@ -1,0 +1,55 @@
+{
+  "featureId": "improve-responsibility-cohesion",
+  "reviewedAt": "2026-03-20T14:00:00Z",
+  "commitId": "e9398e7",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Worker correctly analyzed 9 responsibility cohesion findings and resolved 4 (2 false_positive for production code, 2 wontfix for test files). However, the handoff references commit e9398e7 which is a milestone-1 synthesis commit, NOT a commit for this feature. No source code changes were made - all work is stored in gitignored .desloppify/state-go.json. Build/test/lint pass but only because no code was modified.",
+    "issues": [
+      {
+        "file": "N/A - no source code changes",
+        "line": 0,
+        "severity": "blocking",
+        "description": "Handoff references commit e9398e7 but that commit is for 'scrutiny: milestone-1 validation synthesis (round 2)' - modifying only .factory/validation/milestone-1/scrutiny/synthesis.json. The improve-responsibility-cohesion feature produced NO git commits. All work was stored in gitignored .desloppify/state-go.json. This is the same persistent systemic issue identified for cleanup-unused-t1 in milestone-1."
+      },
+      {
+        "file": "N/A",
+        "line": 0,
+        "severity": "non_blocking",
+        "description": "Feature expectedBehavior states 'Cohesion issues reviewed and categorized' and 'Only clear extraction opportunities addressed'. Worker correctly determined no extraction opportunities exist (production code is cohesive by design, test functions should be independent). The analysis was sound but the resolution was only stored in gitignored state."
+      },
+      {
+        "file": ".desloppify/state-go.json",
+        "line": 0,
+        "severity": "non_blocking",
+        "description": "Desloppify state shows 9 cohesion findings: 4 resolved (2 false_positive: metrics.go, pipeline.go; 2 wontfix: progress_tracker_test.go, cli_test.go), 5 still open (all test files). This matches handoff report. However, the state is not preserved in git."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "Worker modified only gitignored .desloppify/ state files, producing no git commit for the feature. This is a persistent systemic issue - the milestone-1 synthesis for cleanup-unused-t1 already identified this and suggested adding guidance that quality improvement work must produce git commits. The same issue occurs here.",
+      "evidence": "Commit e9398e7 modifies only .factory/validation/milestone-1/scrutiny/synthesis.json. Git status shows .desloppify/ is gitignored. No source code files changed by this feature."
+    },
+    {
+      "area": "skills",
+      "observation": "go-cli-worker skill was used for a desloppify cohesion analysis task. The skill procedure (write failing tests first, verify JSON mode, manual CLI checks) does not apply to desloppify quality analysis. This skill mismatch was already flagged as systemic in milestone-1 synthesis.",
+      "evidence": "Feature uses skillName='go-cli-worker' but task is desloppify responsibility cohesion analysis, not CLI contract work. Transcript shows no CLI testing, no JSON mode verification."
+    },
+    {
+      "area": "knowledge",
+      "observation": "Desloppify correctly detected cohesion clusters in metrics.go (8 clusters of 13 functions) and pipeline.go (7 clusters of 10 functions). Worker correctly identified these as false positives because metrics are organized by type (download, API, job) which is valid design, and pipeline data types + logic are cohesive. This analysis and reasoning should be preserved in git, not just in gitignored state.",
+      "evidence": "Transcript shows thorough analysis of metrics.go and pipeline.go structure. Worker explained why production code is cohesive by design. This reasoning is only in transcript/handoff, not committed."
+    },
+    {
+      "area": "services",
+      "observation": "The desloppify tool stores all state in .desloppify/ directory which is gitignored. If the quality improvement approach is to triage findings (false_positive, wontfix) rather than fix code, there should be a mechanism to commit these resolutions so they're preserved. Currently, resolved findings are lost if .desloppify/ is cleared.",
+      "evidence": ".gitignore contains '.desloppify/'. All desloppify resolve commands only modified state-go.json, not source code."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The worker correctly analyzed 9 responsibility cohesion findings and provided sound reasoning for resolving 4 of them. However, this feature suffers from the same blocking issue as cleanup-unused-t1: all work is stored in gitignored .desloppify/ state files, producing no git-committed artifact. The handoff references commit e9398e7 which is a milestone-1 synthesis commit unrelated to this feature. The analysis was valid but is not preserved. Build/test/lint pass only because no code was changed."
+}

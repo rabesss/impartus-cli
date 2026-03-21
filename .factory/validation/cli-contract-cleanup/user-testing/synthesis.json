@@ -1,0 +1,37 @@
+{
+  "milestone": "cli-contract-cleanup",
+  "round": 2,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 13,
+    "passed": 13,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-CLI-001",
+    "VAL-CLI-002",
+    "VAL-CLI-003",
+    "VAL-CLI-004",
+    "VAL-CLI-005",
+    "VAL-CLI-006",
+    "VAL-CLI-007",
+    "VAL-CLI-008",
+    "VAL-CLI-009",
+    "VAL-CLI-010",
+    "VAL-CLI-011",
+    "VAL-CLI-012",
+    "VAL-CLI-013"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "previousRound": "synthesis-round1.json",
+  "flowReports": [
+    "flows/json-envelope.json",
+    "flows/validation-errors.json",
+    "flows/config-and-output.json",
+    "flows/val-cli-009-round2.json"
+  ],
+  "notes": "Round 2: Re-tested VAL-CLI-009 after fix feature 'cli-positional-arg-consistency-fix' was completed. All commands (version, serve, lectures, download, courses) now consistently reject extra positional arguments with structured JSON errors. All 13 CLI contract assertions pass."
+}

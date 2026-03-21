@@ -1,0 +1,85 @@
+{
+  "groupId": "integration-001-006",
+  "testedAt": "2026-03-17T13:01:30+05:30",
+  "isolation": {
+    "apiServerPort": 8080,
+    "workingDirectory": "/home/ravish/Desktop/clawds-code-crib/impartus-go/impartus",
+    "configFile": "config.json"
+  },
+  "toolsUsed": ["curl"],
+  "assertions": {
+    "VAL-INTEGRATION-001": {
+      "status": "passed",
+      "title": "OpenClaw manifest matches implemented API routes",
+      "evidence": [
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-001-health.json",
+        "docs/openclaw-manifest.json",
+        "internal/server/server.go (lines 352-363)"
+      ],
+      "notes": "All 9 routes declared in openclaw-manifest.json are implemented in server.go with matching paths, methods, and auth expectations. Manifest declares: health (GET), auth/login (POST), courses (GET), lectures (GET), jobs (GET/POST), jobs/{id} (GET/DELETE), ws (GET). All routes verified via curl: public routes (health, login) return 200/401 as expected, protected routes return 401 without token."
+    },
+    "VAL-INTEGRATION-002": {
+      "status": "passed",
+      "title": "API error-code contract matches runtime behavior",
+      "evidence": [
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-002-auth-failed.json",
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-002-invalid-request.json",
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-002-missing-token.json",
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-002-invalid-token.json",
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-002-invalid-token-format.json",
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-002-missing-parameter.json",
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-002-job-missing-params.json",
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-002-invalid-range.json",
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-002-job-not-found.json",
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-002-invalid-job-config.json"
+      ],
+      "notes": "All documented error codes verified at runtime:\n- AUTH_FAILED (401): Invalid credentials returns {code:'AUTH_FAILED', message:'Invalid username or password'}\n- INVALID_REQUEST (400): Malformed JSON returns {code:'INVALID_REQUEST', message:'Invalid request body'}\n- MISSING_TOKEN (401): No auth header returns {code:'MISSING_TOKEN', message:'Authorization header required'}\n- INVALID_TOKEN (401): Invalid token returns {code:'INVALID_TOKEN', message:'Token is invalid or expired'}\n- INVALID_TOKEN_FORMAT (401): Non-Bearer header returns {code:'INVALID_TOKEN_FORMAT', message:'Expected Bearer <token>'}\n- MISSING_PARAMETER (400): Missing lecture params returns {code:'MISSING_PARAMETER', message:'subject_id and session_id query parameters required'}\n- JOB_NOT_FOUND (404): Invalid job ID returns {code:'JOB_NOT_FOUND', message:'Job not found'}\n- INVALID_JOB_CONFIG (400): Invalid quality returns {code:'INVALID_JOB_CONFIG', message:'quality must be one of: 144, 450, 720'}"
+    },
+    "VAL-INTEGRATION-003": {
+      "status": "passed",
+      "title": "API endpoint response shapes are explicitly consistent",
+      "evidence": [
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-003-health.json",
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-003-auth-login.json",
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-003-courses.json",
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-003-lectures.json",
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-003-jobs.json"
+      ],
+      "notes": "Response shapes verified:\n- GET /health: Bare object {\"status\":\"ok\"} (not wrapped)\n- POST /auth/login: Success envelope {success, data: {token, expires}}\n- GET /courses: Bare array []client.Course (not wrapped)\n- GET /lectures: Bare array []client.Lecture (not wrapped)\n- GET /jobs: Bare array []Job (not wrapped)\n- POST /jobs: Job object directly (201, not wrapped)\n- DELETE /jobs/{id}: Success envelope {success, data: {id, status}}\nThis matches docs/api-reference.md which documents the mixed response formats explicitly."
+    },
+    "VAL-INTEGRATION-004": {
+      "status": "passed",
+      "title": "CLI JSON automation contract matches runtime behavior",
+      "evidence": [
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-004-json-help.json",
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-004-json-version.json",
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-004-json-version-after.json",
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-004-json-unknown.json"
+      ],
+      "notes": "CLI JSON envelope contract verified:\n- ./impartus --json: Returns {success, data: {name, description, commands}, error, meta: {command, mode}}\n- ./impartus --json version: Returns {success, data: {name, version, buildDate}, error, meta}\n- ./impartus version --json: Same output (flag order independence confirmed)\n- ./impartus nope --json: Returns {success: false, data: null, error: {message}, meta}\nAll outputs match docs/openclaw-manifest.json cli.jsonMode.envelope specification."
+    },
+    "VAL-INTEGRATION-005": {
+      "status": "passed",
+      "title": "Local API health and auth bootstrap are machine-usable",
+      "evidence": [
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-005-health.json",
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-005-auth-login.json"
+      ],
+      "notes": "Machine-usable bootstrap flow verified:\n1. GET /api/v1/health returns {\"status\":\"ok\"} (200) - no auth required\n2. POST /api/v1/auth/login with JSON body returns {success, data: {token, expires}} (200)\n3. Token works for protected routes: GET /api/v1/courses with Bearer token returns course array (200)\nComplete agent-ready flow: discover health -> authenticate -> access protected resources."
+    },
+    "VAL-INTEGRATION-006": {
+      "status": "passed",
+      "title": "Request ID correlation works on representative API responses",
+      "evidence": [
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-006-health-headers.txt",
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-006-courses-headers.txt",
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-006-custom-request-id.txt",
+        "evidence/validation-agent-integration-hardening/integration-001-006/VAL-INTEGRATION-006-error-headers.txt"
+      ],
+      "notes": "X-Request-ID correlation verified on all responses:\n- GET /health: Auto-generated X-Request-Id: 26b6f511-70c7-4744-989d-6da67198edf5\n- GET /courses (protected): Auto-generated X-Request-Id in response headers\n- GET /health with custom header: X-Request-Id: test-request-123 (propagated from request)\n- GET /courses without auth (error): X-Request-Id in error response headers\nCORS headers correctly expose X-Request-ID: Access-Control-Expose-Headers: X-Request-ID"
+    }
+  },
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 6 assertions: all 6 passed. All integration surfaces (API routes, error codes, response shapes, CLI JSON mode, auth bootstrap, request correlation) match documented contracts in docs/openclaw-manifest.json and docs/api-reference.md."
+}

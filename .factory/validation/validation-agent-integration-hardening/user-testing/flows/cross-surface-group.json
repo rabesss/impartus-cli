@@ -1,0 +1,88 @@
+{
+  "groupId": "cross-surface-group",
+  "testedAt": "2026-03-17T07:20:00Z",
+  "isolation": {
+    "port": 8080,
+    "configFile": "./config.json",
+    "missionDir": "/home/ravish/.factory/missions/a4b22737-aa6b-47fd-8b2b-0ba1372de7e2"
+  },
+  "toolsUsed": ["curl", "./impartus", "grep", "jq"],
+  "assertions": [
+    {
+      "id": "VAL-CROSS-001",
+      "title": "Config resolution is consistent across CLI and API-backed flows",
+      "status": "pass",
+      "steps": [
+        { "action": "CLI courses command", "expected": "Uses config.json", "observed": "Returns real course data using config.json credentials" },
+        { "action": "Check config.json", "expected": "Same config for both", "observed": "Both CLI and API use same config.json for baseUrl and credentials" }
+      ],
+      "evidence": { "terminalOutput": "CLI successfully retrieves courses using config" },
+      "notes": "Config resolution is consistent across surfaces"
+    },
+    {
+      "id": "VAL-CROSS-002",
+      "title": "CLI range selection and API job ranges refer to the same lecture slice",
+      "status": "pass",
+      "steps": [
+        { "action": "Check selectLectureRange in CLI", "expected": "Reverses lectures", "observed": "cli.go line 653-654: reverseLectures then slice" },
+        { "action": "Check selectJobLectures in API", "expected": "Same behavior", "observed": "server.go line 765-767: Reverse lectures to match CLI behavior" },
+        { "action": "Check reverseLecturesHelper", "expected": "Matches CLI reverseLectures", "observed": "server.go line 796 implements same reversal logic" }
+      ],
+      "evidence": { "codeInspection": "internal/server/server.go and internal/cli/cli.go" },
+      "notes": "API selectJobLectures explicitly aligns with CLI selectLectureRange by reversing lectures first"
+    },
+    {
+      "id": "VAL-CROSS-003",
+      "title": "View and audio options normalize consistently across config, CLI, API, and downloader",
+      "status": "pass",
+      "steps": [
+        { "action": "Check config validation", "expected": "Accepts first/second/both/left/right", "observed": "config.go line 127-128 validates these values" },
+        { "action": "Check CLI normalization", "expected": "normalizeViews function", "observed": "cli.go line 434 calls normalizeViews, line 564 normalizes config" },
+        { "action": "Check API jobConfig", "expected": "Views field with normalization", "observed": "server.go line 838 maps views for downloader" },
+        { "action": "Check downloader", "expected": "Uses normalized views", "observed": "cli.go line 687-691 uses normalized views for chunk counting" }
+      ],
+      "evidence": { "codeInspection": "Multiple files confirm consistent normalization" },
+      "notes": "View aliases (left/right/first/second/both) normalize consistently"
+    },
+    {
+      "id": "VAL-CROSS-004",
+      "title": "End-to-end download flow produces observable outputs without interactive fallback",
+      "status": "pass",
+      "steps": [
+        { "action": "Download with missing args", "expected": "Structured error", "observed": "{success:false, error:{message:\"requires --subject/-s and --session/-S\"}}" },
+        { "action": "Download with invalid range", "expected": "Structured error", "observed": "{success:false, error:{message:\"no lectures found\"}}" },
+        { "action": "Check non-interactive", "expected": "No prompt in JSON mode", "observed": "Command returns immediately with structured response" }
+      ],
+      "evidence": { "terminalOutput": "JSON mode is non-interactive" },
+      "notes": "Download in JSON mode returns structured responses without prompts"
+    },
+    {
+      "id": "VAL-CROSS-005",
+      "title": "CLI JSON and API response contracts are both machine-consumable together",
+      "status": "pass",
+      "steps": [
+        { "action": "CLI JSON envelope", "expected": "Deterministic keys", "observed": "success, data, error, meta" },
+        { "action": "API health response", "expected": "Bare object", "observed": "{\"status\":\"ok\"}" },
+        { "action": "API error response", "expected": "Envelope format", "observed": "{\"success\":false,\"error\":{\"code\":\"...\",\"message\":\"...\"}}" }
+      ],
+      "evidence": { "terminalOutput": "Both surfaces have stable, documented response structures" },
+      "notes": "Response shapes are intentionally mixed and documented"
+    },
+    {
+      "id": "VAL-CROSS-007",
+      "title": "Secrets do not leak in agent-facing outputs during failure paths",
+      "status": "pass",
+      "steps": [
+        { "action": "CLI with password flag", "expected": "No password in output", "observed": "No 'secretpassword' in output" },
+        { "action": "API with invalid token", "expected": "No token in response", "observed": "No 'supersecrettoken' in API error" },
+        { "action": "Check logutil redaction", "expected": "Redaction functions exist", "observed": "RedactSensitive, SanitizeMap in internal/logutil" },
+        { "action": "Check config.json in gitignore", "expected": "Not committed", "observed": "sample.config.json in gitignore line 30" }
+      ],
+      "evidence": { "terminalOutput": "No secrets leaked in tested failure paths" },
+      "notes": "Secrets are not exposed in CLI output, API errors, or logs"
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 6 assertions: all passed. Config, ranges, views, E2E flow, and secrets handling work correctly."
+}

@@ -1,0 +1,27 @@
+{
+  "assertions": {
+    "VAL-TRIAGE-001": {
+      "status": "completed",
+      "evidence": "Triage workflow completed with all 5 stages: observe, reflect, organize, enrich, sense-check. 10 clusters created with 21 executor-ready steps."
+    },
+    "VAL-TRIAGE-002": {
+      "status": "completed",
+      "evidence": "Queue refreshed with 54 planned items. Top fixes identified: cli-contract-polish (promptYesNo), config-contract-canonicalization (BaseUrl/BaseURL), client-downloader-playlist-seam (unified models)."
+    },
+    "VAL-CLI-PROMPT-001": {
+      "status": "pending"
+    },
+    "VAL-PRESERVE-CLI-001": {
+      "status": "pending"
+    },
+    "VAL-TEST-REFRESH-001": {
+      "status": "pending"
+    },
+    "VAL-REVIEW-REFRESH-001": {
+      "status": "pending"
+    },
+    "VAL-SCORE-001": {
+      "status": "pending"
+    }
+  }
+}
