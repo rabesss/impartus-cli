@@ -37,6 +37,7 @@ type Config struct {
 	RateLimit        float64 `json:"rateLimit"`
 	APIRateLimit     float64 `json:"apiRateLimit"`
 	EnableJitter     bool    `json:"enableJitter"`
+	SkipNoAudio      bool    `json:"skipNoAudio"`
 
 	EnablePipeline            bool           `json:"enablePipeline"`
 	DownloadWorkersPerLecture int            `json:"downloadWorkersPerLecture"`
@@ -288,6 +289,7 @@ func applyEnvOverrides(cfg *Config) {
 	applyStringEnv("IMPARTUS_AUDIO_FORMAT", &cfg.AudioFormat)
 	applyStringEnv("IMPARTUS_HTTP_TIMEOUT", &cfg.HTTPTimeout)
 	applyBoolEnv("IMPARTUS_AUDIO_ONLY", &cfg.AudioOnly)
+	applyBoolEnv("IMPARTUS_SKIP_NO_AUDIO", &cfg.SkipNoAudio)
 	applyIntEnv("IMPARTUS_NUM_WORKERS", &cfg.NumWorkers)
 	applyFloatEnv("IMPARTUS_RATE_LIMIT", &cfg.RateLimit)
 	applyFloatEnv("IMPARTUS_API_RATE_LIMIT", &cfg.APIRateLimit)

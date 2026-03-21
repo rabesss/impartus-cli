@@ -37,6 +37,7 @@ type JobConfigOptions struct {
 	NumWorkers                *int    `json:"numWorkers,omitempty"`
 	DownloadWorkersPerLecture *int    `json:"downloadWorkersPerLecture,omitempty"`
 	DecryptWorkersPerLecture  *int    `json:"decryptWorkersPerLecture,omitempty"`
+	SkipNoAudio               *bool   `json:"skipNoAudio,omitempty"`
 }
 
 type createJobRequest struct {
@@ -56,6 +57,7 @@ type createJobRequest struct {
 	NumWorkers                *int    `json:"numWorkers,omitempty"`
 	DownloadWorkersPerLecture *int    `json:"downloadWorkersPerLecture,omitempty"`
 	DecryptWorkersPerLecture  *int    `json:"decryptWorkersPerLecture,omitempty"`
+	SkipNoAudio               *bool   `json:"skipNoAudio,omitempty"`
 }
 
 func (r createJobRequest) effectiveJobConfig() *JobConfigOptions {
@@ -71,7 +73,8 @@ func (r createJobRequest) effectiveJobConfig() *JobConfigOptions {
 		r.EnablePipeline == nil &&
 		r.NumWorkers == nil &&
 		r.DownloadWorkersPerLecture == nil &&
-		r.DecryptWorkersPerLecture == nil {
+		r.DecryptWorkersPerLecture == nil &&
+		r.SkipNoAudio == nil {
 		return nil
 	}
 
@@ -85,6 +88,7 @@ func (r createJobRequest) effectiveJobConfig() *JobConfigOptions {
 		NumWorkers:                r.NumWorkers,
 		DownloadWorkersPerLecture: r.DownloadWorkersPerLecture,
 		DecryptWorkersPerLecture:  r.DecryptWorkersPerLecture,
+		SkipNoAudio:              r.SkipNoAudio,
 	}
 }
 
@@ -99,6 +103,7 @@ type JobRuntimeConfig struct {
 	DownloadWorkersPerLecture int    `json:"downloadWorkersPerLecture"`
 	DecryptWorkersPerLecture  int    `json:"decryptWorkersPerLecture"`
 	Slides                    bool   `json:"slides"`
+	SkipNoAudio               bool   `json:"skipNoAudio"`
 }
 
 type Job struct {
@@ -112,6 +117,7 @@ type Job struct {
 	Error             string           `json:"error,omitempty"`
 	TotalLectures     int              `json:"totalLectures,omitempty"`
 	CompletedLectures int              `json:"completedLectures,omitempty"`
+	FilteredLectures  int              `json:"filteredLectures,omitempty"`
 	Outputs           []string         `json:"outputs,omitempty"`
 	Config            JobRuntimeConfig `json:"config"`
 	CreatedAt         time.Time        `json:"createdAt"`
@@ -788,7 +794,21 @@ func selectJobLectures(job *Job, lectures client.Lectures) (client.Lectures, err
 	if endIdx >= len(reversed) {
 		endIdx = len(reversed) - 1
 	}
-	return reversed[startZeroBased : endIdx+1], nil
+	selected := reversed[startZeroBased : endIdx+1]
+
+	// Apply noaudio filter if configured
+	if job.Config.SkipNoAudio {
+		totalLectures := len(selected)
+		selected = filterNoAudioLectures(selected)
+		// Update job with filtered count
+		job.FilteredLectures = totalLectures - len(selected)
+	}
+
+	if len(selected) == 0 {
+		return nil, errors.New("no lectures available after filtering (all lectures have noaudio=1 in the selected range)")
+	}
+
+	return selected, nil
 }
 
 // reverseLecturesHelper reverses the order of lectures slice.
@@ -799,6 +819,18 @@ func reverseLecturesHelper(lectures client.Lectures) client.Lectures {
 		reversed[i] = lectures[len(lectures)-1-i]
 	}
 	return reversed
+}
+
+// filterNoAudioLectures filters out lectures with noaudio=1.
+func filterNoAudioLectures(lectures client.Lectures) client.Lectures {
+	filtered := make(client.Lectures, 0, len(lectures))
+	for _, lecture := range lectures {
+		if lecture.Noaudio == 1 {
+			continue
+		}
+		filtered = append(filtered, lecture)
+	}
+	return filtered
 }
 
 func (s *APIServer) maybeDownloadSlides(ctx context.Context, jobID string, jobCtx context.Context, apiClient *client.Client, cfg *config.Config, lectures client.Lectures) {
@@ -933,6 +965,7 @@ func runtimeConfigFrom(cfg *config.Config) JobRuntimeConfig {
 		DownloadWorkersPerLecture: cfg.DownloadWorkersPerLecture,
 		DecryptWorkersPerLecture:  cfg.DecryptWorkersPerLecture,
 		Slides:                    cfg.Slides,
+		SkipNoAudio:               cfg.SkipNoAudio,
 	}
 }
 
@@ -1057,6 +1090,9 @@ func applyJobConfigOverrides(cfg *config.Config, opts *JobConfigOptions) {
 	}
 	if opts.DecryptWorkersPerLecture != nil {
 		cfg.DecryptWorkersPerLecture = *opts.DecryptWorkersPerLecture
+	}
+	if opts.SkipNoAudio != nil {
+		cfg.SkipNoAudio = *opts.SkipNoAudio
 	}
 }
 
