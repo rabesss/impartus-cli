@@ -1,6 +1,5 @@
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
-**Table of Contents**  *generated with [DocToc](https://github.com/ktechhub/doctoc)*
+**Table of Contents**  *generated automatically*
 
 <!---toc start-->
 
@@ -31,8 +30,9 @@
   * [Progress Tracking](#progress-tracking)
 
 <!---toc end-->
-
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+
 # Impartus-Go System Architecture
 
 This document provides a comprehensive overview of the impartus-go CLI architecture, designed for developers and AI agents working with the codebase.

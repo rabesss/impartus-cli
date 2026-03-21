@@ -1,6 +1,5 @@
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
-**Table of Contents**  *generated with [DocToc](https://github.com/ktechhub/doctoc)*
+**Table of Contents**  *generated automatically*
 
 <!---toc start-->
 
@@ -11,8 +10,9 @@
   * [Internal package/module boundaries](#internal-packagemodule-boundaries)
 
 <!---toc end-->
-
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+
 # Architecture
 
 This project is CLI-first and API-secondary: the CLI is the primary execution path, and the API is started from `impartus serve` when needed.

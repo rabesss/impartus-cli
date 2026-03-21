@@ -211,24 +211,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          python-version: '3.11'
-
-      - name: Install doctoc
-        run: pip install doctoc
+          go-version-file: 'go.mod'
+          cache: true
 
       - name: Generate documentation table of contents
         run: |
           echo "## Documentation Generation" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          # Generate/update TOC for markdown files
+          # Generate/update TOC for markdown files using Go-based generator
           for file in README.md AGENTS.md docs/*.md; do
             if [ -f "$file" ]; then
               echo "Processing: $file" >> $GITHUB_STEP_SUMMARY
-              doctoc "$file" 2>&1 || true
+              go run scripts/generate-toc.go "$file" 2>&1 || true
             fi
           done
           
@@ -239,7 +237,7 @@ jobs:
             echo "Updated documentation TOC files:" >> $GITHUB_STEP_SUMMARY
             git diff --stat >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "Note: Run 'doctoc <file>' to update table of contents" >> $GITHUB_STEP_SUMMARY
+            echo "Note: Run 'go run scripts/generate-toc.go <file>' to update table of contents" >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Check markdown links
