@@ -50,6 +50,9 @@ repos:
     hooks:
       - id: doctoc
         description: Generate table of contents for markdown files
+        name: Generate markdown TOC
+        # Only run on markdown files in root and docs directory
+        files: ^(README\.md|AGENTS\.md|docs/.*\.md)$
 
 # CI configuration
 ci:

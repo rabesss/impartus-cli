@@ -1,4 +1,4 @@
-.PHONY: build test run-cli run-api lint clean install pre-commit-install pre-commit quality-gate quality-gate-scan quality-gate-next
+.PHONY: build test run-cli run-api lint clean install pre-commit-install pre-commit quality-gate quality-gate-scan quality-gate-next docs docs-toc agents-md-validate
 
 DESLOPPIFY_VERSION ?= 0.9.12
 
@@ -121,6 +121,65 @@ quality-gate: quality-gate-scan
 	@echo "NOTE: Target score is >80. Current score may be lower."
 	@echo "Run 'make quality-gate-next' to see prioritized items for improvement."
 
+# Generate documentation table of contents using doctoc
+docs-toc:
+	@echo "Generating documentation table of contents..."
+	@if command -v doctoc >/dev/null 2>&1; then \
+		for file in README.md AGENTS.md docs/*.md; do \
+			if [ -f "$$file" ]; then \
+				echo "Processing: $$file"; \
+				doctoc "$$file"; \
+			fi \
+		done; \
+	else \
+		echo "doctoc not found. Install with: pip install doctoc"; \
+		exit 1; \
+	fi
+	@echo "Documentation TOC generation complete!"
+
+# Validate AGENTS.md commands reference valid targets and files
+agents-md-validate:
+	@echo "Validating AGENTS.md commands..."
+	@FAILED=0; \
+	echo "Checking Makefile targets..."; \
+	for target in $$(grep -oP 'make \w+' AGENTS.md | sort -u | awk '{print $$2}'); do \
+		if grep -q "^$$target:" Makefile; then \
+			echo "  ✓ make $$target exists"; \
+		else \
+			echo "  ✗ make $$target NOT FOUND"; \
+			FAILED=1; \
+		fi \
+	done; \
+	echo "Verifying Go commands..."; \
+	if go build ./... > /dev/null 2>&1; then \
+		echo "  ✓ go build ./... works"; \
+	else \
+		echo "  ✗ go build ./... failed"; \
+		FAILED=1; \
+	fi; \
+	if go test ./... -list '.*' > /dev/null 2>&1; then \
+		echo "  ✓ go test ./... command is valid"; \
+	else \
+		echo "  ✗ go test ./... command failed"; \
+		FAILED=1; \
+	fi; \
+	if [ -f ".golangci.yml" ]; then \
+		echo "  ✓ .golangci.yml exists"; \
+	else \
+		echo "  ✗ .golangci.yml NOT FOUND"; \
+		FAILED=1; \
+	fi; \
+	if [ $$FAILED -eq 0 ]; then \
+		echo "All AGENTS.md validations passed!"; \
+	else \
+		echo "Some validations failed!"; \
+		exit 1; \
+	fi
+
+# Generate docs and validate AGENTS.md
+docs: docs-toc agents-md-validate
+	@echo "Documentation validation complete!"
+
 # Help target
 help:
 	@echo "Available targets:"
@@ -140,4 +199,7 @@ help:
 	@echo "  quality-gate-scan  - Run desloppify $(DESLOPPIFY_VERSION) quality gate scan"
 	@echo "  quality-gate-next  - Show desloppify $(DESLOPPIFY_VERSION) prioritized items"
 	@echo "  quality-gate       - Full quality gate (scan + threshold check)"
+	@echo "  docs-toc           - Generate documentation table of contents (requires doctoc)"
+	@echo "  agents-md-validate - Validate AGENTS.md commands reference valid targets"
+	@echo "  docs               - Run docs-toc and agents-md-validate"
 	@echo "  help               - Show this help message"

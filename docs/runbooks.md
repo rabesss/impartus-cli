@@ -1,3 +1,62 @@
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**  *generated with [DocToc](https://github.com/ktechhub/doctoc)*
+
+<!---toc start-->
+
+* [Runbooks - Incident Response Playbooks](#runbooks---incident-response-playbooks)
+  * [Table of Contents](#table-of-contents)
+  * [Service Health Checks](#service-health-checks)
+    * [Check API Server Status](#check-api-server-status)
+* [Health endpoint](#health-endpoint)
+* [Expected response](#expected-response)
+    * [Check Download Jobs](#check-download-jobs)
+* [List active jobs](#list-active-jobs)
+* [Check specific job](#check-specific-job)
+  * [Common Issues & Troubleshooting](#common-issues--troubleshooting)
+    * [Issue: "ffmpeg not found" Error](#issue-ffmpeg-not-found-error)
+* [Check ffmpeg is installed](#check-ffmpeg-is-installed)
+* [Install on Ubuntu/Debian](#install-on-ubuntudebian)
+* [Install on macOS](#install-on-macos)
+* [Install on Arch Linux](#install-on-arch-linux)
+    * [Issue: Authentication Failed (401)](#issue-authentication-failed-401)
+    * [Issue: Download Timeout](#issue-download-timeout)
+    * [Issue: WebSocket Connection Drops](#issue-websocket-connection-drops)
+    * [Issue: Rate Limiting / IP Ban](#issue-rate-limiting--ip-ban)
+  * [Incident Response Procedures](#incident-response-procedures)
+    * [P1: Complete Service Outage](#p1-complete-service-outage)
+    * [P2: Download Failures](#p2-download-failures)
+    * [P3: Performance Degradation](#p3-performance-degradation)
+  * [Rollback Procedures](#rollback-procedures)
+    * [Binary Rollback](#binary-rollback)
+* [Keep previous version backup](#keep-previous-version-backup)
+* [Rollback to previous version](#rollback-to-previous-version)
+    * [Config Rollback](#config-rollback)
+* [Restore previous config](#restore-previous-config)
+    * [Database/State Recovery](#databasestate-recovery)
+  * [Monitoring & Alerts](#monitoring--alerts)
+    * [Observability Stack](#observability-stack)
+    * [Deployment Observability](#deployment-observability)
+* [Verify service health](#verify-service-health)
+* [Check recent logs for errors](#check-recent-logs-for-errors)
+* [Verify download functionality](#verify-download-functionality)
+* [Mark deployment in logs](#mark-deployment-in-logs)
+    * [Alerting Configuration](#alerting-configuration)
+* [Alert webhook URL (Slack, PagerDuty, custom)](#alert-webhook-url-slack-pagerduty-custom)
+* [Alert on critical errors](#alert-on-critical-errors)
+* [Alert threshold (errors per minute)](#alert-threshold-errors-per-minute)
+    * [Error Tracking (Sentry)](#error-tracking-sentry)
+    * [Key Metrics to Monitor](#key-metrics-to-monitor)
+    * [Log Analysis](#log-analysis)
+* [Count errors by type](#count-errors-by-type)
+* [Recent WebSocket errors](#recent-websocket-errors)
+* [Failed downloads](#failed-downloads)
+  * [Contact & Escalation](#contact--escalation)
+  * [Related Documentation](#related-documentation)
+
+<!---toc end-->
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 # Runbooks - Incident Response Playbooks
 
 This document provides operational runbooks for common incidents and troubleshooting scenarios.

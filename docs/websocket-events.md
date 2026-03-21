@@ -1,3 +1,25 @@
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**  *generated with [DocToc](https://github.com/ktechhub/doctoc)*
+
+<!---toc start-->
+
+* [WebSocket Events](#websocket-events)
+  * [Connection](#connection)
+  * [Event Format](#event-format)
+  * [Event Types](#event-types)
+    * [job.started](#jobstarted)
+    * [job.progress](#jobprogress)
+    * [job.completed](#jobcompleted)
+    * [job.failed](#jobfailed)
+    * [job.cancelled](#jobcancelled)
+  * [Usage Example](#usage-example)
+  * [Reconnection](#reconnection)
+  * [Differences from Design Spec](#differences-from-design-spec)
+
+<!---toc end-->
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 # WebSocket Events
 
 Real-time progress updates for download jobs.

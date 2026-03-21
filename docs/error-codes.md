@@ -1,3 +1,19 @@
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**  *generated with [DocToc](https://github.com/ktechhub/doctoc)*
+
+<!---toc start-->
+
+* [Error Codes Reference](#error-codes-reference)
+  * [Error Response Format](#error-response-format)
+  * [Authentication Errors](#authentication-errors)
+  * [Request Validation Errors](#request-validation-errors)
+  * [Job Errors](#job-errors)
+  * [Upstream Errors](#upstream-errors)
+
+<!---toc end-->
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 # Error Codes Reference
 
 All API errors use structured JSON responses via `respondWithError` in [`auth.go`](file:///home/ravish/Desktop/clawds-code-crib/impartus-go/impartus/internal/server/auth.go) and [`server.go`](file:///home/ravish/Desktop/clawds-code-crib/impartus-go/impartus/internal/server/server.go).
