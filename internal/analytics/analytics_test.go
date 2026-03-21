@@ -4,6 +4,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/rabesss/impartus-cli/internal/buildinfo"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -111,7 +113,7 @@ func TestMergeProperties(t *testing.T) {
 		t.Errorf("expected library field, got %v", result["library"])
 	}
 
-	if result["library_version"] != "1.0.0" {
+	if result["library_version"] != buildinfo.Version {
 		t.Errorf("expected library_version field, got %v", result["library_version"])
 	}
 

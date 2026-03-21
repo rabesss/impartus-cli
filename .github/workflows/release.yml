@@ -6,52 +6,31 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version bump (patch, minor, major, or specific version)'
-        required: false
-        default: 'patch'
 
 jobs:
   release-please:
     name: Release Notes Generation
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       version: ${{ steps.release.outputs.version }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: 'go.mod'
-          cache: true
-
       - name: Run release-please
         id: release
-        uses: google-github-actions/release-please-action@v4
+        uses: googleapis/release-please-action@v4
         with:
-          release-type: go
-          package-name: impartus-cli
-          target-branch: main
-          bump-minor-pre-major: true
-          bump-patch-for-minor-pre-major: true
-          changelog-types: |
-            [
-              { "type": "feat", "section": "Features", "hidden": false },
-              { "type": "fix", "section": "Bug Fixes", "hidden": false },
-              { "type": "perf", "section": "Performance", "hidden": false },
-              { "type": "refactor", "section": "Refactoring", "hidden": false },
-              { "type": "docs", "section": "Documentation", "hidden": false },
-              { "type": "test", "section": "Testing", "hidden": false },
-              { "type": "build", "section": "Build System", "hidden": false },
-              { "type": "ci", "section": "CI/CD", "hidden": false },
-              { "type": "chore", "section": "Maintenance", "hidden": true }
-            ]
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
           token: ${{ secrets.GITHUB_TOKEN }}
 
   build-release:
@@ -59,6 +38,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [release-please]
     if: needs.release-please.outputs.release_created == 'true'
+    permissions:
+      contents: write
     strategy:
       matrix:
         goos: [linux, darwin, windows]
@@ -75,33 +56,48 @@ jobs:
       - name: Get version
         id: version
         run: |
-          VERSION=${GITHUB_REF#refs/tags/}
-          if [[ ! $VERSION =~ ^v ]]; then
-            VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "v0.0.0")
-          fi
+          VERSION="${{ needs.release-please.outputs.version }}"
+          TAG="${{ needs.release-please.outputs.tag_name }}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
+          echo "Tag: $TAG"
 
-      - name: Build
+      - name: Build release archive
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           VERSION: ${{ needs.release-please.outputs.version }}
+          COMMIT: ${{ github.sha }}
         run: |
           EXTENSION=""
+          ARCHIVE_EXT="tar.gz"
           if [ "$GOOS" = "windows" ]; then
             EXTENSION=".exe"
+            ARCHIVE_EXT="zip"
           fi
-          OUTPUT_NAME="impartus-${VERSION#v}-${GOOS}-${GOARCH}${EXTENSION}"
-          CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o "$OUTPUT_NAME" .
-          echo "Built: $OUTPUT_NAME"
-          ls -la "$OUTPUT_NAME"
+          BINARY_NAME="impartus${EXTENSION}"
+          ARCHIVE_NAME="impartus_${VERSION}_${GOOS}_${GOARCH}.${ARCHIVE_EXT}"
+          BUILD_DIR="$(mktemp -d)"
+          DIST_DIR="$(pwd)/dist"
+          mkdir -p "$DIST_DIR"
+          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/rabesss/impartus-cli/internal/buildinfo.Version=${VERSION} -X github.com/rabesss/impartus-cli/internal/buildinfo.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ) -X github.com/rabesss/impartus-cli/internal/buildinfo.Commit=${COMMIT}" -o "${BUILD_DIR}/${BINARY_NAME}" .
+          if [ "$GOOS" = "windows" ]; then
+            (
+              cd "$BUILD_DIR"
+              zip -9 "${DIST_DIR}/${ARCHIVE_NAME}" "${BINARY_NAME}"
+            )
+          else
+            tar -C "$BUILD_DIR" -czf "${DIST_DIR}/${ARCHIVE_NAME}" "${BINARY_NAME}"
+          fi
+          echo "Built: ${DIST_DIR}/${ARCHIVE_NAME}"
+          ls -la "${DIST_DIR}/${ARCHIVE_NAME}"
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.release-please.outputs.version }}
-          files: impartus-*.zip impartus-*-${{ matrix.goos }}-${{ matrix.goarch }}*
+          tag_name: ${{ needs.release-please.outputs.tag_name }}
+          files: dist/*
           draft: false
           prerelease: ${{ needs.release-please.outputs.version != '' && contains(needs.release-please.outputs.version, '-') }}
         env:
@@ -115,8 +111,8 @@ jobs:
     steps:
       - name: Create Release Summary
         run: |
-          echo "## Release ${{ needs.release-please.outputs.version }} Created" >> $GITHUB_STEP_SUMMARY
+          echo "## Release ${{ needs.release-please.outputs.tag_name }} Created" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Release notes have been generated and published." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "View the release: https://github.com/${{ github.repository }}/releases/tag/${{ needs.release-please.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "View the release: https://github.com/${{ github.repository }}/releases/tag/${{ needs.release-please.outputs.tag_name }}" >> $GITHUB_STEP_SUMMARY

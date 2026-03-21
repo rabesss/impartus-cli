@@ -22,8 +22,6 @@ jobs:
 
       - name: Run Gitleaks
         uses: gitleaks/gitleaks-action@v2
-        with:
-          args: --config-path=.gitleaks.toml --verbose --redact
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -32,7 +30,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: gitleaks-results
-          path: gitleaks-results.json
+          path: results.sarif
           retention-days: 30
 
   gosec-security-scan:
@@ -41,6 +39,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      actions: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -86,6 +85,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      actions: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

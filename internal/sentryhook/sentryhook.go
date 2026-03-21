@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/getsentry/sentry-go"
+	"github.com/rabesss/impartus-cli/internal/buildinfo"
 )
 
 // Config holds Sentry configuration
@@ -37,7 +38,7 @@ func Init() error {
 
 	release := os.Getenv("SENTRY_RELEASE")
 	if release == "" {
-		release = "impartus-cli@1.0.0"
+		release = buildinfo.SentryRelease()
 	}
 
 	debug := os.Getenv("SENTRY_DEBUG") == "true"

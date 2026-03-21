@@ -1181,7 +1181,7 @@ The `sentryhook` package provides Sentry integration:
 |----------|-------------|
 | `SENTRY_DSN` | Sentry DSN (required to enable) |
 | `SENTRY_ENVIRONMENT` | Environment tag (default: development) |
-| `SENTRY_RELEASE` | Release version (default: impartus-cli@1.0.0) |
+| `SENTRY_RELEASE` | Release version (default: impartus-cli@<release-version>) |
 | `SENTRY_DEBUG` | Enable debug mode (true/false) |
 
 ### HTTP Middleware

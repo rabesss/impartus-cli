@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rabesss/impartus-cli/internal/buildinfo"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/metric"
@@ -18,10 +19,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
 
-const (
-	serviceName    = "impartus-cli"
-	serviceVersion = "1.0.0"
-)
+const serviceName = "impartus-cli"
 
 // Metrics holds all application metrics
 type Metrics struct {
@@ -84,7 +82,7 @@ func initMetrics(ctx context.Context) (*Metrics, error) {
 		resource.NewWithAttributes(
 			semconv.SchemaURL,
 			semconv.ServiceName(serviceName),
-			semconv.ServiceVersion(serviceVersion),
+			semconv.ServiceVersion(buildinfo.Version),
 		),
 	)
 	if err != nil {
