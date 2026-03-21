@@ -1,3 +1,61 @@
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**  *generated with [DocToc](https://github.com/ktechhub/doctoc)*
+
+<!---toc start-->
+
+* [AGENTS.md - AI Agent Guide for Impartus CLI](#agentsmd---ai-agent-guide-for-impartus-cli)
+  * [Purpose](#purpose)
+  * [Issue Tracking](#issue-tracking)
+  * [Architecture Quick Reference](#architecture-quick-reference)
+    * [Entry Points](#entry-points)
+    * [Flow](#flow)
+    * [Package Map](#package-map)
+    * [Data Flow](#data-flow)
+  * [Critical Files to Understand](#critical-files-to-understand)
+  * [Making Changes](#making-changes)
+    * [Adding a New CLI Command](#adding-a-new-cli-command)
+    * [Adding a New API Endpoint](#adding-a-new-api-endpoint)
+    * [Modifying Config](#modifying-config)
+    * [Adding Download Features](#adding-download-features)
+  * [Common Patterns](#common-patterns)
+    * [Error Handling](#error-handling)
+    * [JSON Envelope Pattern](#json-envelope-pattern)
+    * [Testing Patterns](#testing-patterns)
+    * [Context Usage](#context-usage)
+    * [Dependency Injection](#dependency-injection)
+  * [Key Dependencies](#key-dependencies)
+    * [External Packages](#external-packages)
+    * [Internal Package Dependencies](#internal-package-dependencies)
+  * [Debugging Tips](#debugging-tips)
+    * [CLI Issues](#cli-issues)
+    * [API Issues](#api-issues)
+    * [Download Issues](#download-issues)
+  * [Performance Considerations](#performance-considerations)
+    * [Rate Limiting Configuration](#rate-limiting-configuration)
+    * [Pipeline Parallelization](#pipeline-parallelization)
+    * [Memory Management](#memory-management)
+  * [Security Notes](#security-notes)
+    * [Credential Handling](#credential-handling)
+    * [Token Management](#token-management)
+    * [Log Scrubbing](#log-scrubbing)
+  * [Code Quality](#code-quality)
+    * [Linting](#linting)
+    * [Pre-commit Hooks](#pre-commit-hooks)
+    * [Testing](#testing)
+* [Run all tests](#run-all-tests)
+* [Run with coverage](#run-with-coverage)
+* [View coverage](#view-coverage)
+    * [CI/CD](#cicd)
+  * [Issue & PR Labels](#issue--pr-labels)
+  * [OpenClaw Integration](#openclaw-integration)
+    * [Tool Manifest](#tool-manifest)
+    * [JSON Mode Usage](#json-mode-usage)
+    * [API Reference](#api-reference)
+
+<!---toc end-->
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 # AGENTS.md - AI Agent Guide for Impartus CLI
 
 > This file helps AI coding agents understand the codebase efficiently for making changes, debugging, and adding features.

@@ -1,3 +1,29 @@
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**  *generated with [DocToc](https://github.com/ktechhub/doctoc)*
+
+<!---toc start-->
+
+* [Impartus API Reference](#impartus-api-reference)
+  * [Authentication](#authentication)
+    * [Login](#login)
+  * [Response formats](#response-formats)
+    * [JSON error envelope (`respondWithError`)](#json-error-envelope-respondwitherror)
+    * [JSON success envelope (`respondWithSuccess`)](#json-success-envelope-respondwithsuccess)
+    * [Direct JSON responses](#direct-json-responses)
+  * [Courses](#courses)
+  * [Lectures](#lectures)
+  * [Jobs](#jobs)
+    * [Job object](#job-object)
+    * [Create job](#create-job)
+    * [List jobs](#list-jobs)
+    * [Get job](#get-job)
+    * [Cancel job](#cancel-job)
+  * [WebSocket](#websocket)
+
+<!---toc end-->
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 # Impartus API Reference
 
 Base path: `http://localhost:8080/api/v1`

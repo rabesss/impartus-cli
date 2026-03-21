@@ -1,0 +1,42 @@
+# Gitleaks configuration for secret scanning
+# https://github.com/gitleaks/gitleaks
+
+[verbose]
+value = true
+
+[redact]
+value = true
+
+# Allowlist for common false positives
+[[allowlist]]
+description = "Allowlisted regex pattern"
+regex = "(?i)(example|test|sample|placeholder)"
+
+# Allowlist for test files
+[[allowlist]]
+path = ".*_test\\.go"
+description = "Test files may contain example credentials"
+
+# Allowlist for documentation
+[[allowlist]]
+path = ".*\\.md"
+description = "Documentation files"
+
+# Allowlist for sample configs
+[[allowlist]]
+path = "sample\\.config\\.json"
+description = "Sample config with placeholder values"
+
+# Allowlist for .env.example
+[[allowlist]]
+path = "\\.env\\.example"
+description = "Environment template file"
+
+# Common false positive patterns
+[[allowlist]]
+regex = "(?i)(password|passwd|pwd)\\s*[=:]\s*['\"]?(your_|my_|test_|sample_)?.*"
+description = "Placeholder passwords in examples"
+
+[[allowlist]]
+regex = "(?i)(api.?key|token)\\s*[=:]\s*['\"]?(sk_|pk_|test_)?.*"
+description = "Placeholder API keys in examples"

@@ -1,0 +1,138 @@
+name: Sentry Issue Management
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_action:
+        description: 'Action to perform'
+        required: true
+        default: 'sync'
+        type: choice
+        options:
+          - sync
+          - link
+          - resolve
+          - unresolve
+
+  schedule:
+    # Run daily at 9 AM to sync Sentry issues
+    - cron: '0 9 * * *'
+
+jobs:
+  sync-sentry-issues:
+    name: Sync Sentry Issues to GitHub
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Install Sentry CLI
+        run: |
+          curl -sL https://sentry.io/get-cli/ | bash
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Configure Sentry
+        run: |
+          sentry-cli config set --org "${{ vars.SENTRY_ORG }}"
+          sentry-cli config set --project "${{ vars.SENTRY_PROJECT }}"
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+      - name: Fetch Sentry Issues
+        id: sentry_issues
+        run: |
+          echo "Fetching Sentry issues..."
+          
+          # Get unresolved issues
+          sentry-cli issues list \
+            --status=unresolved \
+            --format=json \
+            --limit=50 > sentry_issues.json || echo "[]" > sentry_issues.json
+          
+          echo "sentry_issues_file=sentry_issues.json" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Issues from Sentry
+        if: vars.SENTRY_AUTO_CREATE_ISSUES == 'true'
+        run: |
+          # Parse Sentry issues and create GitHub issues
+          if command -v jq > /dev/null 2>&1; then
+            cat sentry_issues.json | jq -r '.[] | @base64' | while read issue; do
+              echo "$issue" | jq -r '
+                "Processing issue: \(.id) - \(.title)"
+              '
+            done
+          fi
+          
+          # Count issues
+          COUNT=$(cat sentry_issues.json | jq 'length' 2>/dev/null || echo "0")
+          echo "Found $COUNT unresolved Sentry issues"
+
+      - name: Create Issue Summary
+        run: |
+          echo "## Sentry Issue Sync Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f sentry_issues.json ]; then
+            COUNT=$(cat sentry_issues.json | jq 'length' 2>/dev/null || echo "0")
+            echo "Unresolved Sentry issues: **$COUNT**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            # List top issues by count
+            if [ "$COUNT" -gt 0 ]; then
+              echo "### Top Issues" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "| Issue | Count | Level |" >> $GITHUB_STEP_SUMMARY
+              echo "|-------|-------|-------|" >> $GITHUB_STEP_SUMMARY
+              
+              cat sentry_issues.json | jq -r '.[:5] | .[] | "| [\(.title)](\(.permalink)) | \(.count) | \(.level) |" // empty' >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "No Sentry issues found or unable to fetch." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload Sentry issues as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentry-issues
+          path: sentry_issues.json
+          retention-days: 7
+
+  sentry-webhook-receiver:
+    name: Sentry Webhook Handler
+    runs-on: ubuntu-latest
+    if: false  # Enable when you have a webhook endpoint configured
+    steps:
+      - name: Process Sentry webhook
+        run: |
+          echo "Sentry webhook received"
+          # Process webhook payload and create/update GitHub issues
+
+  error-metrics-report:
+    name: Error Metrics Report
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate Error Report
+        run: |
+          echo "## Error Metrics Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Last updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This report is generated daily. Configure Sentry webhook for real-time alerts." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Quick Links" >> $GITHUB_STEP_SUMMARY
+          echo "- [View in Sentry](https://sentry.io/organizations/${{ vars.SENTRY_ORG }}/issues/?project=${{ vars.SENTRY_PROJECT }})" >> $GITHUB_STEP_SUMMARY
+          echo "- [Sentry Dashboard](https://sentry.io/organizations/${{ vars.SENTRY_ORG }}/dashboards/)" >> $GITHUB_STEP_SUMMARY

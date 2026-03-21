@@ -204,3 +204,166 @@ jobs:
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           desloppify next 2>&1 | head -30 >> $GITHUB_STEP_SUMMARY || true
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install doctoc
+        run: pip install doctoc
+
+      - name: Generate documentation table of contents
+        run: |
+          echo "## Documentation Generation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Generate/update TOC for markdown files
+          for file in README.md AGENTS.md docs/*.md; do
+            if [ -f "$file" ]; then
+              echo "Processing: $file" >> $GITHUB_STEP_SUMMARY
+              doctoc "$file" 2>&1 || true
+            fi
+          done
+          
+          # Check if TOC was updated
+          if git diff --quiet; then
+            echo "✓ Documentation TOC is up to date" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Updated documentation TOC files:" >> $GITHUB_STEP_SUMMARY
+            git diff --stat >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Note: Run 'doctoc <file>' to update table of contents" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Check markdown links
+        run: |
+          pip install markdown-link-check || true
+          
+          # Check for broken links in markdown files (basic check)
+          echo "## Markdown Link Validation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          BROKEN_LINKS=""
+          for file in README.md AGENTS.md docs/*.md; do
+            if [ -f "$file" ]; then
+              # Check for internal file links that might be broken
+              INTERNAL_LINKS=$(grep -oP '\[.*?\]\(.*?\.go\)' "$file" 2>/dev/null || true)
+              if [ -n "$INTERNAL_LINKS" ]; then
+                while IFS= read -r link; do
+                  TARGET=$(echo "$link" | grep -oP '\(.*?\.go\)' | tr -d '()')
+                  if [ -n "$TARGET" ] && [ ! -f "$TARGET" ]; then
+                    BROKEN_LINKS="$BROKEN_LINKS\n$file: $TARGET"
+                  fi
+                done <<< "$INTERNAL_LINKS"
+              fi
+            fi
+          done
+          
+          if [ -n "$BROKEN_LINKS" ]; then
+            echo "Potential issues found:" >> $GITHUB_STEP_SUMMARY
+            echo "```" >> $GITHUB_STEP_SUMMARY
+            echo -e "$BROKEN_LINKS" >> $GITHUB_STEP_SUMMARY
+            echo "```" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✓ No broken internal file links detected" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  agents-md-validation:
+    name: AGENTS.md Validation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Validate AGENTS.md Commands
+        run: |
+          echo "## AGENTS.md Command Validation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          FAILED=0
+          
+          # Check that Makefile targets referenced in AGENTS.md exist
+          echo "Checking Makefile targets..." >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          
+          # Extract Makefile targets from AGENTS.md
+          MAKE_TARGETS=$(grep -oP 'make \w+' AGENTS.md Makefile 2>/dev/null | sort -u || true)
+          
+          for target in $(grep -oP 'make \w+' AGENTS.md 2>/dev/null | sort -u || true); do
+            TARGET_NAME=$(echo "$target" | awk '{print $2}')
+            if grep -q "^${TARGET_NAME}:" Makefile; then
+              echo "✓ make $TARGET_NAME exists" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "✗ make $TARGET_NAME NOT FOUND in Makefile" >> $GITHUB_STEP_SUMMARY
+              FAILED=1
+            fi
+          done
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          
+          # Verify go test ./... works
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Verifying 'go test ./...' command..." >> $GITHUB_STEP_SUMMARY
+          if go test ./... -list '.*' > /dev/null 2>&1; then
+            echo "✓ go test ./... command is valid" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✗ go test ./... command failed" >> $GITHUB_STEP_SUMMARY
+            FAILED=1
+          fi
+          
+          # Verify go build ./... works
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Verifying 'go build ./...' command..." >> $GITHUB_STEP_SUMMARY
+          if go build ./... > /dev/null 2>&1; then
+            echo "✓ go build ./... command is valid" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✗ go build ./... command failed" >> $GITHUB_STEP_SUMMARY
+            FAILED=1
+          fi
+          
+          # Verify golangci-lint config exists
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Checking golangci-lint configuration..." >> $GITHUB_STEP_SUMMARY
+          if [ -f ".golangci.yml" ]; then
+            echo "✓ .golangci.yml exists" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✗ .golangci.yml NOT FOUND" >> $GITHUB_STEP_SUMMARY
+            FAILED=1
+          fi
+          
+          # Check for required package documentation
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Checking package documentation..." >> $GITHUB_STEP_SUMMARY
+          for pkg in cli client config downloader server; do
+            if [ -d "internal/$pkg" ]; then
+              GO_FILES=$(find "internal/$pkg" -name '*.go' ! -name '*_test.go' | head -1)
+              if [ -n "$GO_FILES" ]; then
+                FIRST_FILE=$GO_FILES
+                # Check if package has documentation (starts with package comment)
+                if head -1 "$FIRST_FILE" | grep -q "^package $pkg"; then
+                  echo "✓ internal/$pkg has package declaration" >> $GITHUB_STEP_SUMMARY
+                fi
+              fi
+            fi
+          done
+          
+          # Summary
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ $FAILED -eq 0 ]; then
+            echo "✓ All AGENTS.md command validations passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✗ Some AGENTS.md command validations failed" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi

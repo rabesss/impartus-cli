@@ -35,6 +35,13 @@
 # ...even if they are in subdirectories
 !*/
 
+# Exclude test files (keep private)
+*_test.go
+integration_test.go
+parser_test.go
+coverage*.out
+*.test
+
 # Local agent/tooling workspaces
 .beads/
 .btca/

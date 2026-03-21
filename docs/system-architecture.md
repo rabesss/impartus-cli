@@ -1,3 +1,38 @@
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**  *generated with [DocToc](https://github.com/ktechhub/doctoc)*
+
+<!---toc start-->
+
+* [Impartus-Go System Architecture](#impartus-go-system-architecture)
+  * [System Overview](#system-overview)
+    * [Package Relationships](#package-relationships)
+  * [Core Components](#core-components)
+    * [1. CLI Entry Flow](#1-cli-entry-flow)
+    * [2. HTTP API Request Flow](#2-http-api-request-flow)
+    * [3. Download Pipeline Architecture](#3-download-pipeline-architecture)
+    * [4. Job Execution State Machine](#4-job-execution-state-machine)
+    * [5. WebSocket Event Flow](#5-websocket-event-flow)
+    * [6. Configuration Resolution Flow](#6-configuration-resolution-flow)
+  * [Key Packages](#key-packages)
+    * [internal/config](#internalconfig)
+    * [internal/client](#internalclient)
+    * [internal/downloader](#internaldownloader)
+    * [internal/server](#internalserver)
+    * [internal/cli](#internalcli)
+  * [Data Structures](#data-structures)
+    * [Config Struct Relationships](#config-struct-relationships)
+    * [Download Pipeline Data Flow](#download-pipeline-data-flow)
+  * [Error Handling](#error-handling)
+    * [Error Propagation Patterns](#error-propagation-patterns)
+    * [Retry Logic with Exponential Backoff](#retry-logic-with-exponential-backoff)
+    * [Error Response Format (API)](#error-response-format-api)
+  * [Rate Limiting](#rate-limiting)
+  * [Progress Tracking](#progress-tracking)
+
+<!---toc end-->
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 # Impartus-Go System Architecture
 
 This document provides a comprehensive overview of the impartus-go CLI architecture, designed for developers and AI agents working with the codebase.

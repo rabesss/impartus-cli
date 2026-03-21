@@ -1,3 +1,20 @@
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**  *generated with [DocToc](https://github.com/ktechhub/doctoc)*
+
+<!---toc start-->
+
+* [API Security Validation](#api-security-validation)
+  * [Scope](#scope)
+  * [Checks Run](#checks-run)
+  * [Findings](#findings)
+    * [1) High-confidence auth bypass on WebSocket route (fixed)](#1-high-confidence-auth-bypass-on-websocket-route-fixed)
+  * [Additional Review Notes](#additional-review-notes)
+  * [Current Risk Posture (Actionable)](#current-risk-posture-actionable)
+
+<!---toc end-->
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 # API Security Validation
 
 ## Scope
