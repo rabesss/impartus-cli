@@ -1,6 +1,5 @@
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
-**Table of Contents**  *generated with [DocToc](https://github.com/ktechhub/doctoc)*
+**Table of Contents**  *generated automatically*
 
 <!---toc start-->
 
@@ -12,9 +11,6 @@
 * [Or build from source](#or-build-from-source)
     * [Requirements](#requirements)
     * [Configuration](#configuration)
-      * [Configuration Options](#configuration-options)
-      * [Environment Variables](#environment-variables)
-      * [Validation Rules](#validation-rules)
   * [CLI Usage](#cli-usage)
     * [Interactive Mode](#interactive-mode)
     * [Deterministic JSON Mode](#deterministic-json-mode)
@@ -65,8 +61,9 @@
   * [Documentation](#documentation)
 
 <!---toc end-->
-
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+
 # Impartus CLI
 
 [![Build Status](https://github.com/rabesss/impartus-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/rabesss/impartus-cli/actions/workflows/ci.yml)

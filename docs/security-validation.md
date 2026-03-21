@@ -1,6 +1,5 @@
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
-**Table of Contents**  *generated with [DocToc](https://github.com/ktechhub/doctoc)*
+**Table of Contents**  *generated automatically*
 
 <!---toc start-->
 
@@ -13,8 +12,9 @@
   * [Current Risk Posture (Actionable)](#current-risk-posture-actionable)
 
 <!---toc end-->
-
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+
 # API Security Validation
 
 ## Scope

@@ -44,16 +44,6 @@ repos:
         description: Run Go unit tests
         pass_filenames: false
 
-  # TODO/FIXME detection for tech debt tracking
-  - repo: https://github.com/thlorenz/doctoc
-    rev: v2.2.0
-    hooks:
-      - id: doctoc
-        description: Generate table of contents for markdown files
-        name: Generate markdown TOC
-        # Only run on markdown files in root and docs directory
-        files: ^(README\.md|AGENTS\.md|docs/.*\.md)$
-
   # Secret scanning
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.21.2
