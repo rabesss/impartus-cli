@@ -39,10 +39,10 @@ type Config struct {
 	EnableJitter     bool    `json:"enableJitter"`
 
 	EnablePipeline            bool           `json:"enablePipeline"`
-	DownloadWorkersPerLecture int           `json:"downloadWorkersPerLecture"`
-	DecryptWorkersPerLecture  int           `json:"decryptWorkersPerLecture"`
+	DownloadWorkersPerLecture int            `json:"downloadWorkersPerLecture"`
+	DecryptWorkersPerLecture  int            `json:"decryptWorkersPerLecture"`
 	ProgressTracking          ProgressConfig `json:"progressTracking"`
-	HTTPTimeout               string        `json:"httpTimeout"`
+	HTTPTimeout               string         `json:"httpTimeout"`
 
 	// FeatureFlags enables experimental features and safe rollouts for agents.
 	// See internal/config/feature_flags.go for available flags.
@@ -56,33 +56,32 @@ var (
 )
 
 func (c *Config) ApplyDefaults() {
+	c.applyURLDefaults()
+	c.applyPathDefaults()
+	c.applyWorkerDefaults()
+	c.applyRateLimitDefaults()
+	c.applyProgressDefaults()
+	c.applyFeatureFlagDefaults()
+}
+
+func (c *Config) applyURLDefaults() {
 	if c.BaseUrl == "" && c.BaseURL != "" {
 		c.BaseUrl = c.BaseURL
 	}
 	if c.BaseURL == "" && c.BaseUrl != "" {
 		c.BaseURL = c.BaseUrl
 	}
+}
+
+func (c *Config) applyPathDefaults() {
 	if c.TempDirLocation == "" {
 		c.TempDirLocation = "./temp"
 	}
+}
+
+func (c *Config) applyWorkerDefaults() {
 	if c.NumWorkers == 0 {
 		c.NumWorkers = 5
-	}
-	if c.AudioFormat == "" {
-		c.AudioFormat = "mp3"
-	}
-	if c.RateLimit == 0 {
-		c.RateLimit = 10
-	}
-	if c.APIRateLimit == 0 {
-		c.APIRateLimit = 2
-	}
-	c.EnableJitter = true
-	if c.ProgressTracking.UpdateInterval == "" {
-		c.ProgressTracking.UpdateInterval = "2s"
-	}
-	if c.ProgressTracking.SpeedWindowSize == 0 {
-		c.ProgressTracking.SpeedWindowSize = 10
 	}
 	if c.DownloadWorkersPerLecture == 0 {
 		c.DownloadWorkersPerLecture = 3
@@ -90,10 +89,34 @@ func (c *Config) ApplyDefaults() {
 	if c.DecryptWorkersPerLecture == 0 {
 		c.DecryptWorkersPerLecture = 2
 	}
+}
+
+func (c *Config) applyRateLimitDefaults() {
+	if c.RateLimit == 0 {
+		c.RateLimit = 10
+	}
+	if c.APIRateLimit == 0 {
+		c.APIRateLimit = 2
+	}
+	c.EnableJitter = true
+}
+
+func (c *Config) applyProgressDefaults() {
+	if c.AudioFormat == "" {
+		c.AudioFormat = "mp3"
+	}
+	if c.ProgressTracking.UpdateInterval == "" {
+		c.ProgressTracking.UpdateInterval = "2s"
+	}
+	if c.ProgressTracking.SpeedWindowSize == 0 {
+		c.ProgressTracking.SpeedWindowSize = 10
+	}
 	if c.HTTPTimeout == "" {
 		c.HTTPTimeout = "10m"
 	}
+}
 
+func (c *Config) applyFeatureFlagDefaults() {
 	// Initialize feature flags with defaults if not already set
 	if c.FeatureFlags == nil {
 		c.FeatureFlags = DefaultFeatureFlags()

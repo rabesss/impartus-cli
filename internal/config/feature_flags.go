@@ -50,7 +50,7 @@ type FeatureFlags struct {
 // These flags are conservative by default to minimize risk.
 func DefaultFeatureFlags() *FeatureFlags {
 	return &FeatureFlags{
-		EnableVerboseLogging:          false,
+		EnableVerboseLogging:         false,
 		EnableExperimentalFeatures:   false,
 		EnableAdvancedRateLimiting:   false,
 		EnableRetryWithBackoff:       true,  // Safe default - helps with transient failures

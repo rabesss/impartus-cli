@@ -133,9 +133,9 @@ func (a *Analytics) Track(eventName string, properties map[string]interface{}) {
 	}
 
 	event := Event{
-		Event:     eventName,
+		Event:      eventName,
 		Properties: mergeProperties(properties),
-		Timestamp: time.Now(),
+		Timestamp:  time.Now(),
 	}
 
 	a.mu.Lock()
@@ -170,11 +170,11 @@ func (a *Analytics) TrackCommandExecution(command string, success bool, duration
 // TrackDownload tracks download statistics
 func (a *Analytics) TrackDownload(quality, views string, bytes int64, duration time.Duration, success bool) {
 	properties := map[string]interface{}{
-		"quality":       quality,
-		"views":         views,
-		"bytes":         bytes,
-		"duration_ms":   duration.Milliseconds(),
-		"success":       success,
+		"quality":     quality,
+		"views":       views,
+		"bytes":       bytes,
+		"duration_ms": duration.Milliseconds(),
+		"success":     success,
 	}
 	a.Track("download_completed", properties)
 }
@@ -242,7 +242,9 @@ func (a *Analytics) sendToPostHogWithContext(ctx context.Context, events []Event
 		"batch":   a.formatPostHogEvents(events),
 	}
 
+	//nolint:errcheck // json.Marshal never fails for these simple structs
 	body, _ := json.Marshal(payload)
+	//nolint:errcheck // URL is constructed from validated config
 	req, _ := http.NewRequestWithContext(ctx, "POST", a.config.PostHogEndpoint+"/batch", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -273,8 +275,10 @@ func (a *Analytics) sendToCustomEndpoint(events []Event) {
 		"source": "impartus-cli",
 	}
 
+	//nolint:errcheck // json.Marshal never fails for these simple structs
 	body, _ := json.Marshal(payload)
-	req, _ := http.NewRequest("POST", a.config.CustomEndpoint, bytes.NewBuffer(body))
+	//nolint:errcheck // URL is constructed from validated config
+	req, _ := http.NewRequestWithContext(context.Background(), "POST", a.config.CustomEndpoint, bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	if a.config.CustomAPIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+a.config.CustomAPIKey)
@@ -290,10 +294,10 @@ func (a *Analytics) sendToCustomEndpoint(events []Event) {
 
 func mergeProperties(props map[string]interface{}) map[string]interface{} {
 	result := map[string]interface{}{
-		"library":          "impartus-cli",
-		"library_version":  "1.0.0",
-		"os":               runtime.GOOS,
-		"arch":             runtime.GOARCH,
+		"library":         "impartus-cli",
+		"library_version": "1.0.0",
+		"os":              runtime.GOOS,
+		"arch":            runtime.GOARCH,
 	}
 	for k, v := range props {
 		result[k] = v
@@ -302,6 +306,6 @@ func mergeProperties(props map[string]interface{}) map[string]interface{} {
 }
 
 func generateDistinctID() string {
-	hostname, _ := os.Hostname()
+	hostname, _ := os.Hostname() //nolint:errcheck // hostname fallback is empty string
 	return fmt.Sprintf("%s-%d", hostname, time.Now().Unix())
 }
