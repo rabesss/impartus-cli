@@ -24,8 +24,8 @@ The default mode (`impartus` with no command) runs an interactive download workf
 ```mermaid
 flowchart TD
   A[User runs impartus] --> B[cli.Execute]
-  B --> C{Check --json flag}
-  C -- No --json --> D[runInteractive]
+  B --> C{Check json flag}
+  C -- No --> D[runInteractive]
   D --> E[loadConfig + apply defaults]
   E --> F[client.LoginAndSetToken]
   F --> G[Fetch courses and lectures]
@@ -33,7 +33,7 @@ flowchart TD
   H --> I[downloader.FetchLecturePlaylists]
   I --> J[Download/decrypt/join outputs]
   J --> K[Write files to downloads path]
-  C -- Has --json --> L[Dispatch non-interactive command]
+  C -- Yes --> L[Dispatch non-interactive command]
 ```
 
 ## CLI deterministic JSON mode flow
