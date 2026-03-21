@@ -54,6 +54,16 @@ repos:
         # Only run on markdown files in root and docs directory
         files: ^(README\.md|AGENTS\.md|docs/.*\.md)$
 
+  # Secret scanning
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+        name: Detect secrets in code
+        description: Detect secrets with gitleaks
+        entry: gitleaks detect --config-path=.gitleaks.toml --redact -v
+        language_version: default
+
 # CI configuration
 ci:
   autofix_commit_msg: |

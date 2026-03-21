@@ -1,4 +1,4 @@
-.PHONY: build test run-cli run-api lint clean install pre-commit-install pre-commit quality-gate quality-gate-scan quality-gate-next docs docs-toc agents-md-validate
+.PHONY: build test run-cli run-api lint clean install pre-commit-install pre-commit quality-gate quality-gate-scan quality-gate-next docs docs-toc agents-md-validate security security-scan security-gitleaks security-gosec security-trivy security-govulncheck
 
 DESLOPPIFY_VERSION ?= 0.9.12
 
@@ -180,6 +180,52 @@ agents-md-validate:
 docs: docs-toc agents-md-validate
 	@echo "Documentation validation complete!"
 
+# Security scanning targets
+security-gitleaks:
+	@echo "Running secret scanning..."
+	@if command -v gitleaks >/dev/null 2>&1; then \
+		gitleaks detect --config-path=.gitleaks.toml --verbose --redact; \
+	elif docker info > /dev/null 2>&1; then \
+		docker run --rm -v "$$(pwd):/data" zricethezav/gitleaks:latest detect --config /data/.gitleaks.toml --verbose --redact; \
+	else \
+		echo "gitleaks not found. Install from: https://github.com/gitleaks/gitleaks/releases"; \
+		exit 1; \
+	fi
+	@echo "Secret scanning complete!"
+
+security-gosec:
+	@echo "Running Go security analysis..."
+	@if command -v gosec >/dev/null 2>&1; then \
+		gosec ./...; \
+	else \
+		echo "Installing gosec..."; \
+		go install github.com/securego/gosec/v2/cmd/gosec@latest; \
+		gosec ./...; \
+	fi
+	@echo "Go security analysis complete!"
+
+security-trivy:
+	@echo "Running Trivy vulnerability scanner..."
+	@if command -v trivy >/dev/null 2>&1; then \
+		trivy fs --scanners vuln,secret,misconfig --severity CRITICAL,HIGH,MEDIUM .; \
+	elif docker info > /dev/null 2>&1; then \
+		docker run --rm -v "$$(pwd):/workspace" aquasec/trivy:latest fs --scanners vuln,secret,misconfig --severity CRITICAL,HIGH,MEDIUM /workspace; \
+	else \
+		echo "trivy not found. Install from: https://aquasecurity.github.io/trivy/latest/getting-started/installation/"; \
+		exit 1; \
+	fi
+	@echo "Trivy scanning complete!"
+
+security-govulncheck:
+	@echo "Running Go vulnerability check..."
+	@go install golang.org/x/vuln/cmd/govulncheck@latest
+	@govulncheck ./...
+	@echo "Go vulnerability check complete!"
+
+# Run all security scans
+security: security-gitleaks security-gosec security-trivy security-govulncheck
+	@echo "All security scans complete!"
+
 # Help target
 help:
 	@echo "Available targets:"
@@ -202,4 +248,9 @@ help:
 	@echo "  docs-toc           - Generate documentation table of contents (requires doctoc)"
 	@echo "  agents-md-validate - Validate AGENTS.md commands reference valid targets"
 	@echo "  docs               - Run docs-toc and agents-md-validate"
+	@echo "  security-gitleaks  - Run secret scanning with gitleaks"
+	@echo "  security-gosec     - Run Go security analysis with gosec"
+	@echo "  security-trivy     - Run vulnerability scanning with trivy"
+	@echo "  security-govulncheck - Run Go vulnerability check"
+	@echo "  security           - Run all security scans"
 	@echo "  help               - Show this help message"
