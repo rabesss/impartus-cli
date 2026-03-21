@@ -62,7 +62,7 @@ func processFile(filepath string) error {
 	newContent.WriteString("\n")
 	newContent.Write(content[endIdx+len(endMarker):])
 
-	return os.WriteFile(filepath, newContent.Bytes(), 0644)
+	return os.WriteFile(filepath, newContent.Bytes(), 0600)
 }
 
 func extractHeaders(content string) []string {

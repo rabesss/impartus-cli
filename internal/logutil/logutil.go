@@ -30,7 +30,7 @@ var sensitivePatterns = []struct {
 	{regexp.MustCompile(`(?i)(https?://)([^:@]+):([^@]+)@`), "$1***:***@"},
 
 	// JSON field patterns
-	{regexp.MustCompile(`(?i)"(token|password|secret|api_key)"\s*:\s*"[^"]*"`), `"$1":"***REDACTED***"`},
+	{regexp.MustCompile(`(?i)"(token|password|passwd|pwd|secret|api_key|apikey)"\s*:\s*"[^"]*"`), `"$1":"***REDACTED***"`},
 }
 
 // RedactSensitive redacts sensitive information from log messages.
@@ -59,6 +59,7 @@ func SanitizeMap(data map[string]interface{}) map[string]interface{} {
 		"passwd":        true,
 		"pwd":           true,
 		"token":         true,
+		"tok":           true,
 		"secret":        true,
 		"api_key":       true,
 		"apikey":        true,
