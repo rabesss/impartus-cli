@@ -1,0 +1,122 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version bump (patch, minor, major, or specific version)'
+        required: false
+        default: 'patch'
+
+jobs:
+  release-please:
+    name: Release Notes Generation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Run release-please
+        id: release
+        uses: google-github-actions/release-please-action@v4
+        with:
+          release-type: go
+          package-name: impartus-cli
+          target-branch: main
+          bump-minor-pre-major: true
+          bump-patch-for-minor-pre-major: true
+          changelog-types: |
+            [
+              { "type": "feat", "section": "Features", "hidden": false },
+              { "type": "fix", "section": "Bug Fixes", "hidden": false },
+              { "type": "perf", "section": "Performance", "hidden": false },
+              { "type": "refactor", "section": "Refactoring", "hidden": false },
+              { "type": "docs", "section": "Documentation", "hidden": false },
+              { "type": "test", "section": "Testing", "hidden": false },
+              { "type": "build", "section": "Build System", "hidden": false },
+              { "type": "ci", "section": "CI/CD", "hidden": false },
+              { "type": "chore", "section": "Maintenance", "hidden": true }
+            ]
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  build-release:
+    name: Build Release Binaries
+    runs-on: ubuntu-latest
+    needs: [release-please]
+    if: needs.release-please.outputs.release_created == 'true'
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          if [[ ! $VERSION =~ ^v ]]; then
+            VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "v0.0.0")
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ needs.release-please.outputs.version }}
+        run: |
+          EXTENSION=""
+          if [ "$GOOS" = "windows" ]; then
+            EXTENSION=".exe"
+          fi
+          OUTPUT_NAME="impartus-${VERSION#v}-${GOOS}-${GOARCH}${EXTENSION}"
+          CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o "$OUTPUT_NAME" .
+          echo "Built: $OUTPUT_NAME"
+          ls -la "$OUTPUT_NAME"
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.release-please.outputs.version }}
+          files: impartus-*.zip impartus-*-${{ matrix.goos }}-${{ matrix.goarch }}*
+          draft: false
+          prerelease: ${{ needs.release-please.outputs.version != '' && contains(needs.release-please.outputs.version, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  create-release-summary:
+    name: Create Release Summary
+    runs-on: ubuntu-latest
+    needs: [release-please, build-release]
+    if: needs.release-please.outputs.release_created == 'true'
+    steps:
+      - name: Create Release Summary
+        run: |
+          echo "## Release ${{ needs.release-please.outputs.version }} Created" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Release notes have been generated and published." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View the release: https://github.com/${{ github.repository }}/releases/tag/${{ needs.release-please.outputs.version }}" >> $GITHUB_STEP_SUMMARY
