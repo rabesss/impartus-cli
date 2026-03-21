@@ -24,6 +24,8 @@ import (
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/rabesss/impartus-cli/internal/buildinfo"
 )
 
 // Event represents an analytics event
@@ -295,7 +297,7 @@ func (a *Analytics) sendToCustomEndpoint(events []Event) {
 func mergeProperties(props map[string]interface{}) map[string]interface{} {
 	result := map[string]interface{}{
 		"library":         "impartus-cli",
-		"library_version": "1.0.0",
+		"library_version": buildinfo.Version,
 		"os":              runtime.GOOS,
 		"arch":            runtime.GOARCH,
 	}

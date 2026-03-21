@@ -80,7 +80,7 @@ install: build
 # Build with version info
 build-release:
 	@echo "Building release..."
-	go build -ldflags "-X main.version=$(shell git describe --tags --always --dirty) -X main.date=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" -o impartus .
+	go build -ldflags "-X github.com/rabesss/impartus-cli/internal/buildinfo.Version=$(shell git describe --tags --always --dirty) -X github.com/rabesss/impartus-cli/internal/buildinfo.Date=$(shell date -u +%Y-%m-%dT%H:%M:%SZ) -X github.com/rabesss/impartus-cli/internal/buildinfo.Commit=$(shell git rev-parse HEAD)" -o impartus .
 	@echo "Release build complete!"
 
 # Run API with custom port

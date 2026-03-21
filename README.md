@@ -92,6 +92,12 @@ A Go-based CLI and HTTP API server for downloading lecture videos from Impartus 
 # Install from source
 go install github.com/rabesss/impartus-cli@latest
 
+# Or run the container package
+docker run --rm ghcr.io/rabesss/impartus-cli:main --help
+
+# Or download the latest release asset
+gh release download --repo rabesss/impartus-cli --pattern 'impartus_*_linux_amd64.tar.gz'
+
 # Or build from source
 git clone https://github.com/rabesss/impartus-cli
 cd impartus-cli

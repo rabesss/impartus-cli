@@ -34,9 +34,9 @@ description = "Environment template file"
 
 # Common false positive patterns
 [[allowlist]]
-regex = "(?i)(password|passwd|pwd)\\s*[=:]\s*['\"]?(your_|my_|test_|sample_)?.*"
+regex = "(?i)(password|passwd|pwd)\\s*[=:]\\s*['\"]?(your_|my_|test_|sample_)?.*"
 description = "Placeholder passwords in examples"
 
 [[allowlist]]
-regex = "(?i)(api.?key|token)\\s*[=:]\s*['\"]?(sk_|pk_|test_)?.*"
+regex = "(?i)(api.?key|token)\\s*[=:]\\s*['\"]?(sk_|pk_|test_)?.*"
 description = "Placeholder API keys in examples"

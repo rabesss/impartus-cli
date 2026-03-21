@@ -1,0 +1,13 @@
+.git
+.github
+.factory
+.agents
+.tmp-bin
+.temp
+downloads
+dist
+coverage.out
+config.json
+.token
+*.log
+*.tmp

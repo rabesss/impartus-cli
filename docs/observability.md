@@ -101,7 +101,7 @@ Sentry is integrated for error tracking. To enable:
 ```bash
 export SENTRY_DSN=https://your-sentry-dsn@o123456.ingest.sentry.io/1234567
 export SENTRY_ENVIRONMENT=production
-export SENTRY_RELEASE=impartus-cli@1.0.0
+export SENTRY_RELEASE=impartus-cli@<release-version>
 ```
 
 Or enable via feature flag:

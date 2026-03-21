@@ -109,7 +109,7 @@ jobs:
   sentry-webhook-receiver:
     name: Sentry Webhook Handler
     runs-on: ubuntu-latest
-    if: false  # Enable when you have a webhook endpoint configured
+    if: vars.SENTRY_WEBHOOK_ENABLED == 'true'
     steps:
       - name: Process Sentry webhook
         run: |

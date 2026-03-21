@@ -14,13 +14,18 @@
 !/.github/
 !/.github/**
 !/AGENTS.md
+!/.dockerignore
 !/.env.example
+!/.release-please-manifest.json
 
 !*.go
 !go.sum
 !go.mod
 
+!/CHANGELOG.md
+!/Dockerfile
 !README.md
+!/release-please-config.json
 !shell.nix
 !docs/**
 !internal/CLAUDE.md
