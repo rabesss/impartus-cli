@@ -1,0 +1,27 @@
+# CODEOWNERS - Repository ownership assignments
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owners for everything in the repo
+* @rabesss
+
+# Go source code
+*.go @rabesss
+
+# Configuration files
+/config.json @rabesss
+/sample.config.json @rabesss
+/.golangci.yml @rabesss
+/.pre-commit-config.yaml @rabesss
+
+# CI/CD workflows
+/..github/workflows/ @rabesss
+
+# Documentation
+/docs/ @rabesss
+/README.md @rabesss
+/AGENTS.md @rabesss
+
+# Build and Makefile
+/Makefile @rabesss
+/go.mod @rabesss
+/go.sum @rabesss

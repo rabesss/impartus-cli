@@ -1,0 +1,466 @@
+package client
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"regexp"
+	"strings"
+
+	"github.com/rabesss/impartus-cli/internal/config"
+)
+
+type Client struct {
+	HTTPClient        *http.Client
+	httpClient        *http.Client
+	UserAgentProvider func() string
+	token             string
+}
+
+func New(httpClient *http.Client, userAgentProvider func() string) *Client {
+	if httpClient == nil {
+		httpClient = NewHTTPClient(0)
+	}
+	if userAgentProvider == nil {
+		userAgentProvider = func() string { return "impartus-downloader" }
+	}
+
+	return &Client{
+		HTTPClient:        httpClient,
+		httpClient:        httpClient,
+		UserAgentProvider: userAgentProvider,
+	}
+}
+
+func (c *Client) initialize() {
+	if c.httpClient == nil {
+		if c.HTTPClient != nil {
+			c.httpClient = c.HTTPClient
+		} else {
+			c.httpClient = NewHTTPClient(0)
+			c.HTTPClient = c.httpClient
+		}
+	}
+	if c.UserAgentProvider == nil {
+		c.UserAgentProvider = func() string { return "impartus-downloader" }
+	}
+}
+
+func (c *Client) randomUserAgent() string {
+	c.initialize()
+	return c.UserAgentProvider()
+}
+
+func (c *Client) Token() string {
+	if c == nil {
+		return ""
+	}
+	return c.token
+}
+
+func (c *Client) SetToken(token string) {
+	if c == nil {
+		return
+	}
+	c.token = token
+}
+
+func (c *Client) GetAuthorizedWithToken(ctx context.Context, url string, token string) (*http.Response, error) {
+	cli := c
+	if cli == nil {
+		cli = New(nil, nil)
+	}
+	cli.initialize()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request for GET %s: %w", url, err)
+	}
+
+	if token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+	}
+	req.Header.Set("User-Agent", cli.randomUserAgent())
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+
+	response, err := cli.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed for GET %s: %w", url, err)
+	}
+
+	return response, nil
+}
+
+func (c *Client) LoginAndSetToken(ctx context.Context, cfg *config.Config) error {
+	cli, baseURL, err := c.prepareLogin(cfg)
+	if err != nil {
+		return err
+	}
+	if cli.tryStoredToken(ctx, cfg, baseURL) {
+		return nil
+	}
+	token, err := cli.login(ctx, cfg, baseURL)
+	if err != nil {
+		return err
+	}
+	return cli.storeToken(cfg, token)
+}
+
+func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, error) {
+	if cfg == nil {
+		return nil, errors.New("config is required")
+	}
+
+	baseURL := cfg.BaseUrl
+	if baseURL == "" {
+		baseURL = cfg.BaseURL
+	}
+	if baseURL == "" {
+		return nil, errors.New("baseUrl is required")
+	}
+
+	token := cfg.Token
+	if token == "" {
+		token = c.Token()
+	}
+	if token == "" {
+		return nil, errors.New("token is not set")
+	}
+
+	url := fmt.Sprintf("%s/subjects", baseURL)
+	resp, err := c.GetAuthorizedWithToken(ctx, url, token)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("subjects request failed with status %d and unreadable body: %w", resp.StatusCode, readErr)
+		}
+		return nil, fmt.Errorf("subjects request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var courses Courses
+	if err := json.NewDecoder(resp.Body).Decode(&courses); err != nil {
+		return nil, fmt.Errorf("failed to decode courses response: %w", err)
+	}
+
+	for i := range courses {
+		courses[i].SubjectName = sanitiseFileName(courses[i].SubjectName)
+	}
+
+	return courses, nil
+}
+
+func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Course) (Lectures, error) {
+	if cfg == nil {
+		return nil, errors.New("config is required")
+	}
+
+	baseURL := cfg.BaseUrl
+	if baseURL == "" {
+		baseURL = cfg.BaseURL
+	}
+	if baseURL == "" {
+		return nil, errors.New("baseUrl is required")
+	}
+
+	token := cfg.Token
+	if token == "" {
+		token = c.Token()
+	}
+	if token == "" {
+		return nil, errors.New("token is not set")
+	}
+
+	url := fmt.Sprintf("%s/subjects/%d/lectures/%d", baseURL, course.SubjectID, course.SessionID)
+	resp, err := c.GetAuthorizedWithToken(ctx, url, token)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("lectures request failed with status %d and unreadable body: %w", resp.StatusCode, readErr)
+		}
+		return nil, fmt.Errorf("lectures request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var lectures Lectures
+	if err := json.NewDecoder(resp.Body).Decode(&lectures); err != nil {
+		return nil, fmt.Errorf("failed to decode lectures response: %w", err)
+	}
+
+	for i := range lectures {
+		lectures[i].Topic = sanitiseFileName(lectures[i].Topic)
+		lectures[i].SubjectName = sanitiseFileName(lectures[i].SubjectName)
+	}
+
+	return lectures, nil
+}
+
+func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures Lectures) ([]ParsedPlaylist, error) {
+	if cfg == nil {
+		return nil, errors.New("config is required")
+	}
+
+	baseURL := cfg.BaseUrl
+	if baseURL == "" {
+		baseURL = cfg.BaseURL
+	}
+	if baseURL == "" {
+		return nil, errors.New("baseUrl is required")
+	}
+
+	token := cfg.Token
+	if token == "" {
+		token = c.Token()
+	}
+	if token == "" {
+		return nil, errors.New("token is not set")
+	}
+
+	parsedPlaylists := make([]ParsedPlaylist, 0, len(lectures))
+	for _, lecture := range lectures {
+		streamInfos, err := c.getStreamInfos(ctx, baseURL, token, lecture)
+		if err != nil {
+			return parsedPlaylists, err
+		}
+
+		streamURL := getStreamURL(streamInfos, cfg)
+		if streamURL == "" {
+			continue
+		}
+
+		resp, err := c.GetAuthorizedWithToken(ctx, streamURL, token)
+		if err != nil {
+			return parsedPlaylists, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			body, readErr := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if readErr != nil {
+				return parsedPlaylists, fmt.Errorf("playlist request failed with status %d and unreadable body: %w", resp.StatusCode, readErr)
+			}
+			return parsedPlaylists, fmt.Errorf("playlist request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+
+		scanner := bufio.NewScanner(resp.Body)
+		parsedPlaylists = append(parsedPlaylists, playlistParser(scanner, lecture.Ttid, lecture.Topic, lecture.SeqNo))
+		resp.Body.Close()
+	}
+
+	return parsedPlaylists, nil
+}
+
+func (c *Client) getStreamInfos(ctx context.Context, baseURL, token string, lecture Lecture) ([]StreamInfo, error) {
+	uri := fmt.Sprintf("%s/fetchvideo?ttid=%d&token=%s&type=index.m3u8", baseURL, lecture.Ttid, token)
+	resp, err := c.GetAuthorizedWithToken(ctx, uri, token)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("stream info request failed with status %d and unreadable body: %w", resp.StatusCode, readErr)
+		}
+		return nil, fmt.Errorf("stream info request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	return ParseStreamInfosFromBody(body)
+}
+
+func getStreamURL(streamInfos []StreamInfo, cfg *config.Config) string {
+	return SelectStreamByQuality(streamInfos, cfg.Quality, cfg.AudioOnly)
+}
+
+func playlistParser(scanner *bufio.Scanner, id int, title string, seqNo int) ParsedPlaylist {
+	parsedOutput := ParsedPlaylist{
+		Id:    id,
+		Title: title,
+		SeqNo: seqNo,
+	}
+
+	isFirstView := true
+	firstViewURLs := make([]string, 0)
+	secondViewURLs := make([]string, 0)
+	re := regexp.MustCompile(`URI="([^"]+)"`)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if parsedOutput.KeyURL == "" && strings.HasPrefix(line, "#EXT-X-KEY") {
+			match := re.FindStringSubmatch(line)
+			if len(match) == 2 {
+				parsedOutput.KeyURL = match[1]
+			}
+		} else if strings.HasPrefix(line, "#EXT-X-DISCONTINUITY") {
+			isFirstView = false
+		} else if !strings.HasPrefix(line, "#EXT") {
+			if isFirstView {
+				firstViewURLs = append(firstViewURLs, line)
+			} else {
+				secondViewURLs = append(secondViewURLs, line)
+			}
+		}
+	}
+
+	parsedOutput.FirstViewURLs = firstViewURLs
+	if !isFirstView {
+		parsedOutput.HasMultipleViews = true
+		parsedOutput.SecondViewURLs = secondViewURLs
+	}
+
+	return parsedOutput
+}
+
+func sanitiseFileName(name string) string {
+	re := regexp.MustCompile(`[<>:"/\\|?*\n\r]`)
+	name = re.ReplaceAllString(name, "_")
+	name = strings.TrimSpace(name)
+	return strings.Trim(name, ".")
+}
+
+func (c *Client) readStoredToken() (string, bool) {
+	tokenBytes, err := os.ReadFile(".token")
+	if err != nil {
+		return "", false
+	}
+	token := strings.TrimSpace(string(tokenBytes))
+	if token == "" {
+		return "", false
+	}
+	return token, true
+}
+
+func (c *Client) validateStoredToken(ctx context.Context, baseURL, token string) (bool, error) {
+	profileURL := fmt.Sprintf("%s/user/profile", baseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, profileURL, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+	req.Header.Set("Content-Type", "application/json;charset=UTF-8")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("User-Agent", c.randomUserAgent())
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode == http.StatusOK, nil
+}
+
+func (c *Client) prepareLogin(cfg *config.Config) (*Client, string, error) {
+	if cfg == nil {
+		return nil, "", errors.New("config is required")
+	}
+	cli := c
+	if cli == nil {
+		cli = New(nil, nil)
+	}
+	cli.initialize()
+	baseURL := cfg.BaseUrl
+	if baseURL == "" {
+		baseURL = cfg.BaseURL
+	}
+	if baseURL == "" {
+		return nil, "", errors.New("baseUrl is required")
+	}
+	return cli, baseURL, nil
+}
+
+func (c *Client) tryStoredToken(ctx context.Context, cfg *config.Config, baseURL string) bool {
+	token, ok := c.readStoredToken()
+	if !ok {
+		return false
+	}
+	valid, err := c.validateStoredToken(ctx, baseURL, token)
+	if err != nil || !valid {
+		return false
+	}
+	cfg.Token = token
+	c.SetToken(token)
+	return true
+}
+
+func (c *Client) login(ctx context.Context, cfg *config.Config, baseURL string) (string, error) {
+	req, err := c.newLoginRequest(ctx, cfg, baseURL)
+	if err != nil {
+		return "", err
+	}
+	response, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("login failed: %w", err)
+	}
+	defer response.Body.Close()
+	if err := validateLoginResponse(response); err != nil {
+		return "", err
+	}
+	var loginResponse LoginResponse
+	if err := json.NewDecoder(response.Body).Decode(&loginResponse); err != nil {
+		return "", fmt.Errorf("failed to decode login response: %w", err)
+	}
+	if loginResponse.Token == "" {
+		return "", errors.New("empty token in login response")
+	}
+	return loginResponse.Token, nil
+}
+
+func (c *Client) newLoginRequest(ctx context.Context, cfg *config.Config, baseURL string) (*http.Request, error) {
+	requestBody, err := json.Marshal(map[string]string{"username": cfg.Username, "password": cfg.Password})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal login body: %w", err)
+	}
+	loginURL := fmt.Sprintf("%s/auth/signin", baseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, bytes.NewBuffer(requestBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create login request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json;charset=UTF-8")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("Referer", "https://bitshyd.impartus.com/login/")
+	req.Header.Set("User-Agent", c.randomUserAgent())
+	return req, nil
+}
+
+func validateLoginResponse(response *http.Response) error {
+	if response.StatusCode == http.StatusUnauthorized {
+		return errors.New("wrong credentials please retry")
+	}
+	if response.StatusCode == http.StatusOK {
+		return nil
+	}
+	body, readErr := io.ReadAll(response.Body)
+	if readErr != nil {
+		return fmt.Errorf("login failed with status %d and unreadable body: %w", response.StatusCode, readErr)
+	}
+	return fmt.Errorf("login failed with status %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+}
+
+func (c *Client) storeToken(cfg *config.Config, token string) error {
+	cfg.Token = token
+	c.SetToken(token)
+	if err := os.WriteFile(".token", []byte(token), 0o600); err != nil {
+		return fmt.Errorf("failed to persist token: %w", err)
+	}
+	return nil
+}

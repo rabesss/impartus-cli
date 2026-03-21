@@ -1,0 +1,188 @@
+# golangci-lint configuration
+# Install: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin
+# Run: golangci-lint run
+
+run:
+  timeout: 5m
+  issues-exit-code: 1
+  tests: true
+  modules-download-mode: readonly
+
+output:
+  formats:
+    - format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+
+# All available linters
+linters:
+  enable:
+    # Formatting
+    - gofmt
+    - goimports
+
+    # Naming conventions
+    - revive
+
+    # Complexity analysis
+    - gocyclo
+    - funlen
+    - gocognit
+
+    # Dead code and unused detection
+    - unused
+    - unparam
+
+    # Duplicate code detection
+    - dupl
+
+    # Code quality
+    - govet
+    - errcheck
+    - staticcheck
+    - gosimple
+    - ineffassign
+    - typecheck
+    - bodyclose
+    - noctx
+    - prealloc
+    - copyloopvar
+    - sqlclosecheck
+    - durationcheck
+    - makezero
+
+    # Security
+    - gosec
+
+    # Style
+    - dogsled
+    - dupword
+    - exhaustive
+    - misspell
+    - nolintlint
+    - whitespace
+
+    # Tech debt tracking
+    - godox
+
+  disable:
+    - exhaustruct
+
+# Linter settings
+linters-settings:
+  gofmt:
+    simplify: true
+
+  goimports:
+    local-prefixes: github.com/rabesss/impartus-cli
+
+  revive:
+    rules:
+      - name: var-naming
+        severity: warning
+        disabled: false
+        arguments:
+          - ["ID", "URL", "HTTP", "JSON", "API"]
+      - name: exported
+        severity: warning
+        disabled: false
+      - name: package-comments
+        severity: warning
+        disabled: false
+      - name: blank-imports
+        severity: warning
+        disabled: false
+      - name: dot-imports
+        severity: warning
+        disabled: false
+      - name: error-strings
+        severity: warning
+        disabled: false
+      - name: error-return
+        severity: warning
+        disabled: false
+      - name: receiver-naming
+        severity: warning
+        disabled: false
+      - name: increment-decrement
+        severity: warning
+        disabled: false
+      - name: time-naming
+        severity: warning
+        disabled: false
+      - name: context-as-argument
+        severity: warning
+        disabled: false
+
+  gocyclo:
+    min-complexity: 15
+
+  funlen:
+    lines: 100
+    statements: 60
+
+  gocognit:
+    min-complexity: 30
+
+  dupl:
+    threshold: 100
+
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment
+
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+
+  staticcheck:
+    checks: ["all"]
+
+  gosec:
+    excludes:
+      - G104 # Audit errors not checked (handled by errcheck)
+
+  misspell:
+    locale: US
+
+  godox:
+    keywords:
+      - TODO
+      - FIXME
+      - BUG
+      - HACK
+      - NOTE
+      - OPTIMIZE
+
+issues:
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - dupl
+        - funlen
+        - gocyclo
+        - gocognit
+        - gosec
+    
+    # Exclude known false positives
+    - path: internal/cli/cli\.go
+      linters:
+        - funlen
+    
+    # Allow longer main functions
+    - path: main\.go
+      linters:
+        - funlen
+
+    # Allow jobCtx as second context parameter in server helper functions
+    # These functions legitimately need separate request context (ctx) and job context (jobCtx)
+    - path: internal/server/server\.go
+      text: "context-as-argument"
+      linters:
+        - revive
+
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  new: false

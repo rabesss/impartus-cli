@@ -1,0 +1,28 @@
+# GitHub Issue Labels Configuration
+# Run this workflow manually to sync labels to the repository
+# Labels follow: priority, type, area, and status categories
+
+name: Sync Labels
+on:
+  workflow_dispatch: # Manual trigger
+  push:
+    paths:
+      - '.github/labels.yml'
+    branches: [main]
+
+permissions:
+  issues: write
+
+jobs:
+  sync-labels:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Sync labels
+        uses: crazy-max/ghaction-github-labeler@v5
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          yaml-file: .github/labels.yml
+          skip-delete: false
+          dry-run: false

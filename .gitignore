@@ -1,0 +1,60 @@
+# Allowlisting gitignore template for GO projects prevents us
+# from adding various unwanted local files, such as generated
+# files, developer configurations or IDE-specific files etc.
+#
+# Recommended: Go.AllowList.gitignore
+
+# Ignore everything
+*
+
+# But not these files...
+!/.gitignore
+!/.golangci.yml
+!/.pre-commit-config.yaml
+!/.github/
+!/.github/**
+!/AGENTS.md
+!/.env.example
+
+!*.go
+!go.sum
+!go.mod
+
+!README.md
+!shell.nix
+!docs/**
+!internal/CLAUDE.md
+!internal/**/CLAUDE.md
+!.claude/module-docs-index.md
+
+!sample.config.json
+!fixtures/**
+!assets/**
+!Makefile
+
+# ...even if they are in subdirectories
+!*/
+
+# Local agent/tooling workspaces
+.beads/
+.btca/
+.claude/worktrees/
+
+# Factory validation and mission state
+!.factory/
+!.factory/**
+
+# Credentials and secrets
+.token
+*.token
+config.json
+
+# Test files - keep private
+*_test.go
+coverage*.out
+*.test
+
+# Desloppify quality gate local state
+.desloppify/
+scorecard.png
+query.json
