@@ -90,6 +90,12 @@ type responseMeta struct {
 	Mode    string `json:"mode"`
 }
 
+// retryHint indicates whether an error is retryable and how long to wait before retrying
+type retryHint struct {
+	Retryable bool `json:"retryable"`
+	RetryAfter int `json:"retryAfter"`
+}
+
 func respondWithEnvelope(w http.ResponseWriter, status int, command string, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -108,7 +114,7 @@ func respondWithEnvelope(w http.ResponseWriter, status int, command string, data
 	}
 }
 
-func respondWithError(w http.ResponseWriter, status int, code, message, command string, details ...any) {
+func respondWithError(w http.ResponseWriter, status int, code, message, command string, hint *retryHint, details ...any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
@@ -124,7 +130,14 @@ func respondWithError(w http.ResponseWriter, status int, code, message, command 
 		},
 	}
 
-	if len(details) > 0 {
+	if hint != nil {
+		errorData, ok := errorResp["error"].(map[string]any)
+		if ok {
+			errorData["details"] = hint
+		}
+	}
+
+	if len(details) > 0 && hint == nil {
 		errorData, ok := errorResp["error"].(map[string]any)
 		if ok {
 			errorData["details"] = details[0]
@@ -163,18 +176,18 @@ func (s *APIServer) loginHandler(w http.ResponseWriter, r *http.Request) {
 
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body", "login")
+		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body", "login", nil)
 		return
 	}
 
 	if s.cfg == nil || s.cfg.Username != req.Username || s.cfg.Password != req.Password {
-		respondWithError(w, http.StatusUnauthorized, "AUTH_FAILED", "Invalid username or password", "login")
+		respondWithError(w, http.StatusUnauthorized, "AUTH_FAILED", "Invalid username or password", "login", nil)
 		return
 	}
 
 	token, err := GenerateToken()
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "TOKEN_GENERATION_FAILED", "Failed to generate token", "login")
+		respondWithError(w, http.StatusInternalServerError, "TOKEN_GENERATION_FAILED", "Failed to generate token", "login", nil)
 		return
 	}
 
@@ -200,18 +213,18 @@ func (s *APIServer) authMiddleware(next http.Handler) http.Handler {
 
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
-			respondWithError(w, http.StatusUnauthorized, "MISSING_TOKEN", "Authorization header required", "auth")
+			respondWithError(w, http.StatusUnauthorized, "MISSING_TOKEN", "Authorization header required", "auth", nil)
 			return
 		}
 
 		if !strings.HasPrefix(authHeader, "Bearer ") {
-			respondWithError(w, http.StatusUnauthorized, "INVALID_TOKEN_FORMAT", "Expected 'Bearer <token>'", "auth")
+			respondWithError(w, http.StatusUnauthorized, "INVALID_TOKEN_FORMAT", "Expected 'Bearer <token>'", "auth", nil)
 			return
 		}
 
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 		if !s.tokenStore.IsValid(token) {
-			respondWithError(w, http.StatusUnauthorized, "INVALID_TOKEN", "Token is invalid or expired", "auth")
+			respondWithError(w, http.StatusUnauthorized, "INVALID_TOKEN", "Token is invalid or expired", "auth", nil)
 			return
 		}
 

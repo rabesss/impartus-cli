@@ -424,13 +424,13 @@ func (s *APIServer) coursesHandler(w http.ResponseWriter, r *http.Request) {
 	apiClient := client.New(nil, nil)
 
 	if err := apiClient.LoginAndSetToken(r.Context(), cfg); err != nil {
-		respondWithError(w, http.StatusBadGateway, "LOGIN_FAILED", err.Error(), "courses")
+		respondWithError(w, http.StatusBadGateway, "LOGIN_FAILED", err.Error(), "courses", &retryHint{Retryable: true, RetryAfter: 30})
 		return
 	}
 
 	courses, err := apiClient.GetCourses(r.Context(), cfg)
 	if err != nil {
-		respondWithError(w, http.StatusBadGateway, "COURSES_FETCH_FAILED", err.Error(), "courses")
+		respondWithError(w, http.StatusBadGateway, "COURSES_FETCH_FAILED", err.Error(), "courses", &retryHint{Retryable: true, RetryAfter: 30})
 		return
 	}
 
@@ -448,18 +448,18 @@ func (s *APIServer) lecturesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if subjectID == "" || sessionID == "" {
-		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "subject_id and session_id query parameters required", "lectures")
+		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "subject_id and session_id query parameters required", "lectures", nil)
 		return
 	}
 
 	subjectInt, err := strconv.Atoi(subjectID)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "subjectId must be a valid integer", "lectures")
+		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "subjectId must be a valid integer", "lectures", nil)
 		return
 	}
 	sessionInt, err := strconv.Atoi(sessionID)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "sessionId must be a valid integer", "lectures")
+		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "sessionId must be a valid integer", "lectures", nil)
 		return
 	}
 
@@ -467,13 +467,13 @@ func (s *APIServer) lecturesHandler(w http.ResponseWriter, r *http.Request) {
 	apiClient := client.New(nil, nil)
 	loginErr := apiClient.LoginAndSetToken(r.Context(), cfg)
 	if loginErr != nil {
-		respondWithError(w, http.StatusBadGateway, "LOGIN_FAILED", loginErr.Error(), "lectures")
+		respondWithError(w, http.StatusBadGateway, "LOGIN_FAILED", loginErr.Error(), "lectures", &retryHint{Retryable: true, RetryAfter: 30})
 		return
 	}
 
 	lectures, err := apiClient.GetLectures(r.Context(), cfg, client.Course{SubjectID: subjectInt, SessionID: sessionInt})
 	if err != nil {
-		respondWithError(w, http.StatusBadGateway, "LECTURES_FETCH_FAILED", err.Error(), "lectures")
+		respondWithError(w, http.StatusBadGateway, "LECTURES_FETCH_FAILED", err.Error(), "lectures", &retryHint{Retryable: true, RetryAfter: 30})
 		return
 	}
 
@@ -483,32 +483,32 @@ func (s *APIServer) lecturesHandler(w http.ResponseWriter, r *http.Request) {
 func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 	var req createJobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body", "createJob")
+		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body", "createJob", nil)
 		return
 	}
 
 	if req.SubjectID <= 0 {
-		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "subjectId is required and must be greater than 0", "createJob")
+		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "subjectId is required and must be greater than 0", "createJob", nil)
 		return
 	}
 	if req.SessionID <= 0 {
-		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "sessionId is required and must be greater than 0", "createJob")
+		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "sessionId is required and must be greater than 0", "createJob", nil)
 		return
 	}
 	// API uses 1-based indexing to match CLI semantics (--start/--end are 1-based)
 	// Validate 1-based input, store 1-based in Job, convert to 0-based for execution
 	if req.StartIndex < 1 {
-		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "startIndex must be 1 or greater (1-based, matching CLI --start)", "createJob")
+		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "startIndex must be 1 or greater (1-based, matching CLI --start)", "createJob", nil)
 		return
 	}
 	if req.EndIndex < req.StartIndex {
-		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "endIndex must be greater than or equal to startIndex", "createJob")
+		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "endIndex must be greater than or equal to startIndex", "createJob", nil)
 		return
 	}
 
 	mergedCfg, err := mergeConfigWithJobOptions(s.cfg, req.effectiveJobConfig())
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "INVALID_JOB_CONFIG", err.Error(), "createJob")
+		respondWithError(w, http.StatusBadRequest, "INVALID_JOB_CONFIG", err.Error(), "createJob", nil)
 		return
 	}
 
@@ -526,13 +526,13 @@ func (s *APIServer) listJobsHandler(w http.ResponseWriter, _ *http.Request) {
 func (s *APIServer) getJobHandler(w http.ResponseWriter, r *http.Request) {
 	jobID := mux.Vars(r)["id"]
 	if jobID == "" {
-		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "Job ID is required", "getJob")
+		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "Job ID is required", "getJob", nil)
 		return
 	}
 
 	job, ok := s.jobStore.GetJob(jobID)
 	if !ok {
-		respondWithError(w, http.StatusNotFound, "JOB_NOT_FOUND", "Job not found", "getJob")
+		respondWithError(w, http.StatusNotFound, "JOB_NOT_FOUND", "Job not found", "getJob", nil)
 		return
 	}
 
@@ -542,21 +542,21 @@ func (s *APIServer) getJobHandler(w http.ResponseWriter, r *http.Request) {
 func (s *APIServer) deleteJobHandler(w http.ResponseWriter, r *http.Request) {
 	jobID := mux.Vars(r)["id"]
 	if jobID == "" {
-		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "Job ID is required", "cancelJob")
+		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "Job ID is required", "cancelJob", nil)
 		return
 	}
 
 	job, err := s.jobStore.CancelJob(jobID)
 	if err != nil {
 		if err.Error() == "not_found" {
-			respondWithError(w, http.StatusNotFound, "JOB_NOT_FOUND", "Job not found", "cancelJob")
+			respondWithError(w, http.StatusNotFound, "JOB_NOT_FOUND", "Job not found", "cancelJob", nil)
 			return
 		}
 		if strings.HasPrefix(err.Error(), "terminal:") {
-			respondWithError(w, http.StatusBadRequest, "JOB_CANNOT_CANCEL", "Cannot cancel job in terminal state", "cancelJob", map[string]string{"status": strings.TrimPrefix(err.Error(), "terminal:")})
+			respondWithError(w, http.StatusBadRequest, "JOB_CANNOT_CANCEL", "Cannot cancel job in terminal state", "cancelJob", nil, map[string]string{"status": strings.TrimPrefix(err.Error(), "terminal:")})
 			return
 		}
-		respondWithError(w, http.StatusInternalServerError, "CANCEL_FAILED", err.Error(), "cancelJob")
+		respondWithError(w, http.StatusInternalServerError, "CANCEL_FAILED", err.Error(), "cancelJob", &retryHint{Retryable: true, RetryAfter: 10})
 		return
 	}
 
