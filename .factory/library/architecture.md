@@ -30,7 +30,11 @@ Impartus CLI is a Go application for downloading video lectures from the Impartu
 ### Data Flow (API Mode)
 1. Client sends request to API server (port 8080)
 2. Auth middleware validates Bearer token (in-memory token store)
-3. Handler creates upstream client, logs in to Impartus, fetches data
+3. Handler calls `getOrRefreshUpstreamClient(ctx)` to get a cached upstream client
+   - On first request: logs in to Impartus, caches the client + token (23h TTL)
+   - On subsequent requests: reuses cached client if token is fresh
+   - On expiry: re-authenticates and refreshes cache
+   - Thread-safe via double-checked locking (RLock fast path → Lock slow path → double-check)
 4. Response returned via envelope helpers
 
 ### Response Helpers (auth.go)
@@ -69,6 +73,23 @@ type jsonEnvelope struct {
 - Documentation status values use "canceled" (single L)
 - WebSocket event *type names* use "job.cancelled" (double L) — these are event identifiers, not status values
 - Some doc prose/diagrams still use "cancelled" — follow-up cleanup needed
+
+### Upstream Token Cache
+- `APIServer.upstreamCache` holds an `*upstreamCacheEntry` (client + token + expiry)
+- Protected by `APIServer.upstreamCacheMu` (sync.RWMutex)
+- Token TTL: 23 hours (hardcoded, heuristic for typical 24h upstream token lifetime)
+- Three call sites: `coursesHandler`, `lecturesHandler`, `prepareJobRuntime`
+- The cached client uses default HTTP timeout (per-job `HTTPTimeout` config not applied to cached client)
+- On login failure, cache is not populated; error returned with retryable hint
+
+### Health Endpoint
+- `GET /api/v1/health` — public (no auth required), registered before auth middleware
+- Returns structured status: `{status: "ok"|"degraded", config: {...}, upstream: {...}, ffmpeg: {...}}`
+- Config check: verifies username, password, baseUrl are set
+- Upstream check: HTTP probe using cached token (5s timeout), fallback TCP dial (5s timeout)
+- FFmpeg check: `exec.LookPath("ffmpeg")`
+- Overall status is "degraded" if any component is unhealthy
+- Uses `upstreamCacheMu.RLock()` to safely read the cached upstream client for reachability probe
 
 ## Key Invariants
 - API auth tokens are crypto/rand 32-byte, base64url encoded, 24h expiry

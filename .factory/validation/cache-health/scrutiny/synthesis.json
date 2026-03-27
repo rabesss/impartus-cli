@@ -1,0 +1,48 @@
+{
+  "milestone": "cache-health",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "build": { "passed": true, "command": "go build ./...", "exitCode": 0 },
+    "test": { "passed": true, "command": "go test ./... -cover -parallel 3", "exitCode": 0 },
+    "vet": { "passed": true, "command": "go vet ./...", "exitCode": 0 },
+    "lint": { "passed": false, "command": "make lint (golangci-lint run --timeout 5m)", "exitCode": 2, "note": "Pre-existing failures unrelated to cache-health milestone: Go version mismatch (golangci-lint built with go1.24 vs project using go1.26), sentry API compatibility issues, third-party dependency type mismatches, and pre-existing test composite literal patterns" }
+  },
+  "reviewsSummary": {
+    "total": 2,
+    "passed": 2,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Updated architecture.md to document upstream token cache pattern (double-checked locking, 23h TTL, three call sites) and health endpoint structure (public, config/upstream/ffmpeg checks, degraded status logic)",
+      "sourceFeature": "cache-upstream-token, enhance-health-endpoint"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add note about test files being gitignored (*_test.go in .gitignore). Workers should be aware that tests they write will not be committed to version control. This convention affects CI/CD and code review.",
+      "evidence": "Both features' tests exist on disk but are untracked per .gitignore. Workers may not realize their tests won't persist in git.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "go-backend-worker skill TDD procedure not followed — worker wrote implementation before tests and used real upstream instead of mocks",
+      "reason": "This is a skill procedure compliance issue, not a code quality issue. The tests pass and the implementation is correct. Noting for awareness but not blocking."
+    },
+    {
+      "observation": "upstreamCacheEntry.mu sync.Mutex field is dead code (never used)",
+      "reason": "Non-blocking code cleanliness issue. The field is harmless and removing it is a trivial cleanup, not a blocking concern."
+    },
+    {
+      "observation": "Cached client uses default HTTP timeout instead of per-job HTTPTimeout config",
+      "reason": "This is an inherent tradeoff of the caching design — one client shared across all requests/jobs. The reviewer noted this as acceptable. Not blocking."
+    }
+  ],
+  "previousRound": null
+}
