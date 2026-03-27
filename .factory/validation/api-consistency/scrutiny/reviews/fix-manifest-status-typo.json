@@ -1,0 +1,63 @@
+{
+  "featureId": "fix-manifest-status-typo",
+  "reviewedAt": "2026-03-27T18:10:00Z",
+  "commitId": "d5e839b",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix correctly updates all status field values from 'cancelled' to 'canceled' across the three documentation files specified in the feature description (openclaw-manifest.json, api-reference.md, websocket-events.md). The event type name 'job.cancelled' was correctly preserved. The changes are minimal, focused, and consistent with the codebase's `const statusCanceled = \"canceled\"` in server.go.",
+    "issues": [
+      {
+        "file": "docs/openclaw-manifest.json",
+        "line": 777,
+        "severity": "non_blocking",
+        "description": "The JOB_CANNOT_CANCEL error description still says 'completed/failed/cancelled' (double L) in a prose description string. While this is inside a human-readable description field rather than a status enum value, it could cause confusion. The feature description explicitly scoped changes to status enum values and status field values, so this is arguably out of scope — but worth noting for a follow-up consistency pass."
+      },
+      {
+        "file": "docs/system-architecture.md",
+        "line": 223,
+        "severity": "non_blocking",
+        "description": "Mermaid diagram uses 'cancelled' in state transition labels (lines 223, 387, 392, 398, 422). Not in scope for this feature but noted for future consistency."
+      },
+      {
+        "file": "docs/error-codes.md",
+        "line": 77,
+        "severity": "non_blocking",
+        "description": "JOB_CANNOT_CANCEL error description says 'completed/failed/cancelled' (double L). Same issue as manifest line 777 — prose description inconsistency."
+      },
+      {
+        "file": "docs/validation-report.md",
+        "line": 46,
+        "severity": "non_blocking",
+        "description": "Validation report still references 'cancelled' (double L) in the status values row. This is a validation artifact and may need updating to reflect the corrected spelling."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The codebase uses American English 'canceled' (single L) for status values in Go code (server.go line 28: `const statusCanceled = \"canceled\"`), but several documentation files outside the scope of this feature still use 'cancelled' (double L) in prose descriptions, state machine diagrams, and error descriptions. There is no documented convention in AGENTS.md about which spelling to use for status values vs. event names vs. prose.",
+      "evidence": "docs/system-architecture.md lines 223, 387, 392, 398; docs/error-codes.md line 77; docs/openclaw-manifest.json line 777; docs/validation-report.md line 46"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "assertionCoverage": {
+    "VAL-MAN-001": {
+      "description": "Manifest status enum matches code",
+      "status": "covered",
+      "evidence": "docs/openclaw-manifest.json line 355 now has '\"canceled\"' in the status enum array, matching server.go `const statusCanceled = \"canceled\"`"
+    },
+    "VAL-MAN-002": {
+      "description": "API responses use 'canceled'",
+      "status": "covered",
+      "evidence": "docs/api-reference.md lines 160, 205, 213, 218 all updated to use 'canceled'. The actual server code (server.go lines 237, 566, 571) already used statusCanceled constant correctly."
+    },
+    "VAL-MAN-003": {
+      "description": "WebSocket events use 'canceled'",
+      "status": "covered",
+      "evidence": "docs/websocket-events.md line 186 updated status value to '\"canceled\"'. docs/openclaw-manifest.json line 674 WebSocket event status value also updated. Event type name 'job.cancelled' correctly preserved. Server code (server.go lines 634, 638, 667-669, 675) already used statusCanceled constant."
+    }
+  },
+  "summary": "PASS. The fix correctly updates all status field values from 'cancelled' to 'canceled' in the three documentation files specified in the feature description. The event type name 'job.cancelled' was properly preserved as-is. All three assertions (VAL-MAN-001, VAL-MAN-002, VAL-MAN-003) are addressed. Four non-blocking issues noted: several other doc files (system-architecture.md, error-codes.md, validation-report.md, and a prose description line in openclaw-manifest.json itself) still use 'cancelled' in prose/diagram contexts. These are outside the scope of this feature but should be addressed in a follow-up consistency pass."
+}

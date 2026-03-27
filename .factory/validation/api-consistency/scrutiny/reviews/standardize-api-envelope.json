@@ -1,0 +1,50 @@
+{
+  "featureId": "standardize-api-envelope",
+  "reviewedAt": "2026-03-27T18:30:00Z",
+  "commitId": "76daaf1",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation correctly standardizes all API success and error responses to use the {success, data, error, meta} envelope pattern. The respondWithEnvelope helper was added, respondWithSuccess and respondWithError were updated to include meta, all 8 handlers were updated (health, courses, lectures, createJob, listJobs, getJob, deleteJob/cancelJob, login), and auth middleware errors now include meta. CLI --json mode is completely separate and unaffected. All tests pass.",
+    "issues": [
+      {
+        "file": "internal/server/auth.go",
+        "line": 153,
+        "severity": "non_blocking",
+        "description": "respondWithSuccess does not call w.WriteHeader() explicitly, relying on implicit 200 from json.Encoder.Encode. While this works correctly for 200 responses, it's inconsistent with respondWithEnvelope and respondWithError which both call w.WriteHeader() explicitly. If respondWithSuccess were ever used for non-200 status codes, this would be a bug. Currently only used for login (200) and cancelJob (200), so functionally correct."
+      },
+      {
+        "file": "internal/server/server.go",
+        "line": 1092,
+        "severity": "non_blocking",
+        "description": "writeJSON function is now dead code — no handlers call it anymore. It could be removed in a cleanup pass. Not blocking since it's unused and doesn't affect behavior."
+      },
+      {
+        "file": "internal/server/auth_test.go",
+        "line": 1,
+        "severity": "non_blocking",
+        "description": "Test files (auth_test.go, server_coverage_test.go) are excluded by *_test.gitignore pattern at line 65 and are not tracked by git. This is a pre-existing issue noted by the worker. Tests exist on disk and pass, but won't be version-controlled. This is not caused by this feature but should be tracked for cleanup."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The mission AGENTS.md lists the old signatures for response helpers: 'respondWithError(w, status, \"CODE\", \"message\")' and 'respondWithSuccess(w, data)'. These have changed to include command and hint parameters. The AGENTS.md should be updated to reflect the new signatures: respondWithError(w, status, code, message, command, hint, ...details) and respondWithSuccess(w, command, data).",
+      "evidence": "Mission AGENTS.md lines under 'Response Helpers (server/auth.go)' section still show old signatures"
+    },
+    {
+      "area": "conventions",
+      "observation": "The .factory/library/architecture.md Response Helpers section lists the old signatures and describes writeJSON as 'being replaced by envelope'. Now that the envelope replacement is done, this should be updated to reflect the new helpers and note that writeJSON is dead code.",
+      "evidence": ".factory/library/architecture.md Response Helpers section shows 'respondWithSuccess(w, data)' without command param and mentions writeJSON as 'being replaced'"
+    },
+    {
+      "area": "knowledge",
+      "observation": "The .gitignore has a blanket *_test.go exclusion pattern at line 65 that prevents test files from being committed. The worker discovered this and noted it as a non-blocking issue. This affects all test files and means test changes aren't version-controlled.",
+      "evidence": ".gitignore line 65: *_test.go pattern excludes auth_test.go, server_coverage_test.go and all other test files"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS. The feature correctly implements the standardized API envelope pattern across all 8 API handlers and auth middleware. All success responses now return {success: true, data, meta: {command, mode: 'api'}}, and all error responses return {success: false, error, meta: {command, mode: 'api'}}. The respondWithEnvelope helper is properly defined and used for 6 handlers (health, courses, lectures, createJob, listJobs, getJob), while respondWithSuccess is used for login and cancelJob success responses. respondWithError was updated with command and hint parameters across all 19 error call sites. All server tests pass and were updated to verify the new envelope shape. CLI --json mode uses a completely separate jsonEnvelope struct in cli.go and is unaffected. Minor observations: writeJSON is now dead code, respondWithSuccess doesn't explicitly call WriteHeader (functionally fine for 200), and test files are excluded by .gitignore (pre-existing). All 16 VAL-ENV assertions are addressed."
+}

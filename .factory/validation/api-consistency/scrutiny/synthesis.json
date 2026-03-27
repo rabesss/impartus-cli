@@ -1,0 +1,103 @@
+{
+  "milestone": "api-consistency",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "build": {
+      "passed": true,
+      "command": "go build ./...",
+      "exitCode": 0,
+      "observation": "Clean build with zero errors"
+    },
+    "vet": {
+      "passed": true,
+      "command": "go vet ./...",
+      "exitCode": 0,
+      "observation": "No issues found"
+    },
+    "test": {
+      "passed": true,
+      "command": "go test ./... -v -cover -parallel 3",
+      "exitCode": 0,
+      "observation": "All tests pass across all packages. Coverage: server 52.5%, config 66.7%, downloader 43.9%, cli 32.0%, client 31.7%"
+    },
+    "lint": {
+      "passed": false,
+      "command": "make lint (golangci-lint run --timeout 5m)",
+      "exitCode": 2,
+      "observation": "golangci-lint 1.64.5 (built with Go 1.24) fails on Go 1.26 codebase due to toolchain version mismatch. Errors are false positives: 'missing type in composite literal' in test files, 'undefined: sentry' in sentryhook (CGO-related), and dependency typecheck failures from Go 1.24/1.26 incompatibility. This is a PRE-EXISTING infrastructure issue, not introduced by any milestone feature. go vet passes cleanly."
+    }
+  },
+  "reviewsSummary": {
+    "total": 4,
+    "passed": 4,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "nonBlockingIssues": [
+    {
+      "featureId": "standardize-api-envelope",
+      "severity": "non_blocking",
+      "description": "writeJSON function in server.go is now dead code — no handlers call it after envelope standardization"
+    },
+    {
+      "featureId": "standardize-api-envelope",
+      "severity": "non_blocking",
+      "description": "respondWithSuccess does not explicitly call w.WriteHeader() (relies on implicit 200 from json.Encoder.Encode). Functionally correct but inconsistent with other helpers."
+    },
+    {
+      "featureId": "add-error-retry-hints",
+      "severity": "non_blocking",
+      "description": "When both hint and details are provided to respondWithError, only hint is used — details silently ignored"
+    },
+    {
+      "featureId": "fix-manifest-status-typo",
+      "severity": "non_blocking",
+      "description": "Several doc files still use 'cancelled' (double L) in prose/diagram contexts: system-architecture.md, error-codes.md, validation-report.md, openclaw-manifest.json line 777"
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "file": ".factory/library/architecture.md",
+      "description": "Updated Response Helpers section to reflect new envelope signatures: respondWithEnvelope, respondWithSuccess(w, command, data), respondWithError(w, status, code, msg, command, hint, details). Documented writeJSON as dead code. Added Error Retry Hints section documenting hardcoded retryAfter values and retryable behavior. Added Status Spelling Convention section.",
+      "sourceFeature": "standardize-api-envelope, add-error-retry-hints, fix-manifest-status-typo"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Update the 'Making Changes > Adding a New API Endpoint' section to reflect the new response helper signatures. The example shows old respondWithError(w, status, \"CODE\", \"message\") pattern but should now show respondWithError(w, status, \"CODE\", \"message\", \"command\", nil) and respondWithEnvelope(w, status, \"command\", data). Also update the JSON Envelope Pattern section to note the API envelope uses respondWithEnvelope/respondWithSuccess/respondWithError helpers.",
+      "evidence": "Three of four reviewers flagged that AGENTS.md examples show outdated signatures. The standardize-api-envelope and add-error-retry-hints features both changed the API surface.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add a boundary or convention note about test file handling. The .gitignore contains a *_test.go pattern that prevents test files from being committed. Workers create tests that pass locally but aren't version-controlled. The orchestrator should decide whether to: (a) remove the gitignore pattern, (b) use 'go test -c' artifacts instead, or (c) document this as expected behavior.",
+      "evidence": "Multiple reviewers (standardize-api-envelope, add-error-retry-hints) noted that new test files are excluded by .gitignore line 65 (*_test.go pattern). This affects test persistence and version control.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add a note about 'canceled' vs 'cancelled' spelling convention: status values always use 'canceled' (single L), but WebSocket event type names keep 'job.cancelled' (double L). Future doc updates should follow this convention.",
+      "evidence": "fix-manifest-status-typo reviewer noted 4 other doc files still using 'cancelled' in prose. A convention entry would prevent future confusion.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "respondWithSuccess doesn't call WriteHeader explicitly",
+      "reason": "Not actionable — functionally correct for 200 responses. Would require a code change which is beyond scrutiny scope."
+    },
+    {
+      "observation": "retryHint struct is unexported",
+      "reason": "Not actionable — correct encapsulation for internal-only type."
+    },
+    {
+      "observation": "golangci-lint fails with toolchain version mismatch",
+      "reason": "Pre-existing infrastructure issue. golangci-lint 1.64.5 built with Go 1.24 cannot typecheck Go 1.26 code. Not caused by any milestone feature. Requires golangci-lint upgrade to resolve."
+    }
+  ],
+  "previousRound": null
+}

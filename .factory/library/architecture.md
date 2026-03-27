@@ -34,9 +34,13 @@ Impartus CLI is a Go application for downloading video lectures from the Impartu
 4. Response returned via envelope helpers
 
 ### Response Helpers (auth.go)
-- `respondWithSuccess(w, data)` → `{success: true, data: {...}}`
-- `respondWithError(w, status, code, msg, ...details)` → `{success: false, error: {code, message, details}}`
-- `writeJSON(w, status, payload)` → raw JSON (being replaced by envelope in this mission)
+All API responses use the `{success, data, error, meta}` envelope pattern.
+- `respondWithEnvelope(w, status, command, data)` → `{success: true, data: {...}, meta: {command, mode: "api"}}`
+- `respondWithSuccess(w, command, data)` → `{success: true, data: {...}, meta: {command, mode: "api"}}` (used for login 200, cancelJob 200)
+- `respondWithError(w, status, code, msg, command, hint *retryHint, details ...any)` → `{success: false, error: {code, message, details: {...}}, meta: {command, mode: "api"}}`
+  - `retryHint` is an optional `*retryHint{Retryable: bool, RetryAfter: int}` for upstream errors
+  - When `hint` is provided, `details` is ignored (hint wins)
+- `writeJSON(w, status, payload)` → raw JSON (**dead code** — no handlers use it after envelope standardization)
 
 ### Job Lifecycle
 1. POST /jobs creates job in memory (JobStore)
@@ -53,6 +57,18 @@ type jsonEnvelope struct {
     Meta    jsonMeta `json:"meta"`
 }
 ```
+
+### Error Retry Hints
+- 502 upstream errors (LOGIN_FAILED, COURSES_FETCH_FAILED, LECTURES_FETCH_FAILED) → `retryable: true, retryAfter: 30` (hardcoded)
+- 500 CANCEL_FAILED → `retryable: true, retryAfter: 10` (hardcoded)
+- All 4xx errors → no retryable field (nil hint; absence = not retryable)
+- `retryAfter` values are not configurable — code change required to adjust
+
+### Status Spelling Convention
+- Go code uses American English: `const statusCanceled = "canceled"` (single L)
+- Documentation status values use "canceled" (single L)
+- WebSocket event *type names* use "job.cancelled" (double L) — these are event identifiers, not status values
+- Some doc prose/diagrams still use "cancelled" — follow-up cleanup needed
 
 ## Key Invariants
 - API auth tokens are crypto/rand 32-byte, base64url encoded, 24h expiry
