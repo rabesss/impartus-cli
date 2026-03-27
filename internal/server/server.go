@@ -416,8 +416,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 func (s *APIServer) healthHandler(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+	respondWithEnvelope(w, http.StatusOK, "health", map[string]any{"status": "ok"})
 }
 
 func (s *APIServer) coursesHandler(w http.ResponseWriter, r *http.Request) {
@@ -425,18 +424,17 @@ func (s *APIServer) coursesHandler(w http.ResponseWriter, r *http.Request) {
 	apiClient := client.New(nil, nil)
 
 	if err := apiClient.LoginAndSetToken(r.Context(), cfg); err != nil {
-		respondWithError(w, http.StatusBadGateway, "LOGIN_FAILED", err.Error())
+		respondWithError(w, http.StatusBadGateway, "LOGIN_FAILED", err.Error(), "courses")
 		return
 	}
 
 	courses, err := apiClient.GetCourses(r.Context(), cfg)
 	if err != nil {
-		respondWithError(w, http.StatusBadGateway, "COURSES_FETCH_FAILED", err.Error())
+		respondWithError(w, http.StatusBadGateway, "COURSES_FETCH_FAILED", err.Error(), "courses")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, http.StatusOK, courses)
+	respondWithEnvelope(w, http.StatusOK, "courses", courses)
 }
 
 func (s *APIServer) lecturesHandler(w http.ResponseWriter, r *http.Request) {
@@ -450,18 +448,18 @@ func (s *APIServer) lecturesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if subjectID == "" || sessionID == "" {
-		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "subject_id and session_id query parameters required")
+		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "subject_id and session_id query parameters required", "lectures")
 		return
 	}
 
 	subjectInt, err := strconv.Atoi(subjectID)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "subjectId must be a valid integer")
+		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "subjectId must be a valid integer", "lectures")
 		return
 	}
 	sessionInt, err := strconv.Atoi(sessionID)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "sessionId must be a valid integer")
+		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "sessionId must be a valid integer", "lectures")
 		return
 	}
 
@@ -469,49 +467,48 @@ func (s *APIServer) lecturesHandler(w http.ResponseWriter, r *http.Request) {
 	apiClient := client.New(nil, nil)
 	loginErr := apiClient.LoginAndSetToken(r.Context(), cfg)
 	if loginErr != nil {
-		respondWithError(w, http.StatusBadGateway, "LOGIN_FAILED", loginErr.Error())
+		respondWithError(w, http.StatusBadGateway, "LOGIN_FAILED", loginErr.Error(), "lectures")
 		return
 	}
 
 	lectures, err := apiClient.GetLectures(r.Context(), cfg, client.Course{SubjectID: subjectInt, SessionID: sessionInt})
 	if err != nil {
-		respondWithError(w, http.StatusBadGateway, "LECTURES_FETCH_FAILED", err.Error())
+		respondWithError(w, http.StatusBadGateway, "LECTURES_FETCH_FAILED", err.Error(), "lectures")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, http.StatusOK, lectures)
+	respondWithEnvelope(w, http.StatusOK, "lectures", lectures)
 }
 
 func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 	var req createJobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
+		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body", "createJob")
 		return
 	}
 
 	if req.SubjectID <= 0 {
-		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "subjectId is required and must be greater than 0")
+		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "subjectId is required and must be greater than 0", "createJob")
 		return
 	}
 	if req.SessionID <= 0 {
-		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "sessionId is required and must be greater than 0")
+		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "sessionId is required and must be greater than 0", "createJob")
 		return
 	}
 	// API uses 1-based indexing to match CLI semantics (--start/--end are 1-based)
 	// Validate 1-based input, store 1-based in Job, convert to 0-based for execution
 	if req.StartIndex < 1 {
-		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "startIndex must be 1 or greater (1-based, matching CLI --start)")
+		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "startIndex must be 1 or greater (1-based, matching CLI --start)", "createJob")
 		return
 	}
 	if req.EndIndex < req.StartIndex {
-		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "endIndex must be greater than or equal to startIndex")
+		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "endIndex must be greater than or equal to startIndex", "createJob")
 		return
 	}
 
 	mergedCfg, err := mergeConfigWithJobOptions(s.cfg, req.effectiveJobConfig())
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "INVALID_JOB_CONFIG", err.Error())
+		respondWithError(w, http.StatusBadRequest, "INVALID_JOB_CONFIG", err.Error(), "createJob")
 		return
 	}
 
@@ -519,51 +516,47 @@ func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 	job := s.jobStore.CreateJob(req.SubjectID, req.SessionID, req.StartIndex, req.EndIndex, mergedCfg)
 	go s.executeJob(job.ID)
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	writeJSON(w, http.StatusCreated, job)
+	respondWithEnvelope(w, http.StatusCreated, "createJob", job)
 }
 
 func (s *APIServer) listJobsHandler(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, http.StatusOK, s.jobStore.ListJobs())
+	respondWithEnvelope(w, http.StatusOK, "listJobs", s.jobStore.ListJobs())
 }
 
 func (s *APIServer) getJobHandler(w http.ResponseWriter, r *http.Request) {
 	jobID := mux.Vars(r)["id"]
 	if jobID == "" {
-		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "Job ID is required")
+		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "Job ID is required", "getJob")
 		return
 	}
 
 	job, ok := s.jobStore.GetJob(jobID)
 	if !ok {
-		respondWithError(w, http.StatusNotFound, "JOB_NOT_FOUND", "Job not found")
+		respondWithError(w, http.StatusNotFound, "JOB_NOT_FOUND", "Job not found", "getJob")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, http.StatusOK, job)
+	respondWithEnvelope(w, http.StatusOK, "getJob", job)
 }
 
 func (s *APIServer) deleteJobHandler(w http.ResponseWriter, r *http.Request) {
 	jobID := mux.Vars(r)["id"]
 	if jobID == "" {
-		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "Job ID is required")
+		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "Job ID is required", "cancelJob")
 		return
 	}
 
 	job, err := s.jobStore.CancelJob(jobID)
 	if err != nil {
 		if err.Error() == "not_found" {
-			respondWithError(w, http.StatusNotFound, "JOB_NOT_FOUND", "Job not found")
+			respondWithError(w, http.StatusNotFound, "JOB_NOT_FOUND", "Job not found", "cancelJob")
 			return
 		}
 		if strings.HasPrefix(err.Error(), "terminal:") {
-			respondWithError(w, http.StatusBadRequest, "JOB_CANNOT_CANCEL", "Cannot cancel job in terminal state", map[string]string{"status": strings.TrimPrefix(err.Error(), "terminal:")})
+			respondWithError(w, http.StatusBadRequest, "JOB_CANNOT_CANCEL", "Cannot cancel job in terminal state", "cancelJob", map[string]string{"status": strings.TrimPrefix(err.Error(), "terminal:")})
 			return
 		}
-		respondWithError(w, http.StatusInternalServerError, "CANCEL_FAILED", err.Error())
+		respondWithError(w, http.StatusInternalServerError, "CANCEL_FAILED", err.Error(), "cancelJob")
 		return
 	}
 
@@ -575,7 +568,7 @@ func (s *APIServer) deleteJobHandler(w http.ResponseWriter, r *http.Request) {
 		"timestamp": time.Now().Unix(),
 	})
 
-	respondWithSuccess(w, map[string]any{"id": jobID, "status": statusCanceled})
+	respondWithSuccess(w, "cancelJob", map[string]any{"id": jobID, "status": statusCanceled})
 }
 
 func (s *APIServer) websocketHandler(w http.ResponseWriter, r *http.Request) {
