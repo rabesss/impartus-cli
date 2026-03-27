@@ -553,7 +553,6 @@ func runInteractive() error {
 	selected := append(client.Lectures(nil), reversed[start-1:end]...)
 
 	// Track filtering counts for error message
-	totalBeforeFilter := len(selected)
 	emptyFiltered := 0
 	noaudioFiltered := 0
 
