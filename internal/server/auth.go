@@ -84,7 +84,31 @@ func GenerateToken() (string, error) {
 	return base64.URLEncoding.EncodeToString(b), nil
 }
 
-func respondWithError(w http.ResponseWriter, status int, code, message string, details ...any) {
+// responseMeta represents the meta field in API responses
+type responseMeta struct {
+	Command string `json:"command"`
+	Mode    string `json:"mode"`
+}
+
+func respondWithEnvelope(w http.ResponseWriter, status int, command string, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+
+	envelope := map[string]any{
+		"success": true,
+		"data":    data,
+		"meta": responseMeta{
+			Command: command,
+			Mode:    "api",
+		},
+	}
+
+	if err := json.NewEncoder(w).Encode(envelope); err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+	}
+}
+
+func respondWithError(w http.ResponseWriter, status int, code, message, command string, details ...any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
@@ -93,6 +117,10 @@ func respondWithError(w http.ResponseWriter, status int, code, message string, d
 		"error": map[string]any{
 			"code":    code,
 			"message": message,
+		},
+		"meta": responseMeta{
+			Command: command,
+			Mode:    "api",
 		},
 	}
 
@@ -108,11 +136,15 @@ func respondWithError(w http.ResponseWriter, status int, code, message string, d
 	}
 }
 
-func respondWithSuccess(w http.ResponseWriter, data map[string]any) {
+func respondWithSuccess(w http.ResponseWriter, command string, data map[string]any) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
 		"data":    data,
+		"meta": responseMeta{
+			Command: command,
+			Mode:    "api",
+		},
 	}); err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 	}
@@ -131,18 +163,18 @@ func (s *APIServer) loginHandler(w http.ResponseWriter, r *http.Request) {
 
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
+		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body", "login")
 		return
 	}
 
 	if s.cfg == nil || s.cfg.Username != req.Username || s.cfg.Password != req.Password {
-		respondWithError(w, http.StatusUnauthorized, "AUTH_FAILED", "Invalid username or password")
+		respondWithError(w, http.StatusUnauthorized, "AUTH_FAILED", "Invalid username or password", "login")
 		return
 	}
 
 	token, err := GenerateToken()
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "TOKEN_GENERATION_FAILED", "Failed to generate token")
+		respondWithError(w, http.StatusInternalServerError, "TOKEN_GENERATION_FAILED", "Failed to generate token", "login")
 		return
 	}
 
@@ -153,7 +185,7 @@ func (s *APIServer) loginHandler(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: time.Now(),
 	})
 
-	respondWithSuccess(w, map[string]any{
+	respondWithSuccess(w, "login", map[string]any{
 		"token":   token,
 		"expires": expires,
 	})
@@ -168,18 +200,18 @@ func (s *APIServer) authMiddleware(next http.Handler) http.Handler {
 
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
-			respondWithError(w, http.StatusUnauthorized, "MISSING_TOKEN", "Authorization header required")
+			respondWithError(w, http.StatusUnauthorized, "MISSING_TOKEN", "Authorization header required", "auth")
 			return
 		}
 
 		if !strings.HasPrefix(authHeader, "Bearer ") {
-			respondWithError(w, http.StatusUnauthorized, "INVALID_TOKEN_FORMAT", "Expected 'Bearer <token>'")
+			respondWithError(w, http.StatusUnauthorized, "INVALID_TOKEN_FORMAT", "Expected 'Bearer <token>'", "auth")
 			return
 		}
 
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 		if !s.tokenStore.IsValid(token) {
-			respondWithError(w, http.StatusUnauthorized, "INVALID_TOKEN", "Token is invalid or expired")
+			respondWithError(w, http.StatusUnauthorized, "INVALID_TOKEN", "Token is invalid or expired", "auth")
 			return
 		}
 
