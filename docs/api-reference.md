@@ -157,7 +157,7 @@ Returns lectures as a JSON array.
 ```
 
 Notes:
-- `status`: `pending | running | completed | failed | cancelled`
+- `status`: `pending | running | completed | failed | canceled`
 - `progress`: float percentage (0-100)
 - `totalLectures`, `completedLectures`, `outputs`, `error` are populated as work advances
 
@@ -202,7 +202,7 @@ Success (`201`): returns created `Job` object directly.
 
 `DELETE /jobs/{id}`
 
-Cancels a non-terminal job (`pending`/`running`), marks it `cancelled`, and stops execution.
+Cancels a non-terminal job (`pending`/`running`), marks it `canceled`, and stops execution.
 
 Success (`200`):
 ```json
@@ -210,12 +210,12 @@ Success (`200`):
   "success": true,
   "data": {
     "id": "job-1739366400000000000",
-    "status": "cancelled"
+    "status": "canceled"
   }
 }
 ```
 
-Terminal jobs (`completed`/`failed`/`cancelled`) return `400` with code `JOB_CANNOT_CANCEL`.
+Terminal jobs (`completed`/`failed`/`canceled`) return `400` with code `JOB_CANNOT_CANCEL`.
 
 ## WebSocket
 

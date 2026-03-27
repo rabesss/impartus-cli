@@ -352,7 +352,7 @@
               "running",
               "completed",
               "failed",
-              "cancelled"
+              "canceled"
             ]
           },
           "progress": {
@@ -497,7 +497,7 @@
               },
               "status": {
                 "type": "string",
-                "value": "cancelled"
+                "value": "canceled"
               }
             }
           }
@@ -671,7 +671,7 @@
           },
           "status": {
             "type": "string",
-            "value": "cancelled"
+            "value": "canceled"
           },
           "progress": {
             "type": "number",
