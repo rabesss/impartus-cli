@@ -1,0 +1,115 @@
+{
+  "groupId": "manifest-consistency",
+  "testedAt": "2026-03-27T23:45:00Z",
+  "isolation": {
+    "workingDirectory": "/home/ravish/Desktop/clawds-code-crib/impartus-go/impartus",
+    "sharedState": "none - file content checks only",
+    "serverStartupNeeded": false
+  },
+  "toolsUsed": ["grep", "go-test"],
+  "assertions": [
+    {
+      "id": "VAL-MAN-001",
+      "title": "Manifest status enum matches code",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Grep server.go for statusCanceled constant definition",
+          "expected": "const statusCanceled = \"canceled\" found at line 28",
+          "observed": "const statusCanceled = \"canceled\" at line 28 in internal/server/server.go"
+        },
+        {
+          "action": "Grep openclaw-manifest.json for status enum values",
+          "expected": "\"canceled\" in status enum, no \"cancelled\"",
+          "observed": "Line 355: \"canceled\" in the job status enum array. No instances of \"cancelled\" in status value fields. (\"cancelled\" appears only in event type name \"job.cancelled\" and description text, which is acceptable per spec.)"
+        },
+        {
+          "action": "Verify manifest has no \"cancelled\" as a status value",
+          "expected": "No \"cancelled\" in status value fields",
+          "observed": "All status values use \"canceled\" (single L): line 355 (enum), line 500 (cancel_job response), line 674 (WebSocket event status). The word \"cancelled\" only appears in event type names (\"job.cancelled\") and description text."
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A (file content checks)",
+        "files": [
+          "api-consistency/manifest-consistency/server-go-canceled-grep.txt",
+          "api-consistency/manifest-consistency/manifest-cancel-grep.txt"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-MAN-002",
+      "title": "API responses use \"canceled\"",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Check server.go cancel handler response",
+          "expected": "respondWithSuccess passes statusCanceled constant",
+          "observed": "Line 571: respondWithSuccess(w, \"cancelJob\", map[string]any{\"id\": jobID, \"status\": statusCanceled}) where statusCanceled = \"canceled\""
+        },
+        {
+          "action": "Run go test for TestDeleteJobHandlerCancel",
+          "expected": "Test passes, verifying canceled.Status == \"canceled\"",
+          "observed": "Test PASS (0.00s). Test at line 624 of server_coverage_test.go verifies: if canceled.Status != statusCanceled { t.Errorf(...) }"
+        },
+        {
+          "action": "Check job store cancel logic",
+          "expected": "Job status set to statusCanceled",
+          "observed": "Line 237: job.Status = statusCanceled. Line 233 checks terminal states including statusCanceled."
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "files": [
+          "api-consistency/manifest-consistency/test-cancel-output.txt"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-MAN-003",
+      "title": "WebSocket events use \"canceled\"",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Check server.go cancel handler WebSocket broadcast",
+          "expected": "broadcastEvent uses statusCanceled for status field",
+          "observed": "Lines 563-569: broadcastEvent(s.wsHub, map[string]any{\"type\": \"job.cancelled\", \"jobId\": jobID, \"status\": statusCanceled, ...}) where statusCanceled = \"canceled\""
+        },
+        {
+          "action": "Check broadcastJobUpdate in progress tracking (updateRunningProgress)",
+          "expected": "Cancelled jobs broadcast status \"canceled\"",
+          "observed": "Lines 635-641: broadcastEvent with \"status\": statusCanceled when job is cancelled during progress updates"
+        },
+        {
+          "action": "Check broadcastJobUpdate in error path",
+          "expected": "Error-path cancellation broadcasts status \"canceled\"",
+          "observed": "Lines 672-677: broadcastEvent with \"status\": statusCanceled in the error cancellation path"
+        },
+        {
+          "action": "Check manifest.json WebSocket events section",
+          "expected": "Manifest shows status value \"canceled\" for job.cancelled event",
+          "observed": "Line 674 in manifest: \"value\": \"canceled\" for the status field of job.cancelled event. Event type name \"job.cancelled\" (double L) is acceptable — it's the event name, not the status value."
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "files": [
+          "api-consistency/manifest-consistency/server-go-canceled-grep.txt",
+          "api-consistency/manifest-consistency/manifest-cancel-grep.txt"
+        ]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 3 assertions: all 3 passed. The manifest status enum uses \"canceled\" (single L) matching the code constant statusCanceled = \"canceled\". API responses use the statusCanceled constant for all cancel-related operations. WebSocket events broadcast status: \"canceled\" (single L) while the event type name remains \"job.cancelled\" (double L) as expected per spec."
+}

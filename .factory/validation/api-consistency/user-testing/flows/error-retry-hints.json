@@ -1,0 +1,166 @@
+{
+  "groupId": "error-retry-hints",
+  "testedAt": "2026-03-27T12:00:00Z",
+  "isolation": {
+    "workingDirectory": "/home/ravish/Desktop/clawds-code-crib/impartus-go/impartus",
+    "testMethod": "go-test (httptest.NewRecorder)",
+    "sharedState": false
+  },
+  "toolsUsed": ["go-test"],
+  "assertions": [
+    {
+      "id": "VAL-ERR-001",
+      "title": "LOGIN_FAILED has retryable hint",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Reviewed server.go coursesHandler (line ~427) and lecturesHandler (line ~470)",
+          "expected": "Both handlers pass &retryHint{Retryable: true, RetryAfter: 30} for LOGIN_FAILED",
+          "observed": "Confirmed: coursesHandler passes &retryHint{Retryable: true, RetryAfter: 30} on LoginAndSetToken failure; lecturesHandler passes same hint on loginErr"
+        },
+        {
+          "action": "Ran TestRespondWithErrorRetryHintForUpstreamErrors/LOGIN_FAILED_is_retryable",
+          "expected": "Test passes, response contains details.retryable=true and details.retryAfter=30",
+          "observed": "Test PASS - response has details.retryable=true, details.retryAfter=30"
+        }
+      ],
+      "evidence": {
+        "testOutput": "api-consistency/error-retry-hints/test-output.txt",
+        "codeLocations": [
+          "internal/server/server.go: coursesHandler - respondWithError(..., &retryHint{Retryable: true, RetryAfter: 30})",
+          "internal/server/server.go: lecturesHandler - respondWithError(..., &retryHint{Retryable: true, RetryAfter: 30})"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ERR-002",
+      "title": "COURSES_FETCH_FAILED has retryable hint",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Reviewed server.go coursesHandler (line ~433)",
+          "expected": "Handler passes &retryHint{Retryable: true, RetryAfter: 30} for COURSES_FETCH_FAILED",
+          "observed": "Confirmed: coursesHandler passes &retryHint{Retryable: true, RetryAfter: 30} on GetCourses failure"
+        },
+        {
+          "action": "Ran TestRespondWithErrorRetryHintForUpstreamErrors/COURSES_FETCH_FAILED_is_retryable",
+          "expected": "Test passes, response contains details.retryable=true and details.retryAfter=30",
+          "observed": "Test PASS - response has details.retryable=true, details.retryAfter=30"
+        }
+      ],
+      "evidence": {
+        "testOutput": "api-consistency/error-retry-hints/test-output.txt",
+        "codeLocations": [
+          "internal/server/server.go: coursesHandler - respondWithError(..., \"COURSES_FETCH_FAILED\", ..., &retryHint{Retryable: true, RetryAfter: 30})"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ERR-003",
+      "title": "LECTURES_FETCH_FAILED has retryable hint",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Reviewed server.go lecturesHandler (line ~476)",
+          "expected": "Handler passes &retryHint{Retryable: true, RetryAfter: 30} for LECTURES_FETCH_FAILED",
+          "observed": "Confirmed: lecturesHandler passes &retryHint{Retryable: true, RetryAfter: 30} on GetLectures failure"
+        },
+        {
+          "action": "Ran TestRespondWithErrorRetryHintForUpstreamErrors/LECTURES_FETCH_FAILED_is_retryable",
+          "expected": "Test passes, response contains details.retryable=true and details.retryAfter=30",
+          "observed": "Test PASS - response has details.retryable=true, details.retryAfter=30"
+        }
+      ],
+      "evidence": {
+        "testOutput": "api-consistency/error-retry-hints/test-output.txt",
+        "codeLocations": [
+          "internal/server/server.go: lecturesHandler - respondWithError(..., \"LECTURES_FETCH_FAILED\", ..., &retryHint{Retryable: true, RetryAfter: 30})"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ERR-004",
+      "title": "CANCEL_FAILED has retryable hint",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Reviewed server.go deleteJobHandler (line ~559)",
+          "expected": "Handler passes &retryHint{Retryable: true, RetryAfter: 10} for CANCEL_FAILED",
+          "observed": "Confirmed: deleteJobHandler passes &retryHint{Retryable: true, RetryAfter: 10} for the generic error branch (non-not_found, non-terminal)"
+        },
+        {
+          "action": "Ran TestRespondWithErrorRetryHintForUpstreamErrors/CANCEL_FAILED_is_retryable",
+          "expected": "Test passes, response contains details.retryable=true and details.retryAfter=10",
+          "observed": "Test PASS - response has details.retryable=true, details.retryAfter=10"
+        }
+      ],
+      "evidence": {
+        "testOutput": "api-consistency/error-retry-hints/test-output.txt",
+        "codeLocations": [
+          "internal/server/server.go: deleteJobHandler - respondWithError(..., \"CANCEL_FAILED\", ..., &retryHint{Retryable: true, RetryAfter: 10})"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ERR-005",
+      "title": "4xx errors have retryable=false",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Reviewed server.go handler code for 4xx error paths",
+          "expected": "INVALID_REQUEST, MISSING_PARAMETER, INVALID_JOB_CONFIG (400), AUTH_FAILED (401), JOB_NOT_FOUND (404), JOB_CANNOT_CANCEL (400) all pass nil hint",
+          "observed": "Confirmed: All 4xx error calls in server.go pass nil as the hint parameter. Specifically: createJobHandler (INVALID_REQUEST, MISSING_PARAMETER, INVALID_REQUEST, INVALID_REQUEST, INVALID_JOB_CONFIG), getJobHandler (JOB_NOT_FOUND), deleteJobHandler (JOB_CANNOT_CANCEL), loginHandler (AUTH_FAILED)"
+        },
+        {
+          "action": "Reviewed auth.go respondWithError function behavior with nil hint",
+          "expected": "When hint is nil, respondWithError does not add retryable field to error.details",
+          "observed": "Confirmed: respondWithError only adds details when hint != nil. When hint is nil and no extra details are provided, error.details is absent from response"
+        },
+        {
+          "action": "Ran TestRespondWithErrorNoRetryHintForClientErrors",
+          "expected": "All 9 sub-tests pass: INVALID_REQUEST, MISSING_PARAMETER, INVALID_JOB_CONFIG, JOB_CANNOT_CANCEL, AUTH_FAILED, MISSING_TOKEN, INVALID_TOKEN_FORMAT, INVALID_TOKEN, JOB_NOT_FOUND",
+          "observed": "All 9 sub-tests PASS - verified that no retryable field is present in details for any 4xx error with nil hint"
+        }
+      ],
+      "evidence": {
+        "testOutput": "api-consistency/error-retry-hints/test-output.txt",
+        "codeLocations": [
+          "internal/server/server.go: createJobHandler, getJobHandler, deleteJobHandler - all pass nil hint for 4xx",
+          "internal/server/auth.go: respondWithError - conditional hint handling"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ERR-006",
+      "title": "Auth errors have retryable=false",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Reviewed auth.go authMiddleware function",
+          "expected": "MISSING_TOKEN, INVALID_TOKEN_FORMAT, INVALID_TOKEN all pass nil hint to respondWithError",
+          "observed": "Confirmed: authMiddleware calls respondWithError with nil hint for all three auth error cases: MISSING_TOKEN (empty Authorization header), INVALID_TOKEN_FORMAT (no Bearer prefix), INVALID_TOKEN (invalid/expired token)"
+        },
+        {
+          "action": "Ran TestRespondWithErrorNoRetryHintForClientErrors sub-tests for MISSING_TOKEN, INVALID_TOKEN_FORMAT, INVALID_TOKEN",
+          "expected": "All three auth error sub-tests pass with no retryable field in response",
+          "observed": "All three sub-tests PASS - verified no retryable field in details for MISSING_TOKEN, INVALID_TOKEN_FORMAT, INVALID_TOKEN"
+        }
+      ],
+      "evidence": {
+        "testOutput": "api-consistency/error-retry-hints/test-output.txt",
+        "codeLocations": [
+          "internal/server/auth.go: authMiddleware - respondWithError calls with nil hint for MISSING_TOKEN, INVALID_TOKEN_FORMAT, INVALID_TOKEN"
+        ]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 6 assertions: all 6 passed. Upstream errors (LOGIN_FAILED, COURSES_FETCH_FAILED, LECTURES_FETCH_FAILED at 502 with retryAfter=30, CANCEL_FAILED at 500 with retryAfter=10) correctly include retryable=true hints. Client errors (INVALID_REQUEST, MISSING_PARAMETER, INVALID_JOB_CONFIG, JOB_CANNOT_CANCEL, AUTH_FAILED, MISSING_TOKEN, INVALID_TOKEN_FORMAT, INVALID_TOKEN, JOB_NOT_FOUND) correctly omit retry hints (nil hint passed, no retryable field in response). All Go tests pass."
+}
