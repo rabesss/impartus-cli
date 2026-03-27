@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -428,7 +431,150 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 func (s *APIServer) healthHandler(w http.ResponseWriter, _ *http.Request) {
-	respondWithEnvelope(w, http.StatusOK, "health", map[string]any{"status": "ok"})
+	configStatus := s.checkConfigStatus()
+	upstreamStatus := s.checkUpstreamStatus()
+	ffmpegStatus := s.checkFFmpegStatus()
+
+	overallStatus := "ok"
+	if configStatus["status"] != "ok" || upstreamStatus["status"] != "reachable" || ffmpegStatus["status"] != "available" {
+		overallStatus = "degraded"
+	}
+
+	respondWithEnvelope(w, http.StatusOK, "health", map[string]any{
+		"status":    overallStatus,
+		"config":    configStatus,
+		"upstream":  upstreamStatus,
+		"ffmpeg":    ffmpegStatus,
+	})
+}
+
+// checkConfigStatus verifies that required config fields are set
+func (s *APIServer) checkConfigStatus() map[string]any {
+	result := map[string]any{
+		"status": "ok",
+	}
+
+	if s.cfg == nil {
+		result["status"] = "misconfigured"
+		result["username"] = "missing"
+		result["password"] = "missing"
+		result["baseUrl"] = "missing"
+		return result
+	}
+
+	usernameStatus := "ok"
+	if s.cfg.Username == "" {
+		usernameStatus = "missing"
+		result["status"] = "misconfigured"
+	}
+
+	passwordStatus := "ok"
+	if s.cfg.Password == "" {
+		passwordStatus = "missing"
+		result["status"] = "misconfigured"
+	}
+
+	baseUrlStatus := "ok"
+	if s.cfg.BaseUrl == "" {
+		baseUrlStatus = "missing"
+		result["status"] = "misconfigured"
+	}
+
+	result["username"] = usernameStatus
+	result["password"] = passwordStatus
+	result["baseUrl"] = baseUrlStatus
+
+	return result
+}
+
+// checkUpstreamStatus attempts to reach the Impartus upstream server
+// Uses cached token if available, otherwise does a TCP dial check
+func (s *APIServer) checkUpstreamStatus() map[string]any {
+	result := map[string]any{
+		"status": "unreachable",
+	}
+
+	// If we have a cached token and config, try using it
+	s.upstreamCacheMu.RLock()
+	cached := s.upstreamCache
+	s.upstreamCacheMu.RUnlock()
+
+	if cached != nil && cached.token != "" && s.cfg != nil && s.cfg.BaseUrl != "" {
+		// Try a lightweight HTTP request to check reachability
+		// We just check if we can make a connection, not full auth
+		baseURL := s.cfg.BaseUrl
+		if !strings.HasPrefix(baseURL, "http") {
+			baseURL = "https://" + baseURL
+		}
+		url := strings.TrimSuffix(baseURL, "/") + "/user/profile"
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err == nil {
+			req.Header.Set("Authorization", "Bearer "+cached.token)
+			client := &http.Client{Timeout: 5 * time.Second}
+			resp, err := client.Do(req)
+			if err == nil {
+				defer resp.Body.Close()
+				// Any response (even 401/403) means server is reachable
+				// Only network errors mean unreachable
+				result["status"] = "reachable"
+				return result
+			}
+		}
+	}
+
+	// Fallback: try TCP dial to the base URL host
+	if s.cfg != nil && s.cfg.BaseUrl != "" {
+		baseURL := s.cfg.BaseUrl
+		if !strings.HasPrefix(baseURL, "http") {
+			baseURL = "https://" + baseURL
+		}
+
+		u, err := parseURL(baseURL)
+		if err == nil {
+			host := u.Host
+			if strings.Contains(host, ":") == false {
+				if u.Scheme == "https" {
+					host = net.JoinHostPort(host, "443")
+				} else {
+					host = net.JoinHostPort(host, "80")
+				}
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			dialer := &net.Dialer{}
+			conn, err := dialer.DialContext(ctx, "tcp", host)
+			if err == nil {
+				conn.Close()
+				result["status"] = "reachable"
+			}
+		}
+	}
+
+	return result
+}
+
+// checkFFmpegStatus checks if FFmpeg is available in PATH
+func (s *APIServer) checkFFmpegStatus() map[string]any {
+	result := map[string]any{
+		"status": "not_found",
+	}
+
+	if _, err := exec.LookPath("ffmpeg"); err == nil {
+		result["status"] = "available"
+	}
+
+	return result
+}
+
+// parseURL is a simple URL parser that handles host extraction
+func parseURL(rawURL string) (*url.URL, error) {
+	return url.Parse(rawURL)
 }
 
 // getOrRefreshUpstreamClient returns a cached upstream client or creates a new one.
