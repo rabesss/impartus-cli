@@ -279,14 +279,26 @@ func (h *WSHub) Broadcast(msg map[string]any) error {
 	return nil
 }
 
+// upstreamCacheEntry holds a cached upstream client and token info.
+// The token expires field is used to determine when to refresh.
+type upstreamCacheEntry struct {
+	client    *client.Client
+	cfg       *config.Config
+	token     string
+	expiresAt time.Time
+	mu        sync.Mutex // Protects concurrent refresh attempts
+}
+
 type APIServer struct {
-	cfg        *config.Config
-	jobStore   *JobStore
-	wsHub      *WSHub
-	tokenStore *TokenStore
-	upgrader   websocket.Upgrader
-	router     *mux.Router
-	port       string
+	cfg              *config.Config
+	jobStore         *JobStore
+	wsHub            *WSHub
+	tokenStore       *TokenStore
+	upgrader         websocket.Upgrader
+	router           *mux.Router
+	port             string
+	upstreamCache    *upstreamCacheEntry
+	upstreamCacheMu  sync.RWMutex
 }
 
 func NewAPIServer(port string, cfg *config.Config) *APIServer {
@@ -419,11 +431,62 @@ func (s *APIServer) healthHandler(w http.ResponseWriter, _ *http.Request) {
 	respondWithEnvelope(w, http.StatusOK, "health", map[string]any{"status": "ok"})
 }
 
-func (s *APIServer) coursesHandler(w http.ResponseWriter, r *http.Request) {
+// getOrRefreshUpstreamClient returns a cached upstream client or creates a new one.
+// It is thread-safe and handles token expiration by refreshing when needed.
+// Returns the client, cloned config with token set, and any error.
+func (s *APIServer) getOrRefreshUpstreamClient(ctx context.Context) (*client.Client, *config.Config, error) {
+	// Fast path: check if we have a valid cached entry
+	s.upstreamCacheMu.RLock()
+	cached := s.upstreamCache
+	if cached != nil {
+		valid := cached.expiresAt.After(time.Now()) && cached.token != ""
+		if valid {
+			cfg := cloneConfig(s.cfg)
+			cfg.Token = cached.token
+			s.upstreamCacheMu.RUnlock()
+			return cached.client, cfg, nil
+		}
+	}
+	s.upstreamCacheMu.RUnlock()
+
+	// Slow path: need to login and cache - acquire write lock
+	s.upstreamCacheMu.Lock()
+	defer s.upstreamCacheMu.Unlock()
+
+	// Double-check after acquiring write lock (another goroutine might have refreshed)
+	cached = s.upstreamCache
+	if cached != nil {
+		valid := cached.expiresAt.After(time.Now()) && cached.token != ""
+		if valid {
+			cfg := cloneConfig(s.cfg)
+			cfg.Token = cached.token
+			return cached.client, cfg, nil
+		}
+	}
+
+	// No cache or expired - do fresh login
 	cfg := cloneConfig(s.cfg)
 	apiClient := client.New(nil, nil)
+	if err := apiClient.LoginAndSetToken(ctx, cfg); err != nil {
+		return nil, nil, err
+	}
 
-	if err := apiClient.LoginAndSetToken(r.Context(), cfg); err != nil {
+	// Cache the result (token stored in cfg.Token by LoginAndSetToken)
+	newEntry := &upstreamCacheEntry{
+		client:    apiClient,
+		cfg:       cfg,
+		token:     cfg.Token,
+		expiresAt: time.Now().Add(23 * time.Hour), // Token typically valid for 24h
+	}
+
+	s.upstreamCache = newEntry
+
+	return apiClient, cfg, nil
+}
+
+func (s *APIServer) coursesHandler(w http.ResponseWriter, r *http.Request) {
+	apiClient, cfg, err := s.getOrRefreshUpstreamClient(r.Context())
+	if err != nil {
 		respondWithError(w, http.StatusBadGateway, "LOGIN_FAILED", err.Error(), "courses", &retryHint{Retryable: true, RetryAfter: 30})
 		return
 	}
@@ -463,9 +526,7 @@ func (s *APIServer) lecturesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := cloneConfig(s.cfg)
-	apiClient := client.New(nil, nil)
-	loginErr := apiClient.LoginAndSetToken(r.Context(), cfg)
+	apiClient, cfg, loginErr := s.getOrRefreshUpstreamClient(r.Context())
 	if loginErr != nil {
 		respondWithError(w, http.StatusBadGateway, "LOGIN_FAILED", loginErr.Error(), "lectures", &retryHint{Retryable: true, RetryAfter: 30})
 		return
@@ -707,11 +768,10 @@ func (s *APIServer) prepareJobRuntime(ctx context.Context, jobID string, jobCtx 
 		s.failJob(jobID, err.Error())
 		return nil, nil, false
 	}
-	apiClient := client.New(client.NewHTTPClient(parseHTTPTimeout(cfg.HTTPTimeout)), nil)
 	if !s.updateRunningProgress(jobID, 8, "logging_in", nil) {
 		return nil, nil, false
 	}
-	loginErr := apiClient.LoginAndSetToken(ctx, cfg)
+	apiClient, cachedCfg, loginErr := s.getOrRefreshUpstreamClient(ctx)
 	if loginErr != nil {
 		if s.handleCancelIfNeeded(jobID, jobCtx.Err()) {
 			return nil, nil, false
@@ -719,6 +779,8 @@ func (s *APIServer) prepareJobRuntime(ctx context.Context, jobID string, jobCtx 
 		s.failJob(jobID, loginErr.Error())
 		return nil, nil, false
 	}
+	// Use the token from cached config to ensure consistency
+	cfg.Token = cachedCfg.Token
 	return cfg, apiClient, true
 }
 
