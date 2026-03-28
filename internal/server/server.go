@@ -44,10 +44,11 @@ type JobConfigOptions struct {
 }
 
 type createJobRequest struct {
-	SubjectID  int `json:"subjectId"`
-	SessionID  int `json:"sessionId"`
-	StartIndex int `json:"startIndex"`
-	EndIndex   int `json:"endIndex"`
+	SubjectID      int    `json:"subjectId"`
+	SessionID      int    `json:"sessionId"`
+	StartIndex     int    `json:"startIndex"`
+	EndIndex       int    `json:"endIndex"`
+	IdempotencyKey string `json:"idempotencyKey,omitempty"`
 
 	JobConfig *JobConfigOptions `json:"jobConfig,omitempty"`
 
@@ -110,34 +111,55 @@ type JobRuntimeConfig struct {
 }
 
 type Job struct {
-	ID                string           `json:"id"`
-	SubjectID         int              `json:"subjectId"`
-	SessionID         int              `json:"sessionId"`
-	StartIndex        int              `json:"startIndex"`
-	EndIndex          int              `json:"endIndex"`
-	Status            string           `json:"status"`
-	Progress          float64          `json:"progress"`
-	Error             string           `json:"error,omitempty"`
-	TotalLectures     int              `json:"totalLectures,omitempty"`
-	CompletedLectures int              `json:"completedLectures,omitempty"`
-	FilteredLectures  int              `json:"filteredLectures,omitempty"`
-	Outputs           []string         `json:"outputs,omitempty"`
-	Config            JobRuntimeConfig `json:"config"`
-	CreatedAt         time.Time        `json:"createdAt"`
-	UpdatedAt         time.Time        `json:"updatedAt"`
+	ID               string           `json:"id"`
+	SubjectID        int              `json:"subjectId"`
+	SessionID        int              `json:"sessionId"`
+	StartIndex       int              `json:"startIndex"`
+	EndIndex         int              `json:"endIndex"`
+	Status           string           `json:"status"`
+	Progress         float64          `json:"progress"`
+	Error            string           `json:"error,omitempty"`
+	TotalLectures    int              `json:"totalLectures,omitempty"`
+	CompletedLectures int             `json:"completedLectures,omitempty"`
+	FilteredLectures int              `json:"filteredLectures,omitempty"`
+	Outputs          []string         `json:"outputs,omitempty"`
+	Config           JobRuntimeConfig `json:"config"`
+	IdempotencyKey   string           `json:"idempotencyKey,omitempty"`
+	CreatedAt        time.Time        `json:"createdAt"`
+	UpdatedAt        time.Time        `json:"updatedAt"`
 
 	ctx    context.Context    `json:"-"`
 	cancel context.CancelFunc `json:"-"`
 	cfg    *config.Config     `json:"-"`
 }
 
+const maxIdempotencyKeyLength = 256
+
 type JobStore struct {
-	jobs map[string]*Job
-	mu   sync.RWMutex
+	jobs            map[string]*Job
+	idempotencyKeys map[string]string // idempotencyKey -> jobID
+	mu              sync.RWMutex
+	persistence     *jobPersistence
 }
 
+// NewJobStore creates an in-memory job store with no persistence.
 func NewJobStore() *JobStore {
-	return &JobStore{jobs: make(map[string]*Job)}
+	return &JobStore{
+		jobs:            make(map[string]*Job),
+		idempotencyKeys: make(map[string]string),
+	}
+}
+
+// NewJobStoreWithPersistence creates a job store that persists to the given file path.
+// If path is empty, defaults to ".jobs.json". Jobs are loaded from the file on creation.
+func NewJobStoreWithPersistence(path string) *JobStore {
+	js := &JobStore{
+		jobs:            make(map[string]*Job),
+		idempotencyKeys: make(map[string]string),
+		persistence:     newJobPersistence(path),
+	}
+	js.loadFromDisk()
+	return js
 }
 
 func (js *JobStore) CreateJob(subjectID, sessionID, startIndex, endIndex int, cfg *config.Config) *Job {
@@ -163,7 +185,69 @@ func (js *JobStore) CreateJob(subjectID, sessionID, startIndex, endIndex int, cf
 	}
 
 	js.jobs[jobID] = job
+	js.saveToDisk()
 	return job
+}
+
+// CreateJobWithKey creates a new job with an optional idempotency key.
+// If the idempotency key is non-empty and already exists, it returns the
+// existing job instead of creating a new one. This prevents duplicate job
+// creation on network retries. Returns the job and a boolean indicating
+// whether the job was newly created (true) or returned from the idempotency
+// cache (false).
+func (js *JobStore) CreateJobWithKey(subjectID, sessionID, startIndex, endIndex int, cfg *config.Config, idempotencyKey string) (*Job, bool) {
+	js.mu.Lock()
+	defer js.mu.Unlock()
+
+	// Check idempotency key for existing job
+	if idempotencyKey != "" {
+		if existingID, ok := js.idempotencyKeys[idempotencyKey]; ok {
+			if job, ok := js.jobs[existingID]; ok {
+				return job, false
+			}
+		}
+	}
+
+	jobID := fmt.Sprintf("job-%d", time.Now().UnixNano())
+	ctx, cancel := context.WithCancel(context.Background())
+	job := &Job{
+		ID:             jobID,
+		SubjectID:      subjectID,
+		SessionID:      sessionID,
+		StartIndex:     startIndex,
+		EndIndex:       endIndex,
+		Status:         "pending",
+		Progress:       0,
+		Config:         runtimeConfigFrom(cfg),
+		IdempotencyKey: idempotencyKey,
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+		ctx:            ctx,
+		cancel:         cancel,
+		cfg:            cloneConfig(cfg),
+	}
+
+	js.jobs[jobID] = job
+
+	// Register idempotency key mapping
+	if idempotencyKey != "" {
+		js.idempotencyKeys[idempotencyKey] = jobID
+	}
+
+	js.saveToDisk()
+	return job, true
+}
+
+// GetJobByldempotencyKey looks up a job by its idempotency key.
+func (js *JobStore) GetJobByIdempotencyKey(key string) (*Job, bool) {
+	js.mu.RLock()
+	defer js.mu.RUnlock()
+	jobID, ok := js.idempotencyKeys[key]
+	if !ok {
+		return nil, false
+	}
+	job, ok := js.jobs[jobID]
+	return job, ok
 }
 
 func (js *JobStore) GetJob(id string) (*Job, bool) {
@@ -197,6 +281,7 @@ func (js *JobStore) UpdateJob(id, status string, progress float64, errMsg string
 	job.Progress = progress
 	job.Error = errMsg
 	job.UpdatedAt = time.Now()
+	js.saveToDisk()
 }
 
 func (js *JobStore) SetLectureProgress(id string, completed, total int) {
@@ -210,6 +295,7 @@ func (js *JobStore) SetLectureProgress(id string, completed, total int) {
 	job.CompletedLectures = completed
 	job.TotalLectures = total
 	job.UpdatedAt = time.Now()
+	js.saveToDisk()
 }
 
 func (js *JobStore) SetOutputs(id string, outputs []string) {
@@ -222,6 +308,7 @@ func (js *JobStore) SetOutputs(id string, outputs []string) {
 	}
 	job.Outputs = append([]string{}, outputs...)
 	job.UpdatedAt = time.Now()
+	js.saveToDisk()
 }
 
 func (js *JobStore) CancelJob(id string) (*Job, error) {
@@ -240,7 +327,74 @@ func (js *JobStore) CancelJob(id string) (*Job, error) {
 	job.Status = statusCanceled
 	job.UpdatedAt = time.Now()
 	job.cancel()
+	js.saveToDisk()
 	return job, nil
+}
+
+// loadFromDisk loads previously persisted jobs from the persistence file.
+// Jobs that were in a terminal state (completed, failed, canceled) are restored
+// with their preserved state. Running/pending jobs are restored as "failed" since
+// they cannot be resumed after a restart.
+func (js *JobStore) loadFromDisk() {
+	if js.persistence == nil {
+		return
+	}
+
+	persisted := js.persistence.load()
+	if persisted == nil {
+		return
+	}
+
+	for _, pj := range persisted {
+		createdAt, _ := time.Parse(persistedTimeFormat, pj.CreatedAt)
+		updatedAt, _ := time.Parse(persistedTimeFormat, pj.UpdatedAt)
+
+		// Jobs that were running/pending at shutdown cannot be resumed
+		status := pj.Status
+		if status == "pending" || status == "running" {
+			status = "failed"
+			if pj.Error == "" {
+				pj.Error = "job interrupted by server restart"
+			}
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		js.jobs[pj.ID] = &Job{
+			ID:               pj.ID,
+			SubjectID:        pj.SubjectID,
+			SessionID:        pj.SessionID,
+			StartIndex:       pj.StartIndex,
+			EndIndex:         pj.EndIndex,
+			Status:           status,
+			Progress:         pj.Progress,
+			Error:            pj.Error,
+			TotalLectures:    pj.TotalLectures,
+			CompletedLectures: pj.CompletedLectures,
+			FilteredLectures:  pj.FilteredLectures,
+			Outputs:          append([]string{}, pj.Outputs...),
+			Config:           pj.Config,
+			IdempotencyKey:   pj.IdempotencyKey,
+			CreatedAt:        createdAt,
+			UpdatedAt:        updatedAt,
+			ctx:              ctx,
+			cancel:           cancel,
+		}
+
+		// Rebuild idempotency key index
+		if pj.IdempotencyKey != "" {
+			js.idempotencyKeys[pj.IdempotencyKey] = pj.ID
+		}
+	}
+}
+
+// saveToDisk persists all jobs to the persistence file.
+func (js *JobStore) saveToDisk() {
+	if js.persistence == nil {
+		return
+	}
+	if err := js.persistence.save(js.jobs); err != nil {
+		log.Printf("warning: failed to persist jobs to %s: %v", js.persistence.path, err)
+	}
 }
 
 type WSHub struct {
@@ -292,6 +446,11 @@ type upstreamCacheEntry struct {
 	mu        sync.Mutex // Protects concurrent refresh attempts
 }
 
+// UpstreamLoginFunc is the signature for upstream login operations.
+// It receives a context and config, and returns a client with token set.
+// This allows injecting mock login functions in tests.
+type UpstreamLoginFunc func(ctx context.Context, cfg *config.Config) (*client.Client, *config.Config, error)
+
 type APIServer struct {
 	cfg              *config.Config
 	jobStore         *JobStore
@@ -302,9 +461,36 @@ type APIServer struct {
 	port             string
 	upstreamCache    *upstreamCacheEntry
 	upstreamCacheMu  sync.RWMutex
+	upstreamLogin    UpstreamLoginFunc
+}
+
+// defaultUpstreamLogin is the real upstream login using the Impartus API.
+func defaultUpstreamLogin(ctx context.Context, cfg *config.Config) (*client.Client, *config.Config, error) {
+	apiClient := client.New(nil, nil)
+	if err := apiClient.LoginAndSetToken(ctx, cfg); err != nil {
+		return nil, nil, err
+	}
+	return apiClient, cfg, nil
 }
 
 func NewAPIServer(port string, cfg *config.Config) *APIServer {
+	return NewAPIServerWithLogin(port, cfg, nil)
+}
+
+// NewAPIServerWithPersistence creates an APIServer with job persistence enabled.
+// Jobs are persisted to the given file path (defaults to ".jobs.json" if empty).
+func NewAPIServerWithPersistence(port string, cfg *config.Config, persistencePath string) *APIServer {
+	return newAPIServerFull(port, cfg, nil, persistencePath)
+}
+
+// NewAPIServerWithLogin creates an APIServer with a custom upstream login function.
+// If loginFn is nil, the default real upstream login is used.
+func NewAPIServerWithLogin(port string, cfg *config.Config, loginFn UpstreamLoginFunc) *APIServer {
+	return newAPIServerFull(port, cfg, loginFn, "")
+}
+
+// newAPIServerFull is the internal constructor with all options.
+func newAPIServerFull(port string, cfg *config.Config, loginFn UpstreamLoginFunc, persistencePath string) *APIServer {
 	baseCfg := cloneConfig(cfg)
 	if baseCfg == nil {
 		baseCfg = &config.Config{}
@@ -317,16 +503,27 @@ func NewAPIServer(port string, cfg *config.Config) *APIServer {
 		baseCfg.TempDirLocation = "./temp"
 	}
 
+	if loginFn == nil {
+		loginFn = defaultUpstreamLogin
+	}
+
 	s := &APIServer{
-		cfg:        baseCfg,
-		jobStore:   NewJobStore(),
-		wsHub:      NewWSHub(),
-		tokenStore: NewTokenStore(),
+		cfg: baseCfg,
+		wsHub: NewWSHub(),
+		tokenStore:    NewTokenStore(),
 		upgrader: websocket.Upgrader{CheckOrigin: func(r *http.Request) bool {
 			return true
 		}},
-		router: mux.NewRouter(),
-		port:   port,
+		router:        mux.NewRouter(),
+		port:          port,
+		upstreamLogin: loginFn,
+	}
+
+	// Initialize job store (with persistence if path provided)
+	if persistencePath != "" {
+		s.jobStore = NewJobStoreWithPersistence(persistencePath)
+	} else {
+		s.jobStore = NewJobStore()
 	}
 
 	StartTokenCleanup(s.tokenStore)
@@ -610,24 +807,25 @@ func (s *APIServer) getOrRefreshUpstreamClient(ctx context.Context) (*client.Cli
 		}
 	}
 
-	// No cache or expired - do fresh login
+	// No cache or expired - do fresh login via injectable login function
 	cfg := cloneConfig(s.cfg)
-	apiClient := client.New(nil, nil)
-	if err := apiClient.LoginAndSetToken(ctx, cfg); err != nil {
+	apiClient, loginCfg, err := s.upstreamLogin(ctx, cfg)
+	if err != nil {
 		return nil, nil, err
 	}
 
 	// Cache the result (token stored in cfg.Token by LoginAndSetToken)
+	token := loginCfg.Token
 	newEntry := &upstreamCacheEntry{
 		client:    apiClient,
-		cfg:       cfg,
-		token:     cfg.Token,
+		cfg:       loginCfg,
+		token:     token,
 		expiresAt: time.Now().Add(23 * time.Hour), // Token typically valid for 24h
 	}
 
 	s.upstreamCache = newEntry
 
-	return apiClient, cfg, nil
+	return apiClient, loginCfg, nil
 }
 
 func (s *APIServer) coursesHandler(w http.ResponseWriter, r *http.Request) {
@@ -713,6 +911,14 @@ func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate idempotency key if provided
+	if req.IdempotencyKey != "" {
+		if len(req.IdempotencyKey) > maxIdempotencyKeyLength {
+			respondWithError(w, http.StatusBadRequest, "INVALID_IDEMPOTENCY_KEY", fmt.Sprintf("idempotencyKey must be at most %d characters", maxIdempotencyKeyLength), "createJob", nil)
+			return
+		}
+	}
+
 	mergedCfg, err := mergeConfigWithJobOptions(s.cfg, req.effectiveJobConfig())
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "INVALID_JOB_CONFIG", err.Error(), "createJob", nil)
@@ -720,7 +926,17 @@ func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Store 1-based indices in Job (will be converted to 0-based during execution)
-	job := s.jobStore.CreateJob(req.SubjectID, req.SessionID, req.StartIndex, req.EndIndex, mergedCfg)
+	job, created := s.jobStore.CreateJobWithKey(req.SubjectID, req.SessionID, req.StartIndex, req.EndIndex, mergedCfg, req.IdempotencyKey)
+
+	if !created {
+		// Duplicate idempotency key - return existing job with 409 Conflict
+		respondWithEnvelope(w, http.StatusConflict, "createJob", map[string]any{
+			"job":       job,
+			"duplicate": true,
+		})
+		return
+	}
+
 	go s.executeJob(job.ID)
 
 	respondWithEnvelope(w, http.StatusCreated, "createJob", job)

@@ -8,9 +8,13 @@
 - Runs the local HTTP/WebSocket API for auth, course/lecture lookups, and background download job orchestration.
 
 ## Interfaces / Contracts
-- Server construction/start: `NewAPIServer`, `New`, `StartAPIServer`, `(*APIServer).Start`.
+- Server construction/start: `NewAPIServer`, `NewAPIServerWithPersistence`, `New`, `StartAPIServer`, `(*APIServer).Start`.
+- The CLI `serve` path should construct the persistence-backed server so jobs survive process restarts.
 - Routes under `/api/v1`: public `/health`, `/auth/login`; protected `/ws`, `/courses`, `/lectures`, `/jobs`, `/jobs/{id}`.
 - Job payload/contracts: `createJobRequest`, `JobConfigOptions`, `Job`, `JobRuntimeConfig`.
+- Job persistence: `NewJobStoreWithPersistence(path)` persists jobs to a JSON file on disk. Survives server restarts. No credentials in persistence file. Corrupt files handled gracefully.
+- Job idempotency: `POST /jobs` accepts optional `idempotencyKey` (string, max 256 chars). Same key returns existing job (409 Conflict) instead of creating a duplicate. Keys are persisted and survive restarts. `CreateJobWithKey` method on `JobStore` handles the logic. Omitting the key always creates a new job.
+- Job persistence: `NewJobStoreWithPersistence(path)` persists jobs to a JSON file on disk. Survives server restarts. No credentials in persistence file. Corrupt files handled gracefully.
 - WebSocket event types: `job.started`, `job.progress`, `job.completed`, `job.failed`, `job.cancelled`.
 
 ## Data / Types
