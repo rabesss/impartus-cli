@@ -176,10 +176,10 @@ Used where handlers call `respondWithSuccess` (login + delete job + health check
 
 ### Direct JSON responses
 
-Some handlers write JSON directly (not wrapped in envelope):
-- `GET /courses` → `[]client.Course`
-- `GET /lectures` → `[]client.Lecture`
-- `POST /jobs`, `GET /jobs`, `GET /jobs/{id}` → `Job` / `[]Job`
+All handlers wrap responses in `{success, data, error, meta}` envelope using `respondWithEnvelope`:
+- `GET /courses` → `{success: true, data: [...], meta: {command, mode: 'api'}}`
+- `GET /lectures` → `{success: true, data: [...], meta: {command, mode: 'api'}}`
+- `POST /jobs`, `GET /jobs`, `GET /jobs/{id}` → `{success: true, data: {...}, meta: {command, mode: 'api'}}`
 
 ## Courses
 
@@ -330,7 +330,7 @@ Jobs are persisted to a `.jobs.json` file on disk and survive server restarts.
 ### Restart Behavior
 | Original Status | After Restart |
 |-----------------|---------------|
-| `pending` | Restored as `pending` |
+| `pending` | Marked as `failed` (cannot be resumed) |
 | `running` | Marked as `failed` (cannot resume mid-download) |
 | `completed` | Restored as `completed` |
 | `failed` | Restored as `failed` |
