@@ -44,36 +44,5 @@
     "showETA": true,                                   // Show estimated time remaining (true/false)
     "updateInterval": "2s",                            // Progress update interval (500ms-10s, default: 2s)
     "speedWindowSize": 10                              // Speed moving average window size (3-30, default: 10)
-  },
-
-  // === Feature Flags ===
-  // Feature flags enable experimental features and safe rollouts.
-  // Can also be set via environment variables: IMPARTUS_FLAG_<FEATURE_NAME>=true|false
-  // Available flags and their env vars:
-  //   IMPARTUS_FLAG_VERBOSE_LOGGING - Enable verbose logging
-  //   IMPARTUS_FLAG_EXPERIMENTAL_FEATURES - Enable experimental features
-  //   IMPARTUS_FLAG_ADVANCED_RATE_LIMITING - Enable adaptive rate limiting
-  //   IMPARTUS_FLAG_RETRY_WITH_BACKOFF - Enable exponential backoff retries (default: true)
-  //   IMPARTUS_FLAG_PARALLEL_CHUNKS - Enable parallel chunk downloads (default: true)
-  //   IMPARTUS_FLAG_DETAILED_PROGRESS - Enable detailed progress reporting (default: true)
-  //   IMPARTUS_FLAG_METRICS_EXPORT - Enable OpenTelemetry metrics export
-  //   IMPARTUS_FLAG_ALERTING - Enable webhook alerting
-  //   IMPARTUS_FLAG_SENTRY_ERRORS - Enable Sentry error tracking
-  //   IMPARTUS_FLAG_WS_COMPRESSION - Enable WebSocket compression (default: true)
-  //   IMPARTUS_FLAG_STREAMING_RESPONSE - Enable streaming responses
-  //   IMPARTUS_FLAG_METRICS_ENDPOINT - Enable /metrics endpoint
-  "featureFlags": {
-    "enableVerboseLogging": false,
-    "enableExperimentalFeatures": false,
-    "enableAdvancedRateLimiting": false,
-    "enableRetryWithBackoff": true,
-    "enableParallelChunkDownloads": true,
-    "enableDetailedProgress": true,
-    "enableMetricsExport": false,
-    "enableAlerting": false,
-    "enableSentryErrors": false,
-    "enableWebSocketCompression": true,
-    "enableStreamingResponse": false,
-    "enableMetricsEndpoint": false
   }
 }
