@@ -14,7 +14,6 @@
 - Job payload/contracts: `createJobRequest`, `JobConfigOptions`, `Job`, `JobRuntimeConfig`.
 - Job persistence: `NewJobStoreWithPersistence(path)` persists jobs to a JSON file on disk. Survives server restarts. No credentials in persistence file. Corrupt files handled gracefully.
 - Job idempotency: `POST /jobs` accepts optional `idempotencyKey` (string, max 256 chars). Same key returns existing job (409 Conflict) instead of creating a duplicate. Keys are persisted and survive restarts. `CreateJobWithKey` method on `JobStore` handles the logic. Omitting the key always creates a new job.
-- Job persistence: `NewJobStoreWithPersistence(path)` persists jobs to a JSON file on disk. Survives server restarts. No credentials in persistence file. Corrupt files handled gracefully.
 - WebSocket event types: `job.started`, `job.progress`, `job.completed`, `job.failed`, `job.cancelled`.
 
 ## Data / Types

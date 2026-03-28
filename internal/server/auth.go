@@ -103,6 +103,7 @@ func respondWithEnvelope(w http.ResponseWriter, status int, command string, data
 	envelope := map[string]any{
 		"success": true,
 		"data":    data,
+		"error":   nil,
 		"meta": responseMeta{
 			Command: command,
 			Mode:    "api",

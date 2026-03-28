@@ -237,7 +237,7 @@ func (js *JobStore) CreateJobWithKey(subjectID, sessionID, startIndex, endIndex 
 	return job, true
 }
 
-// GetJobByldempotencyKey looks up a job by its idempotency key.
+// GetJobByIdempotencyKey looks up a job by its idempotency key.
 func (js *JobStore) GetJobByIdempotencyKey(key string) (*Job, bool) {
 	js.mu.RLock()
 	defer js.mu.RUnlock()
