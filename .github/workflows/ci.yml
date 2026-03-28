@@ -33,14 +33,6 @@ jobs:
           filter_mode: diff_context
           fail_level: error
 
-      - name: Run go vet with reviewdog
-        uses: reviewdog/action-govet@v1
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          reporter: github-pr-review
-          filter_mode: diff_context
-          fail_level: none
-
       - name: Check for TODO/FIXME tech debt
         run: |
           echo "## Tech Debt Analysis" >> $GITHUB_STEP_SUMMARY
@@ -300,8 +292,8 @@ jobs:
           # Extract Makefile targets from AGENTS.md
           MAKE_TARGETS=$(grep -oP 'make \w+' AGENTS.md Makefile 2>/dev/null | sort -u || true)
           
-          for target in $(grep -oP 'make \w+' AGENTS.md 2>/dev/null | sort -u || true); do
-            TARGET_NAME=$(echo "$target" | awk '{print $2}')
+          for target in $(grep -oP 'make \K\w+' AGENTS.md 2>/dev/null | sort -u || true); do
+            TARGET_NAME="$target"
             if grep -q "^${TARGET_NAME}:" Makefile; then
               echo "✓ make $TARGET_NAME exists" >> $GITHUB_STEP_SUMMARY
             else
