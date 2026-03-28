@@ -86,8 +86,11 @@ type jsonEnvelope struct {
 - `GET /api/v1/health` — public (no auth required), registered before auth middleware
 - Returns structured status: `{status: "ok"|"degraded", config: {...}, upstream: {...}, ffmpeg: {...}}`
 - Config check: verifies username, password, baseUrl are set
+  - Returns `{status: "ok"|"misconfigured", hasUsername: bool, hasPassword: bool, hasBaseUrl: bool}`
 - Upstream check: HTTP probe using cached token (5s timeout), fallback TCP dial (5s timeout)
+  - Returns `{status: "reachable"|"unreachable"}` — no error field is set
 - FFmpeg check: `exec.LookPath("ffmpeg")`
+  - Returns `{status: "available"|"not_found"}` — no version field is set
 - Overall status is "degraded" if any component is unhealthy
 - Uses `upstreamCacheMu.RLock()` to safely read the cached upstream client for reachability probe
 
