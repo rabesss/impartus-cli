@@ -155,6 +155,7 @@ func respondWithSuccess(w http.ResponseWriter, command string, data map[string]a
 	if err := json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
 		"data":    data,
+		"error":   nil,
 		"meta": responseMeta{
 			Command: command,
 			Mode:    "api",

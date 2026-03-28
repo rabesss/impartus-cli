@@ -567,7 +567,7 @@ func filterLecturesInteractive(ctx context.Context, cfg *config.Config, apiClien
 
 	selected := append(client.Lectures(nil), reversed[start-1:end]...)
 
-	emptyFiltered, noaudioFiltered := applyLectureFilters(selected, skipEmpty, skipNoAudio)
+	selected, emptyFiltered, noaudioFiltered := applyLectureFilters(selected, skipEmpty, skipNoAudio)
 
 	if len(selected) == 0 {
 		return nil, buildNoLecturesError(emptyFiltered, noaudioFiltered)
@@ -576,7 +576,7 @@ func filterLecturesInteractive(ctx context.Context, cfg *config.Config, apiClien
 	return selected, nil
 }
 
-func applyLectureFilters(lectures client.Lectures, skipEmpty, skipNoAudio bool) (int, int) {
+func applyLectureFilters(lectures client.Lectures, skipEmpty, skipNoAudio bool) (client.Lectures, int, int) {
 	emptyFiltered := 0
 	noaudioFiltered := 0
 
@@ -591,7 +591,7 @@ func applyLectureFilters(lectures client.Lectures, skipEmpty, skipNoAudio bool) 
 		noaudioFiltered = before - len(lectures)
 	}
 
-	return emptyFiltered, noaudioFiltered
+	return lectures, emptyFiltered, noaudioFiltered
 }
 
 func buildNoLecturesError(emptyFiltered, noaudioFiltered int) error {
