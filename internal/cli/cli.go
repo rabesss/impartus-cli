@@ -409,7 +409,7 @@ func executeDownload(args []string) (downloadResult, error) {
 	}
 
 	// Apply flag overrides and validate
-	// Note: include-noaudio is handled separately below as it overrides skip behavior
+	// Including noaudio is handled separately below as it overrides skip behavior
 	cfg, err = applyAndValidateFlags(cfg, *quality, *views, *audioOnly, *format, *output, *skipNoAudio)
 	if err != nil {
 		return downloadResult{}, err
@@ -431,11 +431,7 @@ func executeDownload(args []string) (downloadResult, error) {
 	}
 
 	// Count noaudio lectures for warning
-	noaudioCount := countNoAudioLectures(selected)
-	if noaudioCount > 0 && !cfg.SkipNoAudio {
-		fmt.Printf("[WARNING] %d lecture(s) in selection have no audio track (noaudio=1)\n", noaudioCount)
-		fmt.Printf("[INFO] Use --skip-no-audio to filter these out, or --include-noaudio to include anyway\n")
-	}
+	warnNoAudioLectures(selected, cfg.SkipNoAudio)
 
 	// Apply noaudio filter if flag is set
 	totalLectures := len(selected)
@@ -502,12 +498,27 @@ func runInteractive() error {
 	fmt.Println("If you are facing any issues, please check the section at https://github.com/rabesss/impartus-cli#faqtroubleshooting")
 	fmt.Println()
 
-	courses, err := apiClient.GetCourses(ctx, cfg)
+	course, err := selectCourseInteractive(ctx, cfg, apiClient)
 	if err != nil {
 		return err
 	}
+
+	selected, err := filterLecturesInteractive(ctx, cfg, apiClient, course)
+	if err != nil {
+		return err
+	}
+
+	_, err = downloadLectures(ctx, cfg, apiClient, selected)
+	return err
+}
+
+func selectCourseInteractive(ctx context.Context, cfg *config.Config, apiClient *client.Client) (*client.Course, error) {
+	courses, err := apiClient.GetCourses(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
 	if len(courses) == 0 {
-		return errors.New("no courses available")
+		return nil, errors.New("no courses available")
 	}
 
 	for i, course := range courses {
@@ -517,13 +528,16 @@ func runInteractive() error {
 	reader := bufio.NewReader(os.Stdin)
 	courseIndex, err := promptInt(reader, "Enter course number: ", 1, len(courses))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	course := courses[courseIndex-1]
+	return &courses[courseIndex-1], nil
+}
+
+func filterLecturesInteractive(ctx context.Context, cfg *config.Config, apiClient *client.Client, course *client.Course) (client.Lectures, error) {
 	lectures, err := apiClient.GetLectures(ctx, cfg, client.Course{SubjectID: course.SubjectID, SessionID: course.SessionID})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	reversed := reverseLectures(lectures)
@@ -531,55 +545,64 @@ func runInteractive() error {
 		fmt.Printf("%3d) LEC %3d %s\n", i+1, lecture.SeqNo, lecture.Topic)
 	}
 
+	reader := bufio.NewReader(os.Stdin)
 	start, err := promptInt(reader, "Enter start lecture index: ", 1, len(reversed))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	end, err := promptInt(reader, "Enter end lecture index: ", start, len(reversed))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	skipEmpty, err := promptYesNo(reader, "Skip lectures with titles like 'No class' or 'No lecture'? [Y/n]: ", true)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	skipNoAudio, err := promptYesNo(reader, "Skip lectures without audio track? [Y/n]: ", true)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	selected := append(client.Lectures(nil), reversed[start-1:end]...)
 
-	// Track filtering counts for error message
+	emptyFiltered, noaudioFiltered := applyLectureFilters(selected, skipEmpty, skipNoAudio)
+
+	if len(selected) == 0 {
+		return nil, buildNoLecturesError(emptyFiltered, noaudioFiltered)
+	}
+
+	return selected, nil
+}
+
+func applyLectureFilters(lectures client.Lectures, skipEmpty, skipNoAudio bool) (int, int) {
 	emptyFiltered := 0
 	noaudioFiltered := 0
 
 	if skipEmpty {
-		before := len(selected)
-		selected = filterEmptyLectures(selected)
-		emptyFiltered = before - len(selected)
+		before := len(lectures)
+		lectures = filterEmptyLectures(lectures)
+		emptyFiltered = before - len(lectures)
 	}
 	if skipNoAudio {
-		before := len(selected)
-		selected = filterNoAudioLectures(selected)
-		noaudioFiltered = before - len(selected)
+		before := len(lectures)
+		lectures = filterNoAudioLectures(lectures)
+		noaudioFiltered = before - len(lectures)
 	}
 
-	if len(selected) == 0 {
-		var reasons []string
-		if emptyFiltered > 0 {
-			reasons = append(reasons, fmt.Sprintf("%d empty", emptyFiltered))
-		}
-		if noaudioFiltered > 0 {
-			reasons = append(reasons, fmt.Sprintf("%d noaudio", noaudioFiltered))
-		}
-		return fmt.Errorf("no lectures remaining after filtering: %s filtered out", strings.Join(reasons, ", "))
-	}
+	return emptyFiltered, noaudioFiltered
+}
 
-	_, err = downloadLectures(ctx, cfg, apiClient, selected)
-	return err
+func buildNoLecturesError(emptyFiltered, noaudioFiltered int) error {
+	var reasons []string
+	if emptyFiltered > 0 {
+		reasons = append(reasons, fmt.Sprintf("%d empty", emptyFiltered))
+	}
+	if noaudioFiltered > 0 {
+		reasons = append(reasons, fmt.Sprintf("%d noaudio", noaudioFiltered))
+	}
+	return fmt.Errorf("no lectures remaining after filtering: %s filtered out", strings.Join(reasons, ", "))
 }
 
 func runServe(args []string, _ string) error {
@@ -764,6 +787,14 @@ func countNoAudioLectures(lectures client.Lectures) int {
 		}
 	}
 	return count
+}
+
+func warnNoAudioLectures(lectures client.Lectures, skipNoAudio bool) {
+	noaudioCount := countNoAudioLectures(lectures)
+	if noaudioCount > 0 && !skipNoAudio {
+		fmt.Printf("[WARNING] %d lecture(s) in selection have no audio track (noaudio=1)\n", noaudioCount)
+		fmt.Printf("[INFO] Use --skip-no-audio to filter these out, or --include-noaudio to include anyway\n")
+	}
 }
 
 func countChunks(playlists []downloader.ParsedPlaylist, views string) int {
