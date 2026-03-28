@@ -599,7 +599,7 @@ func runServe(args []string, _ string) error {
 		return err
 	}
 
-	srv := server.NewAPIServer(strconv.Itoa(*port), cfg)
+	srv := server.NewAPIServerWithPersistence(strconv.Itoa(*port), cfg, "")
 	return srv.Start(context.Background())
 }
 
