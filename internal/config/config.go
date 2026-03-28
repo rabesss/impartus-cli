@@ -43,7 +43,7 @@ type Config struct {
 	DownloadWorkersPerLecture int            `json:"downloadWorkersPerLecture"`
 	DecryptWorkersPerLecture  int            `json:"decryptWorkersPerLecture"`
 	ProgressTracking          ProgressConfig `json:"progressTracking"`
-	HTTPTimeout string `json:"httpTimeout"`
+	HTTPTimeout               string         `json:"httpTimeout"`
 }
 
 var (

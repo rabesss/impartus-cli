@@ -15,22 +15,22 @@ const (
 // persistedJob represents a job stored on disk, without runtime-only fields
 // like context, cancel func, or config (which may contain credentials).
 type persistedJob struct {
-	ID               string           `json:"id"`
-	SubjectID        int              `json:"subjectId"`
-	SessionID        int              `json:"sessionId"`
-	StartIndex       int              `json:"startIndex"`
-	EndIndex         int              `json:"endIndex"`
-	Status           string           `json:"status"`
-	Progress         float64          `json:"progress"`
-	Error            string           `json:"error,omitempty"`
-	TotalLectures    int              `json:"totalLectures,omitempty"`
-	CompletedLectures int             `json:"completedLectures,omitempty"`
-	FilteredLectures int              `json:"filteredLectures,omitempty"`
-	Outputs          []string         `json:"outputs,omitempty"`
-	Config           JobRuntimeConfig `json:"config"`
-	IdempotencyKey   string           `json:"idempotencyKey,omitempty"`
-	CreatedAt        string           `json:"createdAt"`
-	UpdatedAt        string           `json:"updatedAt"`
+	ID                string           `json:"id"`
+	SubjectID         int              `json:"subjectId"`
+	SessionID         int              `json:"sessionId"`
+	StartIndex        int              `json:"startIndex"`
+	EndIndex          int              `json:"endIndex"`
+	Status            string           `json:"status"`
+	Progress          float64          `json:"progress"`
+	Error             string           `json:"error,omitempty"`
+	TotalLectures     int              `json:"totalLectures,omitempty"`
+	CompletedLectures int              `json:"completedLectures,omitempty"`
+	FilteredLectures  int              `json:"filteredLectures,omitempty"`
+	Outputs           []string         `json:"outputs,omitempty"`
+	Config            JobRuntimeConfig `json:"config"`
+	IdempotencyKey    string           `json:"idempotencyKey,omitempty"`
+	CreatedAt         string           `json:"createdAt"`
+	UpdatedAt         string           `json:"updatedAt"`
 }
 
 // jobPersistence handles reading/writing jobs to a JSON file on disk.
@@ -101,13 +101,6 @@ func (p *jobPersistence) load() map[string]persistedJob {
 	}
 
 	return persisted
-}
-
-// remove deletes the persistence file if it exists.
-func (p *jobPersistence) remove() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return os.Remove(p.path)
 }
 
 func jobToPersisted(job *Job) persistedJob {
