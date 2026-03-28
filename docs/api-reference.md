@@ -28,6 +28,47 @@
 
 Base path: `http://localhost:8080/api/v1`
 
+## Health
+
+`GET /health`
+
+Returns the health status of the API server and its dependencies. No authentication required.
+
+Success (`200`):
+```json
+{
+  "success": true,
+  "data": {
+    "status": "ok",
+    "config": {
+      "status": "ok",
+      "username": "ok",
+      "password": "ok",
+      "baseUrl": "ok"
+    },
+    "upstream": {
+      "status": "reachable"
+    },
+    "ffmpeg": {
+      "status": "available",
+      "version": "n8.1"
+    }
+  },
+  "meta": {
+    "command": "health",
+    "mode": "json"
+  }
+}
+```
+
+Possible `status` values:
+- `ok`: All dependencies are healthy
+- `degraded`: One or more dependencies have issues
+
+The `config.status` will be `misconfigured` if username, password, or baseUrl are missing.
+The `upstream.status` will be `unreachable` if the Impartus API cannot be contacted.
+The `ffmpeg.status` will be `unavailable` if FFmpeg is not installed or not in PATH.
+
 ## Authentication
 
 Protected endpoints require:
@@ -85,25 +126,58 @@ Used by auth middleware/login failures and API validation/runtime errors.
     "code": "ERROR_CODE",
     "message": "Human readable message",
     "details": {}
+  },
+  "meta": {
+    "command": "commandName",
+    "mode": "json"
   }
 }
 ```
 
+Some errors include retry hints when the operation may succeed on retry:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "UPSTREAM_ERROR",
+    "message": "Failed to fetch courses from Impartus",
+    "details": {
+      "retryable": true,
+      "retryAfter": 30
+    }
+  },
+  "meta": {
+    "command": "courses",
+    "mode": "json"
+  }
+}
+```
+
+Retry hints are included for:
+- `LOGIN_FAILED`, `COURSES_FETCH_FAILED`, `LECTURES_FETCH_FAILED` (502 errors): `retryAfter: 30`
+- `CANCEL_FAILED` (500 errors): `retryAfter: 10`
+
+4xx client errors do NOT include retry hints (absence means not retryable).
+
 ### JSON success envelope (`respondWithSuccess`)
 
-Used where handlers call `respondWithSuccess` (currently login + delete job).
+Used where handlers call `respondWithSuccess` (login + delete job + health check).
 
 ```json
 {
   "success": true,
-  "data": {}
+  "data": {},
+  "meta": {
+    "command": "commandName",
+    "mode": "json"
+  }
 }
 ```
 
 ### Direct JSON responses
 
-Some handlers write JSON directly (not wrapped):
-- `GET /health` → `{ "status": "ok" }`
+Some handlers write JSON directly (not wrapped in envelope):
 - `GET /courses` → `[]client.Course`
 - `GET /lectures` → `[]client.Lecture`
 - `POST /jobs`, `GET /jobs`, `GET /jobs/{id}` → `Job` / `[]Job`
@@ -131,8 +205,8 @@ Returns lectures as a JSON array.
   "id": "job-1739366400000000000",
   "subjectId": 678,
   "sessionId": 12345,
-  "startIndex": 0,
-  "endIndex": 5,
+  "startIndex": 1,
+  "endIndex": 6,
   "status": "running",
   "progress": 52.5,
   "error": "",
@@ -168,8 +242,11 @@ Notes:
 Required fields:
 - `subjectId` (int, > 0)
 - `sessionId` (int, > 0)
-- `startIndex` (int, >= 0)
+- `startIndex` (int, >= 1, 1-based)
 - `endIndex` (int, >= startIndex)
+
+Optional fields:
+- `idempotencyKey` (string, max 256 chars): Prevents duplicate job creation. If a job with this key already exists, returns the existing job with 409 Conflict instead of creating a new job. Keys persist across server restarts.
 
 Per-job config overrides are supported in two forms:
 1. Preferred nested object: `jobConfig`
@@ -189,6 +266,25 @@ Supported override keys:
 If `jobConfig` is provided, top-level compatibility fields are ignored.
 
 Success (`201`): returns created `Job` object directly.
+
+Duplicate idempotency key (`409 Conflict`):
+```json
+{
+  "success": true,
+  "data": {
+    "job": { ... },
+    "duplicate": true
+  },
+  "meta": {
+    "command": "createJob",
+    "mode": "json"
+  }
+}
+```
+
+Errors:
+- `INVALID_IDEMPOTENCY_KEY` (400): idempotencyKey exceeds 256 characters
+- `INVALID_REQUEST` (400): invalid subjectId, sessionId, startIndex, or endIndex
 
 ### List jobs
 
@@ -216,6 +312,32 @@ Success (`200`):
 ```
 
 Terminal jobs (`completed`/`failed`/`canceled`) return `400` with code `JOB_CANNOT_CANCEL`.
+
+## Job Persistence
+
+Jobs are persisted to a `.jobs.json` file on disk and survive server restarts.
+
+### Persisted Data
+- Job ID, subjectId, sessionId, startIndex, endIndex
+- Job status, progress, outputs, error message
+- Job config (quality, views, audioOnly, etc.)
+- Idempotency key (if provided)
+- CreatedAt and UpdatedAt timestamps
+
+### NOT Persisted (runtime-only)
+- Credentials (username, password, tokens)
+- Runtime context (download progress, active connections)
+
+### Restart Behavior
+| Original Status | After Restart |
+|-----------------|---------------|
+| `pending` | Restored as `pending` |
+| `running` | Marked as `failed` (cannot resume mid-download) |
+| `completed` | Restored as `completed` |
+| `failed` | Restored as `failed` |
+| `canceled` | Restored as `canceled` |
+
+Idempotency keys are also persisted, so duplicate submissions after restart return the existing job (409 Conflict).
 
 ## WebSocket
 
