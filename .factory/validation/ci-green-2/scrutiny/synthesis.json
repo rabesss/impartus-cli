@@ -1,0 +1,62 @@
+{
+  "milestone": "ci-green-2",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": { "passed": true, "command": "go test ./... -v -cover -parallel 3", "exitCode": 0 },
+    "typecheck": { "passed": true, "command": "go build ./...", "exitCode": 0 },
+    "lint": { "passed": true, "command": "make lint (golangci-lint run --timeout 5m on milestone packages)", "exitCode": 0 }
+  },
+  "reviewsSummary": {
+    "total": 3,
+    "passed": 2,
+    "failed": 1,
+    "failedFeatures": ["fix-lint-errors"]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "fix-lint-errors",
+      "file": "internal/cli/cli.go",
+      "line": 572,
+      "severity": "blocking",
+      "description": "BUG: applyLectureFilters returns filter counts (int, int) but does NOT return the filtered client.Lectures slice. In the original code, `selected = filterEmptyLectures(selected)` and `selected = filterNoAudioLectures(selected)` reassigned the slice in-scope. After extraction to a separate function, the local `lectures` parameter reassignment has no effect on the caller's `selected`. Result: empty and noaudio lecture filtering is silently disabled in interactive mode — user filter preferences are ignored. Fix: have applyLectureFilters return (client.Lectures, int, int) instead of (int, int), and use the returned slice in the caller.",
+      "suggestedFix": "Change applyLectureFilters signature to return the filtered Lectures slice along with the counts. Update the caller to use the returned filtered slice."
+    }
+  ],
+  "nonBlockingIssues": [
+    {
+      "featureId": "fix-ci-workflows",
+      "file": ".github/workflows/ci.yml",
+      "line": 293,
+      "severity": "non_blocking",
+      "description": "MAKE_TARGETS variable is assigned but never used (dead code, pre-existing)"
+    },
+    {
+      "featureId": "fix-code-review-issues",
+      "file": "internal/server/auth.go",
+      "line": 153,
+      "severity": "non_blocking",
+      "description": "respondWithSuccess() omits 'error' field, creating schema inconsistency with respondWithEnvelope() which now includes 'error': null. Both are success-response helpers but produce different JSON shapes."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skills",
+      "suggestion": "The go-backend-worker skill should include a refactoring-specific verification step: when extracting helper functions, verify that all mutations of the original in-scope variables are preserved by either (a) returning the modified values, (b) using pointer receivers, or (c) writing a targeted test for the extracted function's contract. The current skill only says 'run existing tests' which missed this behavioral regression because interactive mode has no automated test coverage.",
+      "evidence": "fix-lint-errors extracted applyLectureFilters from runInteractive, losing the mutation of the `selected` slice. Existing tests passed but the behavioral regression was not caught because interactive mode has no automated tests.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "AGENTS.md could be more specific about HOW to verify behavior preservation during refactoring",
+      "reason": "This is better addressed as a skill-level improvement (see suggestedGuidanceUpdates) rather than adding implementation details to AGENTS.md"
+    },
+    {
+      "observation": "Server and CLI envelope patterns evolved independently without shared schema",
+      "reason": "This is a known architectural observation, not actionable guidance for workers"
+    }
+  ],
+  "previousRound": null
+}

@@ -1,0 +1,33 @@
+{
+  "featureId": "fix-lint-errors",
+  "reviewedAt": "2026-03-29T00:30:00Z",
+  "commitId": "63a9870",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature successfully fixes goimports ordering in metrics.go and sentryhook.go, rephrases the godox trigger comment, and extracts helper functions to reduce cyclomatic complexity of runInteractive and executeDownload. All lint checks pass. However, the refactoring of runInteractive introduced a critical behavioral regression: the applyLectureFilters function computes filter counts but does not mutate the caller's `selected` slice, so filtering is silently ignored in interactive mode.",
+    "issues": [
+      {
+        "file": "internal/cli/cli.go",
+        "line": 572,
+        "severity": "blocking",
+        "description": "BUG: `applyLectureFilters` returns filter counts but does NOT mutate the caller's `selected` variable. In the original code, `selected = filterEmptyLectures(selected)` and `selected = filterNoAudioLectures(selected)` reassigned the slice in scope. After extraction, the local `lectures` parameter in `applyLectureFilters` is reassigned but this has no effect on the caller's `selected`. Result: (1) filtering counts are returned and used for the 'no lectures remaining' error message, but (2) the actual filtering never happens — the unfiltered `selected` is always returned to `runInteractive`, and (3) the `len(selected) == 0` check on line 571 can never be true after filtering unless the slice was already empty. This means empty and noaudio lectures are NEVER filtered out in interactive mode despite the user's choices. Fix: `applyLectureFilters` should return the filtered `client.Lectures` slice as well, and the caller should use the filtered result."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The go-backend-worker SKILL.md Step 3 says 'Write Tests FIRST (Red)' and Step 4 says 'Make the failing tests pass with minimal implementation', but this feature (a refactoring task) had no new tests written — only existing tests were run to check for regressions. The skill doesn't account for refactoring-only features where no new tests are appropriate. The worker correctly skipped test-first for this refactoring, which was reasonable, but the skill procedure didn't guide verification of behavioral preservation beyond running existing tests (which have no coverage for interactive mode filtering since it requires stdin).",
+      "evidence": "Transcript shows worker ran 'go test ./internal/cli/... -v' but no new tests were added. Handoff shows tests.added: [] and tests.updated: []. The bug in applyLectureFilters was not caught because there are no automated tests for interactive mode filtering."
+    },
+    {
+      "area": "conventions",
+      "observation": "The mission AGENTS.md says 'When extracting helper functions from cli.go: keep them unexported, in the same package, preserve exact behavior'. The worker followed the first two rules but violated 'preserve exact behavior'. AGENTS.md could be more specific about HOW to verify behavior preservation during refactoring (e.g., return mutated slices, not just counts).",
+      "evidence": "Mission AGENTS.md line: 'When extracting helper functions from cli.go: keep them unexported, in the same package, preserve exact behavior'"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The feature fixes all 5 lint errors as described: goimports ordering (metrics.go, sentryhook.go), godox trigger word rephrasing (cli.go), and complexity reduction via helper extraction. All verification commands pass (goimports, golangci-lint, go build, go test). HOWEVER, the refactoring of runInteractive introduced a blocking behavioral regression: the `applyLectureFilters` helper computes filter counts locally but never returns the filtered slice to the caller. This means empty and noaudio lecture filtering is silently disabled in interactive mode — the user's filter preferences are ignored. The fix is straightforward: have `applyLectureFilters` return `(client.Lectures, int, int)` instead of `(int, int)`, and use the returned slice in `filterLecturesInteractive`."
+}

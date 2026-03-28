@@ -1,0 +1,33 @@
+{
+  "featureId": "fix-code-review-issues",
+  "reviewedAt": "2026-03-29T00:30:00Z",
+  "commitId": "6b6d6fb",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "All 5 code review issues were correctly and minimally fixed in commit 6b6d6fb. The diff is small (4 files, +3/-5 lines) and each change directly addresses one issue. All verification commands pass: no 'ldempotency' in server.go, respondWithEnvelope includes error:nil in success responses, no 'IMpartus' in observability.md, no metricsEndpoint references in observability.md, exactly 1 'Job persistence' bullet in CLAUDE.md, all tests pass, and the project builds successfully.",
+    "issues": [
+      {
+        "file": "internal/server/auth.go",
+        "line": 153,
+        "severity": "non_blocking",
+        "description": "respondWithSuccess() (line 153) is a separate success-response helper that also omits the 'error' field, creating an inconsistency with respondWithEnvelope(). Both functions produce success JSON but now have different shapes. respondWithSuccess is used in loginHandler and cancelJob. This is a minor inconsistency that was not part of the original feature scope (which only asked to fix respondWithEnvelope), but is worth noting for follow-up."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The server package has two separate success-response helpers (respondWithEnvelope and respondWithSuccess) that produce slightly different JSON shapes. respondWithEnvelope now includes \"error\": null for schema consistency, but respondWithSuccess still omits it. AGENTS.md doesn't document the convention that all success responses should include both 'data' and 'error' fields.",
+      "evidence": "internal/server/auth.go:99-113 (respondWithEnvelope has error:nil) vs internal/server/auth.go:153-165 (respondWithSuccess omits error field). Both are used as API response helpers."
+    },
+    {
+      "area": "conventions",
+      "observation": "The CLI-side envelope (cli.go jsonEnvelope struct) already had consistent schema with Error *jsonErr field, but the server-side was using map[string]any without the error field. This suggests the server and CLI envelope patterns evolved independently without a shared schema definition.",
+      "evidence": "internal/cli/cli.go:32-36 defines jsonEnvelope struct with Error field. internal/server/auth.go uses map[string]any for envelope construction. Different approaches for the same concept."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS — All 5 code review issues fixed correctly and minimally in a clean 4-file diff. Verification commands all pass. One non-blocking observation: respondWithSuccess() in auth.go was not updated to include the error field, creating a minor schema inconsistency with respondWithEnvelope(). The worker followed the go-backend-worker skill procedure faithfully, and the transcript shows a methodical approach (read, grep, edit, verify)."
+}
