@@ -91,6 +91,22 @@ type jsonEnvelope struct {
 - Overall status is "degraded" if any component is unhealthy
 - Uses `upstreamCacheMu.RLock()` to safely read the cached upstream client for reachability probe
 
+### Job Persistence
+- Jobs persisted to `.jobs.json` file on disk via `jobPersistence` struct
+- `JobStore.persistence` field — nil for in-memory store, non-nil for persisted store
+- Persistence triggers on every mutation: CreateJob, UpdateJob, SetLectureProgress, SetOutputs, CancelJob
+- `NewJobStoreWithPersistence(path)` creates a persisted store; `NewJobStore()` creates in-memory
+- CLI `serve` command uses `NewAPIServerWithPersistence(port, cfg, "")` for persistence
+- Running/pending jobs are restored as "failed" on restart (cannot resume interrupted downloads)
+- Only `JobRuntimeConfig` is persisted — no username, password, or token
+
+### Idempotency Keys
+- `POST /api/v1/jobs` accepts optional `idempotencyKey` field (max 256 chars)
+- `JobStore.idempotencyKeys` maps idempotencyKey → jobID
+- Duplicate key returns existing job with 409 Conflict via envelope
+- Keys are persisted alongside jobs and survive restart
+- Omitting key always creates a new job
+
 ## Key Invariants
 - API auth tokens are crypto/rand 32-byte, base64url encoded, 24h expiry
 - Job IDs are `job-{unixNano}` format
