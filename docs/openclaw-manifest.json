@@ -346,7 +346,7 @@
                 "duplicate": { "type": "boolean", "value": true }
               }
             },
-            "meta": { "type": "object", "description": "{ command: string, mode: 'json' }" }
+            "meta": { "type": "object", "description": "{ command: string, mode: 'api' }" }
           }
         },
         "fields": {
@@ -563,21 +563,19 @@
                 "type": "object",
                 "description": "Impartus API reachability check",
                 "fields": {
-                  "status": { "type": "string", "description": "'reachable' or 'unreachable'" },
-                  "error": { "type": "string", "description": "Error message if unreachable" }
+                  "status": { "type": "string", "description": "'reachable' or 'unreachable'" }
                 }
               },
               "ffmpeg": {
                 "type": "object",
                 "description": "FFmpeg availability check",
                 "fields": {
-                  "status": { "type": "string", "description": "'available' or 'unavailable'" },
-                  "version": { "type": "string", "description": "FFmpeg version string if available" }
+                  "status": { "type": "string", "description": "'available' or 'not_found'" }
                 }
               }
             }
           },
-          "meta": { "type": "object", "description": "{ command: string, mode: 'json' }" }
+          "meta": { "type": "object", "description": "{ command: string, mode: 'api' }" }
         }
       }
     }

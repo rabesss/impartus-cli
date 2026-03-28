@@ -32,7 +32,7 @@ See also: [`api-reference.md`](api-reference.md) for route details, [`websocket-
   },
   "meta": {
     "command": "commandName",
-    "mode": "json"
+    "mode": "api"
   }
 }
 ```
@@ -139,7 +139,7 @@ When an `idempotencyKey` is provided and a job with that key already exists, the
   },
   "meta": {
     "command": "createJob",
-    "mode": "json"
+    "mode": "api"
   }
 }
 ```
