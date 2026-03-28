@@ -9,7 +9,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
@@ -92,7 +91,7 @@ func (r createJobRequest) effectiveJobConfig() *JobConfigOptions {
 		NumWorkers:                r.NumWorkers,
 		DownloadWorkersPerLecture: r.DownloadWorkersPerLecture,
 		DecryptWorkersPerLecture:  r.DecryptWorkersPerLecture,
-		SkipNoAudio:              r.SkipNoAudio,
+		SkipNoAudio:               r.SkipNoAudio,
 	}
 }
 
@@ -111,22 +110,22 @@ type JobRuntimeConfig struct {
 }
 
 type Job struct {
-	ID               string           `json:"id"`
-	SubjectID        int              `json:"subjectId"`
-	SessionID        int              `json:"sessionId"`
-	StartIndex       int              `json:"startIndex"`
-	EndIndex         int              `json:"endIndex"`
-	Status           string           `json:"status"`
-	Progress         float64          `json:"progress"`
-	Error            string           `json:"error,omitempty"`
-	TotalLectures    int              `json:"totalLectures,omitempty"`
-	CompletedLectures int             `json:"completedLectures,omitempty"`
-	FilteredLectures int              `json:"filteredLectures,omitempty"`
-	Outputs          []string         `json:"outputs,omitempty"`
-	Config           JobRuntimeConfig `json:"config"`
-	IdempotencyKey   string           `json:"idempotencyKey,omitempty"`
-	CreatedAt        time.Time        `json:"createdAt"`
-	UpdatedAt        time.Time        `json:"updatedAt"`
+	ID                string           `json:"id"`
+	SubjectID         int              `json:"subjectId"`
+	SessionID         int              `json:"sessionId"`
+	StartIndex        int              `json:"startIndex"`
+	EndIndex          int              `json:"endIndex"`
+	Status            string           `json:"status"`
+	Progress          float64          `json:"progress"`
+	Error             string           `json:"error,omitempty"`
+	TotalLectures     int              `json:"totalLectures,omitempty"`
+	CompletedLectures int              `json:"completedLectures,omitempty"`
+	FilteredLectures  int              `json:"filteredLectures,omitempty"`
+	Outputs           []string         `json:"outputs,omitempty"`
+	Config            JobRuntimeConfig `json:"config"`
+	IdempotencyKey    string           `json:"idempotencyKey,omitempty"`
+	CreatedAt         time.Time        `json:"createdAt"`
+	UpdatedAt         time.Time        `json:"updatedAt"`
 
 	ctx    context.Context    `json:"-"`
 	cancel context.CancelFunc `json:"-"`
@@ -346,8 +345,14 @@ func (js *JobStore) loadFromDisk() {
 	}
 
 	for _, pj := range persisted {
-		createdAt, _ := time.Parse(persistedTimeFormat, pj.CreatedAt)
-		updatedAt, _ := time.Parse(persistedTimeFormat, pj.UpdatedAt)
+		createdAt, err := time.Parse(persistedTimeFormat, pj.CreatedAt)
+		if err != nil {
+			createdAt = time.Time{}
+		}
+		updatedAt, err := time.Parse(persistedTimeFormat, pj.UpdatedAt)
+		if err != nil {
+			updatedAt = time.Time{}
+		}
 
 		// Jobs that were running/pending at shutdown cannot be resumed
 		status := pj.Status
@@ -360,24 +365,24 @@ func (js *JobStore) loadFromDisk() {
 
 		ctx, cancel := context.WithCancel(context.Background())
 		js.jobs[pj.ID] = &Job{
-			ID:               pj.ID,
-			SubjectID:        pj.SubjectID,
-			SessionID:        pj.SessionID,
-			StartIndex:       pj.StartIndex,
-			EndIndex:         pj.EndIndex,
-			Status:           status,
-			Progress:         pj.Progress,
-			Error:            pj.Error,
-			TotalLectures:    pj.TotalLectures,
+			ID:                pj.ID,
+			SubjectID:         pj.SubjectID,
+			SessionID:         pj.SessionID,
+			StartIndex:        pj.StartIndex,
+			EndIndex:          pj.EndIndex,
+			Status:            status,
+			Progress:          pj.Progress,
+			Error:             pj.Error,
+			TotalLectures:     pj.TotalLectures,
 			CompletedLectures: pj.CompletedLectures,
 			FilteredLectures:  pj.FilteredLectures,
-			Outputs:          append([]string{}, pj.Outputs...),
-			Config:           pj.Config,
-			IdempotencyKey:   pj.IdempotencyKey,
-			CreatedAt:        createdAt,
-			UpdatedAt:        updatedAt,
-			ctx:              ctx,
-			cancel:           cancel,
+			Outputs:           append([]string{}, pj.Outputs...),
+			Config:            pj.Config,
+			IdempotencyKey:    pj.IdempotencyKey,
+			CreatedAt:         createdAt,
+			UpdatedAt:         updatedAt,
+			ctx:               ctx,
+			cancel:            cancel,
 		}
 
 		// Rebuild idempotency key index
@@ -443,7 +448,6 @@ type upstreamCacheEntry struct {
 	cfg       *config.Config
 	token     string
 	expiresAt time.Time
-	mu        sync.Mutex // Protects concurrent refresh attempts
 }
 
 // UpstreamLoginFunc is the signature for upstream login operations.
@@ -452,16 +456,16 @@ type upstreamCacheEntry struct {
 type UpstreamLoginFunc func(ctx context.Context, cfg *config.Config) (*client.Client, *config.Config, error)
 
 type APIServer struct {
-	cfg              *config.Config
-	jobStore         *JobStore
-	wsHub            *WSHub
-	tokenStore       *TokenStore
-	upgrader         websocket.Upgrader
-	router           *mux.Router
-	port             string
-	upstreamCache    *upstreamCacheEntry
-	upstreamCacheMu  sync.RWMutex
-	upstreamLogin    UpstreamLoginFunc
+	cfg             *config.Config
+	jobStore        *JobStore
+	wsHub           *WSHub
+	tokenStore      *TokenStore
+	upgrader        websocket.Upgrader
+	router          *mux.Router
+	port            string
+	upstreamCache   *upstreamCacheEntry
+	upstreamCacheMu sync.RWMutex
+	upstreamLogin   UpstreamLoginFunc
 }
 
 // defaultUpstreamLogin is the real upstream login using the Impartus API.
@@ -508,9 +512,9 @@ func newAPIServerFull(port string, cfg *config.Config, loginFn UpstreamLoginFunc
 	}
 
 	s := &APIServer{
-		cfg: baseCfg,
-		wsHub: NewWSHub(),
-		tokenStore:    NewTokenStore(),
+		cfg:        baseCfg,
+		wsHub:      NewWSHub(),
+		tokenStore: NewTokenStore(),
 		upgrader: websocket.Upgrader{CheckOrigin: func(r *http.Request) bool {
 			return true
 		}},
@@ -638,10 +642,10 @@ func (s *APIServer) healthHandler(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	respondWithEnvelope(w, http.StatusOK, "health", map[string]any{
-		"status":    overallStatus,
-		"config":    configStatus,
-		"upstream":  upstreamStatus,
-		"ffmpeg":    ffmpegStatus,
+		"status":   overallStatus,
+		"config":   configStatus,
+		"upstream": upstreamStatus,
+		"ffmpeg":   ffmpegStatus,
 	})
 }
 
@@ -733,7 +737,7 @@ func (s *APIServer) checkUpstreamStatus() map[string]any {
 		u, err := parseURL(baseURL)
 		if err == nil {
 			host := u.Host
-			if strings.Contains(host, ":") == false {
+			if !strings.Contains(host, ":") {
 				if u.Scheme == "https" {
 					host = net.JoinHostPort(host, "443")
 				} else {
@@ -1153,14 +1157,6 @@ func ensureJobDirectories(cfg *config.Config) error {
 	return os.MkdirAll(cfg.TempDirLocation, 0o755)
 }
 
-func parseHTTPTimeout(raw string) time.Duration {
-	timeout, err := time.ParseDuration(raw)
-	if err != nil {
-		return 0
-	}
-	return timeout
-}
-
 func (s *APIServer) fetchSelectedLectures(ctx context.Context, jobID string, jobCtx context.Context, apiClient *client.Client, cfg *config.Config, job *Job) (client.Lectures, bool) {
 	if !s.updateRunningProgress(jobID, 15, "fetching_lectures", nil) {
 		return nil, false
@@ -1510,25 +1506,6 @@ func applyJobConfigOverrides(cfg *config.Config, opts *JobConfigOptions) {
 	}
 	if opts.SkipNoAudio != nil {
 		cfg.SkipNoAudio = *opts.SkipNoAudio
-	}
-}
-
-func writeJSON(w http.ResponseWriter, status int, payload any) {
-	recorder := httptest.NewRecorder()
-	recorder.Header().Set("Content-Type", "application/json")
-	recorder.WriteHeader(status)
-	if err := json.NewEncoder(recorder).Encode(payload); err != nil {
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
-	for key, values := range recorder.Header() {
-		for _, value := range values {
-			w.Header().Add(key, value)
-		}
-	}
-	w.WriteHeader(status)
-	if _, err := w.Write(recorder.Body.Bytes()); err != nil {
-		log.Printf("json response write failed: %v", err)
 	}
 }
 

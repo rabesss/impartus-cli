@@ -92,8 +92,8 @@ type responseMeta struct {
 
 // retryHint indicates whether an error is retryable and how long to wait before retrying
 type retryHint struct {
-	Retryable bool `json:"retryable"`
-	RetryAfter int `json:"retryAfter"`
+	Retryable  bool `json:"retryable"`
+	RetryAfter int  `json:"retryAfter"`
 }
 
 func respondWithEnvelope(w http.ResponseWriter, status int, command string, data any) {
