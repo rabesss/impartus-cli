@@ -1,0 +1,96 @@
+{
+  "groupId": "cross-area",
+  "testedAt": "2026-03-28T10:22:00Z",
+  "isolation": {
+    "workingDirectory": "/home/ravish/Desktop/clawds-code-crib/impartus-go/impartus",
+    "testingPattern": "httptest.NewRecorder (no shared state, no real server)"
+  },
+  "toolsUsed": ["go-test"],
+  "assertions": [
+    {
+      "id": "VAL-CROSS-001",
+      "title": "Full agent workflow with consistent envelope",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run go test ./internal/server/... -v -run 'TestHealthHandler|TestLoginHandler|TestListJobsHandler|TestGetJobHandlerSuccess|TestCreateJobHandlerValidation|TestLecturesHandlerValidation'",
+          "expected": "All handler tests pass and return consistent {success, data, error, meta} envelope format",
+          "observed": "All 14 handler test cases passed. Server responses use respondWithEnvelope/respondWithSuccess/respondWithError which all produce {success, data/error, meta} envelope structure."
+        },
+        {
+          "action": "Verify envelope structure in auth.go",
+          "expected": "All response helpers produce {success, data, error, meta} shape",
+          "observed": "respondWithEnvelope produces {success:true, data, meta:{command, mode}}. respondWithError produces {success:false, error:{code, message, details?}, meta:{command, mode}}. respondWithSuccess produces {success:true, data, meta:{command, mode}}. All use identical envelope shape."
+        },
+        {
+          "action": "Verify full server test suite passes",
+          "expected": "go test ./internal/server/... -v passes all tests",
+          "observed": "All 78+ server tests PASS (0.912s). Covers health, login, courses, lectures, jobs CRUD, idempotency keys, persistence, WebSocket auth, cache, etc."
+        }
+      ],
+      "evidence": {
+        "consoleErrors": "none",
+        "network": "N/A - httptest.NewRecorder pattern, no real HTTP server",
+        "testOutput": "TestHealthHandler PASS, TestLoginHandler PASS, TestListJobsHandler PASS, TestGetJobHandlerSuccess PASS, TestCreateJobHandlerValidation (6 subtests) PASS, TestLecturesHandlerValidation (4 subtests) PASS"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-002",
+      "title": "Agent error recovery with retryable hints",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run go test ./internal/server/... -v -run 'RetryHint|Retryable|RespondWithErrorRetryHintForUpstreamErrors'",
+          "expected": "COURSES_FETCH_FAILED returns 502 with retryable:true, retryAfter:N. Retry works.",
+          "observed": "TestRespondWithErrorRetryHintForUpstreamErrors passes with 4 subtests: LOGIN_FAILED is retryable, COURSES_FETCH_FAILED is retryable, LECTURES_FETCH_FAILED is retryable, CANCEL_FAILED is retryable."
+        },
+        {
+          "action": "Verify retryHint struct in auth.go",
+          "expected": "retryHint has Retryable bool and RetryAfter int fields",
+          "observed": "auth.go:94-97 defines retryHint struct{Retryable bool, RetryAfter int}. Used in courses handler (line 834, 840), lectures handler (line 875, 881), cancel handler (line 982)."
+        },
+        {
+          "action": "Verify non-retryable errors don't have retry hints",
+          "expected": "Client errors (4xx) are not retryable",
+          "observed": "TestRespondWithErrorNoRetryHintForClientErrors passes with 9 subtests confirming INVALID_REQUEST, MISSING_PARAMETER, INVALID_JOB_CONFIG, JOB_CANNOT_CANCEL, AUTH_FAILED, MISSING_TOKEN, INVALID_TOKEN_FORMAT, INVALID_TOKEN, JOB_NOT_FOUND are all NOT retryable."
+        }
+      ],
+      "evidence": {
+        "consoleErrors": "none",
+        "testOutput": "TestRespondWithErrorRetryHintForUpstreamErrors (4 subtests) PASS, TestRespondWithErrorNoRetryHintForClientErrors (9 subtests) PASS, TestRespondWithErrorWithRetryHintAndDetails PASS"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-005",
+      "title": "CLI JSON mode unaffected",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run go test ./internal/cli/... -v",
+          "expected": "All CLI tests pass, including JSON envelope tests for all subcommands",
+          "observed": "All 37+ CLI tests PASS (0.003s). Includes TestExecuteJSONNoSubcommandReturnsCapabilitiesEnvelope, TestExecuteJSONEnvelopeShapeForVersionAndErrors (3 subtests), TestExecuteJSONServeReturnsDeterministicMetadata, TestExecuteJSONValidationAndDownloadEnvelope, TestExecuteJSONDownloadUsesStructuredResult."
+        },
+        {
+          "action": "Verify CLI jsonEnvelope struct",
+          "expected": "CLI uses {success, data, error, meta} envelope matching server format",
+          "observed": "cli.go:32-47 defines jsonEnvelope{Success bool, Data any, Error *jsonErr, Meta jsonMeta{Command, Mode}}. Consistent with server envelope shape."
+        },
+        {
+          "action": "Verify go build ./... and go vet ./... pass",
+          "expected": "Clean build and vet",
+          "observed": "go build ./... completed successfully (exit code 0). go vet ./... completed successfully (exit code 0). No issues."
+        }
+      ],
+      "evidence": {
+        "consoleErrors": "none",
+        "testOutput": "All CLI tests PASS. go build and go vet pass cleanly."
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 3 assertions: 3 passed, 0 failed, 0 blocked. VAL-CROSS-001: Full server handler test suite (78+ tests) passes, all handlers produce consistent {success, data, error, meta} envelope. VAL-CROSS-002: Retry hint tests confirm COURSES_FETCH_FAILED (502) returns retryable=true with retryAfter, and client errors are properly non-retryable. VAL-CROSS-005: All 37+ CLI tests pass with JSON envelope format intact, go build and go vet clean."
+}

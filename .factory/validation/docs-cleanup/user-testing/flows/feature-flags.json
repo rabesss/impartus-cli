@@ -1,0 +1,109 @@
+{
+  "groupId": "feature-flags",
+  "testedAt": "2026-03-28T10:25:00Z",
+  "isolation": {
+    "workingDirectory": "/home/ravish/Desktop/clawds-code-crib/impartus-go/impartus",
+    "mode": "code-analysis",
+    "sharedState": "none"
+  },
+  "toolsUsed": ["grep", "file-checks", "go-build", "go-test"],
+  "assertions": [
+    {
+      "id": "VAL-FLAG-001",
+      "title": "No dead feature flags",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Check if internal/config/feature_flags.go exists",
+          "expected": "File should not exist — it was deleted as part of cleanup",
+          "observed": "File does not exist. Directory listing of internal/config/ shows only CLAUDE.md, config.go, config_test.go"
+        },
+        {
+          "action": "Grep codebase for FeatureFlags struct and related functions (IsFeatureEnabled, ListEnabledFeatures, DefaultFeatureFlags, ApplyFeatureFlagEnvOverrides)",
+          "expected": "No references in source code",
+          "observed": "No matches found in source code. References only in .factory/validation/ scrutiny review metadata files (not code)"
+        },
+        {
+          "action": "Grep codebase for all 12 flag names (EnableVerboseLogging, EnableExperimentalFeatures, EnableMultipartDownload, EnableProgressBar, EnableChecksumValidation, EnableResumeOnFailure, EnableAutoRetry, EnableDetailedErrors, EnableConcurrentDownloads, EnableCacheOptimization, EnableMetrics, EnableSentry)",
+          "expected": "No references in source code",
+          "observed": "No matches found anywhere in the codebase"
+        },
+        {
+          "action": "Grep for feature_flag, featureFlag, feature.flag patterns",
+          "expected": "No references in source code",
+          "observed": "No matches found in source code"
+        },
+        {
+          "action": "Check Config struct in internal/config/config.go for FeatureFlags field",
+          "expected": "No FeatureFlags field present",
+          "observed": "Config struct contains 22 fields — none related to feature flags. No FeatureFlags field exists."
+        },
+        {
+          "action": "Check sample.config.json for feature flag entries",
+          "expected": "No featureFlags section or flag entries",
+          "observed": "sample.config.json contains only legitimate config fields (username, password, baseUrl, quality, views, download settings, pipeline settings, progress tracking). No feature flag entries present."
+        },
+        {
+          "action": "Run go build ./...",
+          "expected": "Build succeeds with no errors",
+          "observed": "Build completed successfully (exit code 0)"
+        },
+        {
+          "action": "Run go test ./...",
+          "expected": "All tests pass",
+          "observed": "All 11 test packages pass (10 ok, 1 no test files). Exit code 0."
+        }
+      ],
+      "evidence": {
+        "fileDeletion": "internal/config/feature_flags.go does not exist",
+        "grepResults": {
+          "flagStructsAndFunctions": "zero matches in code",
+          "twelveFlagNames": "zero matches in codebase",
+          "genericFeatureFlagPatterns": "zero matches in code"
+        },
+        "configStruct": "No FeatureFlags field in Config struct",
+        "sampleConfig": "No feature flag entries in sample.config.json",
+        "goBuild": "exit code 0 — success",
+        "goTest": "all packages pass — exit code 0"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-FLAG-002",
+      "title": "Feature flags respect config",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Verify feature flags are removed entirely (satisfies by default per contract)",
+          "expected": "No feature flag system exists in the codebase",
+          "observed": "Feature flag system completely removed — no feature_flags.go, no FeatureFlags struct, no flag fields in Config, no IsFeatureEnabled() calls, no flag entries in sample.config.json"
+        },
+        {
+          "action": "Confirm no behavioral code depends on feature flags",
+          "expected": "No business logic references any feature flag",
+          "observed": "Grep for all 12 flag names and all feature flag functions returns zero matches in source code. No business logic depends on feature flags."
+        },
+        {
+          "action": "Verify build and tests pass without feature flag system",
+          "expected": "No compilation or test failures",
+          "observed": "go build ./... and go test ./... both succeed with exit code 0"
+        },
+        {
+          "action": "Verify stale doc references cleaned up (docs/observability.md, worker SKILL.md)",
+          "expected": "No IMPARTUS_FLAG_* references in docs, no feature_flags.go references in skill files",
+          "observed": "docs/observability.md: zero IMPARTUS_FLAG_* matches. .factory/skills/go-backend-worker: zero feature_flags.go matches. Both cleaned up in prior commits."
+        }
+      ],
+      "evidence": {
+        "removalComplete": "Entire feature flag system deleted — file, struct, methods, config field, sample config entries, test file, and doc references all removed",
+        "goBuild": "exit code 0 — success",
+        "goTest": "all packages pass — exit code 0",
+        "docsClean": "No stale IMPARTUS_FLAG_* or feature_flags.go references in docs or skill files"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 2 assertions: 2 passed, 0 failed. The feature flag system has been completely removed from the codebase — internal/config/feature_flags.go is deleted, the FeatureFlags field is removed from Config struct, all 12 flag names and related functions (IsFeatureEnabled, DefaultFeatureFlags, ApplyFeatureFlagEnvOverrides, ListEnabledFeatures) have zero references in source code, sample.config.json has no feature flag entries, and stale doc references have been cleaned up. Build and all tests pass."
+}

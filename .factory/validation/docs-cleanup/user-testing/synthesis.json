@@ -1,0 +1,34 @@
+{
+  "milestone": "docs-cleanup",
+  "round": 1,
+  "status": "fail",
+  "assertionsSummary": {
+    "total": 9,
+    "passed": 7,
+    "failed": 2,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-FLAG-001",
+    "VAL-FLAG-002",
+    "VAL-DOC-003",
+    "VAL-DOC-004",
+    "VAL-CROSS-001",
+    "VAL-CROSS-002",
+    "VAL-CROSS-005"
+  ],
+  "failedAssertions": [
+    {
+      "id": "VAL-DOC-001",
+      "reason": "Manifest inaccurately describes list responses as bare arrays not wrapped in envelope (all handlers use respondWithEnvelope). Also incorrectly states pending jobs are restored as pending on restart (code marks them as failed)."
+    },
+    {
+      "id": "VAL-DOC-002",
+      "reason": "API reference 'Direct JSON responses' section inaccurately claims courses/lectures/jobs return bare arrays. Restart behavior table incorrectly states pending jobs are 'Restored as pending' (code marks them as failed)."
+    }
+  ],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "previousRound": null,
+  "rootCauseAnalysis": "Two systemic documentation inaccuracies affect both VAL-DOC-001 and VAL-DOC-002: (1) Response wrapping - docs claim list endpoints return bare arrays but ALL handlers (coursesHandler line 844, lecturesHandler line 885, createJobHandler line 942, listJobsHandler line 946, getJobHandler line 962) use respondWithEnvelope(). (2) Pending job restart - docs in both manifest and API reference say pending jobs are restored as pending, but loadFromDisk() marks both pending AND running as failed."
+}
