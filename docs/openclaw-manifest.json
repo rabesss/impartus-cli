@@ -142,33 +142,39 @@
       "authentication": "required",
       "parameters": {},
       "response": {
-        "type": "array",
-        "note": "Returns array directly, not wrapped in envelope",
-        "items": {
-          "sessionId": {
-            "type": "integer"
+        "format": "respondWithEnvelope",
+        "envelope": {
+          "success": { "type": "boolean", "value": true },
+          "data": {
+            "type": "array",
+            "items": {
+              "sessionId": {
+                "type": "integer"
+              },
+              "subjectId": {
+                "type": "integer"
+              },
+              "subjectName": {
+                "type": "string"
+              },
+              "professorName": {
+                "type": "string"
+              },
+              "sessionName": {
+                "type": "string"
+              },
+              "institute": {
+                "type": "string"
+              },
+              "department": {
+                "type": "string"
+              },
+              "videoCount": {
+                "type": "integer"
+              }
+            }
           },
-          "subjectId": {
-            "type": "integer"
-          },
-          "subjectName": {
-            "type": "string"
-          },
-          "professorName": {
-            "type": "string"
-          },
-          "sessionName": {
-            "type": "string"
-          },
-          "institute": {
-            "type": "string"
-          },
-          "department": {
-            "type": "string"
-          },
-          "videoCount": {
-            "type": "integer"
-          }
+          "meta": { "type": "object", "description": "{ command: string, mode: 'api' }" }
         }
       },
       "errors": [
@@ -205,32 +211,38 @@
         }
       },
       "response": {
-        "type": "array",
-        "note": "Returns array directly, not wrapped in envelope",
-        "items": {
-          "videoId": {
-            "type": "integer"
+        "format": "respondWithEnvelope",
+        "envelope": {
+          "success": { "type": "boolean", "value": true },
+          "data": {
+            "type": "array",
+            "items": {
+              "videoId": {
+                "type": "integer"
+              },
+              "seqNo": {
+                "type": "integer"
+              },
+              "topic": {
+                "type": "string"
+              },
+              "startTime": {
+                "type": "string",
+                "format": "ISO 8601"
+              },
+              "endTime": {
+                "type": "string",
+                "format": "ISO 8601"
+              },
+              "actualDuration": {
+                "type": "integer"
+              },
+              "subjectName": {
+                "type": "string"
+              }
+            }
           },
-          "seqNo": {
-            "type": "integer"
-          },
-          "topic": {
-            "type": "string"
-          },
-          "startTime": {
-            "type": "string",
-            "format": "ISO 8601"
-          },
-          "endTime": {
-            "type": "string",
-            "format": "ISO 8601"
-          },
-          "actualDuration": {
-            "type": "integer"
-          },
-          "subjectName": {
-            "type": "string"
-          }
+          "meta": { "type": "object", "description": "{ command: string, mode: 'api' }" }
         }
       },
       "errors": [
@@ -459,9 +471,15 @@
       "endpoint": "GET /api/v1/jobs",
       "authentication": "required",
       "response": {
-        "type": "array",
-        "note": "Returns array of Job objects directly",
-        "items": "Job object (same schema as download_lectures response)"
+        "format": "respondWithEnvelope",
+        "envelope": {
+          "success": { "type": "boolean", "value": true },
+          "data": {
+            "type": "array",
+            "items": "Job object (same schema as download_lectures response)"
+          },
+          "meta": { "type": "object", "description": "{ command: string, mode: 'api' }" }
+        }
       },
       "errors": [
         "MISSING_TOKEN",
@@ -915,7 +933,7 @@
     "Job responses use 'id' field, not 'jobId'",
     "WebSocket events have no 'data' wrapper — additional fields are at top level",
     "WebSocket timestamps are Unix integers, not ISO 8601 strings",
-    "List responses (courses, lectures, jobs) are bare arrays, not wrapped objects",
+    "List responses (courses, lectures, jobs) are wrapped in {success, data, error, meta} envelope",
     "Upstream error messages may be passed through to API clients on 502 responses"
   ],
   "jobPersistence": {
@@ -933,7 +951,7 @@
       "Runtime context (download progress, active connections)"
     ],
     "restartBehavior": {
-      "pending": "Jobs in pending state are restored as pending",
+      "pending": "Jobs in pending state are marked as 'failed' (cannot be resumed)",
       "running": "Jobs that were running are marked as 'failed' on restart (cannot be resumed)",
       "completed": "Jobs in completed state are restored as completed",
       "failed": "Jobs in failed state are restored as failed",
