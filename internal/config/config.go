@@ -43,11 +43,7 @@ type Config struct {
 	DownloadWorkersPerLecture int            `json:"downloadWorkersPerLecture"`
 	DecryptWorkersPerLecture  int            `json:"decryptWorkersPerLecture"`
 	ProgressTracking          ProgressConfig `json:"progressTracking"`
-	HTTPTimeout               string         `json:"httpTimeout"`
-
-	// FeatureFlags enables experimental features and safe rollouts for agents.
-	// See internal/config/feature_flags.go for available flags.
-	FeatureFlags *FeatureFlags `json:"featureFlags"`
+	HTTPTimeout string `json:"httpTimeout"`
 }
 
 var (
@@ -62,7 +58,6 @@ func (c *Config) ApplyDefaults() {
 	c.applyWorkerDefaults()
 	c.applyRateLimitDefaults()
 	c.applyProgressDefaults()
-	c.applyFeatureFlagDefaults()
 }
 
 func (c *Config) applyURLDefaults() {
@@ -114,13 +109,6 @@ func (c *Config) applyProgressDefaults() {
 	}
 	if c.HTTPTimeout == "" {
 		c.HTTPTimeout = "10m"
-	}
-}
-
-func (c *Config) applyFeatureFlagDefaults() {
-	// Initialize feature flags with defaults if not already set
-	if c.FeatureFlags == nil {
-		c.FeatureFlags = DefaultFeatureFlags()
 	}
 }
 
@@ -293,11 +281,6 @@ func applyEnvOverrides(cfg *Config) {
 	applyIntEnv("IMPARTUS_NUM_WORKERS", &cfg.NumWorkers)
 	applyFloatEnv("IMPARTUS_RATE_LIMIT", &cfg.RateLimit)
 	applyFloatEnv("IMPARTUS_API_RATE_LIMIT", &cfg.APIRateLimit)
-
-	// Apply feature flag environment overrides
-	if cfg.FeatureFlags != nil {
-		cfg.ApplyFeatureFlagEnvOverrides()
-	}
 
 	applyCanonicalFields(cfg)
 }
