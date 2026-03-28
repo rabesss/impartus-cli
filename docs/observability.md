@@ -31,8 +31,6 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=https://your-otel-collector:4317
 
 ### Prometheus Integration
 
-To expose metrics for Prometheus scraping, enable the metrics endpoint via config.json `metricsEndpoint: true` or `IMPARTUS_METRICS_ENDPOINT=true`.
-
 Metrics will be available at `/metrics` when running the API server.
 
 ### Monitoring Dashboards
@@ -129,7 +127,7 @@ Logs are written to stderr with structured format:
 Configure log level via environment:
 
 ```bash
-# Enable verbose logging via config.json verbose: true or set IMpartus_VERBOSE=true
+# Enable verbose logging via config.json verbose: true or set IMPARTUS_VERBOSE=true
 ```
 
 ### Log Sanitization
