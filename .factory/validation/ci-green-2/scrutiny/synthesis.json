@@ -1,28 +1,19 @@
 {
   "milestone": "ci-green-2",
-  "round": 1,
-  "status": "fail",
+  "round": 2,
+  "status": "pass",
   "validatorsRun": {
     "test": { "passed": true, "command": "go test ./... -v -cover -parallel 3", "exitCode": 0 },
     "typecheck": { "passed": true, "command": "go build ./...", "exitCode": 0 },
-    "lint": { "passed": true, "command": "make lint (golangci-lint run --timeout 5m on milestone packages)", "exitCode": 0 }
+    "lint": { "passed": true, "command": "make lint (golangci-lint run --timeout 5m)", "exitCode": 0 }
   },
   "reviewsSummary": {
-    "total": 3,
-    "passed": 2,
-    "failed": 1,
-    "failedFeatures": ["fix-lint-errors"]
+    "total": 4,
+    "passed": 4,
+    "failed": 0,
+    "failedFeatures": []
   },
-  "blockingIssues": [
-    {
-      "featureId": "fix-lint-errors",
-      "file": "internal/cli/cli.go",
-      "line": 572,
-      "severity": "blocking",
-      "description": "BUG: applyLectureFilters returns filter counts (int, int) but does NOT return the filtered client.Lectures slice. In the original code, `selected = filterEmptyLectures(selected)` and `selected = filterNoAudioLectures(selected)` reassigned the slice in-scope. After extraction to a separate function, the local `lectures` parameter reassignment has no effect on the caller's `selected`. Result: empty and noaudio lecture filtering is silently disabled in interactive mode — user filter preferences are ignored. Fix: have applyLectureFilters return (client.Lectures, int, int) instead of (int, int), and use the returned slice in the caller.",
-      "suggestedFix": "Change applyLectureFilters signature to return the filtered Lectures slice along with the counts. Update the caller to use the returned filtered slice."
-    }
-  ],
+  "blockingIssues": [],
   "nonBlockingIssues": [
     {
       "featureId": "fix-ci-workflows",
@@ -32,11 +23,11 @@
       "description": "MAKE_TARGETS variable is assigned but never used (dead code, pre-existing)"
     },
     {
-      "featureId": "fix-code-review-issues",
-      "file": "internal/server/auth.go",
-      "line": 153,
+      "featureId": "fix-apply-lecture-filters-bug",
+      "file": "internal/cli/cli_test.go",
+      "line": 480,
       "severity": "non_blocking",
-      "description": "respondWithSuccess() omits 'error' field, creating schema inconsistency with respondWithEnvelope() which now includes 'error': null. Both are success-response helpers but produce different JSON shapes."
+      "description": "TestApplyLectureFilters exists locally and passes all 6 sub-tests, but the test file is gitignored by the *_test.go pattern in .gitignore (line 65). The test cannot be committed to version control. This is a pre-existing project convention issue."
     }
   ],
   "appliedUpdates": [],
@@ -46,6 +37,12 @@
       "suggestion": "The go-backend-worker skill should include a refactoring-specific verification step: when extracting helper functions, verify that all mutations of the original in-scope variables are preserved by either (a) returning the modified values, (b) using pointer receivers, or (c) writing a targeted test for the extracted function's contract. The current skill only says 'run existing tests' which missed this behavioral regression because interactive mode has no automated test coverage.",
       "evidence": "fix-lint-errors extracted applyLectureFilters from runInteractive, losing the mutation of the `selected` slice. Existing tests passed but the behavioral regression was not caught because interactive mode has no automated tests.",
       "isSystemic": false
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "The .gitignore file contains a blanket '*_test.go' pattern that prevents all test files from being committed. This conflicts with AGENTS.md guidance about 'Coverage threshold: 40% minimum' and CI coverage reports. Consider either removing the gitignore pattern or documenting the local-only testing convention.",
+      "evidence": "git check-ignore shows '.gitignore:65:*_test.go'. AGENTS.md says 'Coverage threshold: 40% minimum' and 'CI/CD: Coverage reports uploaded to Codecov'. Test files exist locally (cli_test.go has 710+ lines) but are not in git.",
+      "isSystemic": true
     }
   ],
   "rejectedObservations": [
@@ -55,8 +52,8 @@
     },
     {
       "observation": "Server and CLI envelope patterns evolved independently without shared schema",
-      "reason": "This is a known architectural observation, not actionable guidance for workers"
+      "reason": "This was addressed by fix-apply-lecture-filters-bug which added error: null to respondWithSuccess for schema consistency"
     }
   ],
-  "previousRound": null
+  "previousRound": ".factory/validation/ci-green-2/scrutiny/synthesis.json (round 1)"
 }

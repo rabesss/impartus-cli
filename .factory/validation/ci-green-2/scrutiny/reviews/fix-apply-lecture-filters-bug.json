@@ -1,0 +1,28 @@
+{
+  "featureId": "fix-apply-lecture-filters-bug",
+  "reviewedAt": "2026-03-29T01:30:00Z",
+  "commitId": "a370fe6",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix correctly addresses the behavioral regression from the gocyclo refactoring. The applyLectureFilters function now returns (client.Lectures, int, int) instead of (int, int), and the call site at line 570 correctly captures the filtered slice. The respondWithSuccess function now includes 'error: nil' for schema consistency with respondWithEnvelope. A comprehensive test was added covering 6 scenarios (no filtering, empty-only, noaudio-only, both filters, empty input, nil input). All tests pass and the build succeeds. The test file is gitignored (*_test.go pattern in .gitignore) so it exists locally but cannot be committed to the repository.",
+    "issues": [
+      {
+        "file": "internal/cli/cli_test.go",
+        "line": 480,
+        "severity": "non_blocking",
+        "description": "TestApplyLectureFilters exists locally and passes all 6 sub-tests, but the test file is gitignored by the *_test.go pattern in .gitignore (line 65). This means the test cannot be committed to version control, so CI and other developers will not benefit from the regression test. This is a pre-existing project convention issue, not introduced by this fix. The fix itself is correct regardless of test commitability."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The .gitignore file contains a blanket '*_test.go' pattern at line 65, which prevents ALL test files from being committed to version control. This is a significant convention gap: the project AGENTS.md describes testing patterns (table-driven tests, mock HTTP clients) and says 'Coverage threshold: 40% minimum' with CI coverage reports, but test files themselves are gitignored. This means test coverage can only be measured locally and CI cannot run tests from committed test files. Prior to this fix, the cli_test.go file existed locally (710 lines with many tests) but was never in git. This is a systemic issue that affects regression prevention — the applyLectureFilters bug was partially caused by lack of test coverage for interactive filtering, and the fix adds a test that still can't be committed.",
+      "evidence": "git check-ignore shows '.gitignore:65:*_test.go internal/cli/cli_test.go'. git ls-files returns empty for cli_test.go. AGENTS.md says 'Coverage threshold: 40% minimum' and 'CI/CD: Coverage reports uploaded to Codecov'. The cli_test.go file has 710 lines of tests including TestFilterEmptyLectures, TestFilterNoAudioLectures, TestApplyLectureFilters, and many others."
+    }
+  ],
+  "addressesFailureFrom": "/home/ravish/Desktop/clawds-code-crib/impartus-go/impartus/.factory/validation/ci-green-2/scrutiny/reviews/fix-lint-errors.json",
+  "summary": "PASS — The fix correctly addresses the blocking regression from the prior review. The applyLectureFilters function now returns (client.Lectures, int, int), and the call site captures the filtered slice so that empty/noaudio lecture filtering works correctly in interactive mode. respondWithSuccess now includes 'error: nil' for schema consistency. A comprehensive test with 6 sub-cases was added and all pass. The only non-blocking concern is that test files are gitignored, so the new regression test cannot be committed to version control — but this is a pre-existing project convention, not an issue with this fix."
+}
