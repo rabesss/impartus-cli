@@ -1,36 +1,20 @@
 {
   "milestone": "docs-cleanup",
-  "round": 1,
-  "status": "fail",
+  "round": 2,
+  "status": "pass",
   "validatorsRun": {
     "test": { "passed": true, "command": "go test ./... -v -cover -parallel 3", "exitCode": 0 },
     "typecheck": { "passed": true, "command": "go vet ./...", "exitCode": 0 },
     "build": { "passed": true, "command": "go build ./...", "exitCode": 0 },
-    "lint": { "passed": false, "command": "make lint", "exitCode": 2, "note": "Pre-existing lint failures unrelated to docs-cleanup changes: golangci-lint binary (go1.24) is incompatible with go1.26 stdlib. All errors are in sentryhook (undefined sentry), third-party modules (otel, grpc), and pre-existing composite literal issues in test files. Verified identical lint output on HEAD and HEAD~2." }
+    "lint": { "passed": false, "command": "make lint", "exitCode": 2, "note": "Pre-existing lint failures: golangci-lint binary (go1.24) incompatible with go1.26 stdlib. All errors in third-party modules (sentry-go, otel, grpc). Identical to round 1 lint output. Not related to docs-cleanup changes." }
   },
   "reviewsSummary": {
-    "total": 2,
-    "passed": 1,
-    "failed": 1,
-    "failedFeatures": ["update-all-docs"]
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "failedFeatures": []
   },
-  "blockingIssues": [
-    {
-      "featureId": "update-all-docs",
-      "severity": "blocking",
-      "description": "All API response examples across docs/openclaw-manifest.json, docs/api-reference.md, and docs/error-codes.md show meta.mode: 'json', but the API server (internal/server/auth.go) returns mode: 'api'. CLI --json mode uses 'json' but API endpoints use 'api'. Every envelope example in the docs is wrong for API usage."
-    },
-    {
-      "featureId": "update-all-docs",
-      "severity": "blocking",
-      "description": "Health endpoint docs describe ffmpeg.version field (e.g., 'n8.1') but checkFFmpegStatus() in server.go only returns {status: 'available'|'not_found'} with no version field. Also documents ffmpeg status value 'unavailable' but code returns 'not_found'."
-    },
-    {
-      "featureId": "update-all-docs",
-      "severity": "blocking",
-      "description": "Health endpoint docs describe upstream.error field but checkUpstreamStatus() in server.go only returns {status: 'reachable'|'unreachable'} with no error field."
-    }
-  ],
+  "blockingIssues": [],
   "appliedUpdates": [
     {
       "target": "library",
@@ -44,19 +28,21 @@
       "suggestion": "Add a note in the documentation section about the meta.mode distinction: API server returns mode: 'api', CLI --json returns mode: 'json'. Workers updating docs should check which surface they are documenting.",
       "evidence": "update-all-docs review found all API docs incorrectly using mode: 'json'. The mode distinction is documented in architecture.md but not in AGENTS.md guidance for doc writers.",
       "isSystemic": false
-    },
-    {
-      "target": ".factory/skills/go-backend-worker/SKILL.md",
-      "suggestion": "Remove the reference to 'internal/config/feature_flags.go - Feature flags' from the key files list (line ~43), since this file has been deleted.",
-      "evidence": "cleanup-feature-flags review found stale reference to deleted file in skill documentation.",
-      "isSystemic": false
     }
   ],
   "rejectedObservations": [
     {
+      "observation": "docs/observability.md references config options and env vars that don't exist in the codebase: metricsEndpoint, IMPARTUS_VERBOSE (also with typo 'IMpartus_VERBOSE').",
+      "reason": "Pre-existing documentation accuracy issue. Not a shared state observation suitable for library or services.yaml. The orchestrator can decide whether to create a follow-up task for observability.md cleanup."
+    },
+    {
       "observation": "docs/observability.md references 8 IMPARTUS_FLAG_* environment variables that no longer work after feature flag removal.",
-      "reason": "This is a documentation accuracy issue within the scope of a potential fix feature, not a shared state observation for the library or services.yaml. The orchestrator can decide whether to create a follow-up task."
+      "reason": "Already rejected in round 1. The fix-docs-accuracy feature addressed this by removing these references. The remaining non-existent env vars (IMPARTUS_VERBOSE, metricsEndpoint) are a separate pre-existing issue."
+    },
+    {
+      "observation": "go-backend-worker SKILL.md references deleted feature_flags.go file.",
+      "reason": "Already addressed by a prior commit (e40c722: 'chore: remove stale feature_flags.go reference from worker skill')."
     }
   ],
-  "previousRound": null
+  "previousRound": ".factory/validation/docs-cleanup/scrutiny/synthesis.json"
 }
