@@ -1,0 +1,37 @@
+{
+  "milestone": "ci-fixes",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 9,
+    "passed": 9,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-PERS-001",
+    "VAL-PERS-002",
+    "VAL-LINT-001",
+    "VAL-LINT-002",
+    "VAL-LINT-003",
+    "VAL-BLD-001",
+    "VAL-BLD-002",
+    "VAL-DOC-001",
+    "VAL-CROSS-001"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "previousRound": null,
+  "evidence": {
+    "VAL-PERS-001": "20 persistence tests pass including TestNewAPIServerWithPersistenceRestoresJobsAcrossRestart; code shows newAPIServerFull(port, cfg, nil, \"\", true) creates persistent store, newJobPersistence(\"\") defaults to .jobs.json",
+    "VAL-PERS-002": "CLI serve command calls server.NewAPIServerWithPersistence(strconv.Itoa(*port), cfg, \"\") which always creates persistent store",
+    "VAL-LINT-001": "golangci-lint run --tests=false ./internal/server/ ./internal/config/ exits 0 on mission-changed files; remaining issues in pre-existing files only (cli.go gocyclo, metrics/sentryhook goimports)",
+    "VAL-LINT-002": "grep confirms: no writeJSON(), parseHTTPTimeout(), (*jobPersistence).remove(), upstreamCacheEntry.mu in codebase",
+    "VAL-LINT-003": "loadFromDisk() properly handles time.Parse errors with 'if err != nil { createdAt = time.Time{} }' pattern",
+    "VAL-BLD-001": "go build ./... exits 0",
+    "VAL-BLD-002": "go test ./... exits 0, all packages pass",
+    "VAL-DOC-001": "grep for feature_flags in AGENTS.md returns no matches",
+    "VAL-CROSS-001": "Build + test + lint on mission files + AGENTS.md all pass"
+  }
+}
