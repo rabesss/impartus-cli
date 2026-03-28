@@ -50,13 +50,12 @@ Success (`200`):
       "status": "reachable"
     },
     "ffmpeg": {
-      "status": "available",
-      "version": "n8.1"
+      "status": "available"
     }
   },
   "meta": {
     "command": "health",
-    "mode": "json"
+    "mode": "api"
   }
 }
 ```
@@ -67,7 +66,7 @@ Possible `status` values:
 
 The `config.status` will be `misconfigured` if username, password, or baseUrl are missing.
 The `upstream.status` will be `unreachable` if the Impartus API cannot be contacted.
-The `ffmpeg.status` will be `unavailable` if FFmpeg is not installed or not in PATH.
+The `ffmpeg.status` will be `not_found` if FFmpeg is not installed or not in PATH.
 
 ## Authentication
 
@@ -129,7 +128,7 @@ Used by auth middleware/login failures and API validation/runtime errors.
   },
   "meta": {
     "command": "commandName",
-    "mode": "json"
+    "mode": "api"
   }
 }
 ```
@@ -149,7 +148,7 @@ Some errors include retry hints when the operation may succeed on retry:
   },
   "meta": {
     "command": "courses",
-    "mode": "json"
+    "mode": "api"
   }
 }
 ```
@@ -170,7 +169,7 @@ Used where handlers call `respondWithSuccess` (login + delete job + health check
   "data": {},
   "meta": {
     "command": "commandName",
-    "mode": "json"
+    "mode": "api"
   }
 }
 ```
@@ -277,7 +276,7 @@ Duplicate idempotency key (`409 Conflict`):
   },
   "meta": {
     "command": "createJob",
-    "mode": "json"
+    "mode": "api"
   }
 }
 ```

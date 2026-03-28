@@ -11,9 +11,6 @@ The CLI exports metrics via OpenTelemetry when configured. To enable metrics exp
 ```bash
 # Set OTLP endpoint for metrics export
 export OTEL_EXPORTER_OTLP_ENDPOINT=https://your-otel-collector:4317
-
-# Or use the feature flag
-export IMPARTUS_FLAG_METRICS_EXPORT=true
 ```
 
 ### Available Metrics
@@ -34,11 +31,7 @@ export IMPARTUS_FLAG_METRICS_EXPORT=true
 
 ### Prometheus Integration
 
-To expose metrics for Prometheus scraping, enable the metrics endpoint:
-
-```bash
-export IMPARTUS_FLAG_METRICS_ENDPOINT=true
-```
+To expose metrics for Prometheus scraping, enable the metrics endpoint via config.json `metricsEndpoint: true` or `IMPARTUS_METRICS_ENDPOINT=true`.
 
 Metrics will be available at `/metrics` when running the API server.
 
@@ -104,12 +97,6 @@ export SENTRY_ENVIRONMENT=production
 export SENTRY_RELEASE=impartus-cli@<release-version>
 ```
 
-Or enable via feature flag:
-
-```bash
-export IMPARTUS_FLAG_SENTRY_ERRORS=true
-```
-
 ### Sentry Features
 
 - **Error grouping**: Similar errors are grouped automatically
@@ -142,8 +129,7 @@ Logs are written to stderr with structured format:
 Configure log level via environment:
 
 ```bash
-# Enable verbose logging
-export IMPARTUS_FLAG_VERBOSE_LOGGING=true
+# Enable verbose logging via config.json verbose: true or set IMpartus_VERBOSE=true
 ```
 
 ### Log Sanitization
@@ -242,7 +228,3 @@ Returns Prometheus-formatted metrics.
 | `ALERT_ON_ERRORS` | Enable error alerts |
 | `DD_API_KEY` | Datadog API key |
 | `NEW_RELIC_LICENSE_KEY` | New Relic license key |
-| `IMPARTUS_FLAG_METRICS_EXPORT` | Enable metrics export |
-| `IMPARTUS_FLAG_METRICS_ENDPOINT` | Enable /metrics endpoint |
-| `IMPARTUS_FLAG_SENTRY_ERRORS` | Enable Sentry error tracking |
-| `IMPARTUS_FLAG_VERBOSE_LOGGING` | Enable verbose logging |
