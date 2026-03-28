@@ -40,7 +40,6 @@ None. All work is done via Go tooling (go test, go build) and file editing.
    - `internal/server/job_runner.go` - Parallel download runner
    - `internal/cli/cli.go` - CLI commands and JSON envelope
    - `internal/config/config.go` - Config loading and validation
-   - `internal/config/feature_flags.go` - Feature flags
    - `internal/client/client.go` - HTTP client, upstream API calls
    - `internal/client/types.go` - Data types
 2. Read existing test files to understand testing patterns:
