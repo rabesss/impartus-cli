@@ -480,17 +480,17 @@ func NewAPIServer(port string, cfg *config.Config) *APIServer {
 // NewAPIServerWithPersistence creates an APIServer with job persistence enabled.
 // Jobs are persisted to the given file path (defaults to ".jobs.json" if empty).
 func NewAPIServerWithPersistence(port string, cfg *config.Config, persistencePath string) *APIServer {
-	return newAPIServerFull(port, cfg, nil, persistencePath)
+	return newAPIServerFull(port, cfg, nil, persistencePath, true)
 }
 
 // NewAPIServerWithLogin creates an APIServer with a custom upstream login function.
 // If loginFn is nil, the default real upstream login is used.
 func NewAPIServerWithLogin(port string, cfg *config.Config, loginFn UpstreamLoginFunc) *APIServer {
-	return newAPIServerFull(port, cfg, loginFn, "")
+	return newAPIServerFull(port, cfg, loginFn, "", false)
 }
 
 // newAPIServerFull is the internal constructor with all options.
-func newAPIServerFull(port string, cfg *config.Config, loginFn UpstreamLoginFunc, persistencePath string) *APIServer {
+func newAPIServerFull(port string, cfg *config.Config, loginFn UpstreamLoginFunc, persistencePath string, persistenceEnabled bool) *APIServer {
 	baseCfg := cloneConfig(cfg)
 	if baseCfg == nil {
 		baseCfg = &config.Config{}
@@ -519,8 +519,8 @@ func newAPIServerFull(port string, cfg *config.Config, loginFn UpstreamLoginFunc
 		upstreamLogin: loginFn,
 	}
 
-	// Initialize job store (with persistence if path provided)
-	if persistencePath != "" {
+	// Initialize job store (with persistence if enabled)
+	if persistenceEnabled {
 		s.jobStore = NewJobStoreWithPersistence(persistencePath)
 	} else {
 		s.jobStore = NewJobStore()
