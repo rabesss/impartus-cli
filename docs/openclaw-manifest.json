@@ -1,7 +1,7 @@
 {
   "name": "impartus",
   "description": "CLI and HTTP API for downloading Impartus lecture recordings. Supports interactive and deterministic JSON modes for human and agent use.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": "rabesss",
   "homepage": "https://github.com/rabesss/impartus-cli",
   "endpoints": {
@@ -144,7 +144,10 @@
       "response": {
         "format": "respondWithEnvelope",
         "envelope": {
-          "success": { "type": "boolean", "value": true },
+          "success": {
+            "type": "boolean",
+            "value": true
+          },
           "data": {
             "type": "array",
             "items": {
@@ -174,7 +177,10 @@
               }
             }
           },
-          "meta": { "type": "object", "description": "{ command: string, mode: 'api' }" }
+          "meta": {
+            "type": "object",
+            "description": "{ command: string, mode: 'api' }"
+          }
         }
       },
       "errors": [
@@ -213,7 +219,10 @@
       "response": {
         "format": "respondWithEnvelope",
         "envelope": {
-          "success": { "type": "boolean", "value": true },
+          "success": {
+            "type": "boolean",
+            "value": true
+          },
           "data": {
             "type": "array",
             "items": {
@@ -242,7 +251,10 @@
               }
             }
           },
-          "meta": { "type": "object", "description": "{ command: string, mode: 'api' }" }
+          "meta": {
+            "type": "object",
+            "description": "{ command: string, mode: 'api' }"
+          }
         }
       },
       "errors": [
@@ -350,15 +362,27 @@
           "format": "respondWithEnvelope",
           "description": "Returned when idempotencyKey is provided and a job with that key already exists. Returns the existing job instead of creating a duplicate.",
           "envelope": {
-            "success": { "type": "boolean", "value": true },
+            "success": {
+              "type": "boolean",
+              "value": true
+            },
             "data": {
               "type": "object",
               "fields": {
-                "job": { "type": "object", "description": "The existing Job object" },
-                "duplicate": { "type": "boolean", "value": true }
+                "job": {
+                  "type": "object",
+                  "description": "The existing Job object"
+                },
+                "duplicate": {
+                  "type": "boolean",
+                  "value": true
+                }
               }
             },
-            "meta": { "type": "object", "description": "{ command: string, mode: 'api' }" }
+            "meta": {
+              "type": "object",
+              "description": "{ command: string, mode: 'api' }"
+            }
           }
         },
         "fields": {
@@ -473,12 +497,18 @@
       "response": {
         "format": "respondWithEnvelope",
         "envelope": {
-          "success": { "type": "boolean", "value": true },
+          "success": {
+            "type": "boolean",
+            "value": true
+          },
           "data": {
             "type": "array",
             "items": "Job object (same schema as download_lectures response)"
           },
-          "meta": { "type": "object", "description": "{ command: string, mode: 'api' }" }
+          "meta": {
+            "type": "object",
+            "description": "{ command: string, mode: 'api' }"
+          }
         }
       },
       "errors": [
@@ -562,38 +592,65 @@
       "response": {
         "format": "respondWithEnvelope",
         "envelope": {
-          "success": { "type": "boolean", "value": true },
+          "success": {
+            "type": "boolean",
+            "value": true
+          },
           "data": {
             "type": "object",
             "fields": {
-              "status": { "type": "string", "description": "Overall status: 'ok' or 'degraded'" },
+              "status": {
+                "type": "string",
+                "description": "Overall status: 'ok' or 'degraded'"
+              },
               "config": {
                 "type": "object",
                 "description": "Config validation checks (username, password, baseUrl)",
                 "fields": {
-                  "status": { "type": "string", "description": "'ok' or 'misconfigured'" },
-                  "username": { "type": "string", "description": "'ok' or 'missing'" },
-                  "password": { "type": "string", "description": "'ok' or 'missing'" },
-                  "baseUrl": { "type": "string", "description": "'ok' or 'missing'" }
+                  "status": {
+                    "type": "string",
+                    "description": "'ok' or 'misconfigured'"
+                  },
+                  "username": {
+                    "type": "string",
+                    "description": "'ok' or 'missing'"
+                  },
+                  "password": {
+                    "type": "string",
+                    "description": "'ok' or 'missing'"
+                  },
+                  "baseUrl": {
+                    "type": "string",
+                    "description": "'ok' or 'missing'"
+                  }
                 }
               },
               "upstream": {
                 "type": "object",
                 "description": "Impartus API reachability check",
                 "fields": {
-                  "status": { "type": "string", "description": "'reachable' or 'unreachable'" }
+                  "status": {
+                    "type": "string",
+                    "description": "'reachable' or 'unreachable'"
+                  }
                 }
               },
               "ffmpeg": {
                 "type": "object",
                 "description": "FFmpeg availability check",
                 "fields": {
-                  "status": { "type": "string", "description": "'available' or 'not_found'" }
+                  "status": {
+                    "type": "string",
+                    "description": "'available' or 'not_found'"
+                  }
                 }
               }
             }
           },
-          "meta": { "type": "object", "description": "{ command: string, mode: 'api' }" }
+          "meta": {
+            "type": "object",
+            "description": "{ command: string, mode: 'api' }"
+          }
         }
       }
     }
@@ -801,14 +858,36 @@
     "retryHints": {
       "description": "Some errors include retry hints to guide client retry behavior",
       "format": {
-        "retryable": { "type": "boolean", "description": "True if the operation may succeed on retry" },
-        "retryAfter": { "type": "integer", "description": "Seconds to wait before retrying (only present when retryable=true)" }
+        "retryable": {
+          "type": "boolean",
+          "description": "True if the operation may succeed on retry"
+        },
+        "retryAfter": {
+          "type": "integer",
+          "description": "Seconds to wait before retrying (only present when retryable=true)"
+        }
       },
       "codes": {
-        "LOGIN_FAILED": { "retryable": true, "retryAfter": 30, "status": 502 },
-        "COURSES_FETCH_FAILED": { "retryable": true, "retryAfter": 30, "status": 502 },
-        "LECTURES_FETCH_FAILED": { "retryable": true, "retryAfter": 30, "status": 502 },
-        "CANCEL_FAILED": { "retryable": true, "retryAfter": 10, "status": 500 }
+        "LOGIN_FAILED": {
+          "retryable": true,
+          "retryAfter": 30,
+          "status": 502
+        },
+        "COURSES_FETCH_FAILED": {
+          "retryable": true,
+          "retryAfter": 30,
+          "status": 502
+        },
+        "LECTURES_FETCH_FAILED": {
+          "retryable": true,
+          "retryAfter": 30,
+          "status": 502
+        },
+        "CANCEL_FAILED": {
+          "retryable": true,
+          "retryAfter": 10,
+          "status": 500
+        }
       },
       "notes": [
         "4xx client errors (INVALID_REQUEST, MISSING_PARAMETER, etc.) do NOT include retryable field",
