@@ -32,7 +32,6 @@
 !internal/**/CLAUDE.md
 !cmd/CLAUDE.md
 !cmd/**/CLAUDE.md
-!.claude/module-docs-index.md
 
 !sample.config.json
 !fixtures/**
@@ -54,9 +53,8 @@ coverage*.out
 .btca/
 .claude/worktrees/
 
-# Factory validation and mission state
-!.factory/
-!.factory/**
+# Factory validation and mission state (ignored, never committed)
+.factory/
 
 # Credentials and secrets
 .token
