@@ -453,36 +453,22 @@ server
 
 | Problem | Solution |
 |---------|----------|
-| Token issues | Delete `.token` file to force re-authentication |
-
-### CLI Refactoring Helpers
-
-When refactoring CLI commands, use these helpers in `internal/cli/cli.go`:
-
-- `runInteractiveCommand(args, initFn, flagSets...)` - Prompts for confirmation before running a command that modifies state
-- `runFlagBoundCommand(args, flagSets..., executeFn)` - Binds multiple flag sets to a single command execution
-- `runJSONOnlyCommand(args, executeJSONFn)` - Runs a command that only works in JSON mode (no interactive prompts)
-
-```go
-// Example: refactoring a destructive command to require confirmation
-err := runInteractiveCommand(args,
-    func() error { return initClient(nil) },
-    fsConfirm, fsFlags,
-)
-```
-
-| Helper | Purpose |
-|--------|---------|
-| `runInteractiveCommand` | Runs command with user confirmation prompt for destructive operations |
-| `runFlagBoundCommand` | Binds multiple flag sets to a single command |
-| `runJSONOnlyCommand` | Commands that only work in JSON mode (no interactive fallback) |
-
-| Problem | Solution |
-|---------|----------|
 | "authentication failed" | Check `config.json` username/password, check base URL |
 | "please add ffmpeg to your path" | Install FFmpeg and ensure it's in `$PATH` |
 | Token issues | Delete `.token` file to force re-authentication |
 | Rate limiting errors | Adjust `rateLimit` and `apiRateLimit` in config |
+
+### CLI Refactoring Patterns
+
+When refactoring CLI commands in `internal/cli/cli.go`, prefer extracting shared logic into small helper functions local to that package rather than duplicating code across commands.
+
+Common patterns to look for and reuse include:
+
+- Adding a confirmation prompt before running destructive operations (e.g., deletes or overwrites).
+- Sharing flag parsing and binding logic across related commands.
+- Implementing commands that only operate in JSON mode (no interactive prompts or TTY assumptions).
+
+Use existing commands in `internal/cli/cli.go` as reference implementations for these patterns instead of relying on specific exported helpers, since available helpers may change over time.
 
 Debug with verbose output:
 ```go
