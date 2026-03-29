@@ -101,7 +101,7 @@ This document provides detailed technical documentation for each major package i
 | `internal/config` | Configuration management and validation | `config.go` | Standard library only |
 | `internal/client` | HTTP client and API interactions | `client.go`, `http.go`, `types.go`, `streamutils.go` | `internal/config` |
 | `internal/downloader` | Video download, decryption, and FFmpeg integration | `downloader.go`, `ffmpeg.go`, `pipeline.go`, `rate_limiter.go`, `progress_tracker.go`, `parser.go` | `internal/config`, `internal/client`, `mpb/v8` |
-| `internal/server` | REST API server and WebSocket hub | `server.go`, `auth.go`, `job_runner.go` | `internal/config`, `internal/client`, `internal/downloader`, `gorilla/mux`, `gorilla/websocket` |
+| `internal/server` | REST API server, WebSocket hub, and job persistence | `server.go`, `auth.go`, `job_runner.go`, `job_persistence.go` | `internal/config`, `internal/client`, `internal/downloader`, `gorilla/mux`, `gorilla/websocket` |
 | `internal/cli` | Command-line interface and JSON mode | `cli.go` | All internal packages |
 | `internal/alerts` | Webhook-based alerting system | `alerts.go` | Standard library only |
 | `internal/metrics` | OpenTelemetry metrics instrumentation | `metrics.go` | `go.opentelemetry.io/otel` |
@@ -176,6 +176,7 @@ The `config` package handles all configuration management including:
 | `IMPARTUS_TEMP_DIR` | `tempDirLocation` | Override temp dir |
 | `IMPARTUS_AUDIO_ONLY` | `audioOnly` | Override audio mode |
 | `IMPARTUS_AUDIO_FORMAT` | `audioFormat` | Override audio format |
+| `IMPARTUS_SKIP_NO_AUDIO` | `skipNoAudio` | Skip lectures marked as noaudio |
 | `IMPARTUS_NUM_WORKERS` | `numWorkers` | Override worker count |
 | `IMPARTUS_RATE_LIMIT` | `rateLimit` | Override rate limit |
 | `IMPARTUS_API_RATE_LIMIT` | `apiRateLimit` | Override API rate limit |
@@ -718,17 +719,23 @@ func (s *APIServer) authMiddleware(next http.Handler) http.Handler {
 
 ### Job Store
 
-The `JobStore` manages in-memory job state with thread-safe access:
+The `JobStore` manages job state with thread-safe access and optional persistence to `.jobs.json`:
 
 | Method | Purpose |
 |--------|---------|
 | `CreateJob()` | Create new download job |
+| `CreateJobWithKey()` | Create job with idempotency key (returns existing job if key already exists) |
 | `GetJob()` | Retrieve job by ID |
+| `GetJobByIdempotencyKey()` | Look up job by idempotency key |
 | `ListJobs()` | List all jobs |
 | `UpdateJob()` | Update status/progress |
 | `SetLectureProgress()` | Update completed lectures |
 | `SetOutputs()` | Store output file paths |
 | `CancelJob()` | Cancel running job |
+
+**Persistence:** Jobs are persisted to `.jobs.json` on disk. Running/pending jobs are marked as failed on recovery (non-resumable).
+
+**Idempotency:** `CreateJobWithKey` accepts an optional idempotency key. Duplicate requests return the existing job with 409 Conflict.
 
 ### WebSocket Hub
 
