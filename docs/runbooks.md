@@ -79,9 +79,33 @@ This document provides operational runbooks for common incidents and troubleshoo
 # Health endpoint
 curl -s http://localhost:8080/api/v1/health
 
-# Expected response
-{"status":"healthy","timestamp":"2026-02-26T..."}
+# Expected response (structured envelope with sub-checks)
+{
+  "success": true,
+  "data": {
+    "status": "ok",
+    "config": {
+      "status": "ok",
+      "username": "ok",
+      "password": "ok",
+      "baseUrl": "ok"
+    },
+    "upstream": {
+      "status": "reachable"
+    },
+    "ffmpeg": {
+      "status": "available"
+    }
+  },
+  "error": null,
+  "meta": {
+    "command": "health",
+    "mode": "api"
+  }
+}
 ```
+
+If any component is not configured or unavailable, the overall `status` becomes `degraded` and the relevant sub-check shows `not_configured`, `unreachable`, or `not_found`.
 
 ### Check Download Jobs
 
@@ -239,7 +263,9 @@ git checkout HEAD~1 -- config.json
 
 ### Database/State Recovery
 
-The application is stateless (in-memory job store). Restart clears all job state.
+Jobs are persisted to `.jobs.json` on disk. On restart:
+- Completed, failed, and canceled jobs are restored with their preserved state
+- Running/pending jobs are marked as failed (non-resumable) since downloads cannot continue after server restart
 
 ---
 

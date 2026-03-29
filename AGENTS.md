@@ -128,7 +128,7 @@ main.go → cli.Execute(version, date) → Command Handlers
 | `client` | HTTP client, API calls, playlist parsing | `client.go`, `http.go`, `types.go` |
 | `config` | Configuration loading, validation, defaults | `config.go`, `config_test.go` |
 | `downloader` | Chunk download, AES decryption, FFmpeg operations | `downloader.go`, `pipeline.go`, `ffmpeg.go`, `rate_limiter.go`, `progress_tracker.go` |
-| `server` | REST API, WebSocket, job management | `server.go`, `auth.go`, `job_runner.go` |
+| `server` | REST API, WebSocket, job management, persistence, upstream token cache (23h TTL) | `server.go`, `auth.go`, `job_runner.go`, `job_persistence.go` |
 | `alerts` | Webhook alerting (Slack, PagerDuty) | `alerts.go` |
 | `metrics` | OpenTelemetry metrics instrumentation | `metrics.go` |
 | `sentryhook` | Sentry error tracking integration | `sentryhook.go` |
@@ -186,6 +186,7 @@ flowchart TB
 | `internal/downloader/pipeline.go` | Concurrent pipeline: download workers + decrypt workers for parallel processing. |
 | `internal/server/server.go` | REST API handlers, job store, WebSocket broadcasting, job execution orchestration. |
 | `internal/server/auth.go` | Token generation, storage, validation for API auth. |
+| `internal/server/job_persistence.go` | Job persistence to `.jobs.json`, safe restart recovery, no credentials stored. |
 
 ---
 
@@ -456,6 +457,18 @@ server
 | "please add ffmpeg to your path" | Install FFmpeg and ensure it's in `$PATH` |
 | Token issues | Delete `.token` file to force re-authentication |
 | Rate limiting errors | Adjust `rateLimit` and `apiRateLimit` in config |
+
+### CLI Refactoring Patterns
+
+When refactoring CLI commands in `internal/cli/cli.go`, prefer extracting shared logic into small helper functions local to that package rather than duplicating code across commands.
+
+Common patterns to look for and reuse include:
+
+- Adding a confirmation prompt before running destructive operations (e.g., deletes or overwrites).
+- Sharing flag parsing and binding logic across related commands.
+- Implementing commands that only operate in JSON mode (no interactive prompts or TTY assumptions).
+
+Use existing commands in `internal/cli/cli.go` as reference implementations for these patterns instead of relying on specific exported helpers, since available helpers may change over time.
 
 Debug with verbose output:
 ```go
