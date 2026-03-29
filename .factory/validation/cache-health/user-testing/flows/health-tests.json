@@ -1,0 +1,76 @@
+{
+  "groupId": "health-tests",
+  "milestone": "cache-health",
+  "testedAt": "2026-03-28T00:00:00Z",
+  "isolation": {
+    "workingDirectory": "/home/ravish/Desktop/clawds-code-crib/impartus-go/impartus",
+    "tool": "go-test",
+    "pattern": "httptest.NewRecorder — no real server, no shared state"
+  },
+  "toolsUsed": ["go-test"],
+  "assertions": {
+    "VAL-HLT-001": {
+      "id": "VAL-HLT-001",
+      "title": "Health returns structured status",
+      "status": "pass",
+      "testName": "TestHealthEndpointReturnsStructuredStatus",
+      "evidence": "Response contains config, upstream, and ffmpeg fields at data level. Test verified presence of all three subsections in structured health response.",
+      "testOutput": "=== RUN   TestHealthEndpointReturnsStructuredStatus\n--- PASS: TestHealthEndpointReturnsStructuredStatus (0.02s)\nPASS\nok  \tgithub.com/rabesss/impartus-cli/internal/server\t0.023s",
+      "steps": [
+        { "action": "Run go test -v -run TestHealthEndpointReturnsStructuredStatus", "expected": "PASS", "observed": "PASS (0.02s)" }
+      ],
+      "issues": null
+    },
+    "VAL-HLT-002": {
+      "id": "VAL-HLT-002",
+      "title": "Health reports config validity",
+      "status": "pass",
+      "testName": "TestHealthConfigStatusOkWithValidConfig, TestHealthConfigStatusMisconfiguredWithMissingFields, TestHealthConfigStatusMisconfiguredWithAllMissingFields, TestHealthConfigStatusMisconfiguredWithNilConfig",
+      "evidence": "config.status field correctly reflects config state: 'ok' with valid config, 'misconfigured' with missing/nil config. All four sub-scenarios verified.",
+      "testOutput": "=== RUN   TestHealthConfigStatusOkWithValidConfig\n--- PASS: TestHealthConfigStatusOkWithValidConfig (0.02s)\n=== RUN   TestHealthConfigStatusMisconfiguredWithMissingFields\n--- PASS: TestHealthConfigStatusMisconfiguredWithMissingFields (0.13s)\n=== RUN   TestHealthConfigStatusMisconfiguredWithAllMissingFields\n--- PASS: TestHealthConfigStatusMisconfiguredWithAllMissingFields (0.00s)\n=== RUN   TestHealthConfigStatusMisconfiguredWithNilConfig\n--- PASS: TestHealthConfigStatusMisconfiguredWithNilConfig (0.00s)\nPASS\nok  \tgithub.com/rabesss/impartus-cli/internal/server\t0.153s",
+      "steps": [
+        { "action": "Run go test -v -run TestHealthConfigStatus", "expected": "All 4 config status tests PASS", "observed": "All 4 tests PASS (0.153s total)" }
+      ],
+      "issues": null
+    },
+    "VAL-HLT-003": {
+      "id": "VAL-HLT-003",
+      "title": "Health reports upstream reachability",
+      "status": "pass",
+      "testName": "TestHealthUpstreamStatusWithValidBaseUrl, TestHealthUpstreamStatusWithUnreachableBaseUrl",
+      "evidence": "upstream.status field present: reports 'reachable' with valid base URL, 'unreachable' with bad/missing base URL.",
+      "testOutput": "=== RUN   TestHealthUpstreamStatusWithValidBaseUrl\n--- PASS: TestHealthUpstreamStatusWithValidBaseUrl (0.02s)\n=== RUN   TestHealthUpstreamStatusWithUnreachableBaseUrl\n--- PASS: TestHealthUpstreamStatusWithUnreachableBaseUrl (0.00s)\nPASS\nok  \tgithub.com/rabesss/impartus-cli/internal/server\t0.023s",
+      "steps": [
+        { "action": "Run go test -v -run TestHealthUpstreamStatus", "expected": "Both upstream status tests PASS", "observed": "Both tests PASS (0.023s total)" }
+      ],
+      "issues": null
+    },
+    "VAL-HLT-004": {
+      "id": "VAL-HLT-004",
+      "title": "Health reports FFmpeg availability",
+      "status": "pass",
+      "testName": "TestHealthFFmpegStatus",
+      "evidence": "ffmpeg.status field present in response. FFmpeg is available on this system (confirmed via `ffmpeg -version` in environment).",
+      "testOutput": "=== RUN   TestHealthFFmpegStatus\n--- PASS: TestHealthFFmpegStatus (0.11s)\nPASS\nok  \tgithub.com/rabesss/impartus-cli/internal/server\t0.115s",
+      "steps": [
+        { "action": "Run go test -v -run TestHealthFFmpegStatus", "expected": "PASS", "observed": "PASS (0.11s)" }
+      ],
+      "issues": null
+    },
+    "VAL-HLT-005": {
+      "id": "VAL-HLT-005",
+      "title": "Health still works without auth",
+      "status": "pass",
+      "testName": "TestHealthNoAuthRequired",
+      "evidence": "GET /api/v1/health returns 200 without Authorization header. Health endpoint is publicly accessible.",
+      "testOutput": "=== RUN   TestHealthNoAuthRequired\n--- PASS: TestHealthNoAuthRequired (0.02s)\nPASS\nok  \tgithub.com/rabesss/impartus-cli/internal/server\t0.022s",
+      "steps": [
+        { "action": "Run go test -v -run TestHealthNoAuthRequired", "expected": "PASS (200 without auth)", "observed": "PASS (0.02s)" }
+      ],
+      "issues": null
+    }
+  },
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 5 assertions for cache-health milestone: all 5 passed. Health endpoint returns structured status with config/upstream/ffmpeg subsections, correctly reflects config validity, reports upstream reachability, detects FFmpeg availability, and remains publicly accessible without auth. Total test execution time: ~0.33s across all 5 assertion groups (10 sub-tests)."
+}

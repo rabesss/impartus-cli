@@ -1,0 +1,81 @@
+{
+  "featureId": "update-all-docs",
+  "reviewedAt": "2026-03-28T04:10:00.000Z",
+  "commitId": "4719f4d",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The documentation update is comprehensive and covers all required topics (idempotencyKey, retryable/retryAfter, structured health, envelope meta field, INVALID_IDEMPOTENCY_KEY, job persistence). However, there are several accuracy issues where the documentation does not match the actual server implementation. Most critically, the meta.mode value is documented as 'json' across all files, but the server code returns 'api'. Additionally, the health endpoint response has several mismatches with the actual implementation.",
+    "issues": [
+      {
+        "file": "docs/openclaw-manifest.json",
+        "line": null,
+        "severity": "blocking",
+        "description": "meta field documented as { command: string, mode: 'json' } but server code (internal/server/auth.go) returns Mode: 'api' in respondWithEnvelope, respondWithError, and respondWithSuccess. CLI JSON mode (--json) does use mode: 'json' but the API server always uses mode: 'api'. This affects every envelope example in the manifest."
+      },
+      {
+        "file": "docs/openclaw-manifest.json",
+        "line": null,
+        "severity": "blocking",
+        "description": "Health check response documents ffmpeg.status values as 'available' or 'unavailable', but actual code (checkFFmpegStatus in server.go) returns 'available' or 'not_found'."
+      },
+      {
+        "file": "docs/openclaw-manifest.json",
+        "line": null,
+        "severity": "blocking",
+        "description": "Health check response documents a 'version' field in the ffmpeg object, but checkFFmpegStatus() never sets a version field. The function only returns {status: string}."
+      },
+      {
+        "file": "docs/openclaw-manifest.json",
+        "line": null,
+        "severity": "blocking",
+        "description": "Health check response documents an 'error' field in the upstream object ('Error message if unreachable'), but checkUpstreamStatus() never sets an error field. It only returns {status: 'reachable' | 'unreachable'}."
+      },
+      {
+        "file": "docs/api-reference.md",
+        "line": null,
+        "severity": "blocking",
+        "description": "All meta examples show mode: 'json' but the API server returns mode: 'api' (see respondWithEnvelope in auth.go). Only CLI --json mode uses mode: 'json'."
+      },
+      {
+        "file": "docs/api-reference.md",
+        "line": null,
+        "severity": "blocking",
+        "description": "Health section shows ffmpeg.version field (e.g., 'n8.1') but the code does not return a version. Also documents status value 'unavailable' but code uses 'not_found'."
+      },
+      {
+        "file": "docs/api-reference.md",
+        "line": null,
+        "severity": "non_blocking",
+        "description": "Health section documents upstream can include an error field when unreachable, but the code never sets one."
+      },
+      {
+        "file": "docs/error-codes.md",
+        "line": null,
+        "severity": "non_blocking",
+        "description": "All meta examples show mode: 'json' but the API server returns mode: 'api'. Same issue as other docs."
+      },
+      {
+        "file": "docs/error-codes.md",
+        "line": null,
+        "severity": "non_blocking",
+        "description": "The startIndex error message is documented as 'startIndex must be >= 1' but the actual code returns 'startIndex must be 1 or greater (1-based, matching CLI --start)'. Minor simplification but technically inaccurate."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The server API mode and CLI JSON mode use different meta.mode values ('api' vs 'json'). This distinction is important for documentation accuracy but isn't called out in AGENTS.md or any library file. Workers updating docs need to understand this difference to write accurate envelope examples.",
+      "evidence": "internal/server/auth.go: respondWithEnvelope uses Mode: 'api', while internal/cli/cli.go: newSuccessEnvelope uses Mode: 'json'. All docs in this feature incorrectly use 'json' for API endpoint examples."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The health endpoint response structure (checkConfigStatus, checkUpstreamStatus, checkFFmpegStatus) has specific field names and values that differ from what one might assume. E.g., ffmpeg returns 'not_found' not 'unavailable', and no version field is included. This should be documented in .factory/library/ so future doc updates can reference the actual implementation.",
+      "evidence": "server.go checkFFmpegStatus returns {status: 'not_found'} or {status: 'available'} with no version field. checkUpstreamStatus returns {status: 'unreachable'} or {status: 'reachable'} with no error field."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The feature update is comprehensive in scope, covering all required documentation topics (idempotencyKey, retryable/retryAfter, structured health check, envelope meta field, INVALID_IDEMPOTENCY_KEY, 409 Conflict, job persistence, startIndex 1-based fix). However, the documentation contains several inaccuracies when cross-referenced against the actual server code. The most systemic issue is that all API response examples show mode: 'json' when the server actually returns mode: 'api' (CLI --json mode uses 'json', API server uses 'api'). Additionally, the health endpoint docs describe fields that don't exist in the implementation (ffmpeg.version, upstream.error) and incorrect status values (ffmpeg 'unavailable' vs actual 'not_found'). These should be fixed to ensure the documentation accurately reflects the running system. The websocket-events.md was correctly reviewed and left unchanged. The openclaw-manifest.json is valid JSON."
+}

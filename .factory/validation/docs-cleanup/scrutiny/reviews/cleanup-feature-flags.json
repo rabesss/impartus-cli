@@ -1,0 +1,39 @@
+{
+  "featureId": "cleanup-feature-flags",
+  "reviewedAt": "2026-03-28T04:00:00.000Z",
+  "commitId": "f78524d",
+  "transcriptSkeletonReviewed": false,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The feature flag cleanup is complete and correct. The commit (f78524d) removes 258 lines across 3 files: deletes internal/config/feature_flags.go (209 lines with all 12 flags, FeatureFlags struct, DefaultFeatureFlags(), ApplyFeatureFlagEnvOverrides(), IsFeatureEnabled(), ListEnabledFeatures()), removes the FeatureFlags field and applyFeatureFlagDefaults() from config.go, and removes the featureFlags section from sample.config.json. The feature_flags_test.go was also deleted (per handoff). Build, test, and vet all pass. However, there are stale references in docs/observability.md (8 occurrences of IMPARTUS_FLAG_ env vars) and .factory/skills/go-backend-worker/SKILL.md (1 reference to feature_flags.go). These are documentation-only references in files outside the scope of this feature's cleanup, but users following observability.md would be misled into using non-functional env vars.",
+    "issues": [
+      {
+        "file": "docs/observability.md",
+        "line": 16,
+        "severity": "non_blocking",
+        "description": "References to removed IMPARTUS_FLAG_* environment variables (lines 16, 40, 110, 146, 245-248). These env vars no longer do anything since the feature flag system was deleted. Users following this documentation will set env vars that have no effect. This is likely addressed by a separate docs-update feature but remains stale as of the reviewed commit."
+      },
+      {
+        "file": ".factory/skills/go-backend-worker/SKILL.md",
+        "line": 43,
+        "severity": "non_blocking",
+        "description": "Still references 'internal/config/feature_flags.go - Feature flags' as a key file. This file no longer exists. The skill file should be updated to remove this reference."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "docs/observability.md references IMPARTUS_FLAG_* environment variables that were removed as part of the feature flag cleanup. These stale references could mislead users and agents into thinking feature flags are still functional. The observability docs should be updated to remove or replace these references with the actual mechanism for controlling metrics/sentry/alerting features (e.g., direct config fields or top-level config toggles if they exist).",
+      "evidence": "docs/observability.md lines 16, 40, 110, 146, 245-248 all reference IMPARTUS_FLAG_* env vars that map to deleted FeatureFlags struct fields."
+    },
+    {
+      "area": "skills",
+      "observation": "The go-backend-worker SKILL.md lists 'internal/config/feature_flags.go - Feature flags' as a key file to understand, but this file has been deleted. The skill should be updated to remove this reference.",
+      "evidence": ".factory/skills/go-backend-worker/SKILL.md:43 — references deleted file path."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS — The feature flag cleanup is thorough and correct within the code files themselves. The FeatureFlags struct, all 12 flags, their methods, the Config field, env override handling, sample.config.json entries, and test files have all been properly removed. Build, test, and vet all pass. Two non-blocking issues noted: stale IMPARTUS_FLAG_* references in docs/observability.md and a deleted-file reference in the go-backend-worker skill file. These are documentation/skill artifacts outside the core code and don't affect correctness of the cleanup itself."
+}

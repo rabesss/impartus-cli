@@ -1,0 +1,139 @@
+{
+  "groupId": "docs-accuracy-rerun",
+  "testedAt": "2026-03-28T12:00:00Z",
+  "isolation": {
+    "method": "manual-code-review",
+    "filesReviewed": [
+      "docs/openclaw-manifest.json",
+      "docs/api-reference.md",
+      "internal/server/server.go",
+      "internal/server/auth.go"
+    ]
+  },
+  "toolsUsed": ["manual-review"],
+  "assertions": [
+    {
+      "id": "VAL-DOC-001",
+      "title": "Manifest reflects actual API behavior",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Verify list endpoints use respondWithEnvelope format in manifest",
+          "expected": "list_courses, list_lectures, list_jobs all have format: respondWithEnvelope with proper envelope structure",
+          "observed": "CONFIRMED: list_courses (format: 'respondWithEnvelope'), list_lectures (format: 'respondWithEnvelope'), list_jobs (format: 'respondWithEnvelope') — all include envelope with success, data, meta"
+        },
+        {
+          "action": "Cross-reference manifest list response formats against server.go handlers",
+          "expected": "server.go line 844 coursesHandler, line 885 lecturesHandler, line 946 listJobsHandler all call respondWithEnvelope()",
+          "observed": "CONFIRMED: server.go line 844 respondWithEnvelope(w, http.StatusOK, 'courses', courses), line 885 respondWithEnvelope(w, http.StatusOK, 'lectures', lectures), line 946 respondWithEnvelope(w, http.StatusOK, 'listJobs', s.jobStore.ListJobs())"
+        },
+        {
+          "action": "Verify manifest restartBehavior.pending says jobs are marked as failed",
+          "expected": "restartBehavior.pending should say 'failed', not 'restored as pending'",
+          "observed": "CONFIRMED: manifest jobPersistence.restartBehavior.pending = 'Jobs in pending state are marked as failed (cannot be resumed)'. Also restartBehavior.running = 'Jobs that were running are marked as failed on restart (cannot be resumed)'"
+        },
+        {
+          "action": "Cross-reference restart behavior against server.go loadFromDisk()",
+          "expected": "loadFromDisk() should mark pending/running as failed",
+          "observed": "CONFIRMED: server.go loadFromDisk() sets status = 'failed' when status == 'pending' || status == 'running', with error message 'job interrupted by server restart'"
+        },
+        {
+          "action": "Verify manifest includes idempotencyKey and INVALID_IDEMPOTENCY_KEY error code",
+          "expected": "idempotencyKey parameter in download_lectures tool, INVALID_IDEMPOTENCY_KEY in errorCodes",
+          "observed": "CONFIRMED: download_lectures tool has idempotencyKey parameter (required: false, max 256 chars). errorCodes.codes includes INVALID_IDEMPOTENCY_KEY (status 400). download_lectures errors array includes INVALID_IDEMPOTENCY_KEY"
+        },
+        {
+          "action": "Verify health endpoint structured response in manifest",
+          "expected": "health_check tool has respondWithEnvelope format with status/config/upstream/ffmpeg fields",
+          "observed": "CONFIRMED: health_check tool has format: respondWithEnvelope with envelope containing success, data (status, config, upstream, ffmpeg), meta"
+        },
+        {
+          "action": "Verify createJob/getJob use respondWithEnvelope in manifest",
+          "expected": "download_lectures (201), get_job responses should be wrapped",
+          "observed": "CONFIRMED: server.go line 942 respondWithEnvelope(w, http.StatusCreated, 'createJob', job), line 962 respondWithEnvelope(w, http.StatusOK, 'getJob', job). Manifest get_job response says 'Job object (same schema as download_lectures response)' and download_lectures has duplicateResponse with format: respondWithEnvelope"
+        }
+      ],
+      "evidence": {
+        "codeReferences": [
+          "server.go:844 — respondWithEnvelope(w, http.StatusOK, 'courses', courses)",
+          "server.go:885 — respondWithEnvelope(w, http.StatusOK, 'lectures', lectures)",
+          "server.go:946 — respondWithEnvelope(w, http.StatusOK, 'listJobs', s.jobStore.ListJobs())",
+          "server.go:942 — respondWithEnvelope(w, http.StatusCreated, 'createJob', job)",
+          "server.go:962 — respondWithEnvelope(w, http.StatusOK, 'getJob', job)",
+          "server.go:933 — respondWithEnvelope(w, http.StatusConflict, 'createJob', ...) for idempotency duplicate",
+          "server.go:640 — respondWithEnvelope(w, http.StatusOK, 'health', ...)",
+          "server.go loadFromDisk() — status='failed' for pending/running jobs",
+          "auth.go:99 — respondWithEnvelope definition produces {success, data, meta}",
+          "auth.go:152 — respondWithSuccess definition produces {success, data, meta}",
+          "auth.go:117 — respondWithError definition produces {success: false, error: {code, message}, meta}"
+        ],
+        "previousFailures": [
+          "Previously failed: manifest claimed 'bare arrays not wrapped in envelope' but all handlers use respondWithEnvelope()",
+          "Previously failed: manifest claimed pending jobs 'restored as pending' but code marks them as failed"
+        ],
+        "resolution": "Both previous failures appear FIXED in current manifest"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-DOC-002",
+      "title": "API reference reflects new envelope",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Verify 'Direct JSON responses' section correctly describes envelope wrapping",
+          "expected": "Section should say all handlers wrap in {success, data, error, meta} envelope using respondWithEnvelope",
+          "observed": "CONFIRMED: Section titled 'Direct JSON responses' states: 'All handlers wrap responses in {success, data, error, meta} envelope using respondWithEnvelope'. Lists GET /courses, GET /lectures, POST /jobs, GET /jobs, GET /jobs/{id} with correct envelope format"
+        },
+        {
+          "action": "Verify Restart Behavior table correctly says pending → failed",
+          "expected": "pending should be 'Marked as failed (cannot be resumed)' not 'Restored as pending'",
+          "observed": "CONFIRMED: Restart Behavior table shows: pending → 'Marked as failed (cannot be resumed)', running → 'Marked as failed (cannot resume mid-download)'"
+        },
+        {
+          "action": "Verify health endpoint section exists with structured response",
+          "expected": "Dedicated Health section with structured JSON response showing status/config/upstream/ffmpeg",
+          "observed": "CONFIRMED: Health section at top of api-reference.md with GET /health, 200 response showing {success, data: {status, config, upstream, ffmpeg}, meta}. Includes descriptions of possible status values (ok, degraded, misconfigured, unreachable, not_found)"
+        },
+        {
+          "action": "Verify idempotencyKey documentation on POST /jobs",
+          "expected": "Create job section documents idempotencyKey optional field with 409 behavior",
+          "observed": "CONFIRMED: Create job section lists idempotencyKey (string, max 256 chars) as optional field. Documents 409 Conflict response with envelope format showing {job, duplicate: true}. Lists INVALID_IDEMPOTENCY_KEY (400) in errors. Job Persistence section notes keys survive restarts"
+        },
+        {
+          "action": "Cross-reference api-reference.md against server.go handler behavior",
+          "expected": "All documented behaviors match actual code",
+          "observed": "CONFIRMED: (1) courses/lectures/jobs handlers all use respondWithEnvelope — matches docs. (2) createJob uses respondWithEnvelope for 201 and 409 — matches docs. (3) deleteJob uses respondWithSuccess — matches docs. (4) loadFromDisk marks pending/running as failed — matches restart table. (5) Health handler uses respondWithEnvelope with structured data — matches docs"
+        },
+        {
+          "action": "Verify envelope format sections are comprehensive",
+          "expected": "Three response format sections: error envelope, success envelope, direct JSON responses",
+          "observed": "CONFIRMED: Three sections: 'JSON error envelope (respondWithError)' with {success: false, error: {code, message, details}, meta}, 'JSON success envelope (respondWithSuccess)' with {success: true, data, meta}, 'Direct JSON responses' explaining respondWithEnvelope wrapping. All match auth.go function signatures"
+        }
+      ],
+      "evidence": {
+        "codeReferences": [
+          "server.go:844 — respondWithEnvelope for courses → matches 'Direct JSON responses' section",
+          "server.go:885 — respondWithEnvelope for lectures → matches 'Direct JSON responses' section",
+          "server.go:946 — respondWithEnvelope for listJobs → matches 'Direct JSON responses' section",
+          "server.go:942 — respondWithEnvelope for createJob (201) → matches docs",
+          "server.go:933 — respondWithEnvelope for idempotency 409 → matches 409 section",
+          "server.go:640 — respondWithEnvelope for health → matches Health section",
+          "server.go loadFromDisk() — pending/running → failed → matches Restart Behavior table",
+          "auth.go:99-114 — respondWithEnvelope produces {success, data, meta}",
+          "auth.go:117-149 — respondWithError produces {success: false, error: {code, message}, meta}",
+          "auth.go:152-163 — respondWithSuccess produces {success, data, meta}"
+        ],
+        "previousFailures": [
+          "Previously failed: 'Direct JSON responses' section claimed courses/lectures/jobs return bare arrays",
+          "Previously failed: Restart behavior table claimed pending jobs 'Restored as pending'"
+        ],
+        "resolution": "Both previous failures appear FIXED in current api-reference.md"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 2 assertions: both passed. VAL-DOC-001 (manifest accuracy) and VAL-DOC-002 (API reference accuracy) both correctly reflect the actual server.go code. The two previously-reported failures (bare arrays vs envelope, and pending jobs restart behavior) have both been fixed in the current documentation."
+}

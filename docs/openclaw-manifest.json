@@ -142,33 +142,39 @@
       "authentication": "required",
       "parameters": {},
       "response": {
-        "type": "array",
-        "note": "Returns array directly, not wrapped in envelope",
-        "items": {
-          "sessionId": {
-            "type": "integer"
+        "format": "respondWithEnvelope",
+        "envelope": {
+          "success": { "type": "boolean", "value": true },
+          "data": {
+            "type": "array",
+            "items": {
+              "sessionId": {
+                "type": "integer"
+              },
+              "subjectId": {
+                "type": "integer"
+              },
+              "subjectName": {
+                "type": "string"
+              },
+              "professorName": {
+                "type": "string"
+              },
+              "sessionName": {
+                "type": "string"
+              },
+              "institute": {
+                "type": "string"
+              },
+              "department": {
+                "type": "string"
+              },
+              "videoCount": {
+                "type": "integer"
+              }
+            }
           },
-          "subjectId": {
-            "type": "integer"
-          },
-          "subjectName": {
-            "type": "string"
-          },
-          "professorName": {
-            "type": "string"
-          },
-          "sessionName": {
-            "type": "string"
-          },
-          "institute": {
-            "type": "string"
-          },
-          "department": {
-            "type": "string"
-          },
-          "videoCount": {
-            "type": "integer"
-          }
+          "meta": { "type": "object", "description": "{ command: string, mode: 'api' }" }
         }
       },
       "errors": [
@@ -205,32 +211,38 @@
         }
       },
       "response": {
-        "type": "array",
-        "note": "Returns array directly, not wrapped in envelope",
-        "items": {
-          "videoId": {
-            "type": "integer"
+        "format": "respondWithEnvelope",
+        "envelope": {
+          "success": { "type": "boolean", "value": true },
+          "data": {
+            "type": "array",
+            "items": {
+              "videoId": {
+                "type": "integer"
+              },
+              "seqNo": {
+                "type": "integer"
+              },
+              "topic": {
+                "type": "string"
+              },
+              "startTime": {
+                "type": "string",
+                "format": "ISO 8601"
+              },
+              "endTime": {
+                "type": "string",
+                "format": "ISO 8601"
+              },
+              "actualDuration": {
+                "type": "integer"
+              },
+              "subjectName": {
+                "type": "string"
+              }
+            }
           },
-          "seqNo": {
-            "type": "integer"
-          },
-          "topic": {
-            "type": "string"
-          },
-          "startTime": {
-            "type": "string",
-            "format": "ISO 8601"
-          },
-          "endTime": {
-            "type": "string",
-            "format": "ISO 8601"
-          },
-          "actualDuration": {
-            "type": "integer"
-          },
-          "subjectName": {
-            "type": "string"
-          }
+          "meta": { "type": "object", "description": "{ command: string, mode: 'api' }" }
         }
       },
       "errors": [
@@ -268,6 +280,11 @@
           "type": "integer",
           "required": true,
           "description": "Ending lecture index (1-based, >= startIndex, inclusive, matching CLI --end)"
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "required": false,
+          "description": "Optional idempotency key (max 256 chars). If provided and a job with this key already exists, returns the existing job with 409 Conflict instead of creating a duplicate. Keys are persisted and survive server restarts. Omitting the key always creates a new job."
         },
         "jobConfig": {
           "type": "object",
@@ -328,6 +345,22 @@
       "response": {
         "status": 201,
         "note": "Returns Job object directly",
+        "duplicateResponse": {
+          "status": 409,
+          "format": "respondWithEnvelope",
+          "description": "Returned when idempotencyKey is provided and a job with that key already exists. Returns the existing job instead of creating a duplicate.",
+          "envelope": {
+            "success": { "type": "boolean", "value": true },
+            "data": {
+              "type": "object",
+              "fields": {
+                "job": { "type": "object", "description": "The existing Job object" },
+                "duplicate": { "type": "boolean", "value": true }
+              }
+            },
+            "meta": { "type": "object", "description": "{ command: string, mode: 'api' }" }
+          }
+        },
         "fields": {
           "id": {
             "type": "string",
@@ -352,7 +385,7 @@
               "running",
               "completed",
               "failed",
-              "cancelled"
+              "canceled"
             ]
           },
           "progress": {
@@ -428,6 +461,7 @@
         "INVALID_TOKEN",
         "INVALID_REQUEST",
         "MISSING_PARAMETER",
+        "INVALID_IDEMPOTENCY_KEY",
         "INVALID_JOB_CONFIG"
       ]
     },
@@ -437,9 +471,15 @@
       "endpoint": "GET /api/v1/jobs",
       "authentication": "required",
       "response": {
-        "type": "array",
-        "note": "Returns array of Job objects directly",
-        "items": "Job object (same schema as download_lectures response)"
+        "format": "respondWithEnvelope",
+        "envelope": {
+          "success": { "type": "boolean", "value": true },
+          "data": {
+            "type": "array",
+            "items": "Job object (same schema as download_lectures response)"
+          },
+          "meta": { "type": "object", "description": "{ command: string, mode: 'api' }" }
+        }
       },
       "errors": [
         "MISSING_TOKEN",
@@ -497,7 +537,7 @@
               },
               "status": {
                 "type": "string",
-                "value": "cancelled"
+                "value": "canceled"
               }
             }
           }
@@ -515,14 +555,45 @@
     },
     {
       "name": "health_check",
-      "description": "Check if the API server is running",
+      "description": "Check if the API server is running and its dependencies (config, upstream API, FFmpeg)",
       "endpoint": "GET /api/v1/health",
       "authentication": "none",
       "parameters": {},
       "response": {
-        "status": {
-          "type": "string",
-          "value": "ok"
+        "format": "respondWithEnvelope",
+        "envelope": {
+          "success": { "type": "boolean", "value": true },
+          "data": {
+            "type": "object",
+            "fields": {
+              "status": { "type": "string", "description": "Overall status: 'ok' or 'degraded'" },
+              "config": {
+                "type": "object",
+                "description": "Config validation checks (username, password, baseUrl)",
+                "fields": {
+                  "status": { "type": "string", "description": "'ok' or 'misconfigured'" },
+                  "username": { "type": "string", "description": "'ok' or 'missing'" },
+                  "password": { "type": "string", "description": "'ok' or 'missing'" },
+                  "baseUrl": { "type": "string", "description": "'ok' or 'missing'" }
+                }
+              },
+              "upstream": {
+                "type": "object",
+                "description": "Impartus API reachability check",
+                "fields": {
+                  "status": { "type": "string", "description": "'reachable' or 'unreachable'" }
+                }
+              },
+              "ffmpeg": {
+                "type": "object",
+                "description": "FFmpeg availability check",
+                "fields": {
+                  "status": { "type": "string", "description": "'available' or 'not_found'" }
+                }
+              }
+            }
+          },
+          "meta": { "type": "object", "description": "{ command: string, mode: 'api' }" }
         }
       }
     }
@@ -671,7 +742,7 @@
           },
           "status": {
             "type": "string",
-            "value": "cancelled"
+            "value": "canceled"
           },
           "progress": {
             "type": "number",
@@ -727,7 +798,28 @@
         "details": {}
       }
     },
+    "retryHints": {
+      "description": "Some errors include retry hints to guide client retry behavior",
+      "format": {
+        "retryable": { "type": "boolean", "description": "True if the operation may succeed on retry" },
+        "retryAfter": { "type": "integer", "description": "Seconds to wait before retrying (only present when retryable=true)" }
+      },
+      "codes": {
+        "LOGIN_FAILED": { "retryable": true, "retryAfter": 30, "status": 502 },
+        "COURSES_FETCH_FAILED": { "retryable": true, "retryAfter": 30, "status": 502 },
+        "LECTURES_FETCH_FAILED": { "retryable": true, "retryAfter": 30, "status": 502 },
+        "CANCEL_FAILED": { "retryable": true, "retryAfter": 10, "status": 500 }
+      },
+      "notes": [
+        "4xx client errors (INVALID_REQUEST, MISSING_PARAMETER, etc.) do NOT include retryable field",
+        "Absence of retryable field means the error is not retryable"
+      ]
+    },
     "codes": {
+      "INVALID_IDEMPOTENCY_KEY": {
+        "status": 400,
+        "description": "idempotencyKey must be at most 256 characters"
+      },
       "INVALID_REQUEST": {
         "status": 400,
         "description": "Malformed request body or invalid field value"
@@ -841,7 +933,30 @@
     "Job responses use 'id' field, not 'jobId'",
     "WebSocket events have no 'data' wrapper — additional fields are at top level",
     "WebSocket timestamps are Unix integers, not ISO 8601 strings",
-    "List responses (courses, lectures, jobs) are bare arrays, not wrapped objects",
+    "List responses (courses, lectures, jobs) are wrapped in {success, data, error, meta} envelope",
     "Upstream error messages may be passed through to API clients on 502 responses"
-  ]
+  ],
+  "jobPersistence": {
+    "description": "Jobs are persisted to disk and survive server restarts",
+    "persistenceFile": ".jobs.json",
+    "persistedData": [
+      "Job ID, subjectId, sessionId, startIndex, endIndex",
+      "Job status, progress, outputs, error message",
+      "Job config (quality, views, audioOnly, etc.)",
+      "Idempotency key (if provided)",
+      "CreatedAt and UpdatedAt timestamps"
+    ],
+    "notPersisted": [
+      "Credentials (username, password, tokens)",
+      "Runtime context (download progress, active connections)"
+    ],
+    "restartBehavior": {
+      "pending": "Jobs in pending state are marked as 'failed' (cannot be resumed)",
+      "running": "Jobs that were running are marked as 'failed' on restart (cannot be resumed)",
+      "completed": "Jobs in completed state are restored as completed",
+      "failed": "Jobs in failed state are restored as failed",
+      "canceled": "Jobs in canceled state are restored as canceled"
+    },
+    "idempotencyKeys": "Idempotency keys are persisted alongside jobs. Duplicate key submissions after restart return the existing job."
+  }
 }

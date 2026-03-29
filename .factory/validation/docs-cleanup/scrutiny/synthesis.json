@@ -1,0 +1,48 @@
+{
+  "milestone": "docs-cleanup",
+  "round": 2,
+  "status": "pass",
+  "validatorsRun": {
+    "test": { "passed": true, "command": "go test ./... -v -cover -parallel 3", "exitCode": 0 },
+    "typecheck": { "passed": true, "command": "go vet ./...", "exitCode": 0 },
+    "build": { "passed": true, "command": "go build ./...", "exitCode": 0 },
+    "lint": { "passed": false, "command": "make lint", "exitCode": 2, "note": "Pre-existing lint failures: golangci-lint binary (go1.24) incompatible with go1.26 stdlib. All errors in third-party modules (sentry-go, otel, grpc). Identical to round 1 lint output. Not related to docs-cleanup changes." }
+  },
+  "reviewsSummary": {
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Updated architecture.md health endpoint section to document exact field names and values: config returns {status, hasUsername, hasPassword, hasBaseUrl}, upstream returns {status: 'reachable'|'unreachable'} with no error field, ffmpeg returns {status: 'available'|'not_found'} with no version field.",
+      "sourceFeature": "update-all-docs"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add a note in the documentation section about the meta.mode distinction: API server returns mode: 'api', CLI --json returns mode: 'json'. Workers updating docs should check which surface they are documenting.",
+      "evidence": "update-all-docs review found all API docs incorrectly using mode: 'json'. The mode distinction is documented in architecture.md but not in AGENTS.md guidance for doc writers.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "docs/observability.md references config options and env vars that don't exist in the codebase: metricsEndpoint, IMPARTUS_VERBOSE (also with typo 'IMpartus_VERBOSE').",
+      "reason": "Pre-existing documentation accuracy issue. Not a shared state observation suitable for library or services.yaml. The orchestrator can decide whether to create a follow-up task for observability.md cleanup."
+    },
+    {
+      "observation": "docs/observability.md references 8 IMPARTUS_FLAG_* environment variables that no longer work after feature flag removal.",
+      "reason": "Already rejected in round 1. The fix-docs-accuracy feature addressed this by removing these references. The remaining non-existent env vars (IMPARTUS_VERBOSE, metricsEndpoint) are a separate pre-existing issue."
+    },
+    {
+      "observation": "go-backend-worker SKILL.md references deleted feature_flags.go file.",
+      "reason": "Already addressed by a prior commit (e40c722: 'chore: remove stale feature_flags.go reference from worker skill')."
+    }
+  ],
+  "previousRound": ".factory/validation/docs-cleanup/scrutiny/synthesis.json"
+}

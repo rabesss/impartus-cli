@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/getsentry/sentry-go"
+
 	"github.com/rabesss/impartus-cli/internal/buildinfo"
 )
 

@@ -1,0 +1,68 @@
+{
+  "featureId": "enhance-health-endpoint",
+  "reviewedAt": "2026-03-28T00:30:00Z",
+  "commitId": "f75680f",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation fully covers the feature requirements: structured health endpoint with config validity, upstream reachability, and FFmpeg availability checks. The health endpoint remains public (registered before the auth middleware-protected routes). Overall status correctly transitions to 'degraded' when any component is unhealthy. Code quality is solid with proper mutex usage for concurrent access to upstream cache, context timeouts for network calls, and clean separation of check functions.",
+    "issues": [
+      {
+        "file": "internal/server/server.go",
+        "line": 578,
+        "severity": "non_blocking",
+        "description": "The `parseURL` function is a thin wrapper around `url.Parse` that adds no value. It could be inlined at the call site in `checkUpstreamStatus()` for clarity, but this is a minor style concern."
+      },
+      {
+        "file": "internal/server/server.go",
+        "line": 537,
+        "severity": "non_blocking",
+        "description": "In `checkUpstreamStatus`, the fallback TCP dial path always returns 'unreachable' even if the config has no BaseUrl set. This means when config is nil or BaseUrl is empty, upstream.status is 'unreachable' rather than something like 'not_configured'. This is acceptable behavior but could be more descriptive."
+      },
+      {
+        "file": "internal/server/server.go",
+        "line": 553,
+        "severity": "non_blocking",
+        "description": "Uses `strings.Contains(host, \":\") == false` instead of the more idiomatic `!strings.Contains(host, \":\")`. Minor style issue."
+      },
+      {
+        "file": "internal/server/server_test.go",
+        "line": 0,
+        "severity": "non_blocking",
+        "description": "Test files are gitignored (*_test.go in .gitignore), so the 12 health tests exist on disk but are not committed to the repository. The tests pass successfully but are not part of version control. This is a pre-existing project convention, not introduced by this feature."
+      },
+      {
+        "file": "internal/server/server_test.go",
+        "line": 700,
+        "severity": "non_blocking",
+        "description": "TestHealthUpstreamStatusWithValidBaseUrl only checks that the upstream status is either 'reachable' or 'unreachable' but doesn't assert a specific value, since it depends on network conditions. Similarly TestHealthUpstreamStatusWithUnreachableBaseUrl uses t.Logf instead of t.Errorf for the assertion, making it effectively a non-assertion. This is pragmatic for network-dependent tests but could be more robust with mocking."
+      },
+      {
+        "file": "internal/server/server_test.go",
+        "line": 773,
+        "severity": "non_blocking",
+        "description": "TestHealthOverallStatusOk similarly only checks for 'ok' or 'degraded' without asserting 'ok' specifically, since FFmpeg or upstream might not be available. This makes the test less strict but pragmatic."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The project's .gitignore excludes *_test.go files. This means tests are written and run locally but never committed to version control. This is a significant convention that affects CI/CD and code review practices but is not prominently documented in AGENTS.md.",
+      "evidence": ".gitignore contains '# Exclude test files (keep private)\n*_test.go' — all test files are untracked per `git ls-files internal/server/server_test.go` returning empty."
+    },
+    {
+      "area": "conventions",
+      "observation": "The upstream reachability check creates a new http.Client per health check call rather than reusing a shared client. This is a minor efficiency concern but matches the pattern of keeping health checks stateless and lightweight.",
+      "evidence": "internal/server/server.go line ~525: `client := &http.Client{Timeout: 5 * time.Second}` created inline in checkUpstreamStatus()"
+    },
+    {
+      "area": "knowledge",
+      "observation": "The health endpoint uses the same upstreamCacheMutex and upstreamCacheEntry that were introduced in the 'cache-upstream-token' feature. The health check reads the cached token to attempt an HTTP-based reachability probe, falling back to TCP dial. This coupling between features is worth noting for future maintainers.",
+      "evidence": "internal/server/server.go checkUpstreamStatus() reads s.upstreamCache via s.upstreamCacheMu.RLock()"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS. The enhance-health-endpoint feature is well-implemented and fully covers all stated requirements. The health endpoint correctly reports structured status with config, upstream, and ffmpeg components. Config validity checks username/password/baseUrl, upstream reachability uses cached token HTTP probe with TCP dial fallback (both with 5s timeouts), and FFmpeg uses exec.LookPath. The endpoint remains public (registered on the `api` subrouter before the `protected` subrouter with auth middleware). Overall status is 'degraded' when any component is unhealthy. 12 tests cover all component checks, edge cases (nil config, missing fields), and the no-auth requirement. All tests pass. Minor non-blocking issues: parseURL wrapper is trivial, some test assertions are lenient due to network dependence, and test files are gitignored per project convention."
+}

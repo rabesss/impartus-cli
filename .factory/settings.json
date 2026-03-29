@@ -1,17 +1,17 @@
 {
   "sessionDefaultSettings": {
-    "model": "custom:OpenCode-GLM-5",
+    "model": "custom:glm-5-turbo",
     "reasoningEffort": "max",
     "autonomyMode": "auto-high",
-    "specModeModel": "custom:OpenCode-GLM-5",
+    "specModeModel": "custom:glm-5-turbo",
     "specModeReasoningEffort": "max",
     "interactionMode": "auto",
     "autonomyLevel": "high"
   },
   "missionModelSettings": {
-    "workerModel": "custom:OpenCode-MiniMax-M2.7",
+    "workerModel": "custom:minimax-m2.7",
     "workerReasoningEffort": "max",
-    "validationWorkerModel": "custom:OpenCode-MiniMax-M2.7",
+    "validationWorkerModel": "custom:minimax-m2.7",
     "validationWorkerReasoningEffort": "max"
   },
   "enabledPlugins": {

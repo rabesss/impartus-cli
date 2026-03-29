@@ -1,0 +1,36 @@
+{
+  "milestone": "docs-cleanup",
+  "round": 2,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 9,
+    "passed": 9,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-FLAG-001",
+    "VAL-FLAG-002",
+    "VAL-DOC-001",
+    "VAL-DOC-002",
+    "VAL-DOC-003",
+    "VAL-DOC-004",
+    "VAL-CROSS-001",
+    "VAL-CROSS-002",
+    "VAL-CROSS-005"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "previousRound": ".factory/validation/docs-cleanup/user-testing/synthesis.json.round1.bak",
+  "reTestedAssertions": [
+    {
+      "ids": ["VAL-DOC-001", "VAL-DOC-002"],
+      "previousFailures": [
+        "VAL-DOC-001: Manifest claimed list responses as bare arrays not wrapped in envelope; pending jobs restored as pending on restart",
+        "VAL-DOC-002: API reference 'Direct JSON responses' claimed bare arrays; restart table claimed 'Restored as pending'"
+      ],
+      "resolution": "Both fixed by fix-docs-envelope-and-restart feature. Manifest and API reference now correctly describe respondWithEnvelope wrapping and pending→failed restart behavior."
+    }
+  ]
+}

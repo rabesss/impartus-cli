@@ -1,0 +1,15 @@
+{
+  "featureId": "fix-persistence-empty-path",
+  "reviewedAt": "2026-03-28T12:35:00.000Z",
+  "commitId": "fe1b4a7",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Clean, minimal fix that adds a `persistenceEnabled bool` parameter to `newAPIServerFull`, replacing the fragile `persistencePath != \"\"` check. The fix correctly ensures `NewAPIServerWithPersistence` always creates a persistent JobStore (even when called with empty path), while `NewAPIServer` and `NewAPIServerWithLogin` remain in-memory-only for tests. The change is only 5 lines modified in a single file, and all existing tests pass.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "The fix is correct and minimal. The root cause was that `newAPIServerFull` inferred persistence intent from whether `persistencePath` was non-empty, but the CLI `serve` command calls `NewAPIServerWithPersistence(port, cfg, \"\")` expecting the empty string to be defaulted to `.jobs.json`. The fix replaces the implicit check with an explicit `persistenceEnabled bool` parameter, making the intent unambiguous. All three constructors now clearly express their persistence intent: `NewAPIServerWithPersistence` → true, `NewAPIServer`/`NewAPIServerWithLogin` → false. The `newJobPersistence(\"\")` function correctly defaults to `.jobs.json`. No new tests were needed — the existing 16 TestPersistence tests already validate the behavior. Build and all tests pass."
+}

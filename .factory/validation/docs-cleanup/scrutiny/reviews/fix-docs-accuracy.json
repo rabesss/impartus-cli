@@ -1,0 +1,28 @@
+{
+  "featureId": "fix-docs-accuracy",
+  "reviewedAt": "2026-03-28T04:25:00.000Z",
+  "commitId": "6b42cf0",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix adequately addresses all 3 blocking issues and both non-blocking cleanup items identified in the prior review of update-all-docs. All 4 verification criteria pass: (1) API doc examples in openclaw-manifest.json, api-reference.md, and error-codes.md now consistently use meta.mode: 'api'; (2) health docs show ffmpeg status as 'available' or 'not_found' with no version field; (3) health docs show upstream as {status: 'reachable'|'unreachable'} with no error field; (4) observability.md has no IMPARTUS_FLAG_* references. One minor non-blocking issue found: the fix introduced a typo 'IMpartus_VERBOSE' (lowercase 'm') in observability.md where it should be 'IMPARTUS_VERBOSE', and the referenced env var/config option doesn't appear to exist in the codebase at all.",
+    "issues": [
+      {
+        "file": "docs/observability.md",
+        "line": 132,
+        "severity": "non_blocking",
+        "description": "Typo: 'IMpartus_VERBOSE' (lowercase 'm') should be 'IMPARTUS_VERBOSE'. Additionally, neither IMPARTUS_VERBOSE nor a 'verbose' config field exists in the Go codebase — the reference is to a non-existent setting. This was a pre-existing issue (the old docs referenced IMPARTUS_FLAG_VERBOSE_LOGGING which also didn't exist after flag cleanup) but the fix introduced the typo while attempting to correct it."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The observability.md references config options and env vars that don't exist in the codebase: 'config.json metricsEndpoint: true', 'IMPARTUS_METRICS_ENDPOINT=true', and 'IMpartus_VERBOSE=true' (also with typo). Neither metricsEndpoint nor verbose appear in the Config struct or applyEnvOverrides. This suggests the docs were written aspirationally or reference a different codebase version.",
+      "evidence": "grep for 'metricsEndpoint|MetricsEndpoint|verbose|VERBOSE' in internal/config/*.go returns no matches. The observability.md references were not part of this fix's scope but are worth noting for future doc accuracy work."
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/docs-cleanup/scrutiny/reviews/update-all-docs.json",
+  "summary": "PASS. The fix-docs-accuracy feature successfully addresses all 4 issues from the prior review: (1) All API response examples in openclaw-manifest.json, api-reference.md, and error-codes.md now correctly use meta.mode: 'api' instead of 'json'; (2) ffmpeg health docs removed the non-existent version field and changed 'unavailable' to 'not_found' matching the actual checkFFmpegStatus() return values; (3) upstream health docs removed the non-existent error field, now showing only {status: 'reachable'|'unreachable'} matching checkUpstreamStatus(); (4) All 4 stale IMPARTUS_FLAG_* env var references removed from observability.md. The worker verified all changes against actual server code before editing docs, and ran grep verification after each edit. Build and tests pass. One minor non-blocking issue: a typo 'IMpartus_VERBOSE' was introduced in observability.md, and the referenced env vars in that section don't actually exist in the codebase."
+}

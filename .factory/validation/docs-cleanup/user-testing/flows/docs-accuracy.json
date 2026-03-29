@@ -1,0 +1,268 @@
+{
+  "groupId": "docs-accuracy",
+  "testedAt": "2026-03-28T10:30:00Z",
+  "isolation": {
+    "workingDirectory": "/home/ravish/Desktop/clawds-code-crib/impartus-go/impartus",
+    "testingMethod": "manual-review-cross-reference",
+    "noServerNeeded": true,
+    "noSharedState": true
+  },
+  "toolsUsed": ["manual-code-review", "cross-reference"],
+  "assertions": [
+    {
+      "id": "VAL-DOC-001",
+      "title": "Manifest reflects actual API behavior",
+      "status": "fail",
+      "steps": [
+        {
+          "action": "Validated openclaw-manifest.json is valid JSON",
+          "expected": "Parses without error",
+          "observed": "Valid JSON, parsed successfully"
+        },
+        {
+          "action": "Check idempotencyKey parameter on POST /jobs (download_lectures tool)",
+          "expected": "idempotencyKey documented as optional string parameter, max 256 chars",
+          "observed": "idempotencyKey present as optional string with max 256 chars description, persistence behavior documented"
+        },
+        {
+          "action": "Check retryable/retryAfter in errorCodes section",
+          "expected": "retryHints section with retryable and retryAfter fields for 502 errors",
+          "observed": "retryHints section present with retryable (boolean) and retryAfter (integer) fields, LOGIN_FAILED/COURSES_FETCH_FAILED/LECTURES_FETCH_FAILED/CANCEL_FAILED all documented with retryAfter values"
+        },
+        {
+          "action": "Check health endpoint has structured response with config/upstream/ffmpeg",
+          "expected": "health_check tool shows structured envelope with config, upstream, ffmpeg sub-objects",
+          "observed": "health_check tool shows respondWithEnvelope format with success/data/meta, data contains status/config/upstream/ffmpeg sub-objects"
+        },
+        {
+          "action": "Check INVALID_IDEMPOTENCY_KEY in error codes",
+          "expected": "INVALID_IDEMPOTENCY_KEY documented with status 400",
+          "observed": "INVALID_IDEMPOTENCY_KEY documented in errorCodes.codes section with status 400"
+        },
+        {
+          "action": "Check meta field in envelope descriptions",
+          "expected": "All envelope descriptions include meta field",
+          "observed": "health_check, login, cancel_job, and duplicateResponse all include meta field. CLI jsonMode envelope includes meta with mode 'json'. API responses correctly use mode 'api'"
+        },
+        {
+          "action": "Check API responses use mode 'api' (not 'json')",
+          "expected": "All API tool responses show mode 'api' in meta",
+          "observed": "health_check envelope meta shows mode 'api', duplicateResponse meta shows mode 'api'. CLI jsonMode shows mode 'json'. Correct separation."
+        },
+        {
+          "action": "Check ffmpeg status values are 'available' or 'not_found' (NOT 'unavailable')",
+          "expected": "ffmpeg status uses 'available' or 'not_found'",
+          "observed": "health_check ffmpeg.status description: \"'available' or 'not_found'\" — CORRECT, matches code in checkFFmpegStatus()"
+        },
+        {
+          "action": "Check upstream has only {status: 'reachable'|'unreachable'} (no error field)",
+          "expected": "upstream object has only status field, no error field",
+          "observed": "health_check upstream fields only has status: 'reachable' or 'unreachable' — CORRECT, matches code in checkUpstreamStatus()"
+        },
+        {
+          "action": "Check ffmpeg has no version field",
+          "expected": "ffmpeg object has only status field, no version",
+          "observed": "health_check ffmpeg fields only has status — CORRECT"
+        },
+        {
+          "action": "Cross-reference list_courses/list_lectures response wrapping against server.go code",
+          "expected": "Docs accurately describe whether responses are wrapped in envelope or bare arrays",
+          "observed": "MISMATCH: Manifest says 'Returns array directly, not wrapped in envelope' for list_courses and list_lectures, and knownLimitations says 'List responses are bare arrays'. But server.go coursesHandler (line 844) and lecturesHandler (line 885) both use respondWithEnvelope(), which wraps in {success, data, meta}. Same for listJobsHandler (line 946), getJobHandler (line 962), and createJobHandler (line 942). ALL responses are wrapped."
+        },
+        {
+          "action": "Cross-reference pending job restart behavior against code",
+          "expected": "Manifest accurately describes restart behavior for pending jobs",
+          "observed": "MISMATCH: Manifest jobPersistence.restartBehavior says 'pending: Jobs in pending state are restored as pending'. But server.go loadFromDisk() (line ~545) marks BOTH pending AND running as 'failed': if status == 'pending' || status == 'running' { status = 'failed' }"
+        }
+      ],
+      "evidence": {
+        "filesReviewed": [
+          "docs/openclaw-manifest.json",
+          "internal/server/server.go",
+          "internal/server/auth.go",
+          "internal/server/job_persistence.go"
+        ],
+        "codeLines": {
+          "coursesHandler_envelope": "server.go:844 - respondWithEnvelope(w, http.StatusOK, \"courses\", courses)",
+          "lecturesHandler_envelope": "server.go:885 - respondWithEnvelope(w, http.StatusOK, \"lectures\", lectures)",
+          "listJobsHandler_envelope": "server.go:946 - respondWithEnvelope(w, http.StatusOK, \"listJobs\", s.jobStore.ListJobs())",
+          "createJobHandler_envelope": "server.go:942 - respondWithEnvelope(w, http.StatusCreated, \"createJob\", job)",
+          "loadFromDisk_pending_failure": "server.go:~545 - if status == 'pending' || status == 'running' { status = 'failed' }"
+        },
+        "manifestClaims": {
+          "bare_arrays_note": "Lines 146, 209: 'Returns array directly, not wrapped in envelope'",
+          "knownLimitations": "Line 918: 'List responses (courses, lectures, jobs) are bare arrays, not wrapped objects'",
+          "pending_restart": "jobPersistence.restartBehavior.pending: 'Jobs in pending state are restored as pending'"
+        }
+      },
+      "issues": "Two inaccuracies found: (1) Manifest claims courses/lectures/jobs list responses are 'bare arrays not wrapped in envelope' but ALL handlers use respondWithEnvelope() which wraps in {success, data, meta}. (2) Manifest claims pending jobs are restored as pending on restart, but code marks them as failed."
+    },
+    {
+      "id": "VAL-DOC-002",
+      "title": "API reference reflects new envelope",
+      "status": "fail",
+      "steps": [
+        {
+          "action": "Check health section exists with GET /health",
+          "expected": "Health section with GET /health documented",
+          "observed": "Health section present at top of api-reference.md with GET /health documented"
+        },
+        {
+          "action": "Check health response shows config/upstream/ffmpeg sub-objects",
+          "expected": "Health response JSON example includes config, upstream, ffmpeg objects",
+          "observed": "Health response example shows config {status, username, password, baseUrl}, upstream {status}, ffmpeg {status} — CORRECT, matches code"
+        },
+        {
+          "action": "Check envelope format shown with {success, data, error, meta}",
+          "expected": "Envelope format documented for all response types",
+          "observed": "Error envelope and success envelope documented with {success, error/data, meta}. meta shows mode 'api' for API responses. PASS."
+        },
+        {
+          "action": "Check idempotencyKey documented on POST /jobs",
+          "expected": "idempotencyKey in optional fields with behavior description",
+          "observed": "idempotencyKey documented as optional field (string, max 256 chars) with persistence and 409 behavior described. PASS."
+        },
+        {
+          "action": "Check 409 Conflict behavior documented",
+          "expected": "409 Conflict response documented with example",
+          "observed": "409 Conflict documented with success envelope example showing {job, duplicate: true} in data. PASS."
+        },
+        {
+          "action": "Check persistence section exists (.jobs.json, restart behavior)",
+          "expected": "Job Persistence section with .jobs.json and restart behavior table",
+          "observed": "Job Persistence section present with Persisted Data, NOT Persisted, and Restart Behavior table. PASS."
+        },
+        {
+          "action": "Check meta.mode shows 'api' for API responses",
+          "expected": "All API response examples show meta.mode = 'api'",
+          "observed": "Error envelope shows mode 'api', success envelope shows mode 'api', health response shows mode 'api'. PASS."
+        },
+        {
+          "action": "Cross-reference Direct JSON responses section against actual code",
+          "expected": "Docs accurately describe which handlers write JSON directly vs envelope",
+          "observed": "MISMATCH: api-reference.md 'Direct JSON responses' section says 'GET /courses → []client.Course' and 'GET /lectures → []client.Lecture' and 'POST /jobs, GET /jobs, GET /jobs/{id} → Job / []Job' — implying bare arrays/objects. But code shows ALL these use respondWithEnvelope() wrapping them in {success, data, meta}. This section is inaccurate."
+        },
+        {
+          "action": "Check restart behavior table for pending jobs",
+          "expected": "Table accurately reflects code behavior for pending job restart",
+          "observed": "MISMATCH: Table says 'pending → Restored as pending' but server.go loadFromDisk() marks pending jobs as failed (along with running jobs). Code: if status == 'pending' || status == 'running' { status = 'failed' }"
+        }
+      ],
+      "evidence": {
+        "filesReviewed": [
+          "docs/api-reference.md",
+          "internal/server/server.go",
+          "internal/server/auth.go"
+        ],
+        "codeLines": {
+          "allHandlers_use_envelope": "server.go lines 640, 844, 885, 933, 942, 946, 962 - ALL use respondWithEnvelope()",
+          "loadFromDisk_pending": "server.go loadFromDisk(): if status == 'pending' || status == 'running' { status = 'failed' }"
+        }
+      },
+      "issues": "Two inaccuracies found: (1) 'Direct JSON responses' section claims courses/lectures/jobs return bare arrays, but ALL handlers use respondWithEnvelope(). (2) Restart behavior table claims pending jobs are 'Restored as pending', but code marks them as failed."
+    },
+    {
+      "id": "VAL-DOC-003",
+      "title": "Error codes include retryable docs",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Check INVALID_IDEMPOTENCY_KEY documented (400)",
+          "expected": "INVALID_IDEMPOTENCY_KEY documented with status 400",
+          "observed": "Documented in Request Validation Errors table with code INVALID_IDEMPOTENCY_KEY, status 400, trigger: 'idempotencyKey exceeds 256 chars on POST /jobs'. Also in Job Errors table. PASS."
+        },
+        {
+          "action": "Check retryable/retryAfter documented",
+          "expected": "retryable and retryAfter fields documented with examples",
+          "observed": "Retry Hints section present with field descriptions (retryable: boolean, retryAfter: integer) and example JSON showing details.retryable and details.retryAfter. PASS."
+        },
+        {
+          "action": "Check table of retryable codes",
+          "expected": "Table listing which codes have retry hints with retryAfter values",
+          "observed": "Table present with 4 retryable codes: LOGIN_FAILED (502, 30s), COURSES_FETCH_FAILED (502, 30s), LECTURES_FETCH_FAILED (502, 30s), CANCEL_FAILED (500, 10s). Matches code in server.go where these codes include &retryHint{Retryable: true, RetryAfter: X}. PASS."
+        },
+        {
+          "action": "Check 409 Conflict section explaining it's not an error",
+          "expected": "409 Conflict documented as non-error with example response",
+          "observed": "Job Errors section has '409 Conflict (Not an Error)' subsection explaining that 409 returns a success response with existing job data and duplicate: true. PASS."
+        },
+        {
+          "action": "Cross-reference error codes against actual respondWithError calls in server.go",
+          "expected": "All documented error codes match actual code usage",
+          "observed": "Verified: INVALID_REQUEST, MISSING_PARAMETER, MISSING_TOKEN, INVALID_TOKEN_FORMAT, INVALID_TOKEN, AUTH_FAILED, TOKEN_GENERATION_FAILED, LOGIN_FAILED (with retry), COURSES_FETCH_FAILED (with retry), LECTURES_FETCH_FAILED (with retry), JOB_NOT_FOUND, JOB_CANNOT_CANCEL, INVALID_JOB_CONFIG, INVALID_IDEMPOTENCY_KEY, CANCEL_FAILED (with retry) — all match. PASS."
+        },
+        {
+          "action": "Verify 4xx errors listed as NOT having retry hints",
+          "expected": "4xx errors documented without retry hints",
+          "observed": "'Errors WITHOUT retry hints (4xx client errors)' section lists INVALID_REQUEST, MISSING_PARAMETER, INVALID_JOB_CONFIG, MISSING_TOKEN, INVALID_TOKEN_FORMAT, INVALID_TOKEN, AUTH_FAILED, JOB_NOT_FOUND, JOB_CANNOT_CANCEL, INVALID_IDEMPOTENCY_KEY. Code confirms these pass nil for retryHint. PASS."
+        }
+      ],
+      "evidence": {
+        "filesReviewed": [
+          "docs/error-codes.md",
+          "internal/server/server.go",
+          "internal/server/auth.go"
+        ],
+        "codeLines": {
+          "retryHint_usage": "server.go - LOGIN_FAILED/COURSES_FETCH_FAILED/LECTURES_FETCH_FAILED use &retryHint{Retryable: true, RetryAfter: 30}",
+          "cancel_retryHint": "server.go - CANCEL_FAILED uses &retryHint{Retryable: true, RetryAfter: 10}",
+          "no_retryHint_4xx": "server.go - All 4xx errors pass nil for hint parameter"
+        }
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-DOC-004",
+      "title": "Health endpoint documented",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Check health section shows new response shape with config/upstream/ffmpeg sub-objects",
+          "expected": "Health section documents GET /health with structured response containing config, upstream, ffmpeg",
+          "observed": "Health section at top of api-reference.md documents GET /health with full JSON response example showing config {status, username, password, baseUrl}, upstream {status}, ffmpeg {status}. PASS."
+        },
+        {
+          "action": "Verify config sub-object matches code",
+          "expected": "config has status, username, password, baseUrl fields matching checkConfigStatus()",
+          "observed": "Code checkConfigStatus() returns map with 'status' ('ok'/'misconfigured'), 'username' ('ok'/'missing'), 'password' ('ok'/'missing'), 'baseUrl' ('ok'/'missing'). Docs match exactly. PASS."
+        },
+        {
+          "action": "Verify upstream sub-object matches code",
+          "expected": "upstream has only status field ('reachable'/'unreachable')",
+          "observed": "Code checkUpstreamStatus() returns map with only 'status' ('unreachable' or 'reachable'). Docs show upstream {status: 'reachable'} with note about 'unreachable'. PASS."
+        },
+        {
+          "action": "Verify ffmpeg sub-object matches code",
+          "expected": "ffmpeg has only status field ('available'/'not_found')",
+          "observed": "Code checkFFmpegStatus() returns map with 'status' ('not_found' or 'available'). Docs show ffmpeg {status: 'available'} with note about 'not_found'. PASS."
+        },
+        {
+          "action": "Verify overall status logic documented",
+          "expected": "Overall status is 'ok' or 'degraded' based on sub-checks",
+          "observed": "Docs show status: 'ok' with description of 'degraded' when dependencies have issues. Code: if any sub-check is not ok/reachable/available, overallStatus = 'degraded'. PASS."
+        },
+        {
+          "action": "Verify health uses respondWithEnvelope",
+          "expected": "Health response wrapped in envelope",
+          "observed": "Docs show {success, data, meta} wrapping. Code line 640: respondWithEnvelope(w, http.StatusOK, 'health', ...). PASS."
+        }
+      ],
+      "evidence": {
+        "filesReviewed": [
+          "docs/api-reference.md",
+          "internal/server/server.go"
+        ],
+        "codeLines": {
+          "healthHandler": "server.go:639-646 - respondWithEnvelope with status/config/upstream/ffmpeg",
+          "checkConfigStatus": "server.go checkConfigStatus() - returns {status, username, password, baseUrl}",
+          "checkUpstreamStatus": "server.go checkUpstreamStatus() - returns {status: 'reachable'|'unreachable'}",
+          "checkFFmpegStatus": "server.go checkFFmpegStatus() - returns {status: 'available'|'not_found'}"
+        }
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 4 assertions: 2 passed (VAL-DOC-003 error codes, VAL-DOC-004 health endpoint), 2 failed (VAL-DOC-001 manifest accuracy, VAL-DOC-002 API reference accuracy). Two bugs found: (1) Both docs claim courses/lectures/jobs list responses are 'bare arrays not wrapped in envelope', but ALL server handlers use respondWithEnvelope() wrapping them in {success, data, meta}. (2) Both docs claim pending jobs are 'restored as pending' on server restart, but code marks them as 'failed' (same as running jobs)."
+}

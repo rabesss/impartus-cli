@@ -1,10 +1,8 @@
 commands:
-  install: go mod download && python3 -m pip install --user "desloppify[full]"
+  install: go mod download
   test: go test ./... -v -cover -parallel 3
   lint: make lint
   build: go build ./...
-  desloppify_scan: desloppify scan --path .
-  desloppify_next: desloppify next
 
 services:
   api:

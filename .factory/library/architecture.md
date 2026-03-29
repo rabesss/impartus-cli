@@ -1,20 +1,118 @@
 # Architecture
 
-Architectural decisions, patterns discovered, and system constraints.
+How the impartus-go CLI/API system works.
 
-**What belongs here:** runtime architecture, interface boundaries, normalization rules, invariants.
+**What belongs here:** Components, relationships, data flows, invariants.
+**What does NOT belong here:** Service ports/commands (use `.factory/services.yaml`).
 
 ---
 
-- Primary user surface is the CLI binary; the local API is a secondary integration surface for OpenClaw-style automation.
-- This mission must shift the repo toward an agent-first non-interactive contract while preserving video and audio workflows.
-- CLI, API, config loading, and downloader behavior currently expose contract mismatches (range indexing, JSON shapes, config/env handling) that must be resolved deliberately rather than patched ad hoc.
-- Performance work must preserve correctness of playlist parsing, decryption, artifact assembly, and lecture selection semantics.
-- Cross-surface consistency matters: config resolution, view naming, and lecture-slice semantics should not drift between CLI and API paths.
+## System Overview
 
-## Downloader Package
+Impartus CLI is a Go application for downloading video lectures from the Impartus educational platform. It has two modes: CLI (interactive and JSON) and API server (REST + WebSocket).
 
-- **Rate limiting**: The downloader uses `golang.org/x/time/rate` with configurable RPS limits. `RateLimiter.WaitForDownload` and `RateLimiter.WaitForAPI` calls may block when rate limits are exceeded. Workers spawning download tasks should account for this blocking behavior.
-- **Pipeline architecture**: `internal/downloader/pipeline.go` implements a worker pool pattern with separate download and decrypt workers. The `buildOrderedList` function ensures correct chunk ordering despite concurrent processing by iterating chunk IDs 0 to maxID in order.
-- **Playlist parsing**: `PlaylistParser` in `internal/downloader/parser.go` handles `#EXT-X-DISCONTINUITY` markers to separate first (left) and second (right) view chunks for multi-view Impartus recordings.
-- **Retry behavior**: Downloads use bounded retries (default 3 attempts) with exponential backoff via `retryDelay` function. Failed chunks are tracked but do not abort the entire lecture download.
+## Key Components
+
+### Entry Points
+- `main.go` → `cli.Execute(version, date)`
+- CLI mode: commands routed in `internal/cli/cli.go`
+- API mode: `impartus serve` starts HTTP server via `internal/server/server.go`
+
+### Package Map
+| Package | Responsibility |
+|---------|---------------|
+| `cli` | CLI commands, JSON envelope, interactive mode |
+| `client` | HTTP client, upstream API calls, playlist parsing |
+| `config` | Config loading (file + env vars), validation, defaults |
+| `downloader` | Chunk download, AES decryption, FFmpeg operations, pipeline |
+| `server` | REST API handlers, WebSocket, job management, auth |
+
+### Data Flow (API Mode)
+1. Client sends request to API server (port 8080)
+2. Auth middleware validates Bearer token (in-memory token store)
+3. Handler calls `getOrRefreshUpstreamClient(ctx)` to get a cached upstream client
+   - On first request: logs in to Impartus, caches the client + token (23h TTL)
+   - On subsequent requests: reuses cached client if token is fresh
+   - On expiry: re-authenticates and refreshes cache
+   - Thread-safe via double-checked locking (RLock fast path → Lock slow path → double-check)
+4. Response returned via envelope helpers
+
+### Response Helpers (auth.go)
+All API responses use the `{success, data, error, meta}` envelope pattern.
+- `respondWithEnvelope(w, status, command, data)` → `{success: true, data: {...}, meta: {command, mode: "api"}}`
+- `respondWithSuccess(w, command, data)` → `{success: true, data: {...}, meta: {command, mode: "api"}}` (used for login 200, cancelJob 200)
+- `respondWithError(w, status, code, msg, command, hint *retryHint, details ...any)` → `{success: false, error: {code, message, details: {...}}, meta: {command, mode: "api"}}`
+  - `retryHint` is an optional `*retryHint{Retryable: bool, RetryAfter: int}` for upstream errors
+  - When `hint` is provided, `details` is ignored (hint wins)
+- `writeJSON(w, status, payload)` → raw JSON (**dead code** — no handlers use it after envelope standardization)
+
+### Job Lifecycle
+1. POST /jobs creates job in memory (JobStore)
+2. Job runs asynchronously via goroutine
+3. Progress broadcast via WebSocket
+4. State transitions: pending → running → completed/failed/canceled
+
+### CLI JSON Envelope
+```go
+type jsonEnvelope struct {
+    Success bool     `json:"success"`
+    Data    any      `json:"data"`
+    Error   *jsonErr `json:"error"`
+    Meta    jsonMeta `json:"meta"`
+}
+```
+
+### Error Retry Hints
+- 502 upstream errors (LOGIN_FAILED, COURSES_FETCH_FAILED, LECTURES_FETCH_FAILED) → `retryable: true, retryAfter: 30` (hardcoded)
+- 500 CANCEL_FAILED → `retryable: true, retryAfter: 10` (hardcoded)
+- All 4xx errors → no retryable field (nil hint; absence = not retryable)
+- `retryAfter` values are not configurable — code change required to adjust
+
+### Status Spelling Convention
+- Go code uses American English: `const statusCanceled = "canceled"` (single L)
+- Documentation status values use "canceled" (single L)
+- WebSocket event *type names* use "job.cancelled" (double L) — these are event identifiers, not status values
+- Some doc prose/diagrams still use "cancelled" — follow-up cleanup needed
+
+### Upstream Token Cache
+- `APIServer.upstreamCache` holds an `*upstreamCacheEntry` (client + token + expiry)
+- Protected by `APIServer.upstreamCacheMu` (sync.RWMutex)
+- Token TTL: 23 hours (hardcoded, heuristic for typical 24h upstream token lifetime)
+- Three call sites: `coursesHandler`, `lecturesHandler`, `prepareJobRuntime`
+- The cached client uses default HTTP timeout (per-job `HTTPTimeout` config not applied to cached client)
+- On login failure, cache is not populated; error returned with retryable hint
+
+### Health Endpoint
+- `GET /api/v1/health` — public (no auth required), registered before auth middleware
+- Returns structured status: `{status: "ok"|"degraded", config: {...}, upstream: {...}, ffmpeg: {...}}`
+- Config check: verifies username, password, baseUrl are set
+  - Returns `{status: "ok"|"misconfigured", hasUsername: bool, hasPassword: bool, hasBaseUrl: bool}`
+- Upstream check: HTTP probe using cached token (5s timeout), fallback TCP dial (5s timeout)
+  - Returns `{status: "reachable"|"unreachable"}` — no error field is set
+- FFmpeg check: `exec.LookPath("ffmpeg")`
+  - Returns `{status: "available"|"not_found"}` — no version field is set
+- Overall status is "degraded" if any component is unhealthy
+- Uses `upstreamCacheMu.RLock()` to safely read the cached upstream client for reachability probe
+
+### Job Persistence
+- Jobs persisted to `.jobs.json` file on disk via `jobPersistence` struct
+- `JobStore.persistence` field — nil for in-memory store, non-nil for persisted store
+- Persistence triggers on every mutation: CreateJob, UpdateJob, SetLectureProgress, SetOutputs, CancelJob
+- `NewJobStoreWithPersistence(path)` creates a persisted store; `NewJobStore()` creates in-memory
+- CLI `serve` command uses `NewAPIServerWithPersistence(port, cfg, "")` for persistence
+- Running/pending jobs are restored as "failed" on restart (cannot resume interrupted downloads)
+- Only `JobRuntimeConfig` is persisted — no username, password, or token
+
+### Idempotency Keys
+- `POST /api/v1/jobs` accepts optional `idempotencyKey` field (max 256 chars)
+- `JobStore.idempotencyKeys` maps idempotencyKey → jobID
+- Duplicate key returns existing job with 409 Conflict via envelope
+- Keys are persisted alongside jobs and survive restart
+- Omitting key always creates a new job
+
+## Key Invariants
+- API auth tokens are crypto/rand 32-byte, base64url encoded, 24h expiry
+- Job IDs are `job-{unixNano}` format
+- Lecture indices are 1-based in CLI and API (startIndex, endIndex)
+- Upstream Impartus token stored in `.token` file (mode 0600)
+- Config loaded from `config.json` with env var overrides

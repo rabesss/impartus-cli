@@ -1,0 +1,44 @@
+{
+  "featureId": "add-error-retry-hints",
+  "reviewedAt": "2026-03-27T18:05:00Z",
+  "commitId": "95e6278",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation correctly adds retryable/retryAfter hints to error responses. The retryHint struct is clean, respondWithError signature is updated with an optional *retryHint parameter, all call sites are updated appropriately, and tests cover all error codes. One minor discrepancy: the feature description says CANCEL_FAILED should have retryAfter=30, but the implementation uses retryAfter=10. However, the expectedBehavior in features.json explicitly states retryAfter=10 for CANCEL_FAILED, so the implementation matches the spec. The 4xx errors use nil (no retryable field in details) rather than explicit retryable=false, which is semantically equivalent for consumers (absence = not retryable) and aligns with the test expectations.",
+    "issues": [
+      {
+        "file": "internal/server/auth.go",
+        "line": 130,
+        "severity": "non_blocking",
+        "description": "When both hint and details are provided, only the hint is used — the details parameter is silently ignored. This is documented behavior (the `if len(details) > 0 && hint == nil` guard), but it means a caller passing both hint and details won't get the details merged. The test TestRespondWithErrorWithRetryHintAndDetails verifies this but only checks that the hint wins. This is acceptable but worth noting."
+      },
+      {
+        "file": "internal/server/auth.go",
+        "line": 94,
+        "severity": "non_blocking",
+        "description": "The retryHint struct is unexported (lowercase). This is fine since it's only used within the server package, but if other packages ever need to construct retry hints, it would need to be exported. No action needed now."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The mission AGENTS.md documents `respondWithError(w, status, code, message)` as the signature, but after this feature the signature is now `respondWithError(w, status, code, message, command, hint *retryHint, details ...any)`. The AGENTS.md should be updated to reflect the new signature including the command string and optional retryHint parameter.",
+      "evidence": "AGENTS.md line 'respondWithError(w, status, \"CODE\", \"message\")' vs actual signature at internal/server/auth.go:117"
+    },
+    {
+      "area": "conventions",
+      "observation": "Test files (*_test.go) are gitignored per .gitignore. This means new tests written by workers are not committed to git. This is pre-existing and affects test persistence across workers. The worker noted this as a discovered issue.",
+      "evidence": ".gitignore contains '*_test.go', auth_test.go exists on disk but not in git"
+    },
+    {
+      "area": "knowledge",
+      "observation": "The retryAfter values are hardcoded (30s for 502s, 10s for CANCEL_FAILED) rather than configurable. If these values need to change, a code change is required. This may be worth documenting in architecture.md or AGENTS.md as a design decision.",
+      "evidence": "internal/server/server.go:427,433,470,476 use RetryAfter:30; server.go:559 uses RetryAfter:10"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS. The feature implementation is clean and complete. The retryHint struct was added to auth.go, respondWithError was updated to accept an optional *retryHint parameter, all call sites were updated with appropriate hints (502 upstream errors get retryable=true/retryAfter=30, CANCEL_FAILED gets retryable=true/retryAfter=10, all 4xx errors pass nil), and three test functions cover all error codes. All existing tests pass. The two non-blocking issues are: (1) when both hint and details are provided, only hint is used, and (2) the retryHint struct is unexported. The mission AGENTS.md should be updated to reflect the new respondWithError signature."
+}

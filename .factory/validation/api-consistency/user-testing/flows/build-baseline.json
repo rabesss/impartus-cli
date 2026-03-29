@@ -1,0 +1,94 @@
+{
+  "groupId": "build-baseline",
+  "testedAt": "2026-03-27T00:00:00Z",
+  "isolation": {
+    "workingDirectory": "/home/ravish/Desktop/clawds-code-crib/impartus-go/impartus",
+    "sharedState": "none",
+    "serverStartup": "not needed"
+  },
+  "toolsUsed": ["go build", "go test", "go vet"],
+  "assertions": [
+    {
+      "id": "VAL-BLD-001",
+      "title": "Code compiles",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run go build ./...",
+          "expected": "Exit code 0, zero errors",
+          "observed": "Exit code 0, no output (clean build)"
+        }
+      ],
+      "evidence": {
+        "exitCode": 0,
+        "outputFiles": ["api-consistency/build-baseline/VAL-BLD-001-build-output.txt"],
+        "consoleErrors": "none"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-BLD-002",
+      "title": "All existing tests pass",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run go test ./...",
+          "expected": "Exit code 0, all tests pass",
+          "observed": "Exit code 0. All packages OK: root, alerts, analytics, cli, client, config, downloader, logutil, metrics, sentryhook, server. Three packages have no test files (cmd/impartus, buildinfo, scripts)."
+        }
+      ],
+      "evidence": {
+        "exitCode": 0,
+        "outputFiles": ["api-consistency/build-baseline/VAL-BLD-002-test-output.txt"],
+        "consoleErrors": "none",
+        "packagesOk": [
+          "github.com/rabesss/impartus-cli",
+          "github.com/rabesss/impartus-cli/internal/alerts",
+          "github.com/rabesss/impartus-cli/internal/analytics",
+          "github.com/rabesss/impartus-cli/internal/cli",
+          "github.com/rabesss/impartus-cli/internal/client",
+          "github.com/rabesss/impartus-cli/internal/config",
+          "github.com/rabesss/impartus-cli/internal/downloader",
+          "github.com/rabesss/impartus-cli/internal/logutil",
+          "github.com/rabesss/impartus-cli/internal/metrics",
+          "github.com/rabesss/impartus-cli/internal/sentryhook",
+          "github.com/rabesss/impartus-cli/internal/server"
+        ],
+        "packagesNoTests": [
+          "github.com/rabesss/impartus-cli/cmd/impartus",
+          "github.com/rabesss/impartus-cli/internal/buildinfo",
+          "github.com/rabesss/impartus-cli/scripts"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-BLD-003",
+      "title": "Lint passes",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run go vet ./...",
+          "expected": "Exit code 0",
+          "observed": "Exit code 0, no output (clean vet)"
+        },
+        {
+          "action": "Run golangci-lint run (if configured)",
+          "expected": "Exit code 0 or not installed",
+          "observed": "golangci-lint is not installed on the system. The Makefile references it but the binary is not in PATH. go vet passed cleanly."
+        }
+      ],
+      "evidence": {
+        "goVetExitCode": 0,
+        "golangciLintAvailable": false,
+        "golangciLintNote": "Not installed in PATH. Validation contract specifies 'if configured'. go vet is the available lint tool and passed cleanly.",
+        "outputFiles": ["api-consistency/build-baseline/VAL-BLD-003-lint-output.txt"],
+        "consoleErrors": "none"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 3 assertions: all 3 passed. Build compiles cleanly, all existing tests pass, and go vet reports no issues. golangci-lint is not installed on the system (contract says 'if configured')."
+}

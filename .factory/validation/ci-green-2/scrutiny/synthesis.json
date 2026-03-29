@@ -1,0 +1,59 @@
+{
+  "milestone": "ci-green-2",
+  "round": 2,
+  "status": "pass",
+  "validatorsRun": {
+    "test": { "passed": true, "command": "go test ./... -v -cover -parallel 3", "exitCode": 0 },
+    "typecheck": { "passed": true, "command": "go build ./...", "exitCode": 0 },
+    "lint": { "passed": true, "command": "make lint (golangci-lint run --timeout 5m)", "exitCode": 0 }
+  },
+  "reviewsSummary": {
+    "total": 4,
+    "passed": 4,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "nonBlockingIssues": [
+    {
+      "featureId": "fix-ci-workflows",
+      "file": ".github/workflows/ci.yml",
+      "line": 293,
+      "severity": "non_blocking",
+      "description": "MAKE_TARGETS variable is assigned but never used (dead code, pre-existing)"
+    },
+    {
+      "featureId": "fix-apply-lecture-filters-bug",
+      "file": "internal/cli/cli_test.go",
+      "line": 480,
+      "severity": "non_blocking",
+      "description": "TestApplyLectureFilters exists locally and passes all 6 sub-tests, but the test file is gitignored by the *_test.go pattern in .gitignore (line 65). The test cannot be committed to version control. This is a pre-existing project convention issue."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skills",
+      "suggestion": "The go-backend-worker skill should include a refactoring-specific verification step: when extracting helper functions, verify that all mutations of the original in-scope variables are preserved by either (a) returning the modified values, (b) using pointer receivers, or (c) writing a targeted test for the extracted function's contract. The current skill only says 'run existing tests' which missed this behavioral regression because interactive mode has no automated test coverage.",
+      "evidence": "fix-lint-errors extracted applyLectureFilters from runInteractive, losing the mutation of the `selected` slice. Existing tests passed but the behavioral regression was not caught because interactive mode has no automated tests.",
+      "isSystemic": false
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "The .gitignore file contains a blanket '*_test.go' pattern that prevents all test files from being committed. This conflicts with AGENTS.md guidance about 'Coverage threshold: 40% minimum' and CI coverage reports. Consider either removing the gitignore pattern or documenting the local-only testing convention.",
+      "evidence": "git check-ignore shows '.gitignore:65:*_test.go'. AGENTS.md says 'Coverage threshold: 40% minimum' and 'CI/CD: Coverage reports uploaded to Codecov'. Test files exist locally (cli_test.go has 710+ lines) but are not in git.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "AGENTS.md could be more specific about HOW to verify behavior preservation during refactoring",
+      "reason": "This is better addressed as a skill-level improvement (see suggestedGuidanceUpdates) rather than adding implementation details to AGENTS.md"
+    },
+    {
+      "observation": "Server and CLI envelope patterns evolved independently without shared schema",
+      "reason": "This was addressed by fix-apply-lecture-filters-bug which added error: null to respondWithSuccess for schema consistency"
+    }
+  ],
+  "previousRound": ".factory/validation/ci-green-2/scrutiny/synthesis.json (round 1)"
+}
