@@ -9,12 +9,15 @@
 
 ## Interfaces / Contracts
 - Server construction/start: `NewAPIServer`, `NewAPIServerWithPersistence`, `New`, `StartAPIServer`, `(*APIServer).Start`.
+- Upstream token cache: The server caches the authenticated upstream Impartus client using `upstreamCacheMu` (sync.RWMutex) for thread-safe double-checked locking. Cached entries (`upstreamCacheEntry`) hold the client, config, token, and `expiresAt` (23h TTL). Use `getOrRefreshUpstreamClient(ctx)` to get or lazily refresh the cached client.
 - The CLI `serve` path should construct the persistence-backed server so jobs survive process restarts.
 - Routes under `/api/v1`: public `/health`, `/auth/login`; protected `/ws`, `/courses`, `/lectures`, `/jobs`, `/jobs/{id}`.
 - Job payload/contracts: `createJobRequest`, `JobConfigOptions`, `Job`, `JobRuntimeConfig`.
 - Job persistence: `NewJobStoreWithPersistence(path)` persists jobs to a JSON file on disk. Survives server restarts. No credentials in persistence file. Corrupt files handled gracefully.
 - Job idempotency: `POST /jobs` accepts optional `idempotencyKey` (string, max 256 chars). Same key returns existing job (409 Conflict) instead of creating a duplicate. Keys are persisted and survive restarts. `CreateJobWithKey` method on `JobStore` handles the logic. Omitting the key always creates a new job.
 - WebSocket event types: `job.started`, `job.progress`, `job.completed`, `job.failed`, `job.cancelled`.
+- Health endpoint (`GET /api/v1/health`) returns a structured JSON envelope via `respondWithEnvelope`. The response includes sub-checks: `config` (status: ok/misconfigured), `upstream` (status: not_configured/reachable/unreachable), and `ffmpeg` (status: available/not_found). The overall status is "ok" or "degraded".
+- API envelope pattern: All API responses use `respondWithEnvelope(w, status, command, data)` which produces `{"success": true, "data": <data>, "error": null, "meta": {"command": <cmd>, "mode": "api"}}`. Errors use `respondWithError(w, status, code, message, command, hint)` producing `{"success": false, "error": {"code": <code>, "message": <msg>, "details": <hint>}, "meta": {...}}`.
 
 ## Data / Types
 - Keep shared/public types centralized (avoid duplicate local shape drift).
