@@ -2,8 +2,6 @@
 # Install: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin
 # Run: golangci-lint run
 
-version: "2"
-
 run:
   timeout: 5m
   issues-exit-code: 1
@@ -11,26 +9,16 @@ run:
   modules-download-mode: readonly
 
 output:
-  formats:
-    text:
-      path: stdout
-      print-issued-lines: true
-      print-linter-name: true
-
-formatters:
-  enable:
-    - gofmt
-    - goimports
-  settings:
-    gofmt:
-      simplify: true
-    goimports:
-      local-prefixes:
-        - github.com/rabesss/impartus-cli
+  print-issued-lines: true
+  print-linter-name: true
 
 # All available linters
 linters:
   enable:
+    # Formatting
+    - gofmt
+    - goimports
+
     # Naming conventions
     - revive
 
@@ -78,6 +66,12 @@ linters:
 
 # Linter settings
 linters-settings:
+  gofmt:
+    simplify: true
+  goimports:
+    local-prefixes:
+      - github.com/rabesss/impartus-cli
+
   revive:
     rules:
       - name: var-naming
