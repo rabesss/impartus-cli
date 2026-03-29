@@ -691,6 +691,12 @@ func (s *APIServer) checkConfigStatus() map[string]any {
 // checkUpstreamStatus attempts to reach the Impartus upstream server
 // Uses cached token if available, otherwise does a TCP dial check
 func (s *APIServer) checkUpstreamStatus() map[string]any {
+	if s.cfg == nil || s.cfg.BaseUrl == "" {
+		return map[string]any{
+			"status": "not_configured",
+		}
+	}
+
 	result := map[string]any{
 		"status": "unreachable",
 	}

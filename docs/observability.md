@@ -124,11 +124,7 @@ Logs are written to stderr with structured format:
 
 ### Log Levels
 
-Configure log level via environment:
-
-```bash
-# Enable verbose logging via config.json verbose: true or set IMPARTUS_VERBOSE=true
-```
+Verbose logging is not yet implemented. Log output defaults to standard severity levels (info, warn, error).
 
 ### Log Sanitization
 
