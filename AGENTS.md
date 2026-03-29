@@ -128,7 +128,7 @@ main.go → cli.Execute(version, date) → Command Handlers
 | `client` | HTTP client, API calls, playlist parsing | `client.go`, `http.go`, `types.go` |
 | `config` | Configuration loading, validation, defaults | `config.go`, `config_test.go` |
 | `downloader` | Chunk download, AES decryption, FFmpeg operations | `downloader.go`, `pipeline.go`, `ffmpeg.go`, `rate_limiter.go`, `progress_tracker.go` |
-| `server` | REST API, WebSocket, job management | `server.go`, `auth.go`, `job_runner.go` |
+| `server` | REST API, WebSocket, job management, persistence, upstream token cache (23h TTL) | `server.go`, `auth.go`, `job_runner.go`, `job_persistence.go` |
 | `alerts` | Webhook alerting (Slack, PagerDuty) | `alerts.go` |
 | `metrics` | OpenTelemetry metrics instrumentation | `metrics.go` |
 | `sentryhook` | Sentry error tracking integration | `sentryhook.go` |
@@ -186,6 +186,7 @@ flowchart TB
 | `internal/downloader/pipeline.go` | Concurrent pipeline: download workers + decrypt workers for parallel processing. |
 | `internal/server/server.go` | REST API handlers, job store, WebSocket broadcasting, job execution orchestration. |
 | `internal/server/auth.go` | Token generation, storage, validation for API auth. |
+| `internal/server/job_persistence.go` | Job persistence to `.jobs.json`, safe restart recovery, no credentials stored. |
 
 ---
 
@@ -449,6 +450,32 @@ server
 ## Debugging Tips
 
 ### CLI Issues
+
+| Problem | Solution |
+|---------|----------|
+| Token issues | Delete `.token` file to force re-authentication |
+
+### CLI Refactoring Helpers
+
+When refactoring CLI commands, use these helpers in `internal/cli/cli.go`:
+
+- `runInteractiveCommand(args, initFn, flagSets...)` - Prompts for confirmation before running a command that modifies state
+- `runFlagBoundCommand(args, flagSets..., executeFn)` - Binds multiple flag sets to a single command execution
+- `runJSONOnlyCommand(args, executeJSONFn)` - Runs a command that only works in JSON mode (no interactive prompts)
+
+```go
+// Example: refactoring a destructive command to require confirmation
+err := runInteractiveCommand(args,
+    func() error { return initClient(nil) },
+    fsConfirm, fsFlags,
+)
+```
+
+| Helper | Purpose |
+|--------|---------|
+| `runInteractiveCommand` | Runs command with user confirmation prompt for destructive operations |
+| `runFlagBoundCommand` | Binds multiple flag sets to a single command |
+| `runJSONOnlyCommand` | Commands that only work in JSON mode (no interactive fallback) |
 
 | Problem | Solution |
 |---------|----------|

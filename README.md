@@ -153,6 +153,18 @@ cp sample.config.json config.json
 | `decryptWorkersPerLecture` | int | No | `2` | Decrypt workers per lecture (1-10) |
 | `httpTimeout` | string | No | `"10m"` | HTTP timeout for chunks (30s-60m) |
 | `enableJitter` | bool | No | `true` | Add random delays to reduce load |
+| `skipNoAudio` | bool | No | `false` | Skip lectures with no audio track |
+| `progressTracking` | object | No | see below | Progress bar tracking configuration |
+
+#### Progress Tracking Options
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable progress bar display |
+| `showSpeed` | bool | `true` | Show download speed |
+| `showETA` | bool | `true` | Show estimated time remaining |
+| `updateInterval` | string | `"2s"` | Progress update interval (500ms-10s) |
+| `speedWindowSize` | int | `10` | Speed calculation window (3-30 samples) |
 
 #### Environment Variables
 
@@ -266,7 +278,16 @@ On failure, `success` is `false`, `data` is `null`, and `error.message` contains
 
 ### API Server
 
-Start the HTTP API server:
+Start the HTTP API server with job persistence:
+
+```bash
+# Jobs are persisted to .jobs.json and survive server restarts
+./impartus serve
+```
+
+**Job Persistence:** Jobs are automatically saved to `.jobs.json`. Running/pending jobs at shutdown are restored as failed (non-resumable). Completed/failed/canceled jobs are restored with their preserved state.
+
+```bash
 
 ```bash
 # Default port 8080
@@ -316,7 +337,49 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/courses
 | `DELETE` | `/api/v1/jobs/{id}` | Yes | Cancel job |
 | `GET` | `/api/v1/ws` | Yes | WebSocket events |
 
+### Health Endpoint
+
+```bash
+# Check API health
+curl http://localhost:8080/api/v1/health
+```
+
+**Response:** Returns a structured envelope with sub-checks for config, upstream, and FFmpeg status:
+
+```json
+{
+  "success": true,
+  "data": {
+    "type": "health",
+    "status": "ok",
+    "data": {
+      "status": "ok",
+      "config": {
+        "status": "ok",
+        "username": "ok",
+        "password": "ok",
+        "baseUrl": "ok"
+      },
+      "upstream": {
+        "status": "reachable"
+      },
+      "ffmpeg": {
+        "status": "available"
+      }
+    }
+  }
+}
+```
+
+Status values:
+- `config.status`: `ok` (all fields set) or `misconfigured` (missing fields)
+- `upstream.status`: `reachable` (server responds), `unreachable` (TCP/HTTP fails), or `not_configured` (no baseUrl)
+- `ffmpeg.status`: `available` (in PATH) or `not_found`
+- Overall `status`: `ok` (all sub-checks pass) or `degraded` (one or more sub-checks fail)
+
 ### Create Download Job
+
+**Idempotency Key Support:** Pass an optional `idempotencyKey` field to prevent duplicate job creation on network retries. If a job with the same key already exists, returns the existing job with HTTP 409 Conflict.
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/jobs \
@@ -327,6 +390,7 @@ curl -X POST http://localhost:8080/api/v1/jobs \
     "sessionId": 456,
     "startIndex": 0,
     "endIndex": 4,
+    "idempotencyKey": "unique-identifier-here",
     "jobConfig": {
       "quality": "720",
       "views": "both",
@@ -337,6 +401,8 @@ curl -X POST http://localhost:8080/api/v1/jobs \
 ```
 
 **Note:** API uses 0-based indexing for `startIndex` and `endIndex`, while CLI uses 1-based indexing for `--start` and `--end`.
+
+**Idempotency:** Pass an optional `idempotencyKey` string (max 256 chars) to prevent duplicate job creation. If the key already exists, returns HTTP 409 with the existing job.
 
 ### WebSocket Connection
 
