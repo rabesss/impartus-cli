@@ -90,13 +90,14 @@ impartus download -s <subjectId> -S <sessionId> [flags]
   "username": "string (required)",
   "password": "string (required)",
   "baseUrl": "string (required)",
-  "quality": "144|450|720 (default: 144)",
-  "views": "left|right|both|first|second (default: both)",
+  "quality": "144|450|720 (required, no default)",
+  "views": "left|right|both|first|second (required, no default)",
   "downloadLocation": "string (default: ./downloads)",
-  "tempDirLocation": "string (default: ./.temp)",
+  "tempDirLocation": "string (default: ./temp)",
   "slides": "boolean (default: false)",
   "audioOnly": "boolean (default: false)",
   "audioFormat": "mp3|m4a|aac|opus (default: mp3)",
+  "skipNoAudio": "boolean (default: false)",
   "numWorkers": "integer 1-50 (default: 5)",
   "rateLimit": "float 0.1-100 (default: 10)",
   "apiRateLimit": "float 0.1-20 (default: 2)",
@@ -104,18 +105,27 @@ impartus download -s <subjectId> -S <sessionId> [flags]
   "downloadWorkersPerLecture": "integer 1-10 (default: 3)",
   "decryptWorkersPerLecture": "integer 1-10 (default: 2)",
   "httpTimeout": "duration (default: 10m)",
-  "enableJitter": "boolean (default: true)"
+  "enableJitter": "boolean (default: true)",
+  "progressTracking": {
+    "enabled": "boolean (default: false)",
+    "showSpeed": "boolean (default: false)",
+    "showETA": "boolean (default: false)",
+    "updateInterval": "duration (default: 2s)",
+    "speedWindowSize": "integer 3-30 (default: 10)"
+  }
 }
 ```
 
 ### Environment Variable Overrides
 
-All config fields can be overridden via:
-- `IMPARTUS_USERNAME`
-- `IMPARTUS_PASSWORD`
-- `IMPARTUS_BASE_URL`
-- `IMPARTUS_QUALITY`
-- etc.
+The following config fields can be overridden via environment variables:
+- `IMPARTUS_USERNAME` – overrides `username`
+- `IMPARTUS_PASSWORD` – overrides `password`
+- `IMPARTUS_BASE_URL` – overrides `baseUrl`
+- `IMPARTUS_QUALITY` – overrides `quality`
+- `IMPARTUS_SKIP_NO_AUDIO` – skips lectures marked as having no audio
+
+Other configuration fields, including nested objects such as `progressTracking`, cannot currently be set via environment variables and must be specified in `config.json`.
 
 ---
 
