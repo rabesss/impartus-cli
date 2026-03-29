@@ -10,13 +10,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rabesss/impartus-cli/internal/buildinfo"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
+
+	"github.com/rabesss/impartus-cli/internal/buildinfo"
 )
 
 const serviceName = "impartus-cli"

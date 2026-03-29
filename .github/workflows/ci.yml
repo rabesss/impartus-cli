@@ -16,10 +16,10 @@ jobs:
       pull-requests: write
       checks: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -28,18 +28,11 @@ jobs:
         uses: reviewdog/action-golangci-lint@v2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          golangci_lint_version: v1.64.8
           golangci_lint_flags: "--config=.golangci.yml --timeout=5m"
           reporter: github-pr-review
           filter_mode: diff_context
           fail_level: error
-
-      - name: Run go vet with reviewdog
-        uses: reviewdog/action-govet@v1
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          reporter: github-pr-review
-          filter_mode: diff_context
-          fail_level: none
 
       - name: Check for TODO/FIXME tech debt
         run: |
@@ -59,10 +52,10 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -77,10 +70,10 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -136,10 +129,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint, test]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -152,7 +145,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -209,10 +202,10 @@ jobs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -278,10 +271,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -300,8 +293,8 @@ jobs:
           # Extract Makefile targets from AGENTS.md
           MAKE_TARGETS=$(grep -oP 'make \w+' AGENTS.md Makefile 2>/dev/null | sort -u || true)
           
-          for target in $(grep -oP 'make \w+' AGENTS.md 2>/dev/null | sort -u || true); do
-            TARGET_NAME=$(echo "$target" | awk '{print $2}')
+          for target in $(grep -oP 'make \K\w+' AGENTS.md 2>/dev/null | sort -u || true); do
+            TARGET_NAME="$target"
             if grep -q "^${TARGET_NAME}:" Makefile; then
               echo "✓ make $TARGET_NAME exists" >> $GITHUB_STEP_SUMMARY
             else

@@ -183,7 +183,7 @@ Emitted when a job is cancelled.
 {
   "type": "job.cancelled",
   "jobId": "job-1234567890",
-  "status": "cancelled",
+  "status": "canceled",
   "progress": 42,
   "timestamp": 1705342000
 }
