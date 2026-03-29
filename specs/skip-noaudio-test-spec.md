@@ -174,10 +174,10 @@ export IMPARTUS_SKIP_NO_AUDIO=true
 ```bash
 export IMPARTUS_SKIP_NO_AUDIO=true
 # Run without flag - should filter
-# Run with --skip-no-audio=false - should NOT filter
-./impartus download -s 3176268 -S 1508 --skip-no-audio=false --start 1 --end 10 --json
+# Run with --include-noaudio - should NOT filter (overrides --skip-no-audio and config)
+./impartus download -s 3176268 -S 1508 --include-noaudio --start 1 --end 10 --json
 ```
-**Note:** Need to verify if --skip-no-audio=false works as override
+**Note:** Uses `--include-noaudio` to override `skipNoAudio: true` since Go's `flag.Bool` cannot distinguish "flag not set" from "explicitly false"
 **Status:** TBD
 
 ---
