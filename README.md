@@ -141,7 +141,7 @@ cp sample.config.json config.json
 | `quality` | string | No | `"144"` | Video quality: `144`, `450`, `720` |
 | `views` | string | No | `"both"` | Views: `left`, `right`, `both`, `first`, `second` |
 | `downloadLocation` | string | No | `"./downloads"` | Output directory |
-| `tempDirLocation` | string | No | `"./.temp"` | Temporary directory |
+| `tempDirLocation` | string | No | `"./temp"` | Temporary directory |
 | `slides` | bool | No | `false` | Download slides alongside video |
 | `audioOnly` | bool | No | `false` | Download audio only |
 | `audioFormat` | string | No | `"mp3"` | Audio format: `mp3`, `m4a`, `aac`, `opus` |
@@ -160,9 +160,9 @@ cp sample.config.json config.json
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | bool | `true` | Enable progress bar display |
-| `showSpeed` | bool | `true` | Show download speed |
-| `showETA` | bool | `true` | Show estimated time remaining |
+| `enabled` | bool | `false` | Enable progress bar display |
+| `showSpeed` | bool | `false` | Show download speed |
+| `showETA` | bool | `false` | Show estimated time remaining |
 | `updateInterval` | string | `"2s"` | Progress update interval (500ms-10s) |
 | `speedWindowSize` | int | `10` | Speed calculation window (3-30 samples) |
 
@@ -288,8 +288,6 @@ Start the HTTP API server with job persistence:
 **Job Persistence:** Jobs are automatically saved to `.jobs.json`. Running/pending jobs at shutdown are restored as failed (non-resumable). Completed/failed/canceled jobs are restored with their preserved state.
 
 ```bash
-
-```bash
 # Default port 8080
 ./impartus serve
 
@@ -344,29 +342,30 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/courses
 curl http://localhost:8080/api/v1/health
 ```
 
-**Response:** Returns a structured envelope with sub-checks for config, upstream, and FFmpeg status:
+**Response:** Returns a structured `{success, data, error, meta}` envelope with sub-checks for config, upstream, and FFmpeg status:
 
 ```json
 {
   "success": true,
   "data": {
-    "type": "health",
     "status": "ok",
-    "data": {
+    "config": {
       "status": "ok",
-      "config": {
-        "status": "ok",
-        "username": "ok",
-        "password": "ok",
-        "baseUrl": "ok"
-      },
-      "upstream": {
-        "status": "reachable"
-      },
-      "ffmpeg": {
-        "status": "available"
-      }
+      "username": "ok",
+      "password": "ok",
+      "baseUrl": "ok"
+    },
+    "upstream": {
+      "status": "reachable"
+    },
+    "ffmpeg": {
+      "status": "available"
     }
+  },
+  "error": null,
+  "meta": {
+    "command": "health",
+    "mode": "api"
   }
 }
 ```
@@ -388,8 +387,8 @@ curl -X POST http://localhost:8080/api/v1/jobs \
   -d '{
     "subjectId": 123,
     "sessionId": 456,
-    "startIndex": 0,
-    "endIndex": 4,
+    "startIndex": 1,
+    "endIndex": 5,
     "idempotencyKey": "unique-identifier-here",
     "jobConfig": {
       "quality": "720",
@@ -400,9 +399,7 @@ curl -X POST http://localhost:8080/api/v1/jobs \
   }'
 ```
 
-**Note:** API uses 0-based indexing for `startIndex` and `endIndex`, while CLI uses 1-based indexing for `--start` and `--end`.
-
-**Idempotency:** Pass an optional `idempotencyKey` string (max 256 chars) to prevent duplicate job creation. If the key already exists, returns HTTP 409 with the existing job.
+**Note:** API uses 1-based indexing for `startIndex` and `endIndex` (inclusive), matching CLI `--start` and `--end`.
 
 ### WebSocket Connection
 
