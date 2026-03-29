@@ -30,6 +30,8 @@
 !docs/**
 !internal/CLAUDE.md
 !internal/**/CLAUDE.md
+!cmd/CLAUDE.md
+!cmd/**/CLAUDE.md
 !.claude/module-docs-index.md
 
 !sample.config.json

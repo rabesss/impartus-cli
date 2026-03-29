@@ -22,4 +22,4 @@ Credentials come from `config.json` or environment variables:
 
 - `BaseUrl` field has two forms: `BaseUrl` and `BaseURL` - code normalizes either one
 - Token stored in `.token` file (mode 0600) - separate from API auth tokens
-- golangci-lint is installed at `$(go env GOPATH)/bin/golangci-lint` (v1.64.5, built with Go 1.24). The project uses Go 1.26, which causes `typecheck` linter false positives from standard library version mismatch. Use `$(go env GOPATH)/bin/golangci-lint` rather than expecting it on PATH. The `make lint` target handles the fallback automatically.
+- golangci-lint is installed at `$(go env GOPATH)/bin/golangci-lint` (v1.64.8, built with Go 1.24). The project also uses Go 1.24.0. Use `$(go env GOPATH)/bin/golangci-lint` rather than expecting it on PATH. The `make lint` target handles the fallback automatically.

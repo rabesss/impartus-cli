@@ -106,8 +106,14 @@ graph TB
 | `cli` | `config`, `client`, `downloader`, `server` | Command-line interface and JSON envelope output |
 | `client` | `config` | HTTP client for Impartus API, authentication, playlist fetching |
 | `downloader` | `config`, `client` | Download pipeline, rate limiting, decryption, FFmpeg integration |
-| `server` | `config`, `client`, `downloader` | HTTP API server, job management, WebSocket events |
+| `server` | `config`, `client`, `downloader` | HTTP API server, job management, WebSocket events, job persistence |
 | `config` | - | Configuration loading, validation, environment overrides |
+
+**Job Persistence:** Jobs are persisted to `.jobs.json` on disk for state recovery after server restart. Running/pending jobs are marked as failed on recovery (non-resumable). Completed/failed/canceled jobs are restored with their preserved state.
+
+**Upstream Token Cache:** The server caches upstream authentication tokens with a 23-hour TTL. Token refresh uses double-checked locking for thread safety.
+
+**Idempotency Keys:** The `POST /jobs` endpoint accepts an optional `idempotencyKey` field. Duplicate requests with the same key return the existing job (409 Conflict) instead of creating a new one. This prevents duplicate job creation on network retries.
 
 ## Core Components
 
@@ -573,6 +579,7 @@ flowchart TD
 | `apiRateLimit` | 0.1-20 RPS | 2 |
 | `httpTimeout` | 30s-60m | 10m |
 | `audioFormat` | `mp3`, `m4a`, `aac`, `opus` (audio-only) | `mp3` |
+| `skipNoAudio` | `true`, `false` | `false` |
 
 ## Key Packages
 
@@ -602,6 +609,7 @@ type Config struct {
     RateLimit        float64
     APIRateLimit     float64
     EnableJitter     bool
+    SkipNoAudio      bool
     EnablePipeline   bool
     DownloadWorkersPerLecture int
     DecryptWorkersPerLecture  int
@@ -768,8 +776,10 @@ type Job struct {
     Error             string
     TotalLectures     int
     CompletedLectures  int
+    FilteredLectures  int
     Outputs           []string
     Config            JobRuntimeConfig
+    IdempotencyKey    string
     CreatedAt         time.Time
     UpdatedAt         time.Time
     ctx               context.Context
@@ -796,7 +806,7 @@ type TokenStore struct {
 
 | Handler | Route | Purpose |
 |---------|-------|---------|
-| `healthHandler` | `GET /health` | Health check endpoint |
+| `healthHandler` | `GET /health` | Structured health check (config/upstream/ffmpeg sub-checks) |
 | `loginHandler` | `POST /auth/login` | Authenticate and get token |
 | `coursesHandler` | `GET /courses` | List available courses |
 | `lecturesHandler` | `GET /lectures` | List lectures for course |
@@ -892,8 +902,10 @@ classDiagram
         +string Error
         +int TotalLectures
         +int CompletedLectures
+        +int FilteredLectures
         +[]string Outputs
         +JobRuntimeConfig Config
+        +string IdempotencyKey
         +time.Time CreatedAt
         +time.Time UpdatedAt
     }
@@ -909,6 +921,7 @@ classDiagram
         +int DownloadWorkersPerLecture
         +int DecryptWorkersPerLecture
         +bool Slides
+        +bool SkipNoAudio
     }
 
     Job --> JobRuntimeConfig : contains

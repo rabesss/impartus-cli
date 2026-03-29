@@ -44,7 +44,6 @@ All API responses use the `{success, data, error, meta}` envelope pattern.
 - `respondWithError(w, status, code, msg, command, hint *retryHint, details ...any)` → `{success: false, error: {code, message, details: {...}}, meta: {command, mode: "api"}}`
   - `retryHint` is an optional `*retryHint{Retryable: bool, RetryAfter: int}` for upstream errors
   - When `hint` is provided, `details` is ignored (hint wins)
-- `writeJSON(w, status, payload)` → raw JSON (**dead code** — no handlers use it after envelope standardization)
 
 ### Job Lifecycle
 1. POST /jobs creates job in memory (JobStore)
@@ -87,8 +86,8 @@ type jsonEnvelope struct {
 - Returns structured status: `{status: "ok"|"degraded", config: {...}, upstream: {...}, ffmpeg: {...}}`
 - Config check: verifies username, password, baseUrl are set
   - Returns `{status: "ok"|"misconfigured", hasUsername: bool, hasPassword: bool, hasBaseUrl: bool}`
-- Upstream check: HTTP probe using cached token (5s timeout), fallback TCP dial (5s timeout)
-  - Returns `{status: "reachable"|"unreachable"}` — no error field is set
+- Upstream check: returns `{status: "not_configured"}` if `BaseUrl` is empty/nil; otherwise HTTP probe using cached token (5s timeout), fallback TCP dial (5s timeout)
+  - Returns `{status: "not_configured"|"reachable"|"unreachable"}`
 - FFmpeg check: `exec.LookPath("ffmpeg")`
   - Returns `{status: "available"|"not_found"}` — no version field is set
 - Overall status is "degraded" if any component is unhealthy
