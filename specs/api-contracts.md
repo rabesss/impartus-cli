@@ -14,14 +14,14 @@
 > - Many features documented here (structured errors, auth, pagination, extra job fields) are not present in the current implementation
 
 > **Key Differences from Implementation:**
-> - Responses use `{success, data, meta}` envelope - actual implementation uses envelope format
-> - Job IDs are formatted strings (e.g., "job-<timestamp>") - not UUIDs
-> - Authentication is enforced - actual uses placeholder auth
-> - Errors are structured JSON - actual returns plain text
-> - Lectures endpoint uses query params - actual implementation correct
-> - WebSocket events do not have `data` wrapper - actual implementation correct
-> - Timestamps are RFC 3339 - actual implementation correct (time.Time serializes to RFC 3339)
-> - Many endpoints and features are not implemented (see validation report)
+> - Responses use a `{success, data, error, meta}` envelope in both this spec and the implementation; see `docs/api-reference.md` for the current field-level behavior
+> - Job IDs are formatted strings (e.g., "job-<timestamp>") in this spec, while the implementation currently uses UUIDs
+> - Authentication is enforced via Bearer token middleware in the implementation; the broader auth flows described here (login/session lifecycle, token management) are not fully implemented
+> - Errors are returned as structured JSON (e.g., `{success: false, error: {...}}`); specific error schemas in this spec may not exactly match the implementation, which uses `respondWithError`
+> - Lectures endpoint uses query params as documented here, and the current implementation matches this behavior
+> - WebSocket events do not have a `data` wrapper in either this spec or the implementation
+> - Timestamps are RFC 3339 in both this spec and the implementation (Go `time.Time` serializes to RFC 3339)
+> - Many endpoints and features are still not implemented (see validation report)
 
 ---
 
