@@ -28,10 +28,7 @@
 !/release-please-config.json
 !shell.nix
 !docs/**
-!internal/CLAUDE.md
-!internal/**/CLAUDE.md
-!cmd/CLAUDE.md
-!cmd/**/CLAUDE.md
+
 
 !sample.config.json
 !fixtures/**
@@ -51,7 +48,9 @@ coverage*.out
 # Local agent/tooling workspaces
 .beads/
 .btca/
-.claude/worktrees/
+.claude/
+CLAUDE.md
+
 
 # Factory validation and mission state (ignored, never committed)
 .factory/
@@ -70,3 +69,6 @@ coverage*.out
 .desloppify/
 scorecard.png
 query.json
+
+specs/
+
