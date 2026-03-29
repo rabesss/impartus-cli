@@ -68,10 +68,10 @@ The Impartus CLI is **functional** for basic operations. Core features work corr
 
 | Test ID | Endpoint | Result | Notes |
 |---------|----------|--------|-------|
-| API-T1 | `GET /health` | **PASS** | Returns `{"success":true,"data":{"status":"ok","config":{...},"upstream":{...},"ffmpeg":{...}}}` |
-| API-T2 | `POST /auth/login` | **PASS** | Returns token successfully |
-| API-T3 | `GET /courses` | **PASS** | Returns course list |
-| API-T4 | `GET /lectures` | **PASS** | Returns lecture list |
+| API-T1 | `GET /api/v1/health` | **PASS** | Returns `{"success":true,"data":{"status":"ok","config":{...},"upstream":{...},"ffmpeg":{...}}}` |
+| API-T2 | `POST /api/v1/auth/login` | **PASS** | Returns token successfully |
+| API-T3 | `GET /api/v1/courses` | **PASS** | Returns course list |
+| API-T4 | `GET /api/v1/lectures` | **PASS** | Returns lecture list |
 
 ---
 
@@ -92,21 +92,19 @@ The Impartus CLI is **functional** for basic operations. Core features work corr
 
 **Suggestion:** Add a warning message when downloads start, estimating time based on lecture duration.
 
-### 2. noaudio Flag Not Respected
+### 2. noaudio Flag Handling ✅ RESOLVED
 
-**Problem:** Lectures marked with `noaudio: 1` in the API response are not handled specially.
+**Status:** FIXED — The CLI now fully handles lectures with `noaudio: 1`.
 
-**Code Finding:**
-```go
-// internal/client/types.go
-Noaudio int `json:"noaudio"`
+**Implementation:**
+- **`--skip-no-audio`** flag: Filters out lectures marked `noaudio=1` before downloading.
+- **`--include-noaudio`** flag: Overrides `--skip-no-audio` and config to force inclusion of noaudio lectures.
+- **`filterNoAudioLectures()`** helper in `internal/cli/cli.go`: Removes noaudio lectures from the selection.
+- **`warnNoAudioLectures()`** helper: Warns when selected lectures have `noaudio=1`.
+- **Config support:** `skipNoAudio: true` in `config.json` or `IMPARTUS_SKIP_NO_AUDIO=true` env var.
+- **Interactive mode:** Prompts "Skip lectures without audio track? [Y/n]".
 
-// internal/downloader/downloader.go - no handling found
-```
-
-**Impact:** When downloading in audio-only mode, lectures marked as having no audio may produce unexpected results or fail silently.
-
-**Suggestion:** Check `noaudio` flag before attempting audio-only downloads and either skip or warn user.
+**Error handling:** When all selected lectures have `noaudio=1` and `--skip-no-audio` is active, a clear error message is shown: "no lectures available after filtering (all lectures have noaudio=1 in the selected range)".
 
 ### 3. FFmpeg Dependency Required
 

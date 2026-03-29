@@ -325,7 +325,7 @@ Need to verify `SkipNoAudio` doesn't cause validation errors when parsed.
 
 ```bash
 # Build the binary
-cd /home/ravish/Desktop/clawds-code-crib/impartus-go/impartus && go build -o impartus .
+cd . && go build -o impartus .
 
 # List lectures and check noaudio field
 ./impartus lectures -s 3176268 -S 1508 --json | jq '.data[] | {seqNo, topic, noaudio}'

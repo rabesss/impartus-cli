@@ -69,8 +69,7 @@ linters-settings:
   gofmt:
     simplify: true
   goimports:
-    local-prefixes:
-      - github.com/rabesss/impartus-cli
+    local-prefixes: "github.com/rabesss/impartus-cli"
 
   revive:
     rules:

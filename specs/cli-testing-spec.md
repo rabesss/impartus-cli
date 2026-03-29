@@ -47,7 +47,7 @@ impartus lectures -s 3176268 -S 1508 --json
 **Expected Output:** JSON envelope with array of lectures containing:
 - `ttid` (unique lecture ID), `seqNo` (lecture sequence number)
 - `topic`, `startTime`, `endTime`
-- `noaudio` (1 if audio-only), `views` (view count)
+- `noaudio` (1 if no audio track), `views` (view count)
 - `actualDuration` (seconds)
 
 ### 4. Download Command
@@ -118,12 +118,21 @@ impartus download -s <subjectId> -S <sessionId> [flags]
 
 ### Environment Variable Overrides
 
-The following config fields can be overridden via environment variables:
+The following config fields can be overridden via environment variables (as defined in `internal/config/config.go` → `applyEnvOverrides()`):
 - `IMPARTUS_USERNAME` – overrides `username`
 - `IMPARTUS_PASSWORD` – overrides `password`
 - `IMPARTUS_BASE_URL` – overrides `baseUrl`
 - `IMPARTUS_QUALITY` – overrides `quality`
-- `IMPARTUS_SKIP_NO_AUDIO` – skips lectures marked as having no audio
+- `IMPARTUS_VIEWS` – overrides `views`
+- `IMPARTUS_DOWNLOAD_LOCATION` – overrides `downloadLocation`
+- `IMPARTUS_TEMP_DIR` – overrides `tempDirLocation`
+- `IMPARTUS_AUDIO_ONLY` – overrides `audioOnly`
+- `IMPARTUS_AUDIO_FORMAT` – overrides `audioFormat`
+- `IMPARTUS_HTTP_TIMEOUT` – overrides `httpTimeout`
+- `IMPARTUS_NUM_WORKERS` – overrides `numWorkers`
+- `IMPARTUS_RATE_LIMIT` – overrides `rateLimit`
+- `IMPARTUS_API_RATE_LIMIT` – overrides `apiRateLimit`
+- `IMPARTUS_SKIP_NO_AUDIO` – overrides `skipNoAudio`
 
 Other configuration fields, including nested objects such as `progressTracking`, cannot currently be set via environment variables and must be specified in `config.json`.
 

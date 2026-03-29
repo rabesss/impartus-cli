@@ -15,7 +15,7 @@ Fixed 10 rough corners identified during code review. All HIGH and MEDIUM priori
 
 ### Fix 1: Add `--include-noaudio` Flag (HIGH) ✓
 
-Added `--include-noaudio` flag that overrides both config and `--skip-noaudio`:
+Added `--include-noaudio` flag that overrides both config and `--skip-no-audio`:
 
 ```go
 includeNoAudio := fs.Bool("include-noaudio", false, "Include lectures with no audio track (overrides --skip-no-audio)")
@@ -115,7 +115,7 @@ go build -o impartus_test ./cmd/impartus
 
 ## Success Criteria - All Met ✓
 
-1. ✓ `--include-noaudio` flag exists and overrides config + --skip-noaudio
+1. ✓ `--include-noaudio` flag exists and overrides config + --skip-no-audio
 2. ✓ Warning message appears when noaudio lectures are selected
 3. ✓ Interactive mode error message explains why filtering occurred
 4. ✓ Help text is consistently formatted

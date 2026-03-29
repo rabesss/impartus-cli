@@ -15,7 +15,7 @@
 
 > **Key Differences from Implementation:**
 > - Responses use a `{success, data, error, meta}` envelope in both this spec and the implementation; see `docs/api-reference.md` for the current field-level behavior
-> - Job IDs are formatted strings (e.g., "job-<timestamp>") in this spec, while the implementation currently uses UUIDs
+> - Job IDs are formatted strings (e.g., `job-<timestamp>`) in both this spec and the implementation; the `job-<unixNano>` format used by `fmt.Sprintf("job-%d", time.Now().UnixNano())` in server.go matches the spec's intent — this is no longer a difference
 > - Authentication is enforced via Bearer token middleware in the implementation; the broader auth flows described here (login/session lifecycle, token management) are not fully implemented
 > - Errors are returned as structured JSON (e.g., `{success: false, error: {...}}`); specific error schemas in this spec may not exactly match the implementation, which uses `respondWithError`
 > - Lectures endpoint uses query params as documented here, and the current implementation matches this behavior
@@ -32,11 +32,11 @@
 
 ---
 
-## 1. REST API Endpoints (DESIGN SPEC - NOT IMPLEMENTED)
+## 1. REST API Endpoints
+
+> **⚠️ DESIGN SPEC - NOT FULLY IMPLEMENTED:** The endpoints below are design specifications. See `docs/api-reference.md` for actual implemented behavior.
 
 ---
-
-## 1. REST API Endpoints
 
 ### 1.1 Authentication
 
