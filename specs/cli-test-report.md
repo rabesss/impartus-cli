@@ -18,7 +18,7 @@ The Impartus CLI is **functional** for basic operations. Core features work corr
 
 **Known Issues:**
 1. Downloads are extremely slow due to HLS chunk-by-chunk streaming
-2. `noaudio` lecture flag is not respected during downloads
+2. Lectures with the `noaudio` flag are downloaded by default; CLI now supports `--skip-no-audio` / `skipNoAudio` and warns when such lectures are present
 3. Some edge cases in error handling
 
 ---
@@ -148,7 +148,7 @@ Error: please add ffmpeg to your path
 
 ```json
 {
-  "username": "ravish.mitmpl2024@learner.manipal.edu",
+  "username": "*******",
   "password": "*******",
   "baseUrl": "https://a.impartus.com/api",
   "quality": "144",
