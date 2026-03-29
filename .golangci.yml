@@ -1,3 +1,4 @@
+version: 2
 # golangci-lint configuration
 # Install: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin
 # Run: golangci-lint run
