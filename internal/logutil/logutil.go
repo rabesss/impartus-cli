@@ -45,15 +45,15 @@ func RedactSensitive(message string) string {
 
 // RedactSensitivef formats and redacts sensitive information from log messages.
 // It behaves like fmt.Sprintf but applies redaction to the result.
-func RedactSensitivef(format string, args ...interface{}) string {
+func RedactSensitivef(format string, args ...any) string {
 	message := fmt.Sprintf(format, args...)
 	return RedactSensitive(message)
 }
 
 // SanitizeMap redacts sensitive keys in a map and returns a safe copy.
 // Useful for logging configuration or request data.
-func SanitizeMap(data map[string]interface{}) map[string]interface{} {
-	result := make(map[string]interface{})
+func SanitizeMap(data map[string]any) map[string]any {
+	result := make(map[string]any)
 	sensitiveKeys := map[string]bool{
 		"password":      true,
 		"passwd":        true,

@@ -60,7 +60,7 @@ func (js *JobStore) CreateJob(subjectID, sessionID, startIndex, endIndex int, cf
 		SessionID:  sessionID,
 		StartIndex: startIndex,
 		EndIndex:   endIndex,
-		Status:     "pending",
+		Status:     statusPending,
 		Progress:   0,
 		Config:     runtimeConfigFrom(cfg),
 		CreatedAt:  time.Now(),
@@ -102,7 +102,7 @@ func (js *JobStore) CreateJobWithKey(subjectID, sessionID, startIndex, endIndex 
 		SessionID:      sessionID,
 		StartIndex:     startIndex,
 		EndIndex:       endIndex,
-		Status:         "pending",
+		Status:         statusPending,
 		Progress:       0,
 		Config:         runtimeConfigFrom(cfg),
 		IdempotencyKey: idempotencyKey,
@@ -206,7 +206,7 @@ func (js *JobStore) CancelJob(id string) (*Job, error) {
 		return nil, errors.New("not_found")
 	}
 
-	if job.Status == "completed" || job.Status == "failed" || job.Status == statusCanceled {
+	if job.Status == statusCompleted || job.Status == statusFailed || job.Status == statusCanceled {
 		return nil, fmt.Errorf("terminal:%s", job.Status)
 	}
 
@@ -243,8 +243,8 @@ func (js *JobStore) loadFromDisk() {
 
 		// Jobs that were running/pending at shutdown cannot be resumed
 		status := pj.Status
-		if status == "pending" || status == "running" {
-			status = "failed"
+		if status == statusPending || status == statusRunning {
+			status = statusFailed
 			if pj.Error == "" {
 				pj.Error = "job interrupted by server restart"
 			}
@@ -487,9 +487,9 @@ func (s *APIServer) updateRunningProgress(jobID string, progress float64, phase 
 		return false
 	}
 
-	s.jobStore.UpdateJob(jobID, "running", progress, "")
+	s.jobStore.UpdateJob(jobID, statusRunning, progress, "")
 	evt := newWSEvent("job.progress", jobID)
-	evt.Status = "running"
+	evt.Status = statusRunning
 	evt.Progress = progress
 	evt.Phase = phase
 	evt.Details = details
@@ -519,7 +519,7 @@ func (s *APIServer) startJob(jobID string) bool {
 		return false
 	}
 	evt := newWSEvent("job.started", jobID)
-	evt.Status = "running"
+	evt.Status = statusRunning
 	broadcastEvent(s.wsHub, evt)
 	return true
 }
@@ -699,18 +699,18 @@ func (s *APIServer) runPlaylistDownloads(ctx context.Context, cancelLocal contex
 
 func (s *APIServer) completeJob(jobID string, finalOutputs []string) {
 	s.jobStore.SetOutputs(jobID, finalOutputs)
-	s.jobStore.UpdateJob(jobID, "completed", 100, "")
+	s.jobStore.UpdateJob(jobID, statusCompleted, 100, "")
 	evt := newWSEvent("job.completed", jobID)
-	evt.Status = "completed"
+	evt.Status = statusCompleted
 	evt.Progress = 100
 	evt.Outputs = finalOutputs
 	broadcastEvent(s.wsHub, evt)
 }
 
 func (s *APIServer) failJob(jobID, errMsg string) {
-	s.jobStore.UpdateJob(jobID, "failed", 0, errMsg)
+	s.jobStore.UpdateJob(jobID, statusFailed, 0, errMsg)
 	evt := newWSEvent("job.failed", jobID)
-	evt.Status = "failed"
+	evt.Status = statusFailed
 	evt.Error = errMsg
 	broadcastEvent(s.wsHub, evt)
 }

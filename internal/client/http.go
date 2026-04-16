@@ -52,11 +52,3 @@ func (c *Client) doRequestWithToken(ctx context.Context, method, url string, bod
 
 	return response, nil
 }
-
-func (c *Client) getAuthorized(url string) (*http.Response, error) {
-	token := c.Token()
-	if token == "" {
-		return nil, fmt.Errorf("token is not set")
-	}
-	return c.doRequestWithToken(context.Background(), http.MethodGet, url, nil, token)
-}

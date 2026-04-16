@@ -101,7 +101,7 @@ func TestGetEnvOrDefault(t *testing.T) {
 }
 
 func TestMergeProperties(t *testing.T) {
-	props := map[string]interface{}{
+	props := map[string]any{
 		"custom_field": "value",
 		"count":        42,
 	}
@@ -161,7 +161,7 @@ func TestTrackDisabled(t *testing.T) {
 	}
 
 	// Should not panic when tracking is disabled
-	analytics.Track("test_event", map[string]interface{}{"key": "value"})
+	analytics.Track("test_event", map[string]any{"key": "value"})
 
 	if len(analytics.events) != 0 {
 		t.Errorf("expected no events when disabled, got %d", len(analytics.events))
@@ -179,7 +179,7 @@ func TestTrackFeatureUsage(t *testing.T) {
 		distinctID: "test-id",
 	}
 
-	analytics.TrackFeatureUsage("download", map[string]interface{}{"quality": "720"})
+	analytics.TrackFeatureUsage("download", map[string]any{"quality": "720"})
 
 	if len(analytics.events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(analytics.events))

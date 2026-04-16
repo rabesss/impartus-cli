@@ -144,9 +144,6 @@ func executeJSON(args []string, version, date string) error {
 		}
 		return emitJSONEnvelope(newSuccessEnvelope("lectures", lectures))
 	case "download":
-		if err := validateDownloadArgs(args[1:]); err != nil {
-			return newJSONError("download", err)
-		}
 		result, err := runDownloadJSON(args[1:])
 		if err != nil {
 			return newJSONError("download", err)
@@ -324,78 +321,59 @@ func runDownload(args []string) error {
 }
 
 func runDownloadJSON(args []string) (downloadResult, error) {
-	if err := validateDownloadArgs(args); err != nil {
-		return downloadResult{}, err
-	}
 	return executeDownload(args)
 }
 
-func validateDownloadArgs(args []string) error {
+// downloadFlags holds parsed download command flags.
+type downloadFlags struct {
+	subject        int
+	session        int
+	start          int
+	end            int
+	quality        string
+	views          string
+	audioOnly      bool
+	format         string
+	output         string
+	skipNoAudio    bool
+	includeNoAudio bool
+}
+
+func parseDownloadFlags(args []string) (downloadFlags, error) {
 	fs := flag.NewFlagSet("download", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	subject := fs.Int("subject", 0, "Subject ID")
-	fs.IntVar(subject, "s", 0, "Subject ID")
-	session := fs.Int("session", 0, "Session ID")
-	fs.IntVar(session, "S", 0, "Session ID")
-	start := fs.Int("start", 0, "Start lecture index (1-based)")
-	end := fs.Int("end", 0, "End lecture index (1-based)")
-	quality := fs.String("quality", "", "Video quality override")
-	views := fs.String("views", "", "Views override")
-	audioOnly := fs.Bool("audio-only", false, "Enable audio-only mode")
-	format := fs.String("format", "", "Audio format override")
-	output := fs.String("output", "", "Output directory override")
-	fs.StringVar(output, "o", "", "Output directory override")
-	skipNoAudio := fs.Bool("skip-no-audio", false, "Skip lectures with no audio track")
-	includeNoAudio := fs.Bool("include-noaudio", false, "Include lectures with no audio track")
-	_ = start
-	_ = end
-	_ = quality
-	_ = views
-	_ = audioOnly
-	_ = format
-	_ = output
-	_ = skipNoAudio
-	_ = includeNoAudio
+	var f downloadFlags
+	fs.IntVar(&f.subject, "subject", 0, "Subject ID")
+	fs.IntVar(&f.subject, "s", 0, "Subject ID")
+	fs.IntVar(&f.session, "session", 0, "Session ID")
+	fs.IntVar(&f.session, "S", 0, "Session ID")
+	fs.IntVar(&f.start, "start", 0, "Start lecture index (1-based)")
+	fs.IntVar(&f.end, "end", 0, "End lecture index (1-based)")
+	fs.StringVar(&f.quality, "quality", "", "Video quality override")
+	fs.StringVar(&f.views, "views", "", "Views override: left/right/both or first/second/both")
+	fs.BoolVar(&f.audioOnly, "audio-only", false, "Enable audio-only mode")
+	fs.StringVar(&f.format, "format", "", "Audio format override")
+	fs.StringVar(&f.output, "output", "", "Output directory override")
+	fs.StringVar(&f.output, "o", "", "Output directory override")
+	fs.BoolVar(&f.skipNoAudio, "skip-no-audio", false, "Skip lectures with no audio track")
+	fs.BoolVar(&f.includeNoAudio, "include-noaudio", false, "Include lectures with no audio track (overrides --skip-no-audio)")
 
 	if err := fs.Parse(args); err != nil {
-		return err
+		return downloadFlags{}, err
 	}
 	if fs.NArg() > 0 {
-		return errors.New("download does not accept positional arguments")
+		return downloadFlags{}, errors.New("download does not accept positional arguments")
 	}
-	if *subject <= 0 || *session <= 0 {
-		return errors.New("download requires --subject/-s and --session/-S")
+	if f.subject <= 0 || f.session <= 0 {
+		return downloadFlags{}, errors.New("download requires --subject/-s and --session/-S")
 	}
-	return nil
+	return f, nil
 }
 
 func executeDownload(args []string) (downloadResult, error) {
-	fs := flag.NewFlagSet("download", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-
-	subject := fs.Int("subject", 0, "Subject ID")
-	fs.IntVar(subject, "s", 0, "Subject ID")
-	session := fs.Int("session", 0, "Session ID")
-	fs.IntVar(session, "S", 0, "Session ID")
-	start := fs.Int("start", 0, "Start lecture index (1-based)")
-	end := fs.Int("end", 0, "End lecture index (1-based)")
-	quality := fs.String("quality", "", "Video quality override")
-	views := fs.String("views", "", "Views override: left/right/both or first/second/both")
-	audioOnly := fs.Bool("audio-only", false, "Enable audio-only mode")
-	format := fs.String("format", "", "Audio format override")
-	output := fs.String("output", "", "Output directory override")
-	fs.StringVar(output, "o", "", "Output directory override")
-	skipNoAudio := fs.Bool("skip-no-audio", false, "Skip lectures with no audio track")
-	includeNoAudio := fs.Bool("include-noaudio", false, "Include lectures with no audio track (overrides --skip-no-audio)")
-
-	if err := fs.Parse(args); err != nil {
+	f, err := parseDownloadFlags(args)
+	if err != nil {
 		return downloadResult{}, err
-	}
-	if fs.NArg() > 0 {
-		return downloadResult{}, errors.New("download does not accept positional arguments")
-	}
-	if *subject <= 0 || *session <= 0 {
-		return downloadResult{}, errors.New("download requires --subject/-s and --session/-S")
 	}
 
 	if err := ensureFFmpeg(); err != nil {
@@ -408,24 +386,21 @@ func executeDownload(args []string) (downloadResult, error) {
 		return downloadResult{}, err
 	}
 
-	// Apply flag overrides and validate
-	// Including noaudio is handled separately below as it overrides skip behavior
-	cfg, err = applyAndValidateFlags(cfg, *quality, *views, *audioOnly, *format, *output, *skipNoAudio)
+	cfg, err = applyAndValidateFlags(cfg, f.quality, f.views, f.audioOnly, f.format, f.output, f.skipNoAudio)
 	if err != nil {
 		return downloadResult{}, err
 	}
 
-	// Handle include-noaudio: it overrides skip-noaudio and config setting
-	if *includeNoAudio {
+	if f.includeNoAudio {
 		cfg.SkipNoAudio = false
 	}
 
-	lectures, err := apiClient.GetLectures(ctx, cfg, client.Course{SubjectID: *subject, SessionID: *session})
+	lectures, err := apiClient.GetLectures(ctx, cfg, client.Course{SubjectID: f.subject, SessionID: f.session})
 	if err != nil {
 		return downloadResult{}, err
 	}
 
-	selected, err := selectLectureRange(lectures, *start, *end)
+	selected, err := selectLectureRange(lectures, f.start, f.end)
 	if err != nil {
 		return downloadResult{}, err
 	}
@@ -540,7 +515,7 @@ func filterLecturesInteractive(ctx context.Context, cfg *config.Config, apiClien
 		return nil, err
 	}
 
-	reversed := reverseLectures(lectures)
+	reversed := lectures.Reverse()
 	for i, lecture := range reversed {
 		fmt.Printf("%3d) LEC %3d %s\n", i+1, lecture.SeqNo, lecture.Topic)
 	}
@@ -717,12 +692,8 @@ func appendOutputPaths(outputPaths []string, result downloader.JoinResult) []str
 	return outputPaths
 }
 
-func reverseLectures(lectures client.Lectures) client.Lectures {
-	return lectures.Reverse()
-}
-
 func selectLectureRange(lectures client.Lectures, start, end int) (client.Lectures, error) {
-	reversed := reverseLectures(lectures)
+	reversed := lectures.Reverse()
 	if len(reversed) == 0 {
 		return nil, errors.New("no lectures found")
 	}

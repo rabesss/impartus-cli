@@ -16,6 +16,8 @@ import (
 	"github.com/rabesss/impartus-cli/internal/config"
 )
 
+var invalidFileNameRe = regexp.MustCompile(`[<>:"/\\|?*\n\r]`)
+
 type Client struct {
 	httpClient        *http.Client
 	UserAgentProvider func() string
@@ -308,8 +310,7 @@ func PlaylistParser(scanner *bufio.Scanner, id int, title string, seqNo int) Par
 }
 
 func sanitizeFileName(name string) string {
-	re := regexp.MustCompile(`[<>:"/\\|?*\n\r]`)
-	name = re.ReplaceAllString(name, "_")
+	name = invalidFileNameRe.ReplaceAllString(name, "_")
 	name = strings.TrimSpace(name)
 	return strings.Trim(name, ".")
 }

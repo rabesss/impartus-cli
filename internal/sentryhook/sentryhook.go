@@ -97,7 +97,7 @@ func SetTag(key, value string) {
 }
 
 // SetContext sets additional context data
-func SetContext(name string, data map[string]interface{}) {
+func SetContext(name string, data map[string]any) {
 	sentry.ConfigureScope(func(scope *sentry.Scope) {
 		scope.SetContext(name, data)
 	})
@@ -112,7 +112,7 @@ func CaptureError(err error) *sentry.EventID {
 }
 
 // CaptureErrorWithContext reports an error with additional context
-func CaptureErrorWithContext(err error, tags map[string]string, contextData map[string]interface{}) *sentry.EventID {
+func CaptureErrorWithContext(err error, tags map[string]string, contextData map[string]any) *sentry.EventID {
 	if !IsEnabled() {
 		return nil
 	}
@@ -171,7 +171,7 @@ func Middleware(next http.Handler) http.Handler {
 			scope.SetTag("request_id", requestID)
 			scope.SetTag("http_method", r.Method)
 			scope.SetTag("http_path", r.URL.Path)
-			scope.SetContext("request", map[string]interface{}{
+			scope.SetContext("request", map[string]any{
 				"method":  r.Method,
 				"path":    r.URL.Path,
 				"query":   r.URL.Query().Encode(),

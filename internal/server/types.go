@@ -12,7 +12,14 @@ import (
 	"github.com/rabesss/impartus-cli/internal/config"
 )
 
-const statusCanceled = "canceled"
+const (
+	statusPending   = "pending"
+	statusRunning   = "running"
+	statusCompleted = "completed"
+	statusFailed    = "failed"
+	statusCanceled  = "canceled"
+)
+
 const maxIdempotencyKeyLength = 256
 
 type wsEvent struct {

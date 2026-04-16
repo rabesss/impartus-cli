@@ -151,18 +151,7 @@ func respondWithError(w http.ResponseWriter, status int, code, message, command 
 }
 
 func respondWithSuccess(w http.ResponseWriter, command string, data map[string]any) {
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]any{
-		"success": true,
-		"data":    data,
-		"error":   nil,
-		"meta": responseMeta{
-			Command: command,
-			Mode:    "api",
-		},
-	}); err != nil {
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-	}
+	respondWithEnvelope(w, http.StatusOK, command, data)
 }
 
 type loginRequest struct {
