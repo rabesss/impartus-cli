@@ -73,23 +73,7 @@ func (c *Client) GetAuthorizedWithToken(ctx context.Context, url string, token s
 	}
 	cli.initialize()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request for GET %s: %w", url, err)
-	}
-
-	if token != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
-	}
-	req.Header.Set("User-Agent", cli.randomUserAgent())
-	req.Header.Set("Accept", "application/json, text/plain, */*")
-
-	response, err := cli.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed for GET %s: %w", url, err)
-	}
-
-	return response, nil
+	return cli.doRequestWithToken(ctx, http.MethodGet, url, nil, token)
 }
 
 func (c *Client) LoginAndSetToken(ctx context.Context, cfg *config.Config) error {
