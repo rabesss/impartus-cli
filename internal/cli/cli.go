@@ -751,24 +751,28 @@ func countChunks(playlists []client.ParsedPlaylist, views string) int {
 	return total
 }
 
+// oneOf checks if a value is in the allowed set.
+func oneOf(val string, allowed ...string) bool {
+	for _, a := range allowed {
+		if val == a {
+			return true
+		}
+	}
+	return false
+}
+
 // validateFlagOverrides validates config values after CLI flag overrides are applied.
 // This ensures invalid flag values fail early, before any remote API calls.
 func validateFlagOverrides(cfg *config.Config) error {
-	// Validate quality - must be one of the allowed values
-	if cfg.Quality != "" && !map[string]bool{"144": true, "450": true, "720": true}[cfg.Quality] {
+	if cfg.Quality != "" && !oneOf(cfg.Quality, "144", "450", "720") {
 		return fmt.Errorf("invalid quality value %q: must be one of: 144, 450, 720", cfg.Quality)
 	}
-
-	// Validate views - must be one of the allowed values (both canonical and legacy)
-	if cfg.Views != "" && !map[string]bool{"first": true, "second": true, "both": true, "left": true, "right": true}[cfg.Views] {
+	if cfg.Views != "" && !oneOf(cfg.Views, "first", "second", "both", "left", "right") {
 		return fmt.Errorf("invalid views value %q: must be one of: first, second, both, left, right", cfg.Views)
 	}
-
-	// Validate audio format when audio-only mode is enabled
-	if cfg.AudioOnly && cfg.AudioFormat != "" && !map[string]bool{"mp3": true, "m4a": true, "aac": true, "opus": true}[cfg.AudioFormat] {
+	if cfg.AudioOnly && cfg.AudioFormat != "" && !oneOf(cfg.AudioFormat, "mp3", "m4a", "aac", "opus") {
 		return fmt.Errorf("invalid audioFormat value %q: must be one of: mp3, m4a, aac, opus", cfg.AudioFormat)
 	}
-
 	return nil
 }
 
