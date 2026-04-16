@@ -99,6 +99,24 @@ func (c *Config) applyProgressDefaults() {
 	if c.HTTPTimeout == "" {
 		c.HTTPTimeout = "10m"
 	}
+	if c.Views == "" {
+		c.Views = "both"
+	} else {
+		c.Views = NormalizeViews(c.Views)
+	}
+}
+
+// NormalizeViews maps view aliases to canonical downloader names.
+// "first" → "left", "second" → "right", others pass through lowercased.
+func NormalizeViews(views string) string {
+	switch strings.ToLower(strings.TrimSpace(views)) {
+	case "first":
+		return "left"
+	case "second":
+		return "right"
+	default:
+		return strings.ToLower(strings.TrimSpace(views))
+	}
 }
 
 func (c *Config) Validate() error {

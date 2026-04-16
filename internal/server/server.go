@@ -395,7 +395,7 @@ func (s *APIServer) prepareDownload(ctx context.Context, jobID string, jobCtx co
 		return nil, nil, false
 	}
 	downloadCfg := cloneConfig(cfg)
-	downloadCfg.Views = mapViewsForDownloader(downloadCfg.Views)
+	downloadCfg.Views = config.NormalizeViews(downloadCfg.Views)
 	return playlists, downloadCfg, true
 }
 
@@ -497,17 +497,6 @@ func cloneConfig(cfg *config.Config) *config.Config {
 	}
 	clone := *cfg
 	return &clone
-}
-
-func mapViewsForDownloader(views string) string {
-	switch views {
-	case "first":
-		return "left"
-	case "second":
-		return "right"
-	default:
-		return "both"
-	}
 }
 
 func extractJoinOutputs(result downloader.JoinResult) []string {

@@ -435,7 +435,7 @@ func applyAndValidateFlags(cfg *config.Config, quality, views string, audioOnly 
 		cfg.Quality = quality
 	}
 	if views != "" {
-		cfg.Views = normalizeViews(views)
+		cfg.Views = config.NormalizeViews(views)
 	}
 	if audioOnly {
 		cfg.AudioOnly = true
@@ -623,7 +623,7 @@ func loadConfig() (*config.Config, error) {
 	if cfg.DownloadLocation == "" {
 		cfg.DownloadLocation = "./downloads"
 	}
-	cfg.Views = normalizeViews(cfg.Views)
+	cfg.Views = config.NormalizeViews(cfg.Views)
 	return cfg, nil
 }
 
@@ -752,17 +752,6 @@ func countChunks(playlists []client.ParsedPlaylist, views string) int {
 		}
 	}
 	return total
-}
-
-func normalizeViews(views string) string {
-	switch strings.ToLower(strings.TrimSpace(views)) {
-	case "first":
-		return "left"
-	case "second":
-		return "right"
-	default:
-		return strings.ToLower(strings.TrimSpace(views))
-	}
 }
 
 // validateFlagOverrides validates config values after CLI flag overrides are applied.
