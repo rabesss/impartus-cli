@@ -131,18 +131,11 @@ func respondWithError(w http.ResponseWriter, status int, code, message, command 
 		},
 	}
 
+	errorData := errorResp["error"].(map[string]any)
 	if hint != nil {
-		errorData, ok := errorResp["error"].(map[string]any)
-		if ok {
-			errorData["details"] = hint
-		}
-	}
-
-	if len(details) > 0 && hint == nil {
-		errorData, ok := errorResp["error"].(map[string]any)
-		if ok {
-			errorData["details"] = details[0]
-		}
+		errorData["details"] = hint
+	} else if len(details) > 0 {
+		errorData["details"] = details[0]
 	}
 
 	if err := json.NewEncoder(w).Encode(errorResp); err != nil {

@@ -62,6 +62,9 @@ func (c *Config) applyPathDefaults() {
 	if c.TempDirLocation == "" {
 		c.TempDirLocation = "./temp"
 	}
+	if c.DownloadLocation == "" {
+		c.DownloadLocation = "./downloads"
+	}
 }
 
 func (c *Config) applyWorkerDefaults() {

@@ -51,9 +51,6 @@ func newAPIServerFull(port string, cfg *config.Config, loginFn UpstreamLoginFunc
 		baseCfg = &config.Config{}
 	}
 	baseCfg.ApplyDefaults()
-	if baseCfg.DownloadLocation == "" {
-		baseCfg.DownloadLocation = "./downloads"
-	}
 	if baseCfg.TempDirLocation == "" {
 		baseCfg.TempDirLocation = "./temp"
 	}
@@ -261,9 +258,6 @@ func (s *APIServer) prepareJobRuntime(ctx context.Context, jobID string, jobCtx 
 		s.failJob(jobID, "missing job config")
 		return nil, nil, false
 	}
-	if cfg.DownloadLocation == "" {
-		cfg.DownloadLocation = "./downloads"
-	}
 	if cfg.TempDirLocation == "" {
 		cfg.TempDirLocation = "./temp"
 	}
@@ -453,9 +447,6 @@ func mergeConfigWithJobOptions(globalCfg *config.Config, opts *JobConfigOptions)
 	}
 	cfg.ApplyDefaults()
 
-	if cfg.DownloadLocation == "" {
-		cfg.DownloadLocation = "./downloads"
-	}
 	if cfg.TempDirLocation == "" {
 		cfg.TempDirLocation = "./temp"
 	}

@@ -620,9 +620,6 @@ func loadConfig() (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.DownloadLocation == "" {
-		cfg.DownloadLocation = "./downloads"
-	}
 	cfg.Views = config.NormalizeViews(cfg.Views)
 	return cfg, nil
 }
