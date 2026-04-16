@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,6 +88,10 @@ func (d *Downloader) FetchLecturePlaylists(ctx context.Context, lectures []clien
 		if err != nil {
 			return parsedPlaylists, err
 		}
+		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
+			return parsedPlaylists, fmt.Errorf("fetch playlist for lecture %d: unexpected status %d", lecture.TTID, resp.StatusCode)
+		}
 		scanner := bufio.NewScanner(resp.Body)
 		parsedPlaylists = append(parsedPlaylists, client.ParsePlaylist(scanner, lecture.TTID, lecture.Topic, lecture.SeqNo))
 		_ = resp.Body.Close()
@@ -145,6 +150,10 @@ func (d *Downloader) downloadPlaylistPipelined(_ context.Context, playlist clien
 	result := pipeline.Collect()
 
 	d.stopPipelineMonitor(monitorDone, downloadBar, totalChunks)
+
+	if len(result.FailedChunks) > 0 {
+		return downloadedPlaylist, fmt.Errorf("%d chunks failed to download: %v", len(result.FailedChunks), result.FailedChunks)
+	}
 
 	downloadedPlaylist.FirstViewChunks = result.FirstViewChunks
 	downloadedPlaylist.SecondViewChunks = result.SecondViewChunks
