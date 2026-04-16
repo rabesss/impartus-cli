@@ -51,9 +51,6 @@ func newAPIServerFull(port string, cfg *config.Config, loginFn UpstreamLoginFunc
 		baseCfg = &config.Config{}
 	}
 	baseCfg.ApplyDefaults()
-	if baseCfg.TempDirLocation == "" {
-		baseCfg.TempDirLocation = "./temp"
-	}
 
 	if loginFn == nil {
 		loginFn = defaultUpstreamLogin
@@ -258,9 +255,6 @@ func (s *APIServer) prepareJobRuntime(ctx context.Context, jobID string, jobCtx 
 		s.failJob(jobID, "missing job config")
 		return nil, nil, false
 	}
-	if cfg.TempDirLocation == "" {
-		cfg.TempDirLocation = "./temp"
-	}
 	if err := ensureJobDirectories(cfg); err != nil {
 		s.failJob(jobID, err.Error())
 		return nil, nil, false
@@ -446,10 +440,6 @@ func mergeConfigWithJobOptions(globalCfg *config.Config, opts *JobConfigOptions)
 		cfg = &config.Config{}
 	}
 	cfg.ApplyDefaults()
-
-	if cfg.TempDirLocation == "" {
-		cfg.TempDirLocation = "./temp"
-	}
 
 	applyJobConfigOverrides(cfg, opts)
 
