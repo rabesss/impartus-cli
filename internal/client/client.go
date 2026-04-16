@@ -239,7 +239,7 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 		}
 
 		scanner := bufio.NewScanner(resp.Body)
-		parsedPlaylists = append(parsedPlaylists, PlaylistParser(scanner, lecture.Ttid, lecture.Topic, lecture.SeqNo))
+		parsedPlaylists = append(parsedPlaylists, ParsePlaylist(scanner, lecture.TTID, lecture.Topic, lecture.SeqNo))
 		resp.Body.Close()
 	}
 
@@ -247,7 +247,7 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 }
 
 func (c *Client) GetStreamInfos(ctx context.Context, baseURL, token string, lecture Lecture) ([]StreamInfo, error) {
-	uri := fmt.Sprintf("%s/fetchvideo?ttid=%d&token=%s&type=index.m3u8", baseURL, lecture.Ttid, token)
+	uri := fmt.Sprintf("%s/fetchvideo?ttid=%d&token=%s&type=index.m3u8", baseURL, lecture.TTID, token)
 	resp, err := c.GetAuthorizedWithToken(ctx, uri, token)
 	if err != nil {
 		return nil, err
@@ -270,7 +270,7 @@ func (c *Client) GetStreamInfos(ctx context.Context, baseURL, token string, lect
 	return ParseStreamInfosFromBody(body)
 }
 
-func PlaylistParser(scanner *bufio.Scanner, id int, title string, seqNo int) ParsedPlaylist {
+func ParsePlaylist(scanner *bufio.Scanner, id int, title string, seqNo int) ParsedPlaylist {
 	parsedOutput := ParsedPlaylist{
 		ID:    id,
 		Title: title,

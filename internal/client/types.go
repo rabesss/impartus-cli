@@ -15,7 +15,7 @@ type Course struct {
 	SessionName          string `json:"sessionName"`
 	ProfessorName        string `json:"professorName"`
 	Department           string `json:"department"`
-	Coverpic             string `json:"coverpic"`
+	CoverPic             string `json:"coverpic"`
 	SessionID            int    `json:"sessionId"`
 	ProfessorID          int    `json:"professorId"`
 	DepartmentID         int    `json:"departmentId"`
@@ -36,7 +36,7 @@ type Lecture struct {
 	EndTime             string `json:"endTime"`
 	Topic               string `json:"topic"`
 	StartTime           string `json:"startTime"`
-	Coverpic            string `json:"coverpic"`
+	CoverPic            string `json:"coverpic"`
 	SubjectCode         string `json:"subjectCode"`
 	ProfessorImageURL   string `json:"professorImageUrl"`
 	ProfessorName       string `json:"professorName"`
@@ -50,15 +50,15 @@ type Lecture struct {
 	DepartmentID        int    `json:"departmentId"`
 	ProfessorID         int    `json:"professorId"`
 	InstituteID         int    `json:"instituteId"`
-	Ttid                int    `json:"ttid"`
-	Selfenroll          int    `json:"selfenroll"`
+	TTID                int    `json:"ttid"`
+	SelfEnroll          int    `json:"selfenroll"`
 	SubjectID           int    `json:"subjectId"`
 	ActualDuration      int    `json:"actualDuration"`
 	ClassroomID         int    `json:"classroomId"`
 	Type                int    `json:"type"`
 	Status              int    `json:"status"`
 	SlideCount          int    `json:"slideCount"`
-	Noaudio             int    `json:"noaudio"`
+	NoAudio             int    `json:"noaudio"`
 	Views               int    `json:"views"`
 	DocumentCount       int    `json:"documentCount"`
 	LessonPlanAvailable int    `json:"lessonPlanAvailable"`
@@ -92,7 +92,7 @@ func (l Lectures) Reverse() Lectures {
 func (l Lectures) FilterNoAudio() Lectures {
 	filtered := make(Lectures, 0, len(l))
 	for _, lecture := range l {
-		if lecture.Noaudio == 1 {
+		if lecture.NoAudio == 1 {
 			continue
 		}
 		filtered = append(filtered, lecture)

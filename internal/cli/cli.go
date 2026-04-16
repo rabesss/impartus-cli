@@ -726,7 +726,7 @@ func filterEmptyLectures(lectures client.Lectures) client.Lectures {
 func countNoAudioLectures(lectures client.Lectures) int {
 	count := 0
 	for _, lecture := range lectures {
-		if lecture.Noaudio == 1 {
+		if lecture.NoAudio == 1 {
 			count++
 		}
 	}

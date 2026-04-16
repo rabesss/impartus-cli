@@ -88,7 +88,7 @@ func (d *Downloader) FetchLecturePlaylists(ctx context.Context, lectures []clien
 			return parsedPlaylists, err
 		}
 		scanner := bufio.NewScanner(resp.Body)
-		parsedPlaylists = append(parsedPlaylists, client.PlaylistParser(scanner, lecture.Ttid, lecture.Topic, lecture.SeqNo))
+		parsedPlaylists = append(parsedPlaylists, client.ParsePlaylist(scanner, lecture.TTID, lecture.Topic, lecture.SeqNo))
 		_ = resp.Body.Close()
 	}
 	return parsedPlaylists, nil
