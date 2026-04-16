@@ -81,49 +81,19 @@ type createJobRequest struct {
 	IdempotencyKey string `json:"idempotencyKey,omitempty"`
 
 	JobConfig *JobConfigOptions `json:"jobConfig,omitempty"`
-
-	Quality                   *string `json:"quality,omitempty"`
-	Views                     *string `json:"views,omitempty"`
-	AudioOnly                 *bool   `json:"audioOnly,omitempty"`
-	AudioFormat               *string `json:"audioFormat,omitempty"`
-	OutputPath                *string `json:"outputPath,omitempty"`
-	EnablePipeline            *bool   `json:"enablePipeline,omitempty"`
-	NumWorkers                *int    `json:"numWorkers,omitempty"`
-	DownloadWorkersPerLecture *int    `json:"downloadWorkersPerLecture,omitempty"`
-	DecryptWorkersPerLecture  *int    `json:"decryptWorkersPerLecture,omitempty"`
-	SkipNoAudio               *bool   `json:"skipNoAudio,omitempty"`
+	*JobConfigOptions              // embedded: flat fields promoted for backward compat
 }
 
 func (r createJobRequest) effectiveJobConfig() *JobConfigOptions {
 	if r.JobConfig != nil {
 		return r.JobConfig
 	}
-
-	if r.Quality == nil &&
-		r.Views == nil &&
-		r.AudioOnly == nil &&
-		r.AudioFormat == nil &&
-		r.OutputPath == nil &&
-		r.EnablePipeline == nil &&
-		r.NumWorkers == nil &&
-		r.DownloadWorkersPerLecture == nil &&
-		r.DecryptWorkersPerLecture == nil &&
-		r.SkipNoAudio == nil {
+	if r.JobConfigOptions == nil {
 		return nil
 	}
-
-	return &JobConfigOptions{
-		Quality:                   r.Quality,
-		Views:                     r.Views,
-		AudioOnly:                 r.AudioOnly,
-		AudioFormat:               r.AudioFormat,
-		OutputPath:                r.OutputPath,
-		EnablePipeline:            r.EnablePipeline,
-		NumWorkers:                r.NumWorkers,
-		DownloadWorkersPerLecture: r.DownloadWorkersPerLecture,
-		DecryptWorkersPerLecture:  r.DecryptWorkersPerLecture,
-		SkipNoAudio:               r.SkipNoAudio,
-	}
+	// Return a copy of the embedded options (avoid mutations on shared pointer)
+	cp := *r.JobConfigOptions
+	return &cp
 }
 
 type JobRuntimeConfig struct {
