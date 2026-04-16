@@ -7,6 +7,16 @@ import (
 	"time"
 )
 
+type PipelineStats struct {
+	TotalChunks      int
+	FirstViewChunks  int
+	SecondViewChunks int
+	FailedChunks     int
+	ElapsedTime      time.Duration
+	DownloadWorkers  int
+	DecryptWorkers   int
+}
+
 type ChunkTask struct {
 	ChunkID      int
 	URL          string
@@ -250,17 +260,17 @@ func (p *LecturePipeline) Cancel() {
 	p.cancel()
 }
 
-func (p *LecturePipeline) GetStats() map[string]interface{} {
+func (p *LecturePipeline) GetStats() PipelineStats {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	return map[string]interface{}{
-		"total_chunks":       p.totalChunks,
-		"first_view_chunks":  len(p.firstViewMap),
-		"second_view_chunks": len(p.secondViewMap),
-		"failed_chunks":      len(p.failedChunks),
-		"elapsed_time":       time.Since(p.startTime),
-		"download_workers":   p.config.DownloadWorkers,
-		"decrypt_workers":    p.config.DecryptWorkers,
+	return PipelineStats{
+		TotalChunks:      p.totalChunks,
+		FirstViewChunks:  len(p.firstViewMap),
+		SecondViewChunks: len(p.secondViewMap),
+		FailedChunks:     len(p.failedChunks),
+		ElapsedTime:      time.Since(p.startTime),
+		DownloadWorkers:  p.config.DownloadWorkers,
+		DecryptWorkers:   p.config.DecryptWorkers,
 	}
 }

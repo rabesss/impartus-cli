@@ -181,26 +181,9 @@ func (a *Analytics) TrackDownload(quality, views string, bytes int64, duration t
 	a.Track("download_completed", properties)
 }
 
-// Flush sends all buffered events
+// Flush sends all buffered events.
 func (a *Analytics) Flush() {
-	a.mu.Lock()
-	if len(a.events) == 0 {
-		a.mu.Unlock()
-		return
-	}
-	events := a.events
-	a.events = make([]Event, 0, a.config.BatchSize)
-	a.mu.Unlock()
-
-	// Send to PostHog if configured
-	if a.config.PostHogAPIKey != "" {
-		a.sendToPostHog(events)
-	}
-
-	// Send to custom endpoint if configured
-	if a.config.CustomEndpoint != "" {
-		go a.sendToCustomEndpoint(events)
-	}
+	a.FlushWithContext(context.Background())
 }
 
 // FlushWithContext sends all buffered events with context
@@ -214,12 +197,10 @@ func (a *Analytics) FlushWithContext(ctx context.Context) {
 	a.events = make([]Event, 0, a.config.BatchSize)
 	a.mu.Unlock()
 
-	// Send to PostHog if configured
 	if a.config.PostHogAPIKey != "" {
 		a.sendToPostHogWithContext(ctx, events)
 	}
 
-	// Send to custom endpoint if configured
 	if a.config.CustomEndpoint != "" {
 		go a.sendToCustomEndpoint(events)
 	}
@@ -232,10 +213,6 @@ func (a *Analytics) startFlusher() {
 	for range ticker.C {
 		a.Flush()
 	}
-}
-
-func (a *Analytics) sendToPostHog(events []Event) {
-	a.sendToPostHogWithContext(context.Background(), events)
 }
 
 func (a *Analytics) sendToPostHogWithContext(ctx context.Context, events []Event) {

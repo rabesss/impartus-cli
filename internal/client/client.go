@@ -17,7 +17,6 @@ import (
 )
 
 type Client struct {
-	HTTPClient        *http.Client
 	httpClient        *http.Client
 	UserAgentProvider func() string
 	token             string
@@ -32,7 +31,6 @@ func New(httpClient *http.Client, userAgentProvider func() string) *Client {
 	}
 
 	return &Client{
-		HTTPClient:        httpClient,
 		httpClient:        httpClient,
 		UserAgentProvider: userAgentProvider,
 	}
@@ -40,12 +38,7 @@ func New(httpClient *http.Client, userAgentProvider func() string) *Client {
 
 func (c *Client) initialize() {
 	if c.httpClient == nil {
-		if c.HTTPClient != nil {
-			c.httpClient = c.HTTPClient
-		} else {
-			c.httpClient = NewHTTPClient(0)
-			c.HTTPClient = c.httpClient
-		}
+		c.httpClient = NewHTTPClient(0)
 	}
 	if c.UserAgentProvider == nil {
 		c.UserAgentProvider = func() string { return "impartus-downloader" }
@@ -117,11 +110,7 @@ func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, e
 		return nil, errors.New("config is required")
 	}
 
-	baseURL := cfg.BaseUrl
-	if baseURL == "" {
-		baseURL = cfg.BaseURL
-	}
-	if baseURL == "" {
+	if cfg.BaseURL == "" {
 		return nil, errors.New("baseUrl is required")
 	}
 
@@ -133,7 +122,7 @@ func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, e
 		return nil, errors.New("token is not set")
 	}
 
-	url := fmt.Sprintf("%s/subjects", baseURL)
+	url := fmt.Sprintf("%s/subjects", cfg.BaseURL)
 	resp, err := c.GetAuthorizedWithToken(ctx, url, token)
 	if err != nil {
 		return nil, err
@@ -154,7 +143,7 @@ func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, e
 	}
 
 	for i := range courses {
-		courses[i].SubjectName = sanitiseFileName(courses[i].SubjectName)
+		courses[i].SubjectName = sanitizeFileName(courses[i].SubjectName)
 	}
 
 	return courses, nil
@@ -165,11 +154,7 @@ func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Cou
 		return nil, errors.New("config is required")
 	}
 
-	baseURL := cfg.BaseUrl
-	if baseURL == "" {
-		baseURL = cfg.BaseURL
-	}
-	if baseURL == "" {
+	if cfg.BaseURL == "" {
 		return nil, errors.New("baseUrl is required")
 	}
 
@@ -181,7 +166,7 @@ func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Cou
 		return nil, errors.New("token is not set")
 	}
 
-	url := fmt.Sprintf("%s/subjects/%d/lectures/%d", baseURL, course.SubjectID, course.SessionID)
+	url := fmt.Sprintf("%s/subjects/%d/lectures/%d", cfg.BaseURL, course.SubjectID, course.SessionID)
 	resp, err := c.GetAuthorizedWithToken(ctx, url, token)
 	if err != nil {
 		return nil, err
@@ -202,8 +187,8 @@ func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Cou
 	}
 
 	for i := range lectures {
-		lectures[i].Topic = sanitiseFileName(lectures[i].Topic)
-		lectures[i].SubjectName = sanitiseFileName(lectures[i].SubjectName)
+		lectures[i].Topic = sanitizeFileName(lectures[i].Topic)
+		lectures[i].SubjectName = sanitizeFileName(lectures[i].SubjectName)
 	}
 
 	return lectures, nil
@@ -214,11 +199,7 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 		return nil, errors.New("config is required")
 	}
 
-	baseURL := cfg.BaseUrl
-	if baseURL == "" {
-		baseURL = cfg.BaseURL
-	}
-	if baseURL == "" {
+	if cfg.BaseURL == "" {
 		return nil, errors.New("baseUrl is required")
 	}
 
@@ -232,12 +213,12 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 
 	parsedPlaylists := make([]ParsedPlaylist, 0, len(lectures))
 	for _, lecture := range lectures {
-		streamInfos, err := c.getStreamInfos(ctx, baseURL, token, lecture)
+		streamInfos, err := c.GetStreamInfos(ctx, cfg.BaseURL, token, lecture)
 		if err != nil {
 			return parsedPlaylists, err
 		}
 
-		streamURL := getStreamURL(streamInfos, cfg)
+		streamURL := SelectStreamByQuality(streamInfos, cfg.Quality, cfg.AudioOnly)
 		if streamURL == "" {
 			continue
 		}
@@ -256,14 +237,14 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 		}
 
 		scanner := bufio.NewScanner(resp.Body)
-		parsedPlaylists = append(parsedPlaylists, playlistParser(scanner, lecture.Ttid, lecture.Topic, lecture.SeqNo))
+		parsedPlaylists = append(parsedPlaylists, PlaylistParser(scanner, lecture.Ttid, lecture.Topic, lecture.SeqNo))
 		resp.Body.Close()
 	}
 
 	return parsedPlaylists, nil
 }
 
-func (c *Client) getStreamInfos(ctx context.Context, baseURL, token string, lecture Lecture) ([]StreamInfo, error) {
+func (c *Client) GetStreamInfos(ctx context.Context, baseURL, token string, lecture Lecture) ([]StreamInfo, error) {
 	uri := fmt.Sprintf("%s/fetchvideo?ttid=%d&token=%s&type=index.m3u8", baseURL, lecture.Ttid, token)
 	resp, err := c.GetAuthorizedWithToken(ctx, uri, token)
 	if err != nil {
@@ -287,13 +268,9 @@ func (c *Client) getStreamInfos(ctx context.Context, baseURL, token string, lect
 	return ParseStreamInfosFromBody(body)
 }
 
-func getStreamURL(streamInfos []StreamInfo, cfg *config.Config) string {
-	return SelectStreamByQuality(streamInfos, cfg.Quality, cfg.AudioOnly)
-}
-
-func playlistParser(scanner *bufio.Scanner, id int, title string, seqNo int) ParsedPlaylist {
+func PlaylistParser(scanner *bufio.Scanner, id int, title string, seqNo int) ParsedPlaylist {
 	parsedOutput := ParsedPlaylist{
-		Id:    id,
+		ID:    id,
 		Title: title,
 		SeqNo: seqNo,
 	}
@@ -330,7 +307,7 @@ func playlistParser(scanner *bufio.Scanner, id int, title string, seqNo int) Par
 	return parsedOutput
 }
 
-func sanitiseFileName(name string) string {
+func sanitizeFileName(name string) string {
 	re := regexp.MustCompile(`[<>:"/\\|?*\n\r]`)
 	name = re.ReplaceAllString(name, "_")
 	name = strings.TrimSpace(name)
@@ -378,14 +355,10 @@ func (c *Client) prepareLogin(cfg *config.Config) (*Client, string, error) {
 		cli = New(nil, nil)
 	}
 	cli.initialize()
-	baseURL := cfg.BaseUrl
-	if baseURL == "" {
-		baseURL = cfg.BaseURL
-	}
-	if baseURL == "" {
+	if cfg.BaseURL == "" {
 		return nil, "", errors.New("baseUrl is required")
 	}
-	return cli, baseURL, nil
+	return cli, cfg.BaseURL, nil
 }
 
 func (c *Client) tryStoredToken(ctx context.Context, cfg *config.Config, baseURL string) bool {

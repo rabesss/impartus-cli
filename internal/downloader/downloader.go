@@ -22,27 +22,16 @@ import (
 	"github.com/rabesss/impartus-cli/internal/config"
 )
 
-type Lecture struct {
-	Ttid  int
-	Topic string
-	SeqNo int
-}
-
-type StreamInfo struct {
-	Quality string
-	URL     string
-}
-
 type DownloadedPlaylist struct {
 	FirstViewChunks  []string
 	SecondViewChunks []string
-	Playlist         ParsedPlaylist
+	Playlist         client.ParsedPlaylist
 }
 
 type M3U8File struct {
 	FirstViewFile  string
 	SecondViewFile string
-	Playlist       ParsedPlaylist
+	Playlist       client.ParsedPlaylist
 }
 
 type JoinResult struct {
@@ -76,19 +65,15 @@ func New(cfg *config.Config, apiClient *client.Client) *Downloader {
 	}
 }
 
-func (d *Downloader) ParsePlaylist(scanner *bufio.Scanner, id int, title string, seqNo int) ParsedPlaylist {
-	return PlaylistParser(scanner, id, title, seqNo)
-}
-
-func (d *Downloader) FetchLecturePlaylists(ctx context.Context, lectures []Lecture) ([]ParsedPlaylist, error) {
-	parsedPlaylists := make([]ParsedPlaylist, 0, len(lectures))
+func (d *Downloader) FetchLecturePlaylists(ctx context.Context, lectures []client.Lecture) ([]client.ParsedPlaylist, error) {
+	parsedPlaylists := make([]client.ParsedPlaylist, 0, len(lectures))
 	for _, lecture := range lectures {
 		streamInfos, err := d.getStreamInfos(ctx, lecture)
 		if err != nil {
 			return parsedPlaylists, err
 		}
 
-		streamURL := d.getStreamURL(streamInfos)
+		streamURL := client.SelectStreamByQuality(streamInfos, d.config.Quality, d.config.AudioOnly)
 		if streamURL == "" {
 			continue
 		}
@@ -103,13 +88,13 @@ func (d *Downloader) FetchLecturePlaylists(ctx context.Context, lectures []Lectu
 			return parsedPlaylists, err
 		}
 		scanner := bufio.NewScanner(resp.Body)
-		parsedPlaylists = append(parsedPlaylists, PlaylistParser(scanner, lecture.Ttid, lecture.Topic, lecture.SeqNo))
+		parsedPlaylists = append(parsedPlaylists, client.PlaylistParser(scanner, lecture.Ttid, lecture.Topic, lecture.SeqNo))
 		_ = resp.Body.Close()
 	}
 	return parsedPlaylists, nil
 }
 
-func (d *Downloader) DownloadLecturePlaylists(ctx context.Context, playlists []ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) ([]DownloadedPlaylist, error) {
+func (d *Downloader) DownloadLecturePlaylists(ctx context.Context, playlists []client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) ([]DownloadedPlaylist, error) {
 	results := make([]DownloadedPlaylist, 0, len(playlists))
 	for _, playlist := range playlists {
 		downloadedPlaylist, err := d.DownloadPlaylist(ctx, playlist, p, tracker)
@@ -121,7 +106,7 @@ func (d *Downloader) DownloadLecturePlaylists(ctx context.Context, playlists []P
 	return results, nil
 }
 
-func (d *Downloader) DownloadPlaylist(ctx context.Context, playlist ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) (DownloadedPlaylist, error) {
+func (d *Downloader) DownloadPlaylist(ctx context.Context, playlist client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) (DownloadedPlaylist, error) {
 	decryptionKey, err := d.fetchDecryptionKey(ctx, playlist.KeyURL)
 	if err != nil {
 		return DownloadedPlaylist{}, err
@@ -138,7 +123,7 @@ func (d *Downloader) DownloadPlaylist(ctx context.Context, playlist ParsedPlayli
 	return downloadedPlaylist, nil
 }
 
-func (d *Downloader) downloadPlaylistPipelined(_ context.Context, playlist ParsedPlaylist, decryptionKey []byte, p *mpb.Progress, tracker *ProgressTracker) (DownloadedPlaylist, error) {
+func (d *Downloader) downloadPlaylistPipelined(_ context.Context, playlist client.ParsedPlaylist, decryptionKey []byte, p *mpb.Progress, tracker *ProgressTracker) (DownloadedPlaylist, error) {
 	totalChunks := d.totalChunksForPlaylist(playlist)
 
 	downloadedPlaylist := DownloadedPlaylist{Playlist: playlist}
@@ -167,7 +152,7 @@ func (d *Downloader) downloadPlaylistPipelined(_ context.Context, playlist Parse
 	return downloadedPlaylist, nil
 }
 
-func (d *Downloader) DownloadAndJoinPlaylist(ctx context.Context, playlist ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) (JoinResult, error) {
+func (d *Downloader) DownloadAndJoinPlaylist(ctx context.Context, playlist client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) (JoinResult, error) {
 	downloadedPlaylist, err := d.DownloadPlaylist(ctx, playlist, p, tracker)
 	if err != nil {
 		return JoinResult{}, err
@@ -246,58 +231,11 @@ func writeM3U8File(path string, chunks []string) error {
 	return err
 }
 
-func (d *Downloader) getStreamInfos(ctx context.Context, lecture Lecture) ([]StreamInfo, error) {
-	uri := fmt.Sprintf("%s/fetchvideo?ttid=%d&token=%s&type=index.m3u8", d.config.BaseURL, lecture.Ttid, d.config.Token)
+func (d *Downloader) getStreamInfos(ctx context.Context, lecture client.Lecture) ([]client.StreamInfo, error) {
 	if err := d.rateLimiter.WaitForAPI(ctx); err != nil {
 		return nil, err
 	}
-
-	resp, err := d.client.GetAuthorizedWithToken(ctx, uri, d.config.Token)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	res, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	clientStreamInfos, err := client.ParseStreamInfosFromBody(res)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert client.StreamInfo to downloader.StreamInfo
-	streamInfos := make([]StreamInfo, len(clientStreamInfos))
-	for i, si := range clientStreamInfos {
-		streamInfos[i] = StreamInfo{Quality: si.Quality, URL: si.URL}
-	}
-	return streamInfos, nil
-}
-
-func (d *Downloader) getStreamURL(streamInfos []StreamInfo) string {
-	if d.config.AudioOnly {
-		for _, streamInfo := range streamInfos {
-			if streamInfo.Quality == "144" {
-				return streamInfo.URL
-			}
-		}
-		if len(streamInfos) > 0 {
-			return streamInfos[0].URL
-		}
-		return ""
-	}
-
-	for _, streamInfo := range streamInfos {
-		if (streamInfo.Quality == "450" || streamInfo.Quality == "480") && strings.HasPrefix(d.config.Quality, "4") {
-			return streamInfo.URL
-		}
-		if streamInfo.Quality == d.config.Quality {
-			return streamInfo.URL
-		}
-	}
-	return ""
+	return d.client.GetStreamInfos(ctx, d.config.BaseURL, d.config.Token, lecture)
 }
 
 func (d *Downloader) fetchDecryptionKey(ctx context.Context, keyURL string) ([]byte, error) {
@@ -421,7 +359,7 @@ func (d *Downloader) downloadWithRetry(ctx context.Context, url string, id int, 
 	return "", fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
 }
 
-func (d *Downloader) downloadViewChunks(ctx context.Context, p *mpb.Progress, tracker *ProgressTracker, playlist ParsedPlaylist, urls []string, skipView, requestView, displayView string, decryptionKey []byte) []string {
+func (d *Downloader) downloadViewChunks(ctx context.Context, p *mpb.Progress, tracker *ProgressTracker, playlist client.ParsedPlaylist, urls []string, skipView, requestView, displayView string, decryptionKey []byte) []string {
 	if len(urls) == 0 || d.config.Views == skipView {
 		return nil
 	}
@@ -429,11 +367,11 @@ func (d *Downloader) downloadViewChunks(ctx context.Context, p *mpb.Progress, tr
 	bar := d.newViewBar(p, len(urls), playlist.SeqNo, displayView)
 	chunks := make([]string, 0, len(urls))
 	for i, url := range urls {
-		chunkPath := d.downloadAndDecryptChunk(ctx, url, playlist.ID, i, requestView, decryptionKey, tracker)
+		chunkPath, err := d.downloadAndDecryptChunk(ctx, url, playlist.ID, i, requestView, decryptionKey, tracker)
 		if bar != nil {
 			bar.Increment()
 		}
-		if chunkPath == "" {
+		if err != nil || chunkPath == "" {
 			continue
 		}
 		chunks = append(chunks, chunkPath)
@@ -455,31 +393,23 @@ func (d *Downloader) newViewBar(p *mpb.Progress, total, seqNo int, label string)
 	)
 }
 
-func (d *Downloader) downloadAndDecryptChunk(ctx context.Context, url string, playlistID, chunkIndex int, view string, decryptionKey []byte, tracker *ProgressTracker) string {
+func (d *Downloader) downloadAndDecryptChunk(ctx context.Context, url string, playlistID, chunkIndex int, view string, decryptionKey []byte, tracker *ProgressTracker) (string, error) {
 	filePath, err := d.downloadWithRetry(ctx, url, playlistID, chunkIndex, view, d.maxRetries, tracker)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("download failed for chunk %d: %w", chunkIndex, err)
 	}
 	chunkPath, err := d.decryptChunk(filePath, decryptionKey)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("decrypt failed for chunk %d: %w", chunkIndex, err)
 	}
-	return chunkPath
+	return chunkPath, nil
 }
 
-func sumPipelineStats(stats map[string]any) int {
-	keys := []string{"first_view_chunks", "second_view_chunks", "failed_chunks"}
-	total := 0
-	for _, key := range keys {
-		value, ok := stats[key].(int)
-		if ok {
-			total += value
-		}
-	}
-	return total
+func sumPipelineStats(stats PipelineStats) int {
+	return stats.FirstViewChunks + stats.SecondViewChunks + stats.FailedChunks
 }
 
-func (d *Downloader) totalChunksForPlaylist(playlist ParsedPlaylist) int {
+func (d *Downloader) totalChunksForPlaylist(playlist client.ParsedPlaylist) int {
 	totalChunks := 0
 	if d.config.Views != "right" {
 		totalChunks += len(playlist.FirstViewURLs)
@@ -490,7 +420,7 @@ func (d *Downloader) totalChunksForPlaylist(playlist ParsedPlaylist) int {
 	return totalChunks
 }
 
-func (d *Downloader) newLecturePipeline(playlist ParsedPlaylist, decryptionKey []byte, tracker *ProgressTracker) *LecturePipeline {
+func (d *Downloader) newLecturePipeline(playlist client.ParsedPlaylist, decryptionKey []byte, tracker *ProgressTracker) *LecturePipeline {
 	pipelineConfig := PipelineConfig{
 		DownloadWorkers: d.config.DownloadWorkersPerLecture,
 		DecryptWorkers:  d.config.DecryptWorkersPerLecture,
@@ -515,14 +445,14 @@ func (d *Downloader) newPipelineBar(p *mpb.Progress, seqNo, totalChunks int) *mp
 	)
 }
 
-func (d *Downloader) submitPipelineTasks(pipeline *LecturePipeline, playlist ParsedPlaylist) error {
+func (d *Downloader) submitPipelineTasks(pipeline *LecturePipeline, playlist client.ParsedPlaylist) error {
 	if err := submitPipelineViewTasks(pipeline, playlist.FirstViewURLs, d.config.Views != "right", "first", playlist); err != nil {
 		return err
 	}
 	return submitPipelineViewTasks(pipeline, playlist.SecondViewURLs, d.config.Views != "left", "second", playlist)
 }
 
-func submitPipelineViewTasks(pipeline *LecturePipeline, urls []string, enabled bool, view string, playlist ParsedPlaylist) error {
+func submitPipelineViewTasks(pipeline *LecturePipeline, urls []string, enabled bool, view string, playlist client.ParsedPlaylist) error {
 	if !enabled {
 		return nil
 	}

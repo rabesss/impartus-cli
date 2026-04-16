@@ -2,23 +2,17 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 
@@ -26,113 +20,6 @@ import (
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/downloader"
 )
-
-const statusCanceled = "canceled"
-
-type JobConfigOptions struct {
-	Quality                   *string `json:"quality,omitempty"`
-	Views                     *string `json:"views,omitempty"`
-	AudioOnly                 *bool   `json:"audioOnly,omitempty"`
-	AudioFormat               *string `json:"audioFormat,omitempty"`
-	OutputPath                *string `json:"outputPath,omitempty"`
-	EnablePipeline            *bool   `json:"enablePipeline,omitempty"`
-	NumWorkers                *int    `json:"numWorkers,omitempty"`
-	DownloadWorkersPerLecture *int    `json:"downloadWorkersPerLecture,omitempty"`
-	DecryptWorkersPerLecture  *int    `json:"decryptWorkersPerLecture,omitempty"`
-	SkipNoAudio               *bool   `json:"skipNoAudio,omitempty"`
-}
-
-type createJobRequest struct {
-	SubjectID      int    `json:"subjectId"`
-	SessionID      int    `json:"sessionId"`
-	StartIndex     int    `json:"startIndex"`
-	EndIndex       int    `json:"endIndex"`
-	IdempotencyKey string `json:"idempotencyKey,omitempty"`
-
-	JobConfig *JobConfigOptions `json:"jobConfig,omitempty"`
-
-	Quality                   *string `json:"quality,omitempty"`
-	Views                     *string `json:"views,omitempty"`
-	AudioOnly                 *bool   `json:"audioOnly,omitempty"`
-	AudioFormat               *string `json:"audioFormat,omitempty"`
-	OutputPath                *string `json:"outputPath,omitempty"`
-	EnablePipeline            *bool   `json:"enablePipeline,omitempty"`
-	NumWorkers                *int    `json:"numWorkers,omitempty"`
-	DownloadWorkersPerLecture *int    `json:"downloadWorkersPerLecture,omitempty"`
-	DecryptWorkersPerLecture  *int    `json:"decryptWorkersPerLecture,omitempty"`
-	SkipNoAudio               *bool   `json:"skipNoAudio,omitempty"`
-}
-
-func (r createJobRequest) effectiveJobConfig() *JobConfigOptions {
-	if r.JobConfig != nil {
-		return r.JobConfig
-	}
-
-	if r.Quality == nil &&
-		r.Views == nil &&
-		r.AudioOnly == nil &&
-		r.AudioFormat == nil &&
-		r.OutputPath == nil &&
-		r.EnablePipeline == nil &&
-		r.NumWorkers == nil &&
-		r.DownloadWorkersPerLecture == nil &&
-		r.DecryptWorkersPerLecture == nil &&
-		r.SkipNoAudio == nil {
-		return nil
-	}
-
-	return &JobConfigOptions{
-		Quality:                   r.Quality,
-		Views:                     r.Views,
-		AudioOnly:                 r.AudioOnly,
-		AudioFormat:               r.AudioFormat,
-		OutputPath:                r.OutputPath,
-		EnablePipeline:            r.EnablePipeline,
-		NumWorkers:                r.NumWorkers,
-		DownloadWorkersPerLecture: r.DownloadWorkersPerLecture,
-		DecryptWorkersPerLecture:  r.DecryptWorkersPerLecture,
-		SkipNoAudio:               r.SkipNoAudio,
-	}
-}
-
-type JobRuntimeConfig struct {
-	Quality                   string `json:"quality"`
-	Views                     string `json:"views"`
-	AudioOnly                 bool   `json:"audioOnly"`
-	AudioFormat               string `json:"audioFormat"`
-	OutputPath                string `json:"outputPath"`
-	EnablePipeline            bool   `json:"enablePipeline"`
-	NumWorkers                int    `json:"numWorkers"`
-	DownloadWorkersPerLecture int    `json:"downloadWorkersPerLecture"`
-	DecryptWorkersPerLecture  int    `json:"decryptWorkersPerLecture"`
-	Slides                    bool   `json:"slides"`
-	SkipNoAudio               bool   `json:"skipNoAudio"`
-}
-
-type Job struct {
-	ID                string           `json:"id"`
-	SubjectID         int              `json:"subjectId"`
-	SessionID         int              `json:"sessionId"`
-	StartIndex        int              `json:"startIndex"`
-	EndIndex          int              `json:"endIndex"`
-	Status            string           `json:"status"`
-	Progress          float64          `json:"progress"`
-	Error             string           `json:"error,omitempty"`
-	TotalLectures     int              `json:"totalLectures,omitempty"`
-	CompletedLectures int              `json:"completedLectures,omitempty"`
-	FilteredLectures  int              `json:"filteredLectures,omitempty"`
-	Outputs           []string         `json:"outputs,omitempty"`
-	Config            JobRuntimeConfig `json:"config"`
-	IdempotencyKey    string           `json:"idempotencyKey,omitempty"`
-	CreatedAt         time.Time        `json:"createdAt"`
-	UpdatedAt         time.Time        `json:"updatedAt"`
-
-	ctx    context.Context    `json:"-"`
-	cancel context.CancelFunc `json:"-"`
-	cfg    *config.Config     `json:"-"`
-}
-
-const maxIdempotencyKeyLength = 256
 
 type JobStore struct {
 	jobs            map[string]*Job
@@ -402,73 +289,6 @@ func (js *JobStore) saveToDisk() {
 	}
 }
 
-type WSHub struct {
-	clients map[*websocket.Conn]bool
-	mu      sync.Mutex
-}
-
-func NewWSHub() *WSHub {
-	return &WSHub{clients: make(map[*websocket.Conn]bool)}
-}
-
-func (h *WSHub) Register(conn *websocket.Conn) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.clients[conn] = true
-}
-
-func (h *WSHub) Unregister(conn *websocket.Conn) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	delete(h.clients, conn)
-}
-
-func (h *WSHub) Broadcast(msg map[string]any) error {
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for conn := range h.clients {
-		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			_ = conn.Close()
-			delete(h.clients, conn)
-		}
-	}
-
-	return nil
-}
-
-// upstreamCacheEntry holds a cached upstream client and token info.
-// The token expires field is used to determine when to refresh.
-type upstreamCacheEntry struct {
-	client    *client.Client
-	cfg       *config.Config
-	token     string
-	expiresAt time.Time
-}
-
-// UpstreamLoginFunc is the signature for upstream login operations.
-// It receives a context and config, and returns a client with token set.
-// This allows injecting mock login functions in tests.
-type UpstreamLoginFunc func(ctx context.Context, cfg *config.Config) (*client.Client, *config.Config, error)
-
-type APIServer struct {
-	cfg             *config.Config
-	jobStore        *JobStore
-	wsHub           *WSHub
-	tokenStore      *TokenStore
-	upgrader        websocket.Upgrader
-	router          *mux.Router
-	port            string
-	upstreamCache   *upstreamCacheEntry
-	upstreamCacheMu sync.RWMutex
-	upstreamLogin   UpstreamLoginFunc
-}
-
-// defaultUpstreamLogin is the real upstream login using the Impartus API.
 func defaultUpstreamLogin(ctx context.Context, cfg *config.Config) (*client.Client, *config.Config, error) {
 	apiClient := client.New(nil, nil)
 	if err := apiClient.LoginAndSetToken(ctx, cfg); err != nil {
@@ -566,236 +386,6 @@ func (s *APIServer) Start(ctxs ...context.Context) error {
 	return server.ListenAndServe()
 }
 
-func (s *APIServer) registerRoutes() {
-	s.router.Use(requestIDMiddleware)
-	s.router.Use(corsMiddleware)
-
-	api := s.router.PathPrefix("/api/v1").Subrouter()
-	api.HandleFunc("/health", s.healthHandler).Methods(http.MethodGet, http.MethodOptions)
-	api.HandleFunc("/auth/login", s.loginHandler).Methods(http.MethodPost, http.MethodOptions)
-
-	protected := api.PathPrefix("").Subrouter()
-	protected.Use(s.authMiddleware)
-	protected.HandleFunc("/ws", s.websocketHandler).Methods(http.MethodGet)
-	protected.HandleFunc("/courses", s.coursesHandler).Methods(http.MethodGet, http.MethodOptions)
-	protected.HandleFunc("/lectures", s.lecturesHandler).Methods(http.MethodGet, http.MethodOptions)
-	protected.HandleFunc("/jobs", s.createJobHandler).Methods(http.MethodPost, http.MethodOptions)
-	protected.HandleFunc("/jobs", s.listJobsHandler).Methods(http.MethodGet, http.MethodOptions)
-	protected.HandleFunc("/jobs/{id}", s.getJobHandler).Methods(http.MethodGet, http.MethodOptions)
-	protected.HandleFunc("/jobs/{id}", s.deleteJobHandler).Methods(http.MethodDelete, http.MethodOptions)
-}
-
-// requestIDMiddleware adds a unique request ID to each request for distributed tracing.
-// It propagates existing X-Request-ID headers or generates a new UUID.
-func requestIDMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestID := r.Header.Get("X-Request-ID")
-		if requestID == "" {
-			requestID = uuid.NewString()
-		}
-
-		// Set the request ID in response headers for client correlation
-		w.Header().Set("X-Request-ID", requestID)
-
-		// Add request ID to request context for downstream handlers
-		ctx := context.WithValue(r.Context(), requestIDKey{}, requestID)
-
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-// requestIDKey is the context key for request IDs
-type requestIDKey struct{}
-
-// GetRequestID retrieves the request ID from the request context
-func GetRequestID(r *http.Request) string {
-	if id, ok := r.Context().Value(requestIDKey{}).(string); ok {
-		return id
-	}
-	return ""
-}
-
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
-		w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
-		w.Header().Set("Access-Control-Max-Age", "86400")
-
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func (s *APIServer) healthHandler(w http.ResponseWriter, _ *http.Request) {
-	configStatus := s.checkConfigStatus()
-	upstreamStatus := s.checkUpstreamStatus()
-	ffmpegStatus := s.checkFFmpegStatus()
-
-	overallStatus := "ok"
-	if configStatus["status"] != "ok" || upstreamStatus["status"] != "reachable" || ffmpegStatus["status"] != "available" {
-		overallStatus = "degraded"
-	}
-
-	respondWithEnvelope(w, http.StatusOK, "health", map[string]any{
-		"status":   overallStatus,
-		"config":   configStatus,
-		"upstream": upstreamStatus,
-		"ffmpeg":   ffmpegStatus,
-	})
-}
-
-// checkConfigStatus verifies that required config fields are set
-func (s *APIServer) checkConfigStatus() map[string]any {
-	result := map[string]any{
-		"status": "ok",
-	}
-
-	if s.cfg == nil {
-		result["status"] = "misconfigured"
-		result["username"] = "missing"
-		result["password"] = "missing"
-		result["baseUrl"] = "missing"
-		return result
-	}
-
-	usernameStatus := "ok"
-	if s.cfg.Username == "" {
-		usernameStatus = "missing"
-		result["status"] = "misconfigured"
-	}
-
-	passwordStatus := "ok"
-	if s.cfg.Password == "" {
-		passwordStatus = "missing"
-		result["status"] = "misconfigured"
-	}
-
-	baseUrlStatus := "ok"
-	if s.cfg.BaseUrl == "" {
-		baseUrlStatus = "missing"
-		result["status"] = "misconfigured"
-	}
-
-	result["username"] = usernameStatus
-	result["password"] = passwordStatus
-	result["baseUrl"] = baseUrlStatus
-
-	return result
-}
-
-// checkUpstreamStatus attempts to reach the Impartus upstream server
-// Uses cached token if available, otherwise does a TCP dial check
-func (s *APIServer) checkUpstreamStatus() map[string]any {
-	if s.cfg == nil || s.cfg.BaseUrl == "" {
-		return map[string]any{
-			"status": "not_configured",
-		}
-	}
-
-	status := "unreachable"
-	if s.probeUpstreamHTTP() || s.probeUpstreamTCP() {
-		status = "reachable"
-	}
-
-	return map[string]any{"status": status}
-}
-
-// probeUpstreamHTTP attempts a lightweight HTTP request using the cached token.
-// Any response (even 401/403) means the server is reachable.
-func (s *APIServer) probeUpstreamHTTP() bool {
-	s.upstreamCacheMu.RLock()
-	cached := s.upstreamCache
-	s.upstreamCacheMu.RUnlock()
-
-	if cached == nil || cached.token == "" {
-		return false
-	}
-
-	baseURL := s.ensureScheme(s.cfg.BaseUrl)
-	profileURL := strings.TrimSuffix(baseURL, "/") + "/user/profile"
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, profileURL, nil)
-	if err != nil {
-		return false
-	}
-	req.Header.Set("Authorization", "Bearer "+cached.token)
-
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return false
-	}
-	resp.Body.Close()
-	return true
-}
-
-// probeUpstreamTCP falls back to a TCP dial to check if the upstream host is reachable.
-func (s *APIServer) probeUpstreamTCP() bool {
-	baseURL := s.ensureScheme(s.cfg.BaseUrl)
-
-	u, err := parseURL(baseURL)
-	if err != nil {
-		return false
-	}
-
-	host := u.Host
-	if !strings.Contains(host, ":") {
-		port := "80"
-		if u.Scheme == "https" {
-			port = "443"
-		}
-		host = net.JoinHostPort(host, port)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	dialer := &net.Dialer{}
-	conn, err := dialer.DialContext(ctx, "tcp", host)
-	if err != nil {
-		return false
-	}
-	conn.Close()
-	return true
-}
-
-// ensureScheme prepends "https://" to rawURL if it lacks a scheme.
-func (s *APIServer) ensureScheme(rawURL string) string {
-	if !strings.HasPrefix(rawURL, "http") {
-		return "https://" + rawURL
-	}
-	return rawURL
-}
-
-// checkFFmpegStatus checks if FFmpeg is available in PATH
-func (s *APIServer) checkFFmpegStatus() map[string]any {
-	result := map[string]any{
-		"status": "not_found",
-	}
-
-	if _, err := exec.LookPath("ffmpeg"); err == nil {
-		result["status"] = "available"
-	}
-
-	return result
-}
-
-// parseURL is a simple URL parser that handles host extraction
-func parseURL(rawURL string) (*url.URL, error) {
-	return url.Parse(rawURL)
-}
-
-// getOrRefreshUpstreamClient returns a cached upstream client or creates a new one.
-// It is thread-safe and handles token expiration by refreshing when needed.
-// Returns the client, cloned config with token set, and any error.
 func (s *APIServer) getOrRefreshUpstreamClient(ctx context.Context) (*client.Client, *config.Config, error) {
 	// Fast path: check if we have a valid cached entry
 	s.upstreamCacheMu.RLock()
@@ -847,190 +437,6 @@ func (s *APIServer) getOrRefreshUpstreamClient(ctx context.Context) (*client.Cli
 	return apiClient, loginCfg, nil
 }
 
-func (s *APIServer) coursesHandler(w http.ResponseWriter, r *http.Request) {
-	apiClient, cfg, err := s.getOrRefreshUpstreamClient(r.Context())
-	if err != nil {
-		respondWithError(w, http.StatusBadGateway, "LOGIN_FAILED", err.Error(), "courses", &retryHint{Retryable: true, RetryAfter: 30})
-		return
-	}
-
-	courses, err := apiClient.GetCourses(r.Context(), cfg)
-	if err != nil {
-		respondWithError(w, http.StatusBadGateway, "COURSES_FETCH_FAILED", err.Error(), "courses", &retryHint{Retryable: true, RetryAfter: 30})
-		return
-	}
-
-	respondWithEnvelope(w, http.StatusOK, "courses", courses)
-}
-
-func (s *APIServer) lecturesHandler(w http.ResponseWriter, r *http.Request) {
-	subjectID := r.URL.Query().Get("subject_id")
-	if subjectID == "" {
-		subjectID = r.URL.Query().Get("subjectId")
-	}
-	sessionID := r.URL.Query().Get("session_id")
-	if sessionID == "" {
-		sessionID = r.URL.Query().Get("sessionId")
-	}
-
-	if subjectID == "" || sessionID == "" {
-		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "subject_id and session_id query parameters required", "lectures", nil)
-		return
-	}
-
-	subjectInt, err := strconv.Atoi(subjectID)
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "subjectId must be a valid integer", "lectures", nil)
-		return
-	}
-	sessionInt, err := strconv.Atoi(sessionID)
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "sessionId must be a valid integer", "lectures", nil)
-		return
-	}
-
-	apiClient, cfg, loginErr := s.getOrRefreshUpstreamClient(r.Context())
-	if loginErr != nil {
-		respondWithError(w, http.StatusBadGateway, "LOGIN_FAILED", loginErr.Error(), "lectures", &retryHint{Retryable: true, RetryAfter: 30})
-		return
-	}
-
-	lectures, err := apiClient.GetLectures(r.Context(), cfg, client.Course{SubjectID: subjectInt, SessionID: sessionInt})
-	if err != nil {
-		respondWithError(w, http.StatusBadGateway, "LECTURES_FETCH_FAILED", err.Error(), "lectures", &retryHint{Retryable: true, RetryAfter: 30})
-		return
-	}
-
-	respondWithEnvelope(w, http.StatusOK, "lectures", lectures)
-}
-
-func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
-	var req createJobRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body", "createJob", nil)
-		return
-	}
-
-	if req.SubjectID <= 0 {
-		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "subjectId is required and must be greater than 0", "createJob", nil)
-		return
-	}
-	if req.SessionID <= 0 {
-		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "sessionId is required and must be greater than 0", "createJob", nil)
-		return
-	}
-	// API uses 1-based indexing to match CLI semantics (--start/--end are 1-based)
-	// Validate 1-based input, store 1-based in Job, convert to 0-based for execution
-	if req.StartIndex < 1 {
-		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "startIndex must be 1 or greater (1-based, matching CLI --start)", "createJob", nil)
-		return
-	}
-	if req.EndIndex < req.StartIndex {
-		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "endIndex must be greater than or equal to startIndex", "createJob", nil)
-		return
-	}
-
-	// Validate idempotency key if provided
-	if req.IdempotencyKey != "" {
-		if len(req.IdempotencyKey) > maxIdempotencyKeyLength {
-			respondWithError(w, http.StatusBadRequest, "INVALID_IDEMPOTENCY_KEY", fmt.Sprintf("idempotencyKey must be at most %d characters", maxIdempotencyKeyLength), "createJob", nil)
-			return
-		}
-	}
-
-	mergedCfg, err := mergeConfigWithJobOptions(s.cfg, req.effectiveJobConfig())
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "INVALID_JOB_CONFIG", err.Error(), "createJob", nil)
-		return
-	}
-
-	// Store 1-based indices in Job (will be converted to 0-based during execution)
-	job, created := s.jobStore.CreateJobWithKey(req.SubjectID, req.SessionID, req.StartIndex, req.EndIndex, mergedCfg, req.IdempotencyKey)
-
-	if !created {
-		// Duplicate idempotency key - return existing job with 409 Conflict
-		respondWithEnvelope(w, http.StatusConflict, "createJob", map[string]any{
-			"job":       job,
-			"duplicate": true,
-		})
-		return
-	}
-
-	go s.executeJob(job.ID)
-
-	respondWithEnvelope(w, http.StatusCreated, "createJob", job)
-}
-
-func (s *APIServer) listJobsHandler(w http.ResponseWriter, _ *http.Request) {
-	respondWithEnvelope(w, http.StatusOK, "listJobs", s.jobStore.ListJobs())
-}
-
-func (s *APIServer) getJobHandler(w http.ResponseWriter, r *http.Request) {
-	jobID := mux.Vars(r)["id"]
-	if jobID == "" {
-		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "Job ID is required", "getJob", nil)
-		return
-	}
-
-	job, ok := s.jobStore.GetJob(jobID)
-	if !ok {
-		respondWithError(w, http.StatusNotFound, "JOB_NOT_FOUND", "Job not found", "getJob", nil)
-		return
-	}
-
-	respondWithEnvelope(w, http.StatusOK, "getJob", job)
-}
-
-func (s *APIServer) deleteJobHandler(w http.ResponseWriter, r *http.Request) {
-	jobID := mux.Vars(r)["id"]
-	if jobID == "" {
-		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "Job ID is required", "cancelJob", nil)
-		return
-	}
-
-	job, err := s.jobStore.CancelJob(jobID)
-	if err != nil {
-		if err.Error() == "not_found" {
-			respondWithError(w, http.StatusNotFound, "JOB_NOT_FOUND", "Job not found", "cancelJob", nil)
-			return
-		}
-		if strings.HasPrefix(err.Error(), "terminal:") {
-			respondWithError(w, http.StatusBadRequest, "JOB_CANNOT_CANCEL", "Cannot cancel job in terminal state", "cancelJob", nil, map[string]string{"status": strings.TrimPrefix(err.Error(), "terminal:")})
-			return
-		}
-		respondWithError(w, http.StatusInternalServerError, "CANCEL_FAILED", err.Error(), "cancelJob", &retryHint{Retryable: true, RetryAfter: 10})
-		return
-	}
-
-	broadcastEvent(s.wsHub, map[string]any{
-		"type":      "job.cancelled",
-		"jobId":     jobID,
-		"status":    statusCanceled,
-		"progress":  job.Progress,
-		"timestamp": time.Now().Unix(),
-	})
-
-	respondWithSuccess(w, "cancelJob", map[string]any{"id": jobID, "status": statusCanceled})
-}
-
-func (s *APIServer) websocketHandler(w http.ResponseWriter, r *http.Request) {
-	conn, err := s.upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Printf("WebSocket upgrade error: %v", err)
-		return
-	}
-	defer conn.Close()
-
-	s.wsHub.Register(conn)
-	defer s.wsHub.Unregister(conn)
-
-	for {
-		if _, _, err := conn.ReadMessage(); err != nil {
-			break
-		}
-	}
-}
-
 func (s *APIServer) executeJob(jobID string) {
 	job, ok := s.jobStore.GetJob(jobID)
 	if !ok {
@@ -1067,36 +473,27 @@ func (s *APIServer) executeJob(jobID string) {
 	s.completeJob(jobID, finalOutputs)
 }
 
-func (s *APIServer) updateRunningProgress(jobID string, progress float64, phase string, details map[string]any) bool {
+func (s *APIServer) updateRunningProgress(jobID string, progress float64, phase string, details any) bool {
 	job, ok := s.jobStore.GetJob(jobID)
 	if !ok {
 		return false
 	}
 	if job.ctx.Err() != nil || job.Status == statusCanceled {
 		s.jobStore.UpdateJob(jobID, statusCanceled, progress, "")
-		broadcastEvent(s.wsHub, map[string]any{
-			"type":      "job.cancelled",
-			"jobId":     jobID,
-			"status":    statusCanceled,
-			"progress":  progress,
-			"timestamp": time.Now().Unix(),
-		})
+		evt := newWSEvent("job.cancelled", jobID)
+		evt.Status = statusCanceled
+		evt.Progress = progress
+		broadcastEvent(s.wsHub, evt)
 		return false
 	}
 
 	s.jobStore.UpdateJob(jobID, "running", progress, "")
-	payload := map[string]any{
-		"type":      "job.progress",
-		"jobId":     jobID,
-		"status":    "running",
-		"progress":  progress,
-		"phase":     phase,
-		"timestamp": time.Now().Unix(),
-	}
-	if details != nil {
-		payload["details"] = details
-	}
-	broadcastEvent(s.wsHub, payload)
+	evt := newWSEvent("job.progress", jobID)
+	evt.Status = "running"
+	evt.Progress = progress
+	evt.Phase = phase
+	evt.Details = details
+	broadcastEvent(s.wsHub, evt)
 	return true
 }
 
@@ -1111,12 +508,9 @@ func (s *APIServer) handleCancelIfNeeded(jobID string, jobErr error) bool {
 		s.jobStore.UpdateJob(jobID, statusCanceled, 0, "")
 	}
 
-	broadcastEvent(s.wsHub, map[string]any{
-		"type":      "job.cancelled",
-		"jobId":     jobID,
-		"status":    statusCanceled,
-		"timestamp": time.Now().Unix(),
-	})
+	evt := newWSEvent("job.cancelled", jobID)
+	evt.Status = statusCanceled
+	broadcastEvent(s.wsHub, evt)
 	return true
 }
 
@@ -1124,12 +518,9 @@ func (s *APIServer) startJob(jobID string) bool {
 	if !s.updateRunningProgress(jobID, 2, "initializing", nil) {
 		return false
 	}
-	broadcastEvent(s.wsHub, map[string]any{
-		"type":      "job.started",
-		"jobId":     jobID,
-		"status":    "running",
-		"timestamp": time.Now().Unix(),
-	})
+	evt := newWSEvent("job.started", jobID)
+	evt.Status = "running"
+	broadcastEvent(s.wsHub, evt)
 	return true
 }
 
@@ -1198,7 +589,7 @@ func selectJobLectures(job *Job, lectures client.Lectures) (client.Lectures, err
 	}
 	// Reverse lectures to match CLI's selectLectureRange behavior
 	// CLI reverses before slicing, so API must do the same for index alignment
-	reversed := reverseLecturesHelper(lectures)
+	reversed := lectures.Reverse()
 
 	// Apply default range handling (matching CLI's selectLectureRange behavior)
 	// If start <= 0, default to 1; if end <= 0, default to all available
@@ -1227,7 +618,7 @@ func selectJobLectures(job *Job, lectures client.Lectures) (client.Lectures, err
 	// Apply noaudio filter if configured
 	if job.Config.SkipNoAudio {
 		totalLectures := len(selected)
-		selected = filterNoAudioLectures(selected)
+		selected = selected.FilterNoAudio()
 		// Update job with filtered count
 		job.FilteredLectures = totalLectures - len(selected)
 	}
@@ -1237,28 +628,6 @@ func selectJobLectures(job *Job, lectures client.Lectures) (client.Lectures, err
 	}
 
 	return selected, nil
-}
-
-// reverseLecturesHelper reverses the order of lectures slice.
-// This matches CLI's selectLectureRange behavior for index alignment.
-func reverseLecturesHelper(lectures client.Lectures) client.Lectures {
-	reversed := make(client.Lectures, len(lectures))
-	for i := range lectures {
-		reversed[i] = lectures[len(lectures)-1-i]
-	}
-	return reversed
-}
-
-// filterNoAudioLectures filters out lectures with noaudio=1.
-func filterNoAudioLectures(lectures client.Lectures) client.Lectures {
-	filtered := make(client.Lectures, 0, len(lectures))
-	for _, lecture := range lectures {
-		if lecture.Noaudio == 1 {
-			continue
-		}
-		filtered = append(filtered, lecture)
-	}
-	return filtered
 }
 
 func (s *APIServer) maybeDownloadSlides(ctx context.Context, jobID string, jobCtx context.Context, apiClient *client.Client, cfg *config.Config, lectures client.Lectures) {
@@ -1277,7 +646,7 @@ func (s *APIServer) maybeDownloadSlides(ctx context.Context, jobID string, jobCt
 	}
 }
 
-func (s *APIServer) prepareDownload(ctx context.Context, jobID string, jobCtx context.Context, apiClient *client.Client, cfg *config.Config, selected client.Lectures) ([]downloader.ParsedPlaylist, *config.Config, bool) {
+func (s *APIServer) prepareDownload(ctx context.Context, jobID string, jobCtx context.Context, apiClient *client.Client, cfg *config.Config, selected client.Lectures) ([]client.ParsedPlaylist, *config.Config, bool) {
 	if !s.updateRunningProgress(jobID, 30, "fetching_playlists", nil) {
 		return nil, nil, false
 	}
@@ -1289,7 +658,7 @@ func (s *APIServer) prepareDownload(ctx context.Context, jobID string, jobCtx co
 		s.failJob(jobID, err.Error())
 		return nil, nil, false
 	}
-	playlists := toDownloaderPlaylists(clientPlaylists)
+	playlists := clientPlaylists
 	if len(playlists) == 0 {
 		s.failJob(jobID, "no downloadable playlists found")
 		return nil, nil, false
@@ -1299,7 +668,7 @@ func (s *APIServer) prepareDownload(ctx context.Context, jobID string, jobCtx co
 	return playlists, downloadCfg, true
 }
 
-func (s *APIServer) runPlaylistDownloads(ctx context.Context, cancelLocal context.CancelFunc, jobCtx context.Context, jobID string, apiClient *client.Client, downloadCfg *config.Config, playlists []downloader.ParsedPlaylist) ([]string, bool) {
+func (s *APIServer) runPlaylistDownloads(ctx context.Context, cancelLocal context.CancelFunc, jobCtx context.Context, jobID string, apiClient *client.Client, downloadCfg *config.Config, playlists []client.ParsedPlaylist) ([]string, bool) {
 	total := len(playlists)
 	workers := downloadCfg.NumWorkers
 	if workers < 1 {
@@ -1331,25 +700,19 @@ func (s *APIServer) runPlaylistDownloads(ctx context.Context, cancelLocal contex
 func (s *APIServer) completeJob(jobID string, finalOutputs []string) {
 	s.jobStore.SetOutputs(jobID, finalOutputs)
 	s.jobStore.UpdateJob(jobID, "completed", 100, "")
-	broadcastEvent(s.wsHub, map[string]any{
-		"type":      "job.completed",
-		"jobId":     jobID,
-		"status":    "completed",
-		"progress":  100,
-		"outputs":   finalOutputs,
-		"timestamp": time.Now().Unix(),
-	})
+	evt := newWSEvent("job.completed", jobID)
+	evt.Status = "completed"
+	evt.Progress = 100
+	evt.Outputs = finalOutputs
+	broadcastEvent(s.wsHub, evt)
 }
 
 func (s *APIServer) failJob(jobID, errMsg string) {
 	s.jobStore.UpdateJob(jobID, "failed", 0, errMsg)
-	broadcastEvent(s.wsHub, map[string]any{
-		"type":      "job.failed",
-		"jobId":     jobID,
-		"status":    "failed",
-		"error":     errMsg,
-		"timestamp": time.Now().Unix(),
-	})
+	evt := newWSEvent("job.failed", jobID)
+	evt.Status = "failed"
+	evt.Error = errMsg
+	broadcastEvent(s.wsHub, evt)
 }
 
 func mergeConfigWithJobOptions(globalCfg *config.Config, opts *JobConfigOptions) (*config.Config, error) {
@@ -1402,12 +765,6 @@ func cloneConfig(cfg *config.Config) *config.Config {
 		return nil
 	}
 	clone := *cfg
-	if clone.BaseUrl == "" && clone.BaseURL != "" {
-		clone.BaseUrl = clone.BaseURL
-	}
-	if clone.BaseURL == "" && clone.BaseUrl != "" {
-		clone.BaseURL = clone.BaseUrl
-	}
 	return &clone
 }
 
@@ -1420,22 +777,6 @@ func mapViewsForDownloader(views string) string {
 	default:
 		return "both"
 	}
-}
-
-func toDownloaderPlaylists(in []client.ParsedPlaylist) []downloader.ParsedPlaylist {
-	out := make([]downloader.ParsedPlaylist, 0, len(in))
-	for _, playlist := range in {
-		out = append(out, downloader.ParsedPlaylist{
-			KeyURL:           playlist.KeyURL,
-			Title:            playlist.Title,
-			FirstViewURLs:    playlist.FirstViewURLs,
-			SecondViewURLs:   playlist.SecondViewURLs,
-			ID:               playlist.Id,
-			SeqNo:            playlist.SeqNo,
-			HasMultipleViews: playlist.HasMultipleViews,
-		})
-	}
-	return out
 }
 
 func extractJoinOutputs(result downloader.JoinResult) []string {
@@ -1453,16 +794,15 @@ func extractJoinOutputs(result downloader.JoinResult) []string {
 }
 
 func downloadLectureSlide(ctx context.Context, c *client.Client, cfg *config.Config, lecture client.Lecture) error {
-	baseURL := cfg.BaseUrl
-	if baseURL == "" {
-		baseURL = cfg.BaseURL
+	if cfg.BaseURL == "" {
+		return errors.New("baseUrl is required")
 	}
 
 	if err := os.MkdirAll(cfg.DownloadLocation, 0o755); err != nil {
 		return err
 	}
 
-	url := fmt.Sprintf("%s/videos/%d/auto-generated-pdf", baseURL, lecture.VideoID)
+	url := fmt.Sprintf("%s/videos/%d/auto-generated-pdf", cfg.BaseURL, lecture.VideoID)
 	resp, err := c.GetAuthorizedWithToken(ctx, url, cfg.Token)
 	if err != nil {
 		return err
@@ -1521,11 +861,5 @@ func applyJobConfigOverrides(cfg *config.Config, opts *JobConfigOptions) {
 	}
 	if opts.SkipNoAudio != nil {
 		cfg.SkipNoAudio = *opts.SkipNoAudio
-	}
-}
-
-func broadcastEvent(hub *WSHub, payload map[string]any) {
-	if err := hub.Broadcast(payload); err != nil {
-		log.Printf("websocket broadcast failed: %v", err)
 	}
 }

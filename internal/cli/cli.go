@@ -436,7 +436,7 @@ func executeDownload(args []string) (downloadResult, error) {
 	// Apply noaudio filter if flag is set
 	totalLectures := len(selected)
 	if cfg.SkipNoAudio {
-		selected = filterNoAudioLectures(selected)
+		selected = selected.FilterNoAudio()
 	}
 
 	if len(selected) == 0 {
@@ -587,7 +587,7 @@ func applyLectureFilters(lectures client.Lectures, skipEmpty, skipNoAudio bool) 
 	}
 	if skipNoAudio {
 		before := len(lectures)
-		lectures = filterNoAudioLectures(lectures)
+		lectures = lectures.FilterNoAudio()
 		noaudioFiltered = before - len(lectures)
 	}
 
@@ -662,7 +662,7 @@ func downloadLectures(ctx context.Context, cfg *config.Config, apiClient *client
 	}
 
 	d := downloader.New(cfg, apiClient)
-	playlists, err := d.FetchLecturePlaylists(ctx, toDownloaderLectures(lectures))
+	playlists, err := d.FetchLecturePlaylists(ctx, lectures)
 	if err != nil {
 		return downloadResult{}, err
 	}
@@ -717,24 +717,8 @@ func appendOutputPaths(outputPaths []string, result downloader.JoinResult) []str
 	return outputPaths
 }
 
-func toDownloaderLectures(lectures client.Lectures) []downloader.Lecture {
-	items := make([]downloader.Lecture, 0, len(lectures))
-	for _, lecture := range lectures {
-		items = append(items, downloader.Lecture{
-			Ttid:  lecture.Ttid,
-			Topic: lecture.Topic,
-			SeqNo: lecture.SeqNo,
-		})
-	}
-	return items
-}
-
 func reverseLectures(lectures client.Lectures) client.Lectures {
-	reversed := make(client.Lectures, len(lectures))
-	for i := range lectures {
-		reversed[i] = lectures[len(lectures)-1-i]
-	}
-	return reversed
+	return lectures.Reverse()
 }
 
 func selectLectureRange(lectures client.Lectures, start, end int) (client.Lectures, error) {
@@ -768,17 +752,6 @@ func filterEmptyLectures(lectures client.Lectures) client.Lectures {
 	return filtered
 }
 
-func filterNoAudioLectures(lectures client.Lectures) client.Lectures {
-	filtered := make(client.Lectures, 0, len(lectures))
-	for _, lecture := range lectures {
-		if lecture.Noaudio == 1 {
-			continue
-		}
-		filtered = append(filtered, lecture)
-	}
-	return filtered
-}
-
 func countNoAudioLectures(lectures client.Lectures) int {
 	count := 0
 	for _, lecture := range lectures {
@@ -797,7 +770,7 @@ func warnNoAudioLectures(lectures client.Lectures, skipNoAudio bool) {
 	}
 }
 
-func countChunks(playlists []downloader.ParsedPlaylist, views string) int {
+func countChunks(playlists []client.ParsedPlaylist, views string) int {
 	total := 0
 	for _, playlist := range playlists {
 		if views != "right" {

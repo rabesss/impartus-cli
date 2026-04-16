@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/downloader"
 )
 
@@ -20,8 +21,8 @@ func newPlaylistDownloadRunner(workers int) playlistDownloadRunner {
 	return playlistDownloadRunner{workers: workers}
 }
 
-func (r playlistDownloadRunner) run(ctx context.Context, cancel context.CancelFunc, d *downloader.Downloader, playlists []downloader.ParsedPlaylist, onProgress func(done int) bool) ([]string, error) {
-	tasks := make(chan downloader.ParsedPlaylist)
+func (r playlistDownloadRunner) run(ctx context.Context, cancel context.CancelFunc, d *downloader.Downloader, playlists []client.ParsedPlaylist, onProgress func(done int) bool) ([]string, error) {
+	tasks := make(chan client.ParsedPlaylist)
 	errCh := make(chan error, 1)
 	doneCh := make(chan struct{})
 	outputs := make([]string, 0)

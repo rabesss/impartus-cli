@@ -76,7 +76,26 @@ type ParsedPlaylist struct {
 	Title            string
 	FirstViewURLs    []string
 	SecondViewURLs   []string
-	Id               int
+	ID               int
 	SeqNo            int
 	HasMultipleViews bool
+}
+
+func (l Lectures) Reverse() Lectures {
+	reversed := make(Lectures, len(l))
+	for i := range l {
+		reversed[i] = l[len(l)-1-i]
+	}
+	return reversed
+}
+
+func (l Lectures) FilterNoAudio() Lectures {
+	filtered := make(Lectures, 0, len(l))
+	for _, lecture := range l {
+		if lecture.Noaudio == 1 {
+			continue
+		}
+		filtered = append(filtered, lecture)
+	}
+	return filtered
 }

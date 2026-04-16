@@ -23,8 +23,7 @@ type ProgressConfig struct {
 type Config struct {
 	Username         string  `json:"username"`
 	Password         string  `json:"password"`
-	BaseUrl          string  `json:"baseUrl"`
-	BaseURL          string  `json:"-"`
+	BaseURL          string  `json:"baseUrl"`
 	Quality          string  `json:"quality"`
 	Views            string  `json:"views"`
 	DownloadLocation string  `json:"downloadLocation"`
@@ -53,20 +52,10 @@ var (
 )
 
 func (c *Config) ApplyDefaults() {
-	c.applyURLDefaults()
 	c.applyPathDefaults()
 	c.applyWorkerDefaults()
 	c.applyRateLimitDefaults()
 	c.applyProgressDefaults()
-}
-
-func (c *Config) applyURLDefaults() {
-	if c.BaseUrl == "" && c.BaseURL != "" {
-		c.BaseUrl = c.BaseURL
-	}
-	if c.BaseURL == "" && c.BaseUrl != "" {
-		c.BaseURL = c.BaseUrl
-	}
 }
 
 func (c *Config) applyPathDefaults() {
@@ -113,13 +102,6 @@ func (c *Config) applyProgressDefaults() {
 }
 
 func (c *Config) Validate() error {
-	if c.BaseUrl == "" && c.BaseURL != "" {
-		c.BaseUrl = c.BaseURL
-	}
-	if c.BaseURL == "" && c.BaseUrl != "" {
-		c.BaseURL = c.BaseUrl
-	}
-
 	if err := c.validateCore(); err != nil {
 		return err
 	}
@@ -136,7 +118,7 @@ func (c *Config) validateCore() error {
 	if c.Username == "" || c.Password == "" {
 		return fmt.Errorf("username and password are required")
 	}
-	if c.BaseUrl == "" {
+	if c.BaseURL == "" {
 		return fmt.Errorf("baseUrl is required")
 	}
 	if c.NumWorkers < 1 || c.NumWorkers > 50 {
@@ -226,13 +208,6 @@ func Parse(path string) (*Config, error) {
 		return nil, fmt.Errorf("could not parse config json: %w", err)
 	}
 
-	if cfg.BaseUrl == "" && cfg.BaseURL != "" {
-		cfg.BaseUrl = cfg.BaseURL
-	}
-	if cfg.BaseURL == "" && cfg.BaseUrl != "" {
-		cfg.BaseURL = cfg.BaseUrl
-	}
-
 	return &cfg, nil
 }
 
@@ -269,7 +244,7 @@ func LoadResolved(path string) (*Config, error) {
 func applyEnvOverrides(cfg *Config) {
 	applyStringEnv("IMPARTUS_USERNAME", &cfg.Username)
 	applyStringEnv("IMPARTUS_PASSWORD", &cfg.Password)
-	applyStringEnv("IMPARTUS_BASE_URL", &cfg.BaseUrl)
+	applyStringEnv("IMPARTUS_BASE_URL", &cfg.BaseURL)
 	applyStringEnv("IMPARTUS_QUALITY", &cfg.Quality)
 	applyStringEnv("IMPARTUS_VIEWS", &cfg.Views)
 	applyStringEnv("IMPARTUS_DOWNLOAD_LOCATION", &cfg.DownloadLocation)
@@ -286,12 +261,6 @@ func applyEnvOverrides(cfg *Config) {
 }
 
 func applyCanonicalFields(cfg *Config) {
-	if cfg.BaseUrl == "" && cfg.BaseURL != "" {
-		cfg.BaseUrl = cfg.BaseURL
-	}
-	if cfg.BaseURL == "" && cfg.BaseUrl != "" {
-		cfg.BaseURL = cfg.BaseUrl
-	}
 	if cfg.Views != "" {
 		cfg.Views = strings.ToLower(strings.TrimSpace(cfg.Views))
 	}

@@ -77,9 +77,3 @@ func SanitizeMap(data map[string]interface{}) map[string]interface{} {
 	}
 	return result
 }
-
-// SanitizeString redacts common sensitive patterns from a string.
-// This is an alias for RedactSensitive for clarity.
-func SanitizeString(s string) string {
-	return RedactSensitive(s)
-}
