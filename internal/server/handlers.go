@@ -66,26 +66,21 @@ func (s *APIServer) checkConfigStatus() configCheckResult {
 	}
 
 	result := configCheckResult{Status: "ok"}
-
-	if s.cfg.Username == "" {
-		result.Username = "missing"
-		result.Status = "misconfigured"
-	} else {
-		result.Username = "ok"
+	checks := []struct {
+		value string
+		field *string
+	}{
+		{s.cfg.Username, &result.Username},
+		{s.cfg.Password, &result.Password},
+		{s.cfg.BaseURL, &result.BaseURL},
 	}
-
-	if s.cfg.Password == "" {
-		result.Password = "missing"
-		result.Status = "misconfigured"
-	} else {
-		result.Password = "ok"
-	}
-
-	if s.cfg.BaseURL == "" {
-		result.BaseURL = "missing"
-		result.Status = "misconfigured"
-	} else {
-		result.BaseURL = "ok"
+	for _, check := range checks {
+		if check.value == "" {
+			*check.field = "missing"
+			result.Status = "misconfigured"
+		} else {
+			*check.field = "ok"
+		}
 	}
 
 	return result
