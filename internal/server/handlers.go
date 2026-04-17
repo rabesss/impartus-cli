@@ -47,7 +47,7 @@ func (s *APIServer) healthHandler(w http.ResponseWriter, _ *http.Request) {
 		overallStatus = "degraded"
 	}
 
-	respondWithEnvelope(w, http.StatusOK, "health", healthResponse{
+	respondWithEnvelope(w, http.StatusOK, "getHealth", healthResponse{
 		Status:   overallStatus,
 		Config:   configStatus,
 		Upstream: upstreamStatus,
@@ -175,17 +175,17 @@ func (s *APIServer) checkFFmpegStatus() statusCheckResult {
 func (s *APIServer) coursesHandler(w http.ResponseWriter, r *http.Request) {
 	apiClient, cfg, err := s.getOrRefreshUpstreamClient(r.Context())
 	if err != nil {
-		respondWithError(w, http.StatusBadGateway, "LOGIN_FAILED", err.Error(), "courses", &retryHint{Retryable: true, RetryAfter: 30})
+		respondWithError(w, http.StatusBadGateway, "LOGIN_FAILED", err.Error(), "listCourses", &retryHint{Retryable: true, RetryAfter: 30})
 		return
 	}
 
 	courses, err := apiClient.GetCourses(r.Context(), cfg)
 	if err != nil {
-		respondWithError(w, http.StatusBadGateway, "COURSES_FETCH_FAILED", err.Error(), "courses", &retryHint{Retryable: true, RetryAfter: 30})
+		respondWithError(w, http.StatusBadGateway, "COURSES_FETCH_FAILED", err.Error(), "listCourses", &retryHint{Retryable: true, RetryAfter: 30})
 		return
 	}
 
-	respondWithEnvelope(w, http.StatusOK, "courses", courses)
+	respondWithEnvelope(w, http.StatusOK, "listCourses", courses)
 }
 
 func (s *APIServer) lecturesHandler(w http.ResponseWriter, r *http.Request) {
@@ -199,34 +199,34 @@ func (s *APIServer) lecturesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if subjectID == "" || sessionID == "" {
-		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "subject_id and session_id query parameters required", "lectures", nil)
+		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "subject_id and session_id query parameters required", "listLectures", nil)
 		return
 	}
 
 	subjectInt, err := strconv.Atoi(subjectID)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "subjectId must be a valid integer", "lectures", nil)
+		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "subjectId must be a valid integer", "listLectures", nil)
 		return
 	}
 	sessionInt, err := strconv.Atoi(sessionID)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "sessionId must be a valid integer", "lectures", nil)
+		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "sessionId must be a valid integer", "listLectures", nil)
 		return
 	}
 
 	apiClient, cfg, loginErr := s.getOrRefreshUpstreamClient(r.Context())
 	if loginErr != nil {
-		respondWithError(w, http.StatusBadGateway, "LOGIN_FAILED", loginErr.Error(), "lectures", &retryHint{Retryable: true, RetryAfter: 30})
+		respondWithError(w, http.StatusBadGateway, "LOGIN_FAILED", loginErr.Error(), "listLectures", &retryHint{Retryable: true, RetryAfter: 30})
 		return
 	}
 
 	lectures, err := apiClient.GetLectures(r.Context(), cfg, client.Course{SubjectID: subjectInt, SessionID: sessionInt})
 	if err != nil {
-		respondWithError(w, http.StatusBadGateway, "LECTURES_FETCH_FAILED", err.Error(), "lectures", &retryHint{Retryable: true, RetryAfter: 30})
+		respondWithError(w, http.StatusBadGateway, "LECTURES_FETCH_FAILED", err.Error(), "listLectures", &retryHint{Retryable: true, RetryAfter: 30})
 		return
 	}
 
-	respondWithEnvelope(w, http.StatusOK, "lectures", lectures)
+	respondWithEnvelope(w, http.StatusOK, "listLectures", lectures)
 }
 
 func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
@@ -322,7 +322,7 @@ func (s *APIServer) deleteJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	evt := newWSEvent("job.cancelled", jobID)
+	evt := newWSEvent("job.canceled", jobID)
 	evt.Status = StatusCanceled
 	evt.Progress = job.Progress
 	broadcastEvent(s.wsHub, evt)

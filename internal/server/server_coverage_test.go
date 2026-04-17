@@ -429,7 +429,7 @@ func TestHealthHandler(t *testing.T) {
 	if !ok {
 		t.Fatal("expected meta object in response")
 	}
-	if meta["command"] != "health" {
+	if meta["command"] != "getHealth" {
 		t.Errorf("expected meta.command 'health', got %v", meta["command"])
 	}
 	if meta["mode"] != "api" {

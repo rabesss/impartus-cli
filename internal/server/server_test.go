@@ -640,7 +640,7 @@ func TestHealthEndpointReturnsStructuredStatus(t *testing.T) {
 	if !metaOK {
 		t.Fatal("expected meta field in response")
 	}
-	if meta["command"] != "health" {
+	if meta["command"] != "getHealth" {
 		t.Errorf("expected command=health, got %v", meta["command"])
 	}
 	if meta["mode"] != "api" {

@@ -205,7 +205,7 @@ func (s *APIServer) updateRunningProgress(jobID string, progress float64, phase 
 	}
 	if job.ctx.Err() != nil || job.Status == StatusCanceled {
 		s.jobStore.UpdateJob(jobID, StatusCanceled, progress, "")
-		evt := newWSEvent("job.cancelled", jobID)
+		evt := newWSEvent("job.canceled", jobID)
 		evt.Status = StatusCanceled
 		evt.Progress = progress
 		broadcastEvent(s.wsHub, evt)
@@ -233,7 +233,7 @@ func (s *APIServer) handleCancelIfNeeded(jobID string, jobErr error) bool {
 		s.jobStore.UpdateJob(jobID, StatusCanceled, 0, "")
 	}
 
-	evt := newWSEvent("job.cancelled", jobID)
+	evt := newWSEvent("job.canceled", jobID)
 	evt.Status = StatusCanceled
 	broadcastEvent(s.wsHub, evt)
 	return true

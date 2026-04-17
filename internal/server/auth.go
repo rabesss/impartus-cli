@@ -104,9 +104,10 @@ type successEnvelope struct {
 }
 
 type errorEnvelope struct {
-	Success bool            `json:"success"`
-	Error   *errorBody      `json:"error"`
-	Meta    responseMeta    `json:"meta"`
+	Success bool         `json:"success"`
+	Data    any          `json:"data"`
+	Error   *errorBody   `json:"error"`
+	Meta    responseMeta `json:"meta"`
 }
 
 type errorBody struct {
@@ -199,18 +200,18 @@ func (s *APIServer) authMiddleware(next http.Handler) http.Handler {
 
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
-			respondWithError(w, http.StatusUnauthorized, "MISSING_TOKEN", "Authorization header required", "auth", nil)
+			respondWithError(w, http.StatusUnauthorized, "MISSING_TOKEN", "Authorization header required", "validateAuth", nil)
 			return
 		}
 
 		if !strings.HasPrefix(authHeader, "Bearer ") {
-			respondWithError(w, http.StatusUnauthorized, "INVALID_TOKEN_FORMAT", "Expected 'Bearer <token>'", "auth", nil)
+			respondWithError(w, http.StatusUnauthorized, "INVALID_TOKEN_FORMAT", "Expected 'Bearer <token>'", "validateAuth", nil)
 			return
 		}
 
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 		if !s.tokenStore.IsValid(token) {
-			respondWithError(w, http.StatusUnauthorized, "INVALID_TOKEN", "Token is invalid or expired", "auth", nil)
+			respondWithError(w, http.StatusUnauthorized, "INVALID_TOKEN", "Token is invalid or expired", "validateAuth", nil)
 			return
 		}
 
