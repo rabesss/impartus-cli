@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/downloader"
@@ -519,4 +521,134 @@ func TestExtractJoinOutputs(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ============================================================================
+// getJobHandler Tests
+// ============================================================================
+
+func TestGetJobHandler_Success(t *testing.T) {
+	s := NewAPIServer("8080", validServerConfig())
+	token := setupAuth(t, s)
+
+	cfg := &config.Config{DownloadLocation: "./downloads"}
+	job := s.jobStore.CreateJob(1, 1, 1, 5, cfg)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+job.ID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req = mux.SetURLVars(req, map[string]string{"id": job.ID})
+	rec := httptest.NewRecorder()
+	s.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d, body: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+	if success, ok := resp["success"].(bool); !ok || !success {
+		t.Error("expected success=true")
+	}
+}
+
+func TestGetJobHandler_NotFound(t *testing.T) {
+	s := NewAPIServer("8080", validServerConfig())
+	token := setupAuth(t, s)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/nonexistent", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req = mux.SetURLVars(req, map[string]string{"id": "nonexistent"})
+	rec := httptest.NewRecorder()
+	s.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d, body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// ============================================================================
+// deleteJobHandler Tests
+// ============================================================================
+
+func TestDeleteJobHandler_Success(t *testing.T) {
+	s := NewAPIServer("8080", validServerConfig())
+	token := setupAuth(t, s)
+
+	cfg := &config.Config{DownloadLocation: "./downloads"}
+	job := s.jobStore.CreateJob(1, 1, 1, 5, cfg)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/jobs/"+job.ID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req = mux.SetURLVars(req, map[string]string{"id": job.ID})
+	rec := httptest.NewRecorder()
+	s.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "cancel") {
+		t.Errorf("expected cancel status, got: %s", rec.Body.String())
+	}
+}
+
+func TestDeleteJobHandler_NotFound(t *testing.T) {
+	s := NewAPIServer("8080", validServerConfig())
+	token := setupAuth(t, s)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/jobs/nonexistent", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req = mux.SetURLVars(req, map[string]string{"id": "nonexistent"})
+	rec := httptest.NewRecorder()
+	s.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d, body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDeleteJobHandler_TerminalJob(t *testing.T) {
+	s := NewAPIServer("8080", validServerConfig())
+	token := setupAuth(t, s)
+
+	cfg := &config.Config{DownloadLocation: "./downloads"}
+	job := s.jobStore.CreateJob(1, 1, 1, 5, cfg)
+	s.jobStore.UpdateJob(job.ID, StatusCompleted, 100, "")
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/jobs/"+job.ID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req = mux.SetURLVars(req, map[string]string{"id": job.ID})
+	rec := httptest.NewRecorder()
+	s.router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d, body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "CANNOT_CANCEL") {
+		t.Errorf("expected CANNOT_CANCEL error, got: %s", rec.Body.String())
+	}
+}
+
+// ============================================================================
+// store.saveToDisk Tests
+// ============================================================================
+
+func TestSaveToDisk_NoPersistence(t *testing.T) {
+	js := NewJobStore()
+	cfg := &config.Config{DownloadLocation: "./downloads"}
+	js.CreateJob(1, 1, 1, 5, cfg)
+	// Should not panic when no persistence is configured
+	js.saveToDisk()
+}
+
+func TestSaveToDisk_WithBadPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	js := NewJobStoreWithPersistence(filepath.Join(tmpDir, "jobs.json"))
+	cfg := &config.Config{DownloadLocation: "./downloads"}
+	js.CreateJob(1, 1, 1, 5, cfg)
+	// Corrupt the persistence path to trigger an error
+	js.persistence.path = "/nonexistent/dir/jobs.json"
+	// Should log a warning but not panic
+	js.saveToDisk()
 }

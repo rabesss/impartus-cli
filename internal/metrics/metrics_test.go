@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -223,4 +224,85 @@ func TestRecordDownloadWithInitializedMetrics(t *testing.T) {
 	m.RecordDownload(ctx, 5*time.Second, 1024, true)
 	m.RecordDownload(ctx, time.Second, 0, false)
 	// No assertions on values (manual reader doesn't expose easily), just no panic
+}
+
+func TestMetricsHandlerCollectOutput(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	defer provider.Shutdown(context.Background())
+
+	m := &Metrics{reader: reader}
+
+	handler := m.MetricsHandler()
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "impartus-cli metrics") {
+		t.Errorf("expected metrics header in body, got: %s", body)
+	}
+}
+
+func TestRecordAPIRequestWithMetrics(t *testing.T) {
+	once = sync.Once{}
+	instance = nil
+	if err := Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer Get().Shutdown(context.Background())
+
+	m := Get()
+	ctx := context.Background()
+	m.RecordAPIRequest(ctx, "GET", "/api/courses", 50*time.Millisecond, 200)
+	m.RecordAPIRequest(ctx, "POST", "/api/jobs", 10*time.Millisecond, 500)
+	// Verify both success and error paths execute without panic
+}
+
+func TestRecordJobLifecycleWithMetrics(t *testing.T) {
+	once = sync.Once{}
+	instance = nil
+	if err := Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer Get().Shutdown(context.Background())
+
+	m := Get()
+	ctx := context.Background()
+	m.RecordJobStart(ctx)
+	m.RecordJobComplete(ctx, true)
+	m.RecordJobStart(ctx)
+	m.RecordJobComplete(ctx, false)
+	// Both success and failure paths exercised
+}
+
+func TestInitIdempotent(t *testing.T) {
+	once = sync.Once{}
+	instance = nil
+	if err := Init(); err != nil {
+		t.Fatalf("first Init: %v", err)
+	}
+	m1 := Get()
+	if err := Init(); err != nil {
+		t.Fatalf("second Init: %v", err)
+	}
+	m2 := Get()
+	if m1 != m2 {
+		t.Error("expected Init to be idempotent, got different instances")
+	}
+	defer m1.Shutdown(context.Background())
+}
+
+func TestMetricsHandlerReaderError(t *testing.T) {
+	m := &Metrics{reader: nil}
+	handler := m.MetricsHandler()
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d", rr.Code)
+	}
 }
