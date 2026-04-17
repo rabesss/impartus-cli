@@ -269,9 +269,9 @@ func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 	job, created := s.jobStore.CreateJobWithKey(req.SubjectID, req.SessionID, req.StartIndex, req.EndIndex, mergedCfg, req.IdempotencyKey)
 
 	if !created {
-		respondWithEnvelope(w, http.StatusConflict, "createJob", map[string]any{
-			"job":       job,
-			"duplicate": true,
+		respondWithEnvelope(w, http.StatusConflict, "createJob", createJobConflictResponse{
+			Job:       job,
+			Duplicate: true,
 		})
 		return
 	}
@@ -327,7 +327,7 @@ func (s *APIServer) deleteJobHandler(w http.ResponseWriter, r *http.Request) {
 	evt.Progress = job.Progress
 	broadcastEvent(s.wsHub, evt)
 
-	respondWithSuccess(w, "cancelJob", map[string]any{"id": jobID, "status": statusCanceled})
+	respondWithSuccess(w, "cancelJob", cancelJobResponse{ID: jobID, Status: statusCanceled})
 }
 
 func (s *APIServer) websocketHandler(w http.ResponseWriter, r *http.Request) {

@@ -33,7 +33,7 @@ type Course struct {
 type Lectures []Lecture
 
 type Lecture struct {
-	SubjectDescription  any    `json:"subjectDescription"`
+	SubjectDescription  string `json:"subjectDescription"`
 	SessionName         string `json:"sessionName"`
 	ClassroomName       string `json:"classroomName"`
 	FilePath2           string `json:"filePath2"`

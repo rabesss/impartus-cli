@@ -147,6 +147,21 @@ type upstreamCacheEntry struct {
 
 type UpstreamLoginFunc func(ctx context.Context, cfg *config.Config) (*client.Client, *config.Config, error)
 
+type loginResponse struct {
+	Token   string    `json:"token"`
+	Expires time.Time `json:"expires"`
+}
+
+type cancelJobResponse struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+}
+
+type createJobConflictResponse struct {
+	Job       *Job  `json:"job"`
+	Duplicate bool  `json:"duplicate"`
+}
+
 type APIServer struct {
 	cfg             *config.Config
 	jobStore        *JobStore

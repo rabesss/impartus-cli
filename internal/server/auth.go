@@ -187,10 +187,7 @@ func (s *APIServer) loginHandler(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: time.Now(),
 	})
 
-	respondWithSuccess(w, "login", map[string]any{
-		"token":   token,
-		"expires": expires,
-	})
+	respondWithSuccess(w, "login", loginResponse{Token: token, Expires: expires})
 }
 
 func (s *APIServer) authMiddleware(next http.Handler) http.Handler {

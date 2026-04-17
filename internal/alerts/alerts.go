@@ -207,11 +207,13 @@ func (a *Alerter) sendWebhook(ctx context.Context, payload any) error {
 	return nil
 }
 
-// Reset clears the default alerter, allowing it to be reinitialized from current environment.
+// Reset clears the default alerter and resets the init guard,
+// allowing it to be reinitialized from current environment.
 // This is useful for tests and alternate boot flows that need to pick up new environment
 // variables without being coupled to first-call order.
 func Reset() {
 	defaultAlerter = nil
+	once = sync.Once{}
 }
 
 // SendAlert sends an alert using the default alerter

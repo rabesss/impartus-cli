@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"os"
@@ -370,6 +371,7 @@ func (d *Downloader) downloadViewChunks(ctx context.Context, p *mpb.Progress, tr
 			bar.Increment()
 		}
 		if err != nil || chunkPath == "" {
+			log.Printf("chunk %d failed for %s view: %v", i, vc.Label, err)
 			failed++
 			continue
 		}
