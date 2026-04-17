@@ -145,13 +145,13 @@ func (c *Config) validateCore() error {
 	if c.NumWorkers < 1 || c.NumWorkers > 50 {
 		return fmt.Errorf("numWorkers must be between 1 and 50, got %d", c.NumWorkers)
 	}
-	if !oneOf(c.Quality, "144", "450", "720") {
+	if !OneOf(c.Quality, "144", "450", "720") {
 		return fmt.Errorf("quality must be one of: 144, 450, 720")
 	}
-	if !oneOf(c.Views, "first", "second", "both", "left", "right") {
+	if !OneOf(c.Views, "first", "second", "both", "left", "right") {
 		return fmt.Errorf("views must be one of: first, second, both, left, right")
 	}
-	if c.AudioOnly && !oneOf(c.AudioFormat, "mp3", "m4a", "aac", "opus") {
+	if c.AudioOnly && !OneOf(c.AudioFormat, "mp3", "m4a", "aac", "opus") {
 		return fmt.Errorf("audioFormat must be one of: mp3, m4a, aac, opus")
 	}
 	if c.RateLimit < 0.1 || c.RateLimit > 100 {
@@ -357,8 +357,8 @@ func Get() *Config {
 	return &loadedConfig
 }
 
-// oneOf checks if a value is in the allowed set.
-func oneOf(val string, allowed ...string) bool {
+// OneOf checks if a value is in the allowed set.
+func OneOf(val string, allowed ...string) bool {
 	for _, a := range allowed {
 		if val == a {
 			return true

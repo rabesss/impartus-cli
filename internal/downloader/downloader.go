@@ -122,8 +122,12 @@ func (d *Downloader) DownloadPlaylist(ctx context.Context, playlist client.Parse
 	}
 
 	downloadedPlaylist := DownloadedPlaylist{Playlist: playlist}
-	downloadedPlaylist.FirstViewChunks = d.downloadViewChunks(ctx, p, tracker, playlist, playlist.FirstViewURLs, "right", "first", "left", decryptionKey)
-	downloadedPlaylist.SecondViewChunks = d.downloadViewChunks(ctx, p, tracker, playlist, playlist.SecondViewURLs, "left", "second", "right", decryptionKey)
+	var firstFailed, secondFailed int
+	downloadedPlaylist.FirstViewChunks, firstFailed = d.downloadViewChunks(ctx, p, tracker, playlist, playlist.FirstViewURLs, "right", "first", "left", decryptionKey)
+	downloadedPlaylist.SecondViewChunks, secondFailed = d.downloadViewChunks(ctx, p, tracker, playlist, playlist.SecondViewURLs, "left", "second", "right", decryptionKey)
+	if firstFailed > 0 || secondFailed > 0 {
+		return downloadedPlaylist, fmt.Errorf("download incomplete: %d first-view and %d second-view chunks failed", firstFailed, secondFailed)
+	}
 
 	return downloadedPlaylist, nil
 }
@@ -368,25 +372,27 @@ func (d *Downloader) downloadWithRetry(ctx context.Context, url string, id int, 
 	return "", fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
 }
 
-func (d *Downloader) downloadViewChunks(ctx context.Context, p *mpb.Progress, tracker *ProgressTracker, playlist client.ParsedPlaylist, urls []string, skipView, requestView, displayView string, decryptionKey []byte) []string {
+func (d *Downloader) downloadViewChunks(ctx context.Context, p *mpb.Progress, tracker *ProgressTracker, playlist client.ParsedPlaylist, urls []string, skipView, requestView, displayView string, decryptionKey []byte) ([]string, int) {
 	if len(urls) == 0 || d.config.Views == skipView {
-		return nil
+		return nil, 0
 	}
 
 	bar := d.newViewBar(p, len(urls), playlist.SeqNo, displayView)
 	chunks := make([]string, 0, len(urls))
+	failed := 0
 	for i, url := range urls {
 		chunkPath, err := d.downloadAndDecryptChunk(ctx, url, playlist.ID, i, requestView, decryptionKey, tracker)
 		if bar != nil {
 			bar.Increment()
 		}
 		if err != nil || chunkPath == "" {
+			failed++
 			continue
 		}
 		chunks = append(chunks, chunkPath)
 	}
 
-	return chunks
+	return chunks, failed
 }
 
 func (d *Downloader) newViewBar(p *mpb.Progress, total, seqNo int, label string) *mpb.Bar {
