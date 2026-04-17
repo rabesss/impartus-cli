@@ -77,18 +77,11 @@ func (m *Metrics) Shutdown(ctx context.Context) error {
 func initMetrics(ctx context.Context) (*Metrics, error) {
 	m := &Metrics{}
 
-	// Create resource with service info
-	res, err := resource.Merge(
-		resource.Default(),
-		resource.NewWithAttributes(
-			semconv.SchemaURL,
-			semconv.ServiceName(serviceName),
-			semconv.ServiceVersion(buildinfo.Version),
-		),
+	// Create resource with service info (avoid schema conflict by using NewSchemaless)
+	res := resource.NewSchemaless(
+		semconv.ServiceName(serviceName),
+		semconv.ServiceVersion(buildinfo.Version),
 	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create resource: %w", err)
-	}
 
 	// Use ManualReader (metrics collected on-demand via /metrics endpoint).
 	// This avoids pulling in the heavy OTLP HTTP exporter and its transitive
