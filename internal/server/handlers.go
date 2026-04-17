@@ -323,11 +323,11 @@ func (s *APIServer) deleteJobHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	evt := newWSEvent("job.cancelled", jobID)
-	evt.Status = statusCanceled
+	evt.Status = StatusCanceled
 	evt.Progress = job.Progress
 	broadcastEvent(s.wsHub, evt)
 
-	respondWithSuccess(w, "cancelJob", cancelJobResponse{ID: jobID, Status: statusCanceled})
+	respondWithSuccess(w, "cancelJob", cancelJobResponse{ID: jobID, Status: StatusCanceled})
 }
 
 func (s *APIServer) websocketHandler(w http.ResponseWriter, r *http.Request) {

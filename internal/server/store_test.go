@@ -22,8 +22,8 @@ func TestJobStore_CreateAndGet(t *testing.T) {
 	if job.SessionID != 2 {
 		t.Errorf("SessionID = %d, want 2", job.SessionID)
 	}
-	if job.Status != statusPending {
-		t.Errorf("Status = %q, want %q", job.Status, statusPending)
+	if job.Status != StatusPending {
+		t.Errorf("Status = %q, want %q", job.Status, StatusPending)
 	}
 
 	got, ok := store.GetJob(job.ID)
@@ -53,11 +53,11 @@ func TestJobStore_UpdateJob(t *testing.T) {
 	cfg := &config.Config{}
 	job := store.CreateJob(1, 2, 1, 10, cfg)
 
-	store.UpdateJob(job.ID, statusRunning, 50.0, "")
+	store.UpdateJob(job.ID, StatusRunning, 50.0, "")
 
 	got, _ := store.GetJob(job.ID)
-	if got.Status != statusRunning {
-		t.Errorf("Status = %q, want %q", got.Status, statusRunning)
+	if got.Status != StatusRunning {
+		t.Errorf("Status = %q, want %q", got.Status, StatusRunning)
 	}
 	if got.Progress != 50.0 {
 		t.Errorf("Progress = %f, want 50.0", got.Progress)
@@ -73,8 +73,8 @@ func TestJobStore_CancelJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CancelJob error: %v", err)
 	}
-	if canceled.Status != statusCanceled {
-		t.Errorf("Status = %q, want %q", canceled.Status, statusCanceled)
+	if canceled.Status != StatusCanceled {
+		t.Errorf("Status = %q, want %q", canceled.Status, StatusCanceled)
 	}
 }
 
@@ -83,7 +83,7 @@ func TestJobStore_CancelTerminalJob(t *testing.T) {
 	cfg := &config.Config{}
 	job := store.CreateJob(1, 2, 1, 10, cfg)
 
-	store.UpdateJob(job.ID, statusCompleted, 100.0, "")
+	store.UpdateJob(job.ID, StatusCompleted, 100.0, "")
 	_, err := store.CancelJob(job.ID)
 	if err == nil {
 		t.Error("expected error canceling terminal job")
@@ -172,7 +172,7 @@ func TestJobStore_Persistence(t *testing.T) {
 
 	store1 := NewJobStoreWithPersistence(path)
 	job := store1.CreateJob(1, 2, 1, 10, cfg)
-	store1.UpdateJob(job.ID, statusCompleted, 100.0, "")
+	store1.UpdateJob(job.ID, StatusCompleted, 100.0, "")
 
 	// Create new store loading from same file
 	store2 := NewJobStoreWithPersistence(path)
@@ -183,8 +183,8 @@ func TestJobStore_Persistence(t *testing.T) {
 	if got.SubjectID != 1 {
 		t.Errorf("SubjectID = %d, want 1", got.SubjectID)
 	}
-	if got.Status != statusCompleted {
-		t.Errorf("Status = %q, want %q", got.Status, statusCompleted)
+	if got.Status != StatusCompleted {
+		t.Errorf("Status = %q, want %q", got.Status, StatusCompleted)
 	}
 }
 
@@ -200,8 +200,8 @@ func TestJobStore_PendingBecomesFailedOnLoad(t *testing.T) {
 
 	store2 := NewJobStoreWithPersistence(path)
 	got, _ := store2.GetJob(job.ID)
-	if got.Status != statusFailed {
-		t.Errorf("pending job on reload: Status = %q, want %q", got.Status, statusFailed)
+	if got.Status != StatusFailed {
+		t.Errorf("pending job on reload: Status = %q, want %q", got.Status, StatusFailed)
 	}
 	if got.Error == "" {
 		t.Error("expected error message for interrupted job")

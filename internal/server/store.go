@@ -50,7 +50,7 @@ func (js *JobStore) CreateJob(subjectID, sessionID, startIndex, endIndex int, cf
 		SessionID:  sessionID,
 		StartIndex: startIndex,
 		EndIndex:   endIndex,
-		Status:     statusPending,
+		Status:     StatusPending,
 		Progress:   0,
 		Config:     runtimeConfigFrom(cfg),
 		CreatedAt:  time.Now(),
@@ -92,7 +92,7 @@ func (js *JobStore) CreateJobWithKey(subjectID, sessionID, startIndex, endIndex 
 		SessionID:      sessionID,
 		StartIndex:     startIndex,
 		EndIndex:       endIndex,
-		Status:         statusPending,
+		Status:         StatusPending,
 		Progress:       0,
 		Config:         runtimeConfigFrom(cfg),
 		IdempotencyKey: idempotencyKey,
@@ -144,7 +144,7 @@ func (js *JobStore) ListJobs() []*Job {
 	return jobs
 }
 
-func (js *JobStore) UpdateJob(id, status string, progress float64, errMsg string) {
+func (js *JobStore) UpdateJob(id string, status JobStatus, progress float64, errMsg string) {
 	js.mu.Lock()
 	defer js.mu.Unlock()
 
@@ -196,11 +196,11 @@ func (js *JobStore) CancelJob(id string) (*Job, error) {
 		return nil, errors.New("not_found")
 	}
 
-	if job.Status == statusCompleted || job.Status == statusFailed || job.Status == statusCanceled {
+	if job.Status == StatusCompleted || job.Status == StatusFailed || job.Status == StatusCanceled {
 		return nil, fmt.Errorf("terminal:%s", job.Status)
 	}
 
-	job.Status = statusCanceled
+	job.Status = StatusCanceled
 	job.UpdatedAt = time.Now()
 	job.cancel()
 	js.saveToDisk()
@@ -233,8 +233,8 @@ func (js *JobStore) loadFromDisk() {
 
 		// Jobs that were running/pending at shutdown cannot be resumed
 		status := pj.Status
-		if status == statusPending || status == statusRunning {
-			status = statusFailed
+		if status == StatusPending || status == StatusRunning {
+			status = StatusFailed
 			if pj.Error == "" {
 				pj.Error = "job interrupted by server restart"
 			}

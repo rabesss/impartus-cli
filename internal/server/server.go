@@ -203,18 +203,18 @@ func (s *APIServer) updateRunningProgress(jobID string, progress float64, phase 
 	if !ok {
 		return false
 	}
-	if job.ctx.Err() != nil || job.Status == statusCanceled {
-		s.jobStore.UpdateJob(jobID, statusCanceled, progress, "")
+	if job.ctx.Err() != nil || job.Status == StatusCanceled {
+		s.jobStore.UpdateJob(jobID, StatusCanceled, progress, "")
 		evt := newWSEvent("job.cancelled", jobID)
-		evt.Status = statusCanceled
+		evt.Status = StatusCanceled
 		evt.Progress = progress
 		broadcastEvent(s.wsHub, evt)
 		return false
 	}
 
-	s.jobStore.UpdateJob(jobID, statusRunning, progress, "")
+	s.jobStore.UpdateJob(jobID, StatusRunning, progress, "")
 	evt := newWSEvent("job.progress", jobID)
-	evt.Status = statusRunning
+	evt.Status = StatusRunning
 	evt.Progress = progress
 	evt.Phase = phase
 	evt.Details = details
@@ -228,13 +228,13 @@ func (s *APIServer) handleCancelIfNeeded(jobID string, jobErr error) bool {
 	}
 	job, ok := s.jobStore.GetJob(jobID)
 	if ok {
-		s.jobStore.UpdateJob(jobID, statusCanceled, job.Progress, "")
+		s.jobStore.UpdateJob(jobID, StatusCanceled, job.Progress, "")
 	} else {
-		s.jobStore.UpdateJob(jobID, statusCanceled, 0, "")
+		s.jobStore.UpdateJob(jobID, StatusCanceled, 0, "")
 	}
 
 	evt := newWSEvent("job.cancelled", jobID)
-	evt.Status = statusCanceled
+	evt.Status = StatusCanceled
 	broadcastEvent(s.wsHub, evt)
 	return true
 }
@@ -244,7 +244,7 @@ func (s *APIServer) startJob(jobID string) bool {
 		return false
 	}
 	evt := newWSEvent("job.started", jobID)
-	evt.Status = statusRunning
+	evt.Status = StatusRunning
 	broadcastEvent(s.wsHub, evt)
 	return true
 }
@@ -390,18 +390,18 @@ func (s *APIServer) runPlaylistDownloads(ctx context.Context, cancelLocal contex
 
 func (s *APIServer) completeJob(jobID string, finalOutputs []string) {
 	s.jobStore.SetOutputs(jobID, finalOutputs)
-	s.jobStore.UpdateJob(jobID, statusCompleted, 100, "")
+	s.jobStore.UpdateJob(jobID, StatusCompleted, 100, "")
 	evt := newWSEvent("job.completed", jobID)
-	evt.Status = statusCompleted
+	evt.Status = StatusCompleted
 	evt.Progress = 100
 	evt.Outputs = finalOutputs
 	broadcastEvent(s.wsHub, evt)
 }
 
 func (s *APIServer) failJob(jobID, errMsg string) {
-	s.jobStore.UpdateJob(jobID, statusFailed, 0, errMsg)
+	s.jobStore.UpdateJob(jobID, StatusFailed, 0, errMsg)
 	evt := newWSEvent("job.failed", jobID)
-	evt.Status = statusFailed
+	evt.Status = StatusFailed
 	evt.Error = errMsg
 	broadcastEvent(s.wsHub, evt)
 }

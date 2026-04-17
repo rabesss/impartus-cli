@@ -12,12 +12,14 @@ import (
 	"github.com/rabesss/impartus-cli/internal/config"
 )
 
+type JobStatus string
+
 const (
-	statusPending   = "pending"
-	statusRunning   = "running"
-	statusCompleted = "completed"
-	statusFailed    = "failed"
-	statusCanceled  = "canceled"
+	StatusPending   JobStatus = "pending"
+	StatusRunning   JobStatus = "running"
+	StatusCompleted JobStatus = "completed"
+	StatusFailed    JobStatus = "failed"
+	StatusCanceled  JobStatus = "canceled"
 )
 
 const maxIdempotencyKeyLength = 256
@@ -25,7 +27,7 @@ const maxIdempotencyKeyLength = 256
 type wsEvent struct {
 	Type      string     `json:"type"`
 	JobID     string     `json:"jobId,omitempty"`
-	Status    string     `json:"status,omitempty"`
+	Status    JobStatus  `json:"status,omitempty"`
 	Progress  float64    `json:"progress,omitempty"`
 	Phase     string     `json:"phase,omitempty"`
 	Timestamp int64      `json:"timestamp"`
@@ -121,7 +123,7 @@ type Job struct {
 	SessionID         int              `json:"sessionId"`
 	StartIndex        int              `json:"startIndex"`
 	EndIndex          int              `json:"endIndex"`
-	Status            string           `json:"status"`
+	Status            JobStatus        `json:"status"`
 	Progress          float64          `json:"progress"`
 	Error             string           `json:"error,omitempty"`
 	TotalLectures     int              `json:"totalLectures,omitempty"`
@@ -153,8 +155,8 @@ type loginResponse struct {
 }
 
 type cancelJobResponse struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
+	ID     string    `json:"id"`
+	Status JobStatus `json:"status"`
 }
 
 type createJobConflictResponse struct {

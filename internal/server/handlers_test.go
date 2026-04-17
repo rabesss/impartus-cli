@@ -384,7 +384,7 @@ func TestWSHubRegisterAndBroadcast(t *testing.T) {
 
 	// Broadcast with no connections should not panic
 	evt := newWSEvent("test.event", "job-1")
-	evt.Status = statusCompleted
+	evt.Status = StatusCompleted
 	broadcastEvent(hub, evt)
 }
 
@@ -405,7 +405,7 @@ func TestBroadcastEventWithDetails(t *testing.T) {
 	evt := wsEvent{
 		Type:      "job.progress",
 		JobID:     "job-123",
-		Status:    statusRunning,
+		Status:    StatusRunning,
 		Progress:  0.5,
 		Phase:     "downloading",
 		Timestamp: time.Now().Unix(),
