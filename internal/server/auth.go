@@ -96,21 +96,34 @@ type retryHint struct {
 	RetryAfter int  `json:"retryAfter"`
 }
 
+type successEnvelope struct {
+	Success bool         `json:"success"`
+	Data    any          `json:"data"`
+	Error   any          `json:"error"`
+	Meta    responseMeta `json:"meta"`
+}
+
+type errorEnvelope struct {
+	Success bool            `json:"success"`
+	Error   *errorBody      `json:"error"`
+	Meta    responseMeta    `json:"meta"`
+}
+
+type errorBody struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Details any    `json:"details,omitempty"`
+}
+
 func respondWithEnvelope(w http.ResponseWriter, status int, command string, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
-	envelope := map[string]any{
-		"success": true,
-		"data":    data,
-		"error":   nil,
-		"meta": responseMeta{
-			Command: command,
-			Mode:    "api",
-		},
-	}
-
-	if err := json.NewEncoder(w).Encode(envelope); err != nil {
+	if err := json.NewEncoder(w).Encode(successEnvelope{
+		Success: true,
+		Data:    data,
+		Meta:    responseMeta{Command: command, Mode: "api"},
+	}); err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 	}
 }
@@ -119,31 +132,23 @@ func respondWithError(w http.ResponseWriter, status int, code, message, command 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
-	errorResp := map[string]any{
-		"success": false,
-		"error": map[string]any{
-			"code":    code,
-			"message": message,
-		},
-		"meta": responseMeta{
-			Command: command,
-			Mode:    "api",
-		},
-	}
-
-	errorData := errorResp["error"].(map[string]any)
+	body := &errorBody{Code: code, Message: message}
 	if hint != nil {
-		errorData["details"] = hint
+		body.Details = hint
 	} else if len(details) > 0 {
-		errorData["details"] = details[0]
+		body.Details = details[0]
 	}
 
-	if err := json.NewEncoder(w).Encode(errorResp); err != nil {
+	if err := json.NewEncoder(w).Encode(errorEnvelope{
+		Success: false,
+		Error:   body,
+		Meta:    responseMeta{Command: command, Mode: "api"},
+	}); err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 	}
 }
 
-func respondWithSuccess(w http.ResponseWriter, command string, data map[string]any) {
+func respondWithSuccess(w http.ResponseWriter, command string, data any) {
 	respondWithEnvelope(w, http.StatusOK, command, data)
 }
 
