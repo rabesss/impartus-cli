@@ -303,42 +303,14 @@ func (s *APIServer) fetchSelectedLectures(ctx context.Context, jobID string, job
 }
 
 func selectJobLectures(job *Job, lectures client.Lectures) (client.Lectures, error) {
-	if len(lectures) == 0 {
-		return nil, errors.New("no lectures found")
-	}
-	// Reverse lectures to match CLI's selectLectureRange behavior
-	// CLI reverses before slicing, so API must do the same for index alignment
-	reversed := lectures.Reverse()
-
-	// Apply default range handling (matching CLI's selectLectureRange behavior)
-	// If start <= 0, default to 1; if end <= 0, default to all available
-	start := job.StartIndex
-	end := job.EndIndex
-	if start <= 0 {
-		start = 1
-	}
-	if end <= 0 {
-		end = len(reversed)
+	selected, err := lectures.SelectRange(job.StartIndex, job.EndIndex)
+	if err != nil {
+		return nil, err
 	}
 
-	// Job stores 1-based indices (matching CLI and API contract)
-	// Convert to 0-based for internal slice access
-	startZeroBased := start - 1
-	endZeroBased := end - 1
-	if startZeroBased >= len(reversed) {
-		return nil, fmt.Errorf("startIndex %d out of range for %d lectures", start, len(reversed))
-	}
-	endIdx := endZeroBased
-	if endIdx >= len(reversed) {
-		endIdx = len(reversed) - 1
-	}
-	selected := reversed[startZeroBased : endIdx+1]
-
-	// Apply noaudio filter if configured
 	if job.Config.SkipNoAudio {
 		totalLectures := len(selected)
 		selected = selected.FilterNoAudio()
-		// Update job with filtered count
 		job.FilteredLectures = totalLectures - len(selected)
 	}
 

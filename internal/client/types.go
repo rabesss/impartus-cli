@@ -1,5 +1,10 @@
 package client
 
+import (
+	"errors"
+	"fmt"
+)
+
 type LoginResponse struct {
 	Message  string `json:"message"`
 	Token    string `json:"token"`
@@ -98,4 +103,25 @@ func (l Lectures) FilterNoAudio() Lectures {
 		filtered = append(filtered, lecture)
 	}
 	return filtered
+}
+
+// SelectRange returns a 1-indexed slice of the lectures.
+// It reverses the lectures first (matching the platform's chronological order),
+// then returns lectures[start..end] where start and end are 1-based inclusive.
+// Pass start=0 or end=0 to use defaults (1 and len respectively).
+func (l Lectures) SelectRange(start, end int) (Lectures, error) {
+	reversed := l.Reverse()
+	if len(reversed) == 0 {
+		return nil, errors.New("no lectures found")
+	}
+	if start <= 0 {
+		start = 1
+	}
+	if end <= 0 {
+		end = len(reversed)
+	}
+	if start < 1 || end > len(reversed) || start > end {
+		return nil, fmt.Errorf("invalid lecture range: start=%d end=%d (available 1-%d)", start, end, len(reversed))
+	}
+	return append(Lectures(nil), reversed[start-1:end]...), nil
 }

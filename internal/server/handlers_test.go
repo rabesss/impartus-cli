@@ -436,14 +436,11 @@ func TestSelectJobLectures_EndIndexClamped(t *testing.T) {
 		{SeqNo: 2, Topic: "L2"},
 	}
 
-	// endIndex > len(lectures)
+	// endIndex > len(lectures) — SelectRange returns error for out-of-range
 	job := &Job{StartIndex: 1, EndIndex: 10}
-	selected, err := selectJobLectures(job, lectures)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(selected) != 2 {
-		t.Errorf("expected 2 lectures (clamped), got %d", len(selected))
+	_, err := selectJobLectures(job, lectures)
+	if err == nil {
+		t.Fatal("expected error for out-of-range end index")
 	}
 }
 

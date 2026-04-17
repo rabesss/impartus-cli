@@ -400,7 +400,7 @@ func executeDownload(args []string) (downloadResult, error) {
 		return downloadResult{}, err
 	}
 
-	selected, err := selectLectureRange(lectures, f.start, f.end)
+	selected, err := lectures.SelectRange(f.start, f.end)
 	if err != nil {
 		return downloadResult{}, err
 	}
@@ -687,25 +687,6 @@ func appendOutputPaths(outputPaths []string, result downloader.JoinResult) []str
 		outputPaths = append(outputPaths, path)
 	}
 	return outputPaths
-}
-
-func selectLectureRange(lectures client.Lectures, start, end int) (client.Lectures, error) {
-	reversed := lectures.Reverse()
-	if len(reversed) == 0 {
-		return nil, errors.New("no lectures found")
-	}
-
-	if start <= 0 {
-		start = 1
-	}
-	if end <= 0 {
-		end = len(reversed)
-	}
-	if start < 1 || end > len(reversed) || start > end {
-		return nil, fmt.Errorf("invalid lecture range: start=%d end=%d (available 1-%d)", start, end, len(reversed))
-	}
-
-	return append(client.Lectures(nil), reversed[start-1:end]...), nil
 }
 
 func filterEmptyLectures(lectures client.Lectures) client.Lectures {
