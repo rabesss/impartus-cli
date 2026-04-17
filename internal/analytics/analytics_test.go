@@ -1,7 +1,11 @@
 package analytics
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -279,4 +283,85 @@ func TestFlushWithNoEvents(t *testing.T) {
 
 	// Should not panic
 	analytics.Flush()
+}
+
+func TestIsEnabled(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Enabled = true
+	analytics := &Analytics{config: cfg}
+	if !analytics.IsEnabled() {
+		t.Error("expected IsEnabled to return true")
+	}
+
+	cfg.Enabled = false
+	analytics = &Analytics{config: cfg}
+	if analytics.IsEnabled() {
+		t.Error("expected IsEnabled to return false")
+	}
+}
+
+func TestGetReturnsNilBeforeInit(t *testing.T) {
+	// Reset the singleton
+	instance = nil
+	once = sync.Once{}
+	if Get() != nil {
+		t.Error("expected Get() to return nil before Init()")
+	}
+}
+
+func TestTrackFeatureUsage_NilProperties(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Enabled = true
+	analytics := &Analytics{
+		config:     cfg,
+		events:     make([]Event, 0, 10),
+		distinctID: "test-id",
+	}
+
+	analytics.TrackFeatureUsage("test-feature", nil)
+	if len(analytics.events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(analytics.events))
+	}
+	if analytics.events[0].Properties["feature"] != "test-feature" {
+		t.Error("expected feature property")
+	}
+}
+
+func TestFlushWithContext_PostHog(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := DefaultConfig()
+	cfg.Enabled = true
+	cfg.PostHogAPIKey = "test-key"
+	cfg.PostHogEndpoint = server.URL
+	analytics := &Analytics{
+		config:     cfg,
+		client:     &http.Client{Timeout: 5 * time.Second},
+		events:     []Event{{Event: "test", Properties: map[string]any{"k": "v"}, Timestamp: time.Now()}},
+		distinctID: "test-id",
+	}
+	analytics.FlushWithContext(context.Background())
+}
+
+func TestFlushWithContext_CustomEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := DefaultConfig()
+	cfg.Enabled = true
+	cfg.CustomEndpoint = server.URL
+	cfg.CustomAPIKey = "test-key"
+	analytics := &Analytics{
+		config:     cfg,
+		client:     &http.Client{Timeout: 5 * time.Second},
+		events:     []Event{{Event: "test", Properties: map[string]any{"k": "v"}, Timestamp: time.Now()}},
+		distinctID: "test-id",
+	}
+	analytics.FlushWithContext(context.Background())
+	time.Sleep(100 * time.Millisecond) // wait for goroutine
 }

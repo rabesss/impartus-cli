@@ -79,6 +79,9 @@ func New(cfg *config.Config, apiClient *client.Client) *Downloader {
 	}
 }
 
+// FetchLecturePlaylists delegates to client.GetPlaylists.
+// Kept as a method on Downloader so callers don't need direct client access,
+// enabling future caching/retry interception at this layer.
 func (d *Downloader) FetchLecturePlaylists(ctx context.Context, lectures []client.Lecture) ([]client.ParsedPlaylist, error) {
 	return d.client.GetPlaylists(ctx, d.config, lectures)
 }

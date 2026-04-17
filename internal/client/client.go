@@ -39,6 +39,9 @@ func New(httpClient *http.Client, userAgentProvider func() string) *Client {
 	}
 }
 
+// initialize is a defensive fallback ensuring httpClient and UserAgentProvider
+// are set even if Client was constructed without New(). Called from randomUseragent
+// and prepareLogin to guarantee safe access.
 func (c *Client) initialize() {
 	if c.httpClient == nil {
 		c.httpClient = NewHTTPClient(0)

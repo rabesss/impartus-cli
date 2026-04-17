@@ -229,3 +229,82 @@ func TestSendAlertHelpersDisabled(t *testing.T) {
 		t.Fatalf("Send failed: %v", err)
 	}
 }
+
+func TestSend_PagerDutyFormat(t *testing.T) {
+	var receivedBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf := make([]byte, 4096)
+		n, _ := r.Body.Read(buf)
+		receivedBody = string(buf[:n])
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	alerter := &Alerter{
+		config:    Config{WebhookURL: "https://events.pagerduty.com/v2/enqueue", Enabled: true, Environment: "prod"},
+		client:    server.Client(),
+		lastAlert: make(map[string]time.Time),
+	}
+	alerter.config.WebhookURL = server.URL
+
+	err := alerter.Send(context.Background(), Alert{
+		Severity: SeverityCritical,
+		Title:    "pd test",
+		Message:  "pd message",
+	})
+	if err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	if receivedBody == "" {
+		t.Fatal("expected PagerDuty webhook to receive body")
+	}
+}
+
+func TestSend_DefaultsFields(t *testing.T) {
+	var receivedBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf := make([]byte, 4096)
+		n, _ := r.Body.Read(buf)
+		receivedBody = string(buf[:n])
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	alerter := &Alerter{
+		config:    Config{WebhookURL: server.URL, Enabled: true, Environment: "test-env"},
+		client:    server.Client(),
+		lastAlert: make(map[string]time.Time),
+	}
+
+	alert := Alert{Severity: SeverityInfo, Title: "defaults", Message: "msg"}
+	// Send without setting Timestamp, Environment, Source
+	err := alerter.Send(context.Background(), alert)
+	if err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+	if receivedBody == "" {
+		t.Fatal("expected body")
+	}
+}
+
+func TestSendAlertHelpers(t *testing.T) {
+	Reset()
+	_ = Init()
+	// These should all succeed (disabled since no webhook set)
+	ctx := context.Background()
+	if err := SendInfo(ctx, "info-test", "info msg"); err != nil {
+		t.Fatalf("SendInfo failed: %v", err)
+	}
+	if err := SendWarning(ctx, "warn-test", "warn msg"); err != nil {
+		t.Fatalf("SendWarning failed: %v", err)
+	}
+	if err := SendCritical(ctx, "crit-test", "crit msg"); err != nil {
+		t.Fatalf("SendCritical failed: %v", err)
+	}
+	if err := SendAlert(ctx, SeverityInfo, "alert-test", "alert msg", map[string]any{"key": "val"}); err != nil {
+		t.Fatalf("SendAlert failed: %v", err)
+	}
+	if err := SendAlertWithRequestID(ctx, SeverityInfo, "rid-test", "rid msg", "req-123"); err != nil {
+		t.Fatalf("SendAlertWithRequestID failed: %v", err)
+	}
+}
