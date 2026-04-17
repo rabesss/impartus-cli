@@ -6,12 +6,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -92,25 +90,15 @@ func initMetrics(ctx context.Context) (*Metrics, error) {
 		return nil, fmt.Errorf("failed to create resource: %w", err)
 	}
 
-	// Check for OTLP endpoint
-	otlpEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-
-	var opts []sdkmetric.Option
-	opts = append(opts, sdkmetric.WithResource(res))
-
-	if otlpEndpoint != "" {
-		// Use OTLP exporter for production
-		exporter, err := otlpmetrichttp.New(ctx,
-			otlpmetrichttp.WithEndpoint(otlpEndpoint),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create OTLP exporter: %w", err)
-		}
-		opts = append(opts, sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter)))
-	} else {
-		// Use manual reader for development (metrics accessible via /metrics endpoint)
-		m.reader = sdkmetric.NewManualReader()
-		opts = append(opts, sdkmetric.WithReader(m.reader))
+	// Use ManualReader (metrics collected on-demand via /metrics endpoint).
+	// This avoids pulling in the heavy OTLP HTTP exporter and its transitive
+	// dependencies (grpc, protobuf, grpc-gateway). To export to an OTLP
+	// collector, set OTEL_EXPORTER_OTLP_ENDPOINT and wire the OTLP exporter
+	// in a future iteration.
+	m.reader = sdkmetric.NewManualReader()
+	opts := []sdkmetric.Option{
+		sdkmetric.WithResource(res),
+		sdkmetric.WithReader(m.reader),
 	}
 
 	m.provider = sdkmetric.NewMeterProvider(opts...)

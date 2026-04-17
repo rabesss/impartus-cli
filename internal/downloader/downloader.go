@@ -40,6 +40,19 @@ type JoinResult struct {
 	BothOutput  string
 }
 
+// viewConfig holds the view-specific parameters for downloading chunks.
+// SkipView is the Views config value that means "skip this view entirely".
+// Label is the human-readable name used in progress bars and file paths.
+type viewConfig struct {
+	SkipView string
+	Label    string
+}
+
+var (
+	firstViewConfig  = viewConfig{SkipView: "right", Label: "left"}
+	secondViewConfig = viewConfig{SkipView: "left", Label: "right"}
+)
+
 type Downloader struct {
 	config      *config.Config
 	client      *client.Client
@@ -93,8 +106,8 @@ func (d *Downloader) DownloadPlaylist(ctx context.Context, playlist client.Parse
 
 	downloadedPlaylist := DownloadedPlaylist{Playlist: playlist}
 	var firstFailed, secondFailed int
-	downloadedPlaylist.FirstViewChunks, firstFailed = d.downloadViewChunks(ctx, p, tracker, playlist, playlist.FirstViewURLs, "right", "first", "left", decryptionKey)
-	downloadedPlaylist.SecondViewChunks, secondFailed = d.downloadViewChunks(ctx, p, tracker, playlist, playlist.SecondViewURLs, "left", "second", "right", decryptionKey)
+	downloadedPlaylist.FirstViewChunks, firstFailed = d.downloadViewChunks(ctx, p, tracker, playlist, playlist.FirstViewURLs, firstViewConfig, decryptionKey)
+	downloadedPlaylist.SecondViewChunks, secondFailed = d.downloadViewChunks(ctx, p, tracker, playlist, playlist.SecondViewURLs, secondViewConfig, decryptionKey)
 	if firstFailed > 0 || secondFailed > 0 {
 		return downloadedPlaylist, fmt.Errorf("download incomplete: %d first-view and %d second-view chunks failed", firstFailed, secondFailed)
 	}
@@ -237,6 +250,10 @@ func (d *Downloader) fetchDecryptionKey(ctx context.Context, keyURL string) ([]b
 	return getDecryptionKey(keyURLContent), nil
 }
 
+// getDecryptionKey transforms the raw key from the upstream API into the
+// actual AES decryption key. The upstream response includes a 2-byte header
+// prefix followed by the key bytes in reversed order. This function strips
+// the header and reverses the remaining bytes to recover the usable key.
 func getDecryptionKey(encryptionKey []byte) []byte {
 	if len(encryptionKey) < 2 {
 		return encryptionKey
@@ -339,16 +356,16 @@ func (d *Downloader) downloadWithRetry(ctx context.Context, url string, id int, 
 	return "", fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
 }
 
-func (d *Downloader) downloadViewChunks(ctx context.Context, p *mpb.Progress, tracker *ProgressTracker, playlist client.ParsedPlaylist, urls []string, skipView, requestView, displayView string, decryptionKey []byte) ([]string, int) {
-	if len(urls) == 0 || d.config.Views == skipView {
+func (d *Downloader) downloadViewChunks(ctx context.Context, p *mpb.Progress, tracker *ProgressTracker, playlist client.ParsedPlaylist, urls []string, vc viewConfig, decryptionKey []byte) ([]string, int) {
+	if len(urls) == 0 || d.config.Views == vc.SkipView {
 		return nil, 0
 	}
 
-	bar := d.newViewBar(p, len(urls), playlist.SeqNo, displayView)
+	bar := d.newViewBar(p, len(urls), playlist.SeqNo, vc.Label)
 	chunks := make([]string, 0, len(urls))
 	failed := 0
 	for i, url := range urls {
-		chunkPath, err := d.downloadAndDecryptChunk(ctx, url, playlist.ID, i, requestView, decryptionKey, tracker)
+		chunkPath, err := d.downloadAndDecryptChunk(ctx, url, playlist.ID, i, vc.Label, decryptionKey, tracker)
 		if bar != nil {
 			bar.Increment()
 		}

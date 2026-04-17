@@ -340,7 +340,9 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
-func Get() *Config {
+// Get returns the singleton config, loading it on first call.
+// Returns an error if config loading fails instead of panicking.
+func Get() (*Config, error) {
 	loadOnce.Do(func() {
 		cfg, err := Load(ConfigLocation)
 		if err != nil {
@@ -351,10 +353,20 @@ func Get() *Config {
 	})
 
 	if loadErr != nil {
-		panic(loadErr)
+		return nil, loadErr
 	}
 
-	return &loadedConfig
+	return &loadedConfig, nil
+}
+
+// MustGet returns the singleton config, panicking on load failure.
+// Use this in init paths where config is a hard requirement.
+func MustGet() *Config {
+	cfg, err := Get()
+	if err != nil {
+		panic(err)
+	}
+	return cfg
 }
 
 // OneOf checks if a value is in the allowed set.

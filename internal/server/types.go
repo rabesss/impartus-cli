@@ -23,15 +23,15 @@ const (
 const maxIdempotencyKeyLength = 256
 
 type wsEvent struct {
-	Type      string  `json:"type"`
-	JobID     string  `json:"jobId,omitempty"`
-	Status    string  `json:"status,omitempty"`
-	Progress  float64 `json:"progress,omitempty"`
-	Phase     string  `json:"phase,omitempty"`
-	Timestamp int64   `json:"timestamp"`
-	Details   any     `json:"details,omitempty"`
-	Error     string  `json:"error,omitempty"`
-	Outputs   any     `json:"outputs,omitempty"`
+	Type      string     `json:"type"`
+	JobID     string     `json:"jobId,omitempty"`
+	Status    string     `json:"status,omitempty"`
+	Progress  float64    `json:"progress,omitempty"`
+	Phase     string     `json:"phase,omitempty"`
+	Timestamp int64      `json:"timestamp"`
+	Details   any        `json:"details,omitempty"`
+	Error     string     `json:"error,omitempty"`
+	Outputs   []string   `json:"outputs,omitempty"`
 }
 
 func newWSEvent(eventType, jobID string) wsEvent {
@@ -73,6 +73,11 @@ type JobConfigOptions struct {
 	SkipNoAudio               *bool   `json:"skipNoAudio,omitempty"`
 }
 
+// createJobRequest supports two API shapes for backward compatibility:
+//   - New shape: { ..., "jobConfig": { ... } }
+//   - Legacy shape: { ..., "quality": "...", "views": "..." }  (flat fields)
+//
+// effectiveJobConfig() normalizes both into a single *JobConfigOptions.
 type createJobRequest struct {
 	SubjectID      int    `json:"subjectId"`
 	SessionID      int    `json:"sessionId"`
@@ -80,8 +85,8 @@ type createJobRequest struct {
 	EndIndex       int    `json:"endIndex"`
 	IdempotencyKey string `json:"idempotencyKey,omitempty"`
 
-	JobConfig *JobConfigOptions `json:"jobConfig,omitempty"`
-	*JobConfigOptions              // embedded: flat fields promoted for backward compat
+	JobConfig      *JobConfigOptions `json:"jobConfig,omitempty"`
+	*JobConfigOptions // embedded: flat fields promoted for backward-compatible legacy clients
 }
 
 func (r createJobRequest) effectiveJobConfig() *JobConfigOptions {

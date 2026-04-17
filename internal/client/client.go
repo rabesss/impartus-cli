@@ -17,6 +17,7 @@ import (
 )
 
 var invalidFileNameRe = regexp.MustCompile(`[<>:"/\\|?*\n\r]`)
+var uriValueRe = regexp.MustCompile(`URI="([^"]+)"`)
 
 type Client struct {
 	httpClient        *http.Client
@@ -267,12 +268,11 @@ func ParsePlaylist(scanner *bufio.Scanner, id int, title string, seqNo int) Pars
 	isFirstView := true
 	firstViewURLs := make([]string, 0)
 	secondViewURLs := make([]string, 0)
-	re := regexp.MustCompile(`URI="([^"]+)"`)
 
 	for scanner.Scan() {
 		line := scanner.Text()
 		if parsedOutput.KeyURL == "" && strings.HasPrefix(line, "#EXT-X-KEY") {
-			match := re.FindStringSubmatch(line)
+			match := uriValueRe.FindStringSubmatch(line)
 			if len(match) == 2 {
 				parsedOutput.KeyURL = match[1]
 			}
