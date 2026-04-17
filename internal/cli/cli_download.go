@@ -1,0 +1,232 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"github.com/vbauerster/mpb/v8"
+
+	"github.com/rabesss/impartus-cli/internal/client"
+	"github.com/rabesss/impartus-cli/internal/config"
+	"github.com/rabesss/impartus-cli/internal/downloader"
+)
+
+type downloadFlags struct {
+	subject        int
+	session        int
+	start          int
+	end            int
+	quality        string
+	views          string
+	audioOnly      bool
+	format         string
+	output         string
+	skipNoAudio    bool
+	includeNoAudio bool
+}
+
+type downloadResult struct {
+	Status        string   `json:"status"`
+	OutputPaths   []string `json:"outputPaths"`
+	LectureCount  int      `json:"lectureCount"`
+	FilteredCount int      `json:"filteredCount,omitempty"`
+	TotalLectures int      `json:"totalLectures,omitempty"`
+}
+
+func runDownload(args []string) error {
+	_, err := executeDownload(args)
+	return err
+}
+
+func runDownloadJSON(args []string) (downloadResult, error) {
+	return executeDownload(args)
+}
+
+func parseDownloadFlags(args []string) (downloadFlags, error) {
+	fs := flag.NewFlagSet("download", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var f downloadFlags
+	fs.IntVar(&f.subject, "subject", 0, "Subject ID")
+	fs.IntVar(&f.subject, "s", 0, "Subject ID")
+	fs.IntVar(&f.session, "session", 0, "Session ID")
+	fs.IntVar(&f.session, "S", 0, "Session ID")
+	fs.IntVar(&f.start, "start", 0, "Start lecture index (1-based)")
+	fs.IntVar(&f.end, "end", 0, "End lecture index (1-based)")
+	fs.StringVar(&f.quality, "quality", "", "Video quality override")
+	fs.StringVar(&f.views, "views", "", "Views override: left/right/both or first/second/both")
+	fs.BoolVar(&f.audioOnly, "audio-only", false, "Enable audio-only mode")
+	fs.StringVar(&f.format, "format", "", "Audio format override")
+	fs.StringVar(&f.output, "output", "", "Output directory override")
+	fs.StringVar(&f.output, "o", "", "Output directory override")
+	fs.BoolVar(&f.skipNoAudio, "skip-no-audio", false, "Skip lectures with no audio track")
+	fs.BoolVar(&f.includeNoAudio, "include-noaudio", false, "Include lectures with no audio track (overrides --skip-no-audio)")
+
+	if err := fs.Parse(args); err != nil {
+		return downloadFlags{}, err
+	}
+	if fs.NArg() > 0 {
+		return downloadFlags{}, errors.New("download does not accept positional arguments")
+	}
+	if f.subject <= 0 || f.session <= 0 {
+		return downloadFlags{}, errors.New("download requires --subject/-s and --session/-S")
+	}
+	return f, nil
+}
+
+func executeDownload(args []string) (downloadResult, error) {
+	f, err := parseDownloadFlags(args)
+	if err != nil {
+		return downloadResult{}, err
+	}
+
+	if err := ensureFFmpeg(); err != nil {
+		return downloadResult{}, err
+	}
+
+	ctx := context.Background()
+	cfg, apiClient, err := initClient(ctx)
+	if err != nil {
+		return downloadResult{}, err
+	}
+
+	cfg, err = applyAndValidateFlags(cfg, f.quality, f.views, f.audioOnly, f.format, f.output, f.skipNoAudio)
+	if err != nil {
+		return downloadResult{}, err
+	}
+
+	if f.includeNoAudio {
+		cfg.SkipNoAudio = false
+	}
+
+	lectures, err := apiClient.GetLectures(ctx, cfg, client.Course{SubjectID: f.subject, SessionID: f.session})
+	if err != nil {
+		return downloadResult{}, err
+	}
+
+	selected, err := lectures.SelectRange(f.start, f.end)
+	if err != nil {
+		return downloadResult{}, err
+	}
+
+	// Count noaudio lectures for warning
+	warnNoAudioLectures(selected, cfg.SkipNoAudio)
+
+	// Apply noaudio filter if flag is set
+	totalLectures := len(selected)
+	if cfg.SkipNoAudio {
+		selected = selected.FilterNoAudio()
+	}
+
+	if len(selected) == 0 {
+		return downloadResult{}, fmt.Errorf("no lectures available after filtering (all lectures have noaudio=1 in the selected range)")
+	}
+
+	result, err := downloadLectures(ctx, cfg, apiClient, selected)
+	if err != nil {
+		return downloadResult{}, err
+	}
+	result.FilteredCount = totalLectures - len(selected)
+	result.TotalLectures = totalLectures
+	return result, nil
+}
+
+// applyAndValidateFlags applies CLI flag overrides to the config and validates them.
+// This ensures invalid flag values fail early, before any remote API calls.
+func applyAndValidateFlags(cfg *config.Config, quality, views string, audioOnly bool, format, output string, skipNoAudio bool) (*config.Config, error) {
+	// Apply flag overrides
+	if quality != "" {
+		cfg.Quality = quality
+	}
+	if views != "" {
+		cfg.Views = config.NormalizeViews(views)
+	}
+	if audioOnly {
+		cfg.AudioOnly = true
+	}
+	if format != "" {
+		cfg.AudioFormat = format
+	}
+	if output != "" {
+		cfg.DownloadLocation = output
+	}
+	if skipNoAudio {
+		cfg.SkipNoAudio = true
+	}
+
+	// Validate flag override values
+	if err := validateFlagOverrides(cfg); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
+
+func downloadLectures(ctx context.Context, cfg *config.Config, apiClient *client.Client, lectures client.Lectures) (downloadResult, error) {
+	if len(lectures) == 0 {
+		return downloadResult{}, errors.New("no lectures selected")
+	}
+
+	if err := os.MkdirAll(cfg.DownloadLocation, 0o755); err != nil {
+		return downloadResult{}, err
+	}
+
+	d := downloader.New(cfg, apiClient)
+	playlists, err := d.FetchLecturePlaylists(ctx, lectures)
+	if err != nil {
+		return downloadResult{}, err
+	}
+	if len(playlists) == 0 {
+		return downloadResult{}, errors.New("no playlists available for selected lectures")
+	}
+
+	p := mpb.New(mpb.WithWidth(70))
+	var tracker *downloader.ProgressTracker
+	if cfg.ProgressTracking.Enabled {
+		tracker = downloader.NewProgressTracker(len(playlists), countChunks(playlists, cfg.Views), p)
+	}
+
+	outputPaths := make([]string, 0, len(playlists))
+	for _, playlist := range playlists {
+		downloaded, err := d.DownloadPlaylist(ctx, playlist, p, tracker)
+		if err != nil {
+			return downloadResult{}, err
+		}
+
+		metadataFile, err := d.CreateTempM3U8File(downloaded)
+		if err != nil {
+			return downloadResult{}, err
+		}
+
+		joinResult, err := d.JoinLectureOutput(metadataFile)
+		if err != nil {
+			return downloadResult{}, err
+		}
+		outputPaths = appendOutputPaths(outputPaths, joinResult)
+
+		if tracker != nil {
+			downloader.LectureCompleted(tracker)
+		}
+	}
+
+	if tracker != nil {
+		tracker.Stop()
+	}
+
+	p.Wait()
+	return downloadResult{Status: "completed", OutputPaths: outputPaths, LectureCount: len(outputPaths)}, nil
+}
+
+func appendOutputPaths(outputPaths []string, result downloader.JoinResult) []string {
+	for _, path := range []string{result.LeftOutput, result.RightOutput, result.BothOutput} {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		outputPaths = append(outputPaths, path)
+	}
+	return outputPaths
+}
