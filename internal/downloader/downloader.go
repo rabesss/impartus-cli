@@ -1,7 +1,6 @@
 package downloader
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/aes"
@@ -67,36 +66,7 @@ func New(cfg *config.Config, apiClient *client.Client) *Downloader {
 }
 
 func (d *Downloader) FetchLecturePlaylists(ctx context.Context, lectures []client.Lecture) ([]client.ParsedPlaylist, error) {
-	parsedPlaylists := make([]client.ParsedPlaylist, 0, len(lectures))
-	for _, lecture := range lectures {
-		streamInfos, err := d.getStreamInfos(ctx, lecture)
-		if err != nil {
-			return parsedPlaylists, err
-		}
-
-		streamURL := client.SelectStreamByQuality(streamInfos, d.config.Quality, d.config.AudioOnly)
-		if streamURL == "" {
-			continue
-		}
-
-		waitErr := d.rateLimiter.WaitForAPI(ctx)
-		if waitErr != nil {
-			return parsedPlaylists, waitErr
-		}
-
-		resp, err := d.client.GetAuthorizedWithToken(ctx, streamURL, d.config.Token)
-		if err != nil {
-			return parsedPlaylists, err
-		}
-		if resp.StatusCode != http.StatusOK {
-			_ = resp.Body.Close()
-			return parsedPlaylists, fmt.Errorf("fetch playlist for lecture %d: unexpected status %d", lecture.TTID, resp.StatusCode)
-		}
-		scanner := bufio.NewScanner(resp.Body)
-		parsedPlaylists = append(parsedPlaylists, client.ParsePlaylist(scanner, lecture.TTID, lecture.Topic, lecture.SeqNo))
-		_ = resp.Body.Close()
-	}
-	return parsedPlaylists, nil
+	return d.client.GetPlaylists(ctx, d.config, lectures)
 }
 
 func (d *Downloader) DownloadLecturePlaylists(ctx context.Context, playlists []client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) ([]DownloadedPlaylist, error) {
@@ -242,13 +212,6 @@ func writeM3U8File(path string, chunks []string) error {
 
 	_, err = f.WriteString("#EXT-X-ENDLIST")
 	return err
-}
-
-func (d *Downloader) getStreamInfos(ctx context.Context, lecture client.Lecture) ([]client.StreamInfo, error) {
-	if err := d.rateLimiter.WaitForAPI(ctx); err != nil {
-		return nil, err
-	}
-	return d.client.GetStreamInfos(ctx, d.config.BaseURL, d.config.Token, lecture)
 }
 
 func (d *Downloader) fetchDecryptionKey(ctx context.Context, keyURL string) ([]byte, error) {
