@@ -91,6 +91,18 @@ func (c *Client) LoginAndSetToken(ctx context.Context, cfg *config.Config) error
 	return cli.storeToken(cfg, token)
 }
 
+// resolveToken returns the token from config, falling back to the client's stored token.
+func (c *Client) resolveToken(cfg *config.Config) (string, error) {
+	token := cfg.Token
+	if token == "" {
+		token = c.Token()
+	}
+	if token == "" {
+		return "", errors.New("token is not set")
+	}
+	return token, nil
+}
+
 func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, error) {
 	if cfg == nil {
 		return nil, errors.New("config is required")
@@ -100,12 +112,9 @@ func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, e
 		return nil, errors.New("baseUrl is required")
 	}
 
-	token := cfg.Token
-	if token == "" {
-		token = c.Token()
-	}
-	if token == "" {
-		return nil, errors.New("token is not set")
+	token, err := c.resolveToken(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	url := fmt.Sprintf("%s/subjects", cfg.BaseURL)
@@ -144,12 +153,9 @@ func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Cou
 		return nil, errors.New("baseUrl is required")
 	}
 
-	token := cfg.Token
-	if token == "" {
-		token = c.Token()
-	}
-	if token == "" {
-		return nil, errors.New("token is not set")
+	token, err := c.resolveToken(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	url := fmt.Sprintf("%s/subjects/%d/lectures/%d", cfg.BaseURL, course.SubjectID, course.SessionID)
@@ -189,12 +195,9 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 		return nil, errors.New("baseUrl is required")
 	}
 
-	token := cfg.Token
-	if token == "" {
-		token = c.Token()
-	}
-	if token == "" {
-		return nil, errors.New("token is not set")
+	token, err := c.resolveToken(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	parsedPlaylists := make([]ParsedPlaylist, 0, len(lectures))
