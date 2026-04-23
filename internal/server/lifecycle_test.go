@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -184,8 +185,8 @@ func TestJobStoreCancelJob(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when canceling nonexistent job")
 	}
-	if err.Error() != "not_found" {
-		t.Errorf("expected 'not_found' error, got %v", err)
+	if !errors.Is(err, ErrJobNotFound) {
+		t.Errorf("expected ErrJobNotFound, got %v", err)
 	}
 
 	// Cancel pending job
@@ -209,8 +210,12 @@ func TestJobStoreCancelJob(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when canceling already canceled job")
 	}
-	if !strings.HasPrefix(err.Error(), "terminal:") {
-		t.Errorf("expected 'terminal:' prefix in error, got %v", err)
+	var terminalErr *TerminalStatusError
+	if !errors.As(err, &terminalErr) {
+		t.Fatalf("expected TerminalStatusError, got %v", err)
+	}
+	if terminalErr.Status != StatusCanceled {
+		t.Fatalf("expected canceled terminal status, got %s", terminalErr.Status)
 	}
 
 	// Create completed job and try to cancel
@@ -429,7 +434,7 @@ func TestHealthHandler(t *testing.T) {
 	if !ok {
 		t.Fatal("expected meta object in response")
 	}
-	if meta["command"] != "getHealth" {
+	if meta["command"] != healthCommand {
 		t.Errorf("expected meta.command 'health', got %v", meta["command"])
 	}
 	if meta["mode"] != "api" {
@@ -734,8 +739,8 @@ func TestRuntimeConfigFrom(t *testing.T) {
 	if runtime.Quality != "720" {
 		t.Errorf("expected quality '720', got %s", runtime.Quality)
 	}
-	if runtime.Views != "first" {
-		t.Errorf("expected views 'first', got %s", runtime.Views)
+	if runtime.Views != "left" {
+		t.Errorf("expected views 'left', got %s", runtime.Views)
 	}
 	if !runtime.AudioOnly {
 		t.Error("expected audioOnly=true")
@@ -847,8 +852,8 @@ func TestApplyJobConfigOverrides(t *testing.T) {
 	if cfg.Quality != "720" {
 		t.Errorf("expected quality '720', got %s", cfg.Quality)
 	}
-	if cfg.Views != "first" {
-		t.Errorf("expected views 'first', got %s", cfg.Views)
+	if cfg.Views != "left" {
+		t.Errorf("expected views 'left', got %s", cfg.Views)
 	}
 	if !cfg.AudioOnly {
 		t.Error("expected audioOnly=true")
@@ -930,16 +935,16 @@ func TestEffectiveJobConfigWithJobConfig(t *testing.T) {
 	}
 }
 
-func TestEffectiveJobConfigWithTopLevelFields(t *testing.T) {
-	quality := "450"
-	req := createJobRequest{
-		SubjectID:       1,
-		SessionID:       1,
-		StartIndex:      1,
-		EndIndex:        1,
-		JobConfigOptions: &JobConfigOptions{
-			Quality: &quality,
-		},
+func TestEffectiveJobConfigWithLegacyTopLevelFields(t *testing.T) {
+	var req createJobRequest
+	if err := json.Unmarshal([]byte(`{
+		"subjectId": 1,
+		"sessionId": 1,
+		"startIndex": 1,
+		"endIndex": 1,
+		"quality": "450"
+	}`), &req); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
 	}
 
 	effective := req.effectiveJobConfig()
@@ -948,6 +953,30 @@ func TestEffectiveJobConfigWithTopLevelFields(t *testing.T) {
 	}
 	if effective.Quality == nil || *effective.Quality != "450" {
 		t.Errorf("expected quality '450', got %v", effective.Quality)
+	}
+}
+
+func TestCreateJobRequestPrefersCanonicalJobConfig(t *testing.T) {
+	var req createJobRequest
+	if err := json.Unmarshal([]byte(`{
+		"subjectId": 1,
+		"sessionId": 1,
+		"startIndex": 1,
+		"endIndex": 1,
+		"quality": "450",
+		"jobConfig": {
+			"quality": "720"
+		}
+	}`), &req); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+
+	effective := req.effectiveJobConfig()
+	if effective == nil {
+		t.Fatal("expected non-nil effective config")
+	}
+	if effective.Quality == nil || *effective.Quality != "720" {
+		t.Errorf("expected quality '720', got %v", effective.Quality)
 	}
 }
 

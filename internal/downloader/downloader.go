@@ -119,7 +119,7 @@ func (d *Downloader) DownloadPlaylist(ctx context.Context, playlist client.Parse
 	return downloadedPlaylist, nil
 }
 
-func (d *Downloader) downloadPlaylistPipelined(_ context.Context, playlist client.ParsedPlaylist, decryptionKey []byte, p *mpb.Progress, tracker *ProgressTracker) (DownloadedPlaylist, error) {
+func (d *Downloader) downloadPlaylistPipelined(ctx context.Context, playlist client.ParsedPlaylist, decryptionKey []byte, p *mpb.Progress, tracker *ProgressTracker) (DownloadedPlaylist, error) {
 	totalChunks := d.totalChunksForPlaylist(playlist)
 
 	downloadedPlaylist := DownloadedPlaylist{Playlist: playlist}
@@ -127,7 +127,7 @@ func (d *Downloader) downloadPlaylistPipelined(_ context.Context, playlist clien
 		return downloadedPlaylist, nil
 	}
 
-	pipeline := d.newLecturePipeline(playlist, decryptionKey, tracker)
+	pipeline := d.newLecturePipeline(ctx, playlist, decryptionKey, tracker)
 	pipeline.Start()
 
 	downloadBar := d.newPipelineBar(p, playlist.SeqNo, totalChunks)
@@ -315,6 +315,17 @@ func (d *Downloader) downloadURL(ctx context.Context, url string, id int, chunk 
 		return "", 0, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if readErr != nil {
+			return "", 0, fmt.Errorf("chunk request failed with status %d and unreadable error body: %w", resp.StatusCode, readErr)
+		}
+		message := strings.TrimSpace(string(body))
+		if message == "" {
+			return "", 0, fmt.Errorf("chunk request failed with status %d", resp.StatusCode)
+		}
+		return "", 0, fmt.Errorf("chunk request failed with status %d: %s", resp.StatusCode, message)
+	}
 
 	err = os.MkdirAll(d.config.TempDirLocation, 0o755)
 	if err != nil {
@@ -354,7 +365,9 @@ func (d *Downloader) downloadWithRetry(ctx context.Context, url string, id int, 
 		lastErr = err
 		if attempt < maxRetries-1 {
 			delay := retryDelay(baseDelay, attempt)
-			time.Sleep(delay)
+			if waitErr := waitForRetry(ctx, delay); waitErr != nil {
+				return "", waitErr
+			}
 		}
 	}
 	return "", fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
@@ -424,8 +437,9 @@ func (d *Downloader) totalChunksForPlaylist(playlist client.ParsedPlaylist) int 
 	return totalChunks
 }
 
-func (d *Downloader) newLecturePipeline(playlist client.ParsedPlaylist, decryptionKey []byte, tracker *ProgressTracker) *LecturePipeline {
+func (d *Downloader) newLecturePipeline(ctx context.Context, playlist client.ParsedPlaylist, decryptionKey []byte, tracker *ProgressTracker) *LecturePipeline {
 	pipelineConfig := PipelineConfig{
+		Context:         ctx,
 		DownloadWorkers: d.config.DownloadWorkersPerLecture,
 		DecryptWorkers:  d.config.DecryptWorkersPerLecture,
 		DecryptionKey:   decryptionKey,
@@ -522,7 +536,7 @@ func (d *Downloader) joinAudioOutput(file M3U8File) (JoinResult, error) {
 	result.LeftOutput = left
 	result.RightOutput = right
 	if left != "" && right != "" && d.config.Views == "both" {
-		both, joinErr := d.JoinViewsAudioOnly(left, right, fmt.Sprintf("LEC %03d %s", file.Playlist.SeqNo, file.Playlist.Title), d.config.AudioFormat)
+		both, joinErr := d.CreateBothViewsAudioOutput(left, fmt.Sprintf("LEC %03d %s", file.Playlist.SeqNo, file.Playlist.Title), d.config.AudioFormat)
 		if joinErr != nil {
 			return result, joinErr
 		}
@@ -569,6 +583,18 @@ func retryDelay(baseDelay time.Duration, attempt int) time.Duration {
 	}
 	multiplier := int64(math.Pow(2, float64(attempt)))
 	return time.Duration(int64(baseDelay) * multiplier)
+}
+
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func validateFFmpegArgs(args ...string) error {

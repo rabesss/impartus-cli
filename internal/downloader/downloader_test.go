@@ -2,14 +2,46 @@ package downloader
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 )
+
+func reverseBytes(in []byte) []byte {
+	out := make([]byte, len(in))
+	for i := range in {
+		out[i] = in[len(in)-1-i]
+	}
+	return out
+}
+
+func fakeKeyResponse(key []byte) []byte {
+	return append([]byte{0, 0}, reverseBytes(key)...)
+}
+
+func writeFakeFFmpegScript(t *testing.T, logPath string, outputContent string) string {
+	t.Helper()
+
+	scriptPath := filepath.Join(t.TempDir(), "ffmpeg")
+	script := fmt.Sprintf(`#!/usr/bin/env bash
+set -eu
+printf '%%s\n' "$@" > %q
+last="${@: -1}"
+printf '%%s' %q > "$last"
+`, logPath, outputContent)
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake ffmpeg) failed: %v", err)
+	}
+	return scriptPath
+}
 
 // TestNewDownloaderWithConfigDefaults tests that ApplyDefaults is called
 func TestNewDownloaderWithConfigDefaults(t *testing.T) {
@@ -807,7 +839,7 @@ func TestDownloaderNewLecturePipeline(t *testing.T) {
 	decryptionKey := []byte("1234567890123456")
 
 	// newLecturePipeline should return a non-nil pipeline
-	pipeline := d.newLecturePipeline(playlist, decryptionKey, nil)
+	pipeline := d.newLecturePipeline(context.Background(), playlist, decryptionKey, nil)
 	if pipeline == nil {
 		t.Fatal("newLecturePipeline() returned nil")
 	}
@@ -936,68 +968,6 @@ func TestDownloadAndJoinPlaylistNoChunks(t *testing.T) {
 	}
 }
 
-func TestDownloadPlaylistWithKeyURL(t *testing.T) {
-	// Test that DownloadPlaylist handles the case where there's a KeyURL
-	// but we can't actually make HTTP requests in unit tests
-	// This is a placeholder for integration tests
-	d := &Downloader{
-		config: &config.Config{
-			EnablePipeline: false,
-		},
-		rateLimiter: NewRateLimiter(100.0, 50.0, false),
-	}
-
-	// Without a KeyURL, fetchDecryptionKey returns an error
-	playlist := client.ParsedPlaylist{
-		ID:     1,
-		SeqNo:  1,
-		KeyURL: "", // Empty key URL
-	}
-
-	// This will fail because it tries to make a request with empty URL
-	_, err := d.DownloadPlaylist(context.Background(), playlist, nil, nil)
-	// Expected to fail without proper client setup
-	if err == nil {
-		t.Log("DownloadPlaylist() unexpectedly succeeded without client")
-	}
-}
-
-func TestFetchLecturePlaylists_DelegatesToClient(t *testing.T) {
-	cfg := &config.Config{Quality: "720p"}
-	d := New(cfg, nil)
-
-	// FetchLecturePlaylists should delegate to client.GetPlaylists
-	// which will fail because there's no real server
-	_, err := d.FetchLecturePlaylists(context.Background(), []client.Lecture{{TTID: 1}})
-	if err == nil {
-		t.Log("FetchLecturePlaylists() unexpectedly succeeded without server")
-	}
-}
-
-func TestDownloadPlaylist_FailedChunks(t *testing.T) {
-	tmpDir := t.TempDir()
-	cfg := &config.Config{
-		EnablePipeline:  false,
-		TempDirLocation: tmpDir,
-	}
-	d := &Downloader{
-		config:      cfg,
-		rateLimiter: NewRateLimiter(100.0, 50.0, false),
-	}
-
-	playlist := client.ParsedPlaylist{
-		ID:     1,
-		SeqNo:  1,
-		KeyURL: "http://placeholder.test/key",
-	}
-
-	// Will fail on fetchDecryptionKey due to no server
-	_, err := d.DownloadPlaylist(context.Background(), playlist, nil, nil)
-	if err == nil {
-		t.Error("expected error without server")
-	}
-}
-
 func TestDownloadLecturePlaylists_EmptyInput(t *testing.T) {
 	d := &Downloader{}
 	results, err := d.DownloadLecturePlaylists(context.Background(), nil, nil, nil)
@@ -1009,24 +979,166 @@ func TestDownloadLecturePlaylists_EmptyInput(t *testing.T) {
 	}
 }
 
-func TestDownloadAndJoinPlaylist_MissingKeyURL(t *testing.T) {
-	cfg := &config.Config{
-		TempDirLocation:  t.TempDir(),
-		DownloadLocation: t.TempDir(),
-	}
+func TestDownloadURLRejectsHTTPErrorStatus(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "upstream unavailable", http.StatusServiceUnavailable)
+	}))
+	defer ts.Close()
+
 	d := &Downloader{
-		config:      cfg,
+		config: &config.Config{
+			TempDirLocation: t.TempDir(),
+			Token:           "token",
+		},
+		client:      client.New(ts.Client(), nil),
 		rateLimiter: NewRateLimiter(100.0, 50.0, false),
 	}
 
-	playlist := client.ParsedPlaylist{
-		ID:     1,
-		SeqNo:  1,
-		KeyURL: "http://invalid.test/key",
+	_, _, err := d.downloadURL(context.Background(), ts.URL+"/chunk.ts", 1, 0, "left")
+	if err == nil {
+		t.Fatal("expected error for non-200 chunk response")
+	}
+	if !strings.Contains(err.Error(), "status 503") {
+		t.Fatalf("expected status 503 in error, got %v", err)
+	}
+}
+
+func TestDownloadWithRetryHonoursCancellationDuringBackoff(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		time.Sleep(25 * time.Millisecond)
+		cancel()
+	}()
+
+	d := &Downloader{
+		config: &config.Config{
+			TempDirLocation: t.TempDir(),
+			Token:           "token",
+		},
+		client:      client.New(&http.Client{}, nil),
+		rateLimiter: NewRateLimiter(100.0, 50.0, false),
 	}
 
-	_, err := d.DownloadAndJoinPlaylist(context.Background(), playlist, nil, nil)
+	start := time.Now()
+	_, err := d.downloadWithRetry(ctx, "://bad-url", 1, 0, "left", 2, nil)
 	if err == nil {
-		t.Error("expected error without valid server")
+		t.Fatal("expected cancellation error")
+	}
+	if err != context.Canceled {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed >= 500*time.Millisecond {
+		t.Fatalf("expected cancellation during backoff before 500ms, took %v", elapsed)
+	}
+}
+
+func TestDownloadAndJoinPlaylistEndToEnd(t *testing.T) {
+	tempDir := t.TempDir()
+	logPath := filepath.Join(tempDir, "ffmpeg.log")
+	ffmpegPath := writeFakeFFmpegScript(t, logPath, "joined output")
+	decryptionKey := []byte("1234567890123456")
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/key":
+			if _, err := w.Write(fakeKeyResponse(decryptionKey)); err != nil {
+				t.Fatalf("Write(key) failed: %v", err)
+			}
+		case "/chunk0.ts":
+			if _, err := w.Write(make([]byte, 16)); err != nil {
+				t.Fatalf("Write(chunk) failed: %v", err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	d := &Downloader{
+		config: &config.Config{
+			TempDirLocation:  tempDir,
+			DownloadLocation: tempDir,
+			Views:            "left",
+			Token:            "token",
+		},
+		client:      client.New(ts.Client(), nil),
+		rateLimiter: NewRateLimiter(100.0, 50.0, false),
+		ffmpegPath:  ffmpegPath,
+		maxRetries:  1,
+	}
+
+	result, err := d.DownloadAndJoinPlaylist(context.Background(), client.ParsedPlaylist{
+		KeyURL:        ts.URL + "/key",
+		Title:         "Integration Lecture",
+		ID:            7,
+		SeqNo:         3,
+		FirstViewURLs: []string{ts.URL + "/chunk0.ts"},
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("DownloadAndJoinPlaylist() error = %v", err)
+	}
+	if result.LeftOutput == "" {
+		t.Fatal("expected left output path")
+	}
+	content, err := os.ReadFile(result.LeftOutput)
+	if err != nil {
+		t.Fatalf("ReadFile(output) failed: %v", err)
+	}
+	if string(content) != "joined output" {
+		t.Fatalf("unexpected output content: %q", string(content))
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile(ffmpeg log) failed: %v", err)
+	}
+	if !strings.Contains(string(logData), "_first.m3u8") {
+		t.Fatalf("expected ffmpeg log to reference first-view m3u8, got %s", string(logData))
+	}
+}
+
+func TestJoinAudioOutputKeepsPerViewOutputsForBothViews(t *testing.T) {
+	tempDir := t.TempDir()
+	logPath := filepath.Join(tempDir, "ffmpeg-audio.log")
+	ffmpegPath := writeFakeFFmpegScript(t, logPath, "audio output")
+
+	leftM3U8 := filepath.Join(tempDir, "left.m3u8")
+	rightM3U8 := filepath.Join(tempDir, "right.m3u8")
+	if err := os.WriteFile(leftM3U8, []byte("#EXTM3U\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(left) failed: %v", err)
+	}
+	if err := os.WriteFile(rightM3U8, []byte("#EXTM3U\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(right) failed: %v", err)
+	}
+
+	d := &Downloader{
+		config: &config.Config{
+			DownloadLocation: tempDir,
+			Views:            "both",
+			AudioOnly:        true,
+			AudioFormat:      "mp3",
+		},
+		ffmpegPath: ffmpegPath,
+	}
+
+	result, err := d.joinAudioOutput(M3U8File{
+		FirstViewFile:  leftM3U8,
+		SecondViewFile: rightM3U8,
+		Playlist: client.ParsedPlaylist{
+			SeqNo: 1,
+			Title: "Audio Lecture",
+		},
+	})
+	if err != nil {
+		t.Fatalf("joinAudioOutput() error = %v", err)
+	}
+	for _, output := range []string{result.LeftOutput, result.RightOutput, result.BothOutput} {
+		if output == "" {
+			t.Fatal("expected all audio outputs to be populated")
+		}
+		if _, err := os.Stat(output); err != nil {
+			t.Fatalf("expected output to exist: %s (%v)", output, err)
+		}
 	}
 }

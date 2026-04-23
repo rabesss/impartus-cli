@@ -18,7 +18,10 @@ https://cdn.placeholder.test/001.ts
 `
 
 	scanner := bufio.NewScanner(strings.NewReader(playlist))
-	got := client.ParsePlaylist(scanner, 123, "Lecture", 1)
+	got, err := client.ParsePlaylist(scanner, 123, "Lecture", 1)
+	if err != nil {
+		t.Fatalf("ParsePlaylist() unexpected error: %v", err)
+	}
 
 	if got.KeyURL != "https://key.placeholder.test" {
 		t.Fatalf("expected key URL, got %q", got.KeyURL)
@@ -42,7 +45,10 @@ https://cdn.placeholder.test/right-000.ts
 `
 
 	scanner := bufio.NewScanner(strings.NewReader(playlist))
-	got := client.ParsePlaylist(scanner, 456, "Lecture-2", 2)
+	got, err := client.ParsePlaylist(scanner, 456, "Lecture-2", 2)
+	if err != nil {
+		t.Fatalf("ParsePlaylist() unexpected error: %v", err)
+	}
 
 	if !got.HasMultipleViews {
 		t.Fatalf("expected multi-view playlist")

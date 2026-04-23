@@ -320,11 +320,8 @@ func TestProgressTrackerGetCurrentSpeed(t *testing.T) {
 func TestProgressTrackerStop(t *testing.T) {
 	pt := NewProgressTracker(10, 5, nil)
 
-	// Should not panic when stopping
 	pt.Stop()
-
-	// Stop() is not idempotent - calling twice would panic
-	// so we intentionally do not call it again
+	pt.Stop()
 }
 
 func TestProgressTrackerStopNilReceiver(t *testing.T) {

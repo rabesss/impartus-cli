@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -88,6 +89,13 @@ func TestJobStore_CancelTerminalJob(t *testing.T) {
 	if err == nil {
 		t.Error("expected error canceling terminal job")
 	}
+	var terminalErr *TerminalStatusError
+	if !errors.As(err, &terminalErr) {
+		t.Fatalf("expected TerminalStatusError, got %v", err)
+	}
+	if terminalErr.Status != StatusCompleted {
+		t.Fatalf("TerminalStatusError status = %s, want %s", terminalErr.Status, StatusCompleted)
+	}
 }
 
 func TestJobStore_CancelNotFound(t *testing.T) {
@@ -95,6 +103,9 @@ func TestJobStore_CancelNotFound(t *testing.T) {
 	_, err := store.CancelJob("nonexistent")
 	if err == nil {
 		t.Error("expected error for nonexistent job")
+	}
+	if !errors.Is(err, ErrJobNotFound) {
+		t.Fatalf("expected ErrJobNotFound, got %v", err)
 	}
 }
 

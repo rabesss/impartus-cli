@@ -30,22 +30,22 @@ func (s *APIServer) executeJob(jobID string) {
 		return
 	}
 
-	cfg, apiClient, ok := s.prepareJobRuntime(ctx, jobID, job.ctx, job.cfg)
+	cfg, apiClient, ok := s.prepareJobRuntime(ctx, job.ctx, jobID, job.cfg)
 	if !ok {
 		return
 	}
-	selected, ok := s.fetchSelectedLectures(ctx, jobID, jobCtx, apiClient, cfg, job)
+	selected, ok := s.fetchSelectedLectures(ctx, jobCtx, jobID, apiClient, cfg, job)
 	if !ok {
 		return
 	}
 	s.jobStore.SetLectureProgress(jobID, 0, len(selected))
 
-	s.maybeDownloadSlides(ctx, jobID, jobCtx, apiClient, cfg, selected)
-	playlists, downloadCfg, ok := s.prepareDownload(ctx, jobID, jobCtx, apiClient, cfg, selected)
+	s.maybeDownloadSlides(ctx, jobCtx, jobID, apiClient, cfg, selected)
+	playlists, downloadCfg, ok := s.prepareDownload(ctx, jobCtx, jobID, apiClient, cfg, selected)
 	if !ok {
 		return
 	}
-	finalOutputs, ok := s.runPlaylistDownloads(ctx, cancelLocal, jobCtx, jobID, apiClient, downloadCfg, playlists)
+	finalOutputs, ok := s.runPlaylistDownloads(ctx, jobCtx, cancelLocal, jobID, apiClient, downloadCfg, playlists)
 	if !ok {
 		return
 	}
@@ -59,10 +59,6 @@ func (s *APIServer) updateRunningProgress(jobID string, progress float64, phase 
 	}
 	if job.ctx.Err() != nil || job.Status == StatusCanceled {
 		s.jobStore.UpdateJob(jobID, StatusCanceled, progress, "")
-		evt := newWSEvent("job.canceled", jobID)
-		evt.Status = StatusCanceled
-		evt.Progress = progress
-		broadcastEvent(s.wsHub, evt)
 		return false
 	}
 
@@ -87,9 +83,6 @@ func (s *APIServer) handleCancelIfNeeded(jobID string, jobErr error) bool {
 		s.jobStore.UpdateJob(jobID, StatusCanceled, 0, "")
 	}
 
-	evt := newWSEvent("job.canceled", jobID)
-	evt.Status = StatusCanceled
-	broadcastEvent(s.wsHub, evt)
 	return true
 }
 
@@ -103,7 +96,7 @@ func (s *APIServer) startJob(jobID string) bool {
 	return true
 }
 
-func (s *APIServer) prepareJobRuntime(ctx context.Context, jobID string, jobCtx context.Context, jobCfg *config.Config) (*config.Config, *client.Client, bool) {
+func (s *APIServer) prepareJobRuntime(ctx context.Context, jobCtx context.Context, jobID string, jobCfg *config.Config) (*config.Config, *client.Client, bool) {
 	cfg := cloneConfig(jobCfg)
 	if cfg == nil {
 		s.failJob(jobID, "missing job config")
@@ -136,7 +129,7 @@ func ensureJobDirectories(cfg *config.Config) error {
 	return os.MkdirAll(cfg.TempDirLocation, 0o755)
 }
 
-func (s *APIServer) fetchSelectedLectures(ctx context.Context, jobID string, jobCtx context.Context, apiClient *client.Client, cfg *config.Config, job *Job) (client.Lectures, bool) {
+func (s *APIServer) fetchSelectedLectures(ctx context.Context, jobCtx context.Context, jobID string, apiClient *client.Client, cfg *config.Config, job *Job) (client.Lectures, bool) {
 	if !s.updateRunningProgress(jobID, 15, "fetching_lectures", nil) {
 		return nil, false
 	}
@@ -148,34 +141,36 @@ func (s *APIServer) fetchSelectedLectures(ctx context.Context, jobID string, job
 		s.failJob(jobID, err.Error())
 		return nil, false
 	}
-	selected, selectErr := selectJobLectures(job, lectures)
+	selected, filteredLectures, selectErr := selectJobLectures(job, lectures)
 	if selectErr != nil {
 		s.failJob(jobID, selectErr.Error())
 		return nil, false
 	}
+	job.FilteredLectures = filteredLectures
 	return selected, true
 }
 
-func selectJobLectures(job *Job, lectures client.Lectures) (client.Lectures, error) {
+func selectJobLectures(job *Job, lectures client.Lectures) (client.Lectures, int, error) {
 	selected, err := lectures.SelectRange(job.StartIndex, job.EndIndex)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
+	filteredLectures := 0
 	if job.Config.SkipNoAudio {
 		totalLectures := len(selected)
 		selected = selected.FilterNoAudio()
-		job.FilteredLectures = totalLectures - len(selected)
+		filteredLectures = totalLectures - len(selected)
 	}
 
 	if len(selected) == 0 {
-		return nil, errors.New("no lectures available after filtering (all lectures have noaudio=1 in the selected range)")
+		return nil, filteredLectures, errors.New("no lectures available after filtering (all lectures have noaudio=1 in the selected range)")
 	}
 
-	return selected, nil
+	return selected, filteredLectures, nil
 }
 
-func (s *APIServer) maybeDownloadSlides(ctx context.Context, jobID string, jobCtx context.Context, apiClient *client.Client, cfg *config.Config, lectures client.Lectures) {
+func (s *APIServer) maybeDownloadSlides(ctx context.Context, jobCtx context.Context, jobID string, apiClient *client.Client, cfg *config.Config, lectures client.Lectures) {
 	if !cfg.Slides {
 		return
 	}
@@ -191,7 +186,7 @@ func (s *APIServer) maybeDownloadSlides(ctx context.Context, jobID string, jobCt
 	}
 }
 
-func (s *APIServer) prepareDownload(ctx context.Context, jobID string, jobCtx context.Context, apiClient *client.Client, cfg *config.Config, selected client.Lectures) ([]client.ParsedPlaylist, *config.Config, bool) {
+func (s *APIServer) prepareDownload(ctx context.Context, jobCtx context.Context, jobID string, apiClient *client.Client, cfg *config.Config, selected client.Lectures) ([]client.ParsedPlaylist, *config.Config, bool) {
 	if !s.updateRunningProgress(jobID, 30, "fetching_playlists", nil) {
 		return nil, nil, false
 	}
@@ -213,7 +208,7 @@ func (s *APIServer) prepareDownload(ctx context.Context, jobID string, jobCtx co
 	return playlists, downloadCfg, true
 }
 
-func (s *APIServer) runPlaylistDownloads(ctx context.Context, cancelLocal context.CancelFunc, jobCtx context.Context, jobID string, apiClient *client.Client, downloadCfg *config.Config, playlists []client.ParsedPlaylist) ([]string, bool) {
+func (s *APIServer) runPlaylistDownloads(ctx context.Context, jobCtx context.Context, cancelLocal context.CancelFunc, jobID string, apiClient *client.Client, downloadCfg *config.Config, playlists []client.ParsedPlaylist) ([]string, bool) {
 	total := len(playlists)
 	workers := downloadCfg.NumWorkers
 	if workers < 1 {
@@ -285,7 +280,7 @@ func runtimeConfigFrom(cfg *config.Config) JobRuntimeConfig {
 	}
 	return JobRuntimeConfig{
 		Quality:                   cfg.Quality,
-		Views:                     cfg.Views,
+		Views:                     config.NormalizeViews(cfg.Views),
 		AudioOnly:                 cfg.AudioOnly,
 		AudioFormat:               cfg.AudioFormat,
 		OutputPath:                cfg.DownloadLocation,
@@ -363,7 +358,7 @@ func applyJobConfigOverrides(cfg *config.Config, opts *JobConfigOptions) {
 		cfg.Quality = *opts.Quality
 	}
 	if opts.Views != nil {
-		cfg.Views = *opts.Views
+		cfg.Views = config.NormalizeViews(*opts.Views)
 	}
 	if opts.AudioOnly != nil {
 		cfg.AudioOnly = *opts.AudioOnly

@@ -13,6 +13,7 @@ func TestBuildinfoIntegration(t *testing.T) {
 }
 
 func TestMainPackageImports(t *testing.T) {
-	// Verify the main package compiles and imports resolve correctly
-	_ = buildinfo.SentryRelease()
+	if buildinfo.SentryRelease() == "" {
+		t.Fatal("buildinfo.SentryRelease() should not be empty")
+	}
 }

@@ -56,7 +56,7 @@ var (
 func Init() error {
 	var initErr error
 	once.Do(func() {
-		instance, initErr = initMetrics(context.Background())
+		instance, initErr = initMetrics()
 	})
 	return initErr
 }
@@ -74,7 +74,7 @@ func (m *Metrics) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func initMetrics(ctx context.Context) (*Metrics, error) {
+func initMetrics() (*Metrics, error) {
 	m := &Metrics{}
 
 	// Create resource with service info (avoid schema conflict by using NewSchemaless)

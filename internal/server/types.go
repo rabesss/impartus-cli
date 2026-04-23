@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -11,6 +14,25 @@ import (
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 )
+
+// Typed sentinel errors for job operations.
+var (
+	ErrJobNotFound   = errors.New("job not found")
+	ErrJobTerminated = errors.New("job in terminal state")
+)
+
+// TerminalStatusError wraps ErrJobTerminated with the specific terminal status.
+type TerminalStatusError struct {
+	Status JobStatus
+}
+
+func (e *TerminalStatusError) Error() string {
+	return fmt.Sprintf("job in terminal state: %s", e.Status)
+}
+
+func (e *TerminalStatusError) Unwrap() error {
+	return ErrJobTerminated
+}
 
 type JobStatus string
 
@@ -25,15 +47,15 @@ const (
 const maxIdempotencyKeyLength = 256
 
 type wsEvent struct {
-	Type      string     `json:"type"`
-	JobID     string     `json:"jobId,omitempty"`
-	Status    JobStatus  `json:"status,omitempty"`
-	Progress  float64    `json:"progress,omitempty"`
-	Phase     string     `json:"phase,omitempty"`
-	Timestamp int64      `json:"timestamp"`
-	Details   any        `json:"details,omitempty"`
-	Error     string     `json:"error,omitempty"`
-	Outputs   []string   `json:"outputs,omitempty"`
+	Type      string    `json:"type"`
+	JobID     string    `json:"jobId,omitempty"`
+	Status    JobStatus `json:"status,omitempty"`
+	Progress  float64   `json:"progress,omitempty"`
+	Phase     string    `json:"phase,omitempty"`
+	Timestamp int64     `json:"timestamp"`
+	Details   any       `json:"details,omitempty"`
+	Error     string    `json:"error,omitempty"`
+	Outputs   []string  `json:"outputs,omitempty"`
 }
 
 func newWSEvent(eventType, jobID string) wsEvent {
@@ -75,11 +97,58 @@ type JobConfigOptions struct {
 	SkipNoAudio               *bool   `json:"skipNoAudio,omitempty"`
 }
 
-// createJobRequest supports two API shapes for backward compatibility:
-//   - New shape: { ..., "jobConfig": { ... } }
-//   - Legacy shape: { ..., "quality": "...", "views": "..." }  (flat fields)
-//
-// effectiveJobConfig() normalizes both into a single *JobConfigOptions.
+type legacyJobConfigOptions struct {
+	Quality                   *string `json:"quality,omitempty"`
+	Views                     *string `json:"views,omitempty"`
+	AudioOnly                 *bool   `json:"audioOnly,omitempty"`
+	AudioFormat               *string `json:"audioFormat,omitempty"`
+	OutputPath                *string `json:"outputPath,omitempty"`
+	EnablePipeline            *bool   `json:"enablePipeline,omitempty"`
+	NumWorkers                *int    `json:"numWorkers,omitempty"`
+	DownloadWorkersPerLecture *int    `json:"downloadWorkersPerLecture,omitempty"`
+	DecryptWorkersPerLecture  *int    `json:"decryptWorkersPerLecture,omitempty"`
+	SkipNoAudio               *bool   `json:"skipNoAudio,omitempty"`
+}
+
+func (o legacyJobConfigOptions) hasValues() bool {
+	return o.Quality != nil ||
+		o.Views != nil ||
+		o.AudioOnly != nil ||
+		o.AudioFormat != nil ||
+		o.OutputPath != nil ||
+		o.EnablePipeline != nil ||
+		o.NumWorkers != nil ||
+		o.DownloadWorkersPerLecture != nil ||
+		o.DecryptWorkersPerLecture != nil ||
+		o.SkipNoAudio != nil
+}
+
+func (o legacyJobConfigOptions) toJobConfigOptions() *JobConfigOptions {
+	if !o.hasValues() {
+		return nil
+	}
+	var views *string
+	if o.Views != nil {
+		normalized := config.NormalizeViews(*o.Views)
+		views = &normalized
+	}
+	return &JobConfigOptions{
+		Quality:                   o.Quality,
+		Views:                     views,
+		AudioOnly:                 o.AudioOnly,
+		AudioFormat:               o.AudioFormat,
+		OutputPath:                o.OutputPath,
+		EnablePipeline:            o.EnablePipeline,
+		NumWorkers:                o.NumWorkers,
+		DownloadWorkersPerLecture: o.DownloadWorkersPerLecture,
+		DecryptWorkersPerLecture:  o.DecryptWorkersPerLecture,
+		SkipNoAudio:               o.SkipNoAudio,
+	}
+}
+
+// createJobRequest keeps the canonical request shape in the runtime model.
+// Legacy flat config keys are accepted only during JSON decoding and normalized
+// into JobConfig at the boundary.
 type createJobRequest struct {
 	SubjectID      int    `json:"subjectId"`
 	SessionID      int    `json:"sessionId"`
@@ -87,20 +156,54 @@ type createJobRequest struct {
 	EndIndex       int    `json:"endIndex"`
 	IdempotencyKey string `json:"idempotencyKey,omitempty"`
 
-	JobConfig      *JobConfigOptions `json:"jobConfig,omitempty"`
-	*JobConfigOptions // embedded: flat fields promoted for backward-compatible legacy clients
+	JobConfig *JobConfigOptions `json:"jobConfig,omitempty"`
 }
 
 func (r createJobRequest) effectiveJobConfig() *JobConfigOptions {
-	if r.JobConfig != nil {
-		return r.JobConfig
-	}
-	if r.JobConfigOptions == nil {
+	if r.JobConfig == nil {
 		return nil
 	}
-	// Return a copy of the embedded options (avoid mutations on shared pointer)
-	cp := *r.JobConfigOptions
+	cp := *r.JobConfig
 	return &cp
+}
+
+func (r *createJobRequest) UnmarshalJSON(data []byte) error {
+	type rawCreateJobRequest struct {
+		SubjectID      int               `json:"subjectId"`
+		SessionID      int               `json:"sessionId"`
+		StartIndex     int               `json:"startIndex"`
+		EndIndex       int               `json:"endIndex"`
+		IdempotencyKey string            `json:"idempotencyKey,omitempty"`
+		JobConfig      *JobConfigOptions `json:"jobConfig,omitempty"`
+		legacyJobConfigOptions
+	}
+
+	var raw rawCreateJobRequest
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	*r = createJobRequest{
+		SubjectID:      raw.SubjectID,
+		SessionID:      raw.SessionID,
+		StartIndex:     raw.StartIndex,
+		EndIndex:       raw.EndIndex,
+		IdempotencyKey: raw.IdempotencyKey,
+	}
+
+	switch {
+	case raw.JobConfig != nil:
+		cp := *raw.JobConfig
+		if cp.Views != nil {
+			normalized := config.NormalizeViews(*cp.Views)
+			cp.Views = &normalized
+		}
+		r.JobConfig = &cp
+	case raw.legacyJobConfigOptions.hasValues():
+		r.JobConfig = raw.legacyJobConfigOptions.toJobConfigOptions()
+	}
+
+	return nil
 }
 
 type JobRuntimeConfig struct {
@@ -160,19 +263,20 @@ type cancelJobResponse struct {
 }
 
 type createJobConflictResponse struct {
-	Job       *Job  `json:"job"`
-	Duplicate bool  `json:"duplicate"`
+	Job       *Job `json:"job"`
+	Duplicate bool `json:"duplicate"`
 }
 
 type APIServer struct {
-	cfg             *config.Config
-	jobStore        *JobStore
-	wsHub           *WSHub
-	tokenStore      *TokenStore
-	upgrader        websocket.Upgrader
-	router          *mux.Router
-	port            string
-	upstreamCache   *upstreamCacheEntry
-	upstreamCacheMu sync.RWMutex
-	upstreamLogin   UpstreamLoginFunc
+	cfg              *config.Config
+	jobStore         *JobStore
+	wsHub            *WSHub
+	tokenStore       *TokenStore
+	stopTokenCleanup func()
+	upgrader         websocket.Upgrader
+	router           *mux.Router
+	port             string
+	upstreamCache    *upstreamCacheEntry
+	upstreamCacheMu  sync.RWMutex
+	upstreamLogin    UpstreamLoginFunc
 }

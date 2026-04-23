@@ -48,6 +48,7 @@ type ProgressTracker struct {
 	statsBar     *mpb.Bar
 	updateTicker *time.Ticker
 	stopChan     chan struct{}
+	stopOnce     sync.Once
 
 	mu sync.RWMutex
 }
@@ -273,14 +274,16 @@ func (pt *ProgressTracker) Stop() {
 	if pt == nil {
 		return
 	}
-	if pt.updateTicker != nil {
-		pt.updateTicker.Stop()
-	}
-	close(pt.stopChan)
-	if pt.statsBar != nil {
-		pt.statsBar.SetCurrent(100)
-		pt.statsBar.Abort(true)
-	}
+	pt.stopOnce.Do(func() {
+		if pt.updateTicker != nil {
+			pt.updateTicker.Stop()
+		}
+		close(pt.stopChan)
+		if pt.statsBar != nil {
+			pt.statsBar.SetCurrent(100)
+			pt.statsBar.Abort(true)
+		}
+	})
 }
 
 func (pt *ProgressTracker) GetStats() ProgressStats {

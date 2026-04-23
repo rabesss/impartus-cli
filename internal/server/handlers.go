@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -16,6 +17,18 @@ import (
 	"github.com/gorilla/mux"
 
 	"github.com/rabesss/impartus-cli/internal/client"
+)
+
+const (
+	healthCommand                 = "health"
+	jobCancelledEventType         = "job.cancelled"
+	lectureSubjectQueryParam      = "subjectId"
+	lectureSubjectLegacyParam     = "subject_id"
+	lectureSessionQueryParam      = "sessionId"
+	lectureSessionLegacyParam     = "session_id"
+	upstreamLoginFailedMessage    = "Failed to authenticate with Impartus API"
+	upstreamCoursesFailedMessage  = "Failed to fetch courses from Impartus"
+	upstreamLecturesFailedMessage = "Failed to fetch lectures from Impartus"
 )
 
 func (s *APIServer) registerRoutes() {
@@ -47,7 +60,7 @@ func (s *APIServer) healthHandler(w http.ResponseWriter, _ *http.Request) {
 		overallStatus = "degraded"
 	}
 
-	respondWithEnvelope(w, http.StatusOK, "getHealth", healthResponse{
+	respondWithEnvelope(w, http.StatusOK, healthCommand, healthResponse{
 		Status:   overallStatus,
 		Config:   configStatus,
 		Upstream: upstreamStatus,
@@ -165,6 +178,22 @@ func (s *APIServer) ensureScheme(rawURL string) string {
 	return rawURL
 }
 
+func firstQueryValue(values url.Values, keys ...string) string {
+	for _, key := range keys {
+		if value := values.Get(key); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func respondWithUpstreamFailure(w http.ResponseWriter, code, message, command string, err error) {
+	if err != nil {
+		log.Printf("%s failed for %s: %v", code, command, err)
+	}
+	respondWithError(w, http.StatusBadGateway, code, message, command, &retryHint{Retryable: true, RetryAfter: 30})
+}
+
 func (s *APIServer) checkFFmpegStatus() statusCheckResult {
 	if _, err := exec.LookPath("ffmpeg"); err == nil {
 		return statusCheckResult{Status: "available"}
@@ -175,13 +204,13 @@ func (s *APIServer) checkFFmpegStatus() statusCheckResult {
 func (s *APIServer) coursesHandler(w http.ResponseWriter, r *http.Request) {
 	apiClient, cfg, err := s.getOrRefreshUpstreamClient(r.Context())
 	if err != nil {
-		respondWithError(w, http.StatusBadGateway, "LOGIN_FAILED", err.Error(), "listCourses", &retryHint{Retryable: true, RetryAfter: 30})
+		respondWithUpstreamFailure(w, "LOGIN_FAILED", upstreamLoginFailedMessage, "listCourses", err)
 		return
 	}
 
 	courses, err := apiClient.GetCourses(r.Context(), cfg)
 	if err != nil {
-		respondWithError(w, http.StatusBadGateway, "COURSES_FETCH_FAILED", err.Error(), "listCourses", &retryHint{Retryable: true, RetryAfter: 30})
+		respondWithUpstreamFailure(w, "COURSES_FETCH_FAILED", upstreamCoursesFailedMessage, "listCourses", err)
 		return
 	}
 
@@ -189,17 +218,11 @@ func (s *APIServer) coursesHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) lecturesHandler(w http.ResponseWriter, r *http.Request) {
-	subjectID := r.URL.Query().Get("subject_id")
-	if subjectID == "" {
-		subjectID = r.URL.Query().Get("subjectId")
-	}
-	sessionID := r.URL.Query().Get("session_id")
-	if sessionID == "" {
-		sessionID = r.URL.Query().Get("sessionId")
-	}
+	subjectID := firstQueryValue(r.URL.Query(), lectureSubjectQueryParam, lectureSubjectLegacyParam)
+	sessionID := firstQueryValue(r.URL.Query(), lectureSessionQueryParam, lectureSessionLegacyParam)
 
 	if subjectID == "" || sessionID == "" {
-		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", "subject_id and session_id query parameters required", "listLectures", nil)
+		respondWithError(w, http.StatusBadRequest, "MISSING_PARAMETER", fmt.Sprintf("%s and %s query parameters required", lectureSubjectQueryParam, lectureSessionQueryParam), "listLectures", nil)
 		return
 	}
 
@@ -216,13 +239,13 @@ func (s *APIServer) lecturesHandler(w http.ResponseWriter, r *http.Request) {
 
 	apiClient, cfg, loginErr := s.getOrRefreshUpstreamClient(r.Context())
 	if loginErr != nil {
-		respondWithError(w, http.StatusBadGateway, "LOGIN_FAILED", loginErr.Error(), "listLectures", &retryHint{Retryable: true, RetryAfter: 30})
+		respondWithUpstreamFailure(w, "LOGIN_FAILED", upstreamLoginFailedMessage, "listLectures", loginErr)
 		return
 	}
 
 	lectures, err := apiClient.GetLectures(r.Context(), cfg, client.Course{SubjectID: subjectInt, SessionID: sessionInt})
 	if err != nil {
-		respondWithError(w, http.StatusBadGateway, "LECTURES_FETCH_FAILED", err.Error(), "listLectures", &retryHint{Retryable: true, RetryAfter: 30})
+		respondWithUpstreamFailure(w, "LECTURES_FETCH_FAILED", upstreamLecturesFailedMessage, "listLectures", err)
 		return
 	}
 
@@ -310,19 +333,20 @@ func (s *APIServer) deleteJobHandler(w http.ResponseWriter, r *http.Request) {
 
 	job, err := s.jobStore.CancelJob(jobID)
 	if err != nil {
-		if err.Error() == "not_found" {
+		if errors.Is(err, ErrJobNotFound) {
 			respondWithError(w, http.StatusNotFound, "JOB_NOT_FOUND", "Job not found", "cancelJob", nil)
 			return
 		}
-		if strings.HasPrefix(err.Error(), "terminal:") {
-			respondWithError(w, http.StatusBadRequest, "JOB_CANNOT_CANCEL", "Cannot cancel job in terminal state", "cancelJob", nil, map[string]string{"status": strings.TrimPrefix(err.Error(), "terminal:")})
+		var terminalErr *TerminalStatusError
+		if errors.As(err, &terminalErr) {
+			respondWithError(w, http.StatusBadRequest, "JOB_CANNOT_CANCEL", "Cannot cancel job in terminal state", "cancelJob", nil, map[string]string{"status": string(terminalErr.Status)})
 			return
 		}
 		respondWithError(w, http.StatusInternalServerError, "CANCEL_FAILED", err.Error(), "cancelJob", &retryHint{Retryable: true, RetryAfter: 10})
 		return
 	}
 
-	evt := newWSEvent("job.canceled", jobID)
+	evt := newWSEvent(jobCancelledEventType, jobID)
 	evt.Status = StatusCanceled
 	evt.Progress = job.Progress
 	broadcastEvent(s.wsHub, evt)

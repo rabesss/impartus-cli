@@ -66,7 +66,7 @@ func TestMergeConfigWithJobOptionsAppliesOverridesAndValidatesInvalidValues(t *t
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	if merged.Quality != "720" || merged.Views != "second" || !merged.AudioOnly || merged.AudioFormat != "aac" {
+	if merged.Quality != "720" || merged.Views != "right" || !merged.AudioOnly || merged.AudioFormat != "aac" {
 		t.Fatalf("unexpected merged media config: %+v", merged)
 	}
 	if merged.DownloadLocation != "./custom-output" {
@@ -114,7 +114,7 @@ func TestCreateJobRequestEffectiveJobConfigMapsTopLevelFields(t *testing.T) {
 	decryptWorkers := 2
 
 	req := createJobRequest{
-		JobConfigOptions: &JobConfigOptions{
+		JobConfig: &JobConfigOptions{
 			Quality:                   &quality,
 			Views:                     &views,
 			AudioOnly:                 &audioOnly,
@@ -251,19 +251,22 @@ func TestRequestIDMiddlewarePropagatesExistingID(t *testing.T) {
 func TestSelectJobLecturesMatchesCLIAlignment(t *testing.T) {
 	// Create test lectures matching the structure used in CLI tests
 	lectures := client.Lectures{
-		{SeqNo: 1, Topic: "Lecture 1"},
-		{SeqNo: 2, Topic: "Lecture 2"},
-		{SeqNo: 3, Topic: "Lecture 3"},
-		{SeqNo: 4, Topic: "Lecture 4"},
-		{SeqNo: 5, Topic: "Lecture 5"},
+		client.Lecture{SeqNo: 1, Topic: "Lecture 1"},
+		client.Lecture{SeqNo: 2, Topic: "Lecture 2"},
+		client.Lecture{SeqNo: 3, Topic: "Lecture 3"},
+		client.Lecture{SeqNo: 4, Topic: "Lecture 4"},
+		client.Lecture{SeqNo: 5, Topic: "Lecture 5"},
 	}
 
 	// Test case 1: range 1-2 should select first 2 lectures from reversed order
 	// CLI's selectLectureRange: reverses to [5,4,3,2,1], then takes [5,4] for range 1-2
 	job1 := &Job{StartIndex: 1, EndIndex: 2}
-	selected1, err := selectJobLectures(job1, lectures)
+	selected1, filtered1, err := selectJobLectures(job1, lectures)
 	if err != nil {
 		t.Fatalf("selectJobLectures(1-2) unexpected error: %v", err)
+	}
+	if filtered1 != 0 {
+		t.Fatalf("expected 0 filtered lectures, got %d", filtered1)
 	}
 	// Expected: reversed [5,4,3,2,1], take indices 0-1 => [5,4]
 	if len(selected1) != 2 {
@@ -275,9 +278,12 @@ func TestSelectJobLecturesMatchesCLIAlignment(t *testing.T) {
 
 	// Test case 2: range 1-5 (full range) should select all lectures in reverse order
 	job2 := &Job{StartIndex: 1, EndIndex: 5}
-	selected2, err := selectJobLectures(job2, lectures)
+	selected2, filtered2, err := selectJobLectures(job2, lectures)
 	if err != nil {
 		t.Fatalf("selectJobLectures(1-5) unexpected error: %v", err)
+	}
+	if filtered2 != 0 {
+		t.Fatalf("expected 0 filtered lectures, got %d", filtered2)
 	}
 	expectedSeqNos := []int{5, 4, 3, 2, 1}
 	if len(selected2) != len(expectedSeqNos) {
@@ -291,9 +297,12 @@ func TestSelectJobLecturesMatchesCLIAlignment(t *testing.T) {
 
 	// Test case 3: default range (0,0) should select all lectures
 	job3 := &Job{StartIndex: 0, EndIndex: 0}
-	selected3, err := selectJobLectures(job3, lectures)
+	selected3, filtered3, err := selectJobLectures(job3, lectures)
 	if err != nil {
 		t.Fatalf("selectJobLectures(0,0) unexpected error: %v", err)
+	}
+	if filtered3 != 0 {
+		t.Fatalf("expected 0 filtered lectures, got %d", filtered3)
 	}
 	if len(selected3) != 5 {
 		t.Errorf("default range: expected 5 lectures, got %d", len(selected3))
@@ -308,9 +317,12 @@ func TestSelectJobLecturesMatchesCLIAlignment(t *testing.T) {
 	// Test case 4: range 3-4 should select middle lectures from reversed order
 	// Reversed: [5,4,3,2,1], indices 2-3 => [3,2]
 	job4 := &Job{StartIndex: 3, EndIndex: 4}
-	selected4, err := selectJobLectures(job4, lectures)
+	selected4, filtered4, err := selectJobLectures(job4, lectures)
 	if err != nil {
 		t.Fatalf("selectJobLectures(3-4) unexpected error: %v", err)
+	}
+	if filtered4 != 0 {
+		t.Fatalf("expected 0 filtered lectures, got %d", filtered4)
 	}
 	if len(selected4) != 2 {
 		t.Fatalf("expected 2 lectures, got %d", len(selected4))
@@ -323,13 +335,13 @@ func TestSelectJobLecturesMatchesCLIAlignment(t *testing.T) {
 // TestSelectJobLecturesOutOfRange validates error handling for invalid ranges
 func TestSelectJobLecturesOutOfRange(t *testing.T) {
 	lectures := client.Lectures{
-		{SeqNo: 1, Topic: "Lecture 1"},
-		{SeqNo: 2, Topic: "Lecture 2"},
+		client.Lecture{SeqNo: 1, Topic: "Lecture 1"},
+		client.Lecture{SeqNo: 2, Topic: "Lecture 2"},
 	}
 
 	// Start index beyond available lectures
 	job := &Job{StartIndex: 5, EndIndex: 10}
-	_, err := selectJobLectures(job, lectures)
+	_, _, err := selectJobLectures(job, lectures)
 	if err == nil {
 		t.Error("expected error for startIndex out of range")
 	}
@@ -339,7 +351,7 @@ func TestSelectJobLecturesOutOfRange(t *testing.T) {
 
 	// Empty lectures
 	emptyJob := &Job{StartIndex: 1, EndIndex: 1}
-	_, err = selectJobLectures(emptyJob, nil)
+	_, _, err = selectJobLectures(emptyJob, nil)
 	if err == nil {
 		t.Error("expected error for empty lectures")
 	}
@@ -640,7 +652,7 @@ func TestHealthEndpointReturnsStructuredStatus(t *testing.T) {
 	if !metaOK {
 		t.Fatal("expected meta field in response")
 	}
-	if meta["command"] != "getHealth" {
+	if meta["command"] != healthCommand {
 		t.Errorf("expected command=health, got %v", meta["command"])
 	}
 	if meta["mode"] != "api" {

@@ -230,8 +230,12 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 		}
 
 		scanner := bufio.NewScanner(resp.Body)
-		parsedPlaylists = append(parsedPlaylists, ParsePlaylist(scanner, lecture.TTID, lecture.Topic, lecture.SeqNo))
+		parsed, parseErr := ParsePlaylist(scanner, lecture.TTID, lecture.Topic, lecture.SeqNo)
 		resp.Body.Close()
+		if parseErr != nil {
+			return parsedPlaylists, fmt.Errorf("parse playlist for lecture %d (%s): %w", lecture.TTID, lecture.Topic, parseErr)
+		}
+		parsedPlaylists = append(parsedPlaylists, parsed)
 	}
 
 	return parsedPlaylists, nil
@@ -261,7 +265,7 @@ func (c *Client) GetStreamInfos(ctx context.Context, baseURL, token string, lect
 	return ParseStreamInfosFromBody(body)
 }
 
-func ParsePlaylist(scanner *bufio.Scanner, id int, title string, seqNo int) ParsedPlaylist {
+func ParsePlaylist(scanner *bufio.Scanner, id int, title string, seqNo int) (ParsedPlaylist, error) {
 	parsedOutput := ParsedPlaylist{
 		ID:    id,
 		Title: title,
@@ -290,13 +294,17 @@ func ParsePlaylist(scanner *bufio.Scanner, id int, title string, seqNo int) Pars
 		}
 	}
 
+	if err := scanner.Err(); err != nil {
+		return ParsedPlaylist{}, fmt.Errorf("scan playlist: %w", err)
+	}
+
 	parsedOutput.FirstViewURLs = firstViewURLs
 	if !isFirstView {
 		parsedOutput.HasMultipleViews = true
 		parsedOutput.SecondViewURLs = secondViewURLs
 	}
 
-	return parsedOutput
+	return parsedOutput, nil
 }
 
 func sanitizeFileName(name string) string {

@@ -26,14 +26,14 @@ const (
 
 // Alert represents an alert to be sent
 type Alert struct {
-	Timestamp   time.Time              `json:"timestamp"`
-	Severity    Severity               `json:"severity"`
-	Title       string                 `json:"title"`
-	Message     string                 `json:"message"`
-	Source      string                 `json:"source"`
-	RequestID   string                 `json:"request_id,omitempty"`
+	Timestamp   time.Time      `json:"timestamp"`
+	Severity    Severity       `json:"severity"`
+	Title       string         `json:"title"`
+	Message     string         `json:"message"`
+	Source      string         `json:"source"`
+	RequestID   string         `json:"request_id,omitempty"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
-	Environment string                 `json:"environment"`
+	Environment string         `json:"environment"`
 }
 
 // Config holds alerting configuration

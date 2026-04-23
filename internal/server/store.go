@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -193,11 +192,11 @@ func (js *JobStore) CancelJob(id string) (*Job, error) {
 
 	job, ok := js.jobs[id]
 	if !ok {
-		return nil, errors.New("not_found")
+		return nil, ErrJobNotFound
 	}
 
 	if job.Status == StatusCompleted || job.Status == StatusFailed || job.Status == StatusCanceled {
-		return nil, fmt.Errorf("terminal:%s", job.Status)
+		return nil, &TerminalStatusError{Status: job.Status}
 	}
 
 	job.Status = StatusCanceled

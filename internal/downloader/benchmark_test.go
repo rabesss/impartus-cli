@@ -12,7 +12,9 @@ func BenchmarkRateLimiterWait(b *testing.B) {
 	ctx := b.Context()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rl.WaitForDownload(ctx)
+		if err := rl.WaitForDownload(ctx); err != nil {
+			b.Fatalf("WaitForDownload() failed: %v", err)
+		}
 	}
 }
 
@@ -29,7 +31,9 @@ func BenchmarkRateLimiterConcurrentWait(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			rl.WaitForDownload(ctx)
+			if err := rl.WaitForDownload(ctx); err != nil {
+				b.Fatalf("WaitForDownload() failed: %v", err)
+			}
 		}
 	})
 }
@@ -41,7 +45,9 @@ func TestRateLimiterConcurrency(t *testing.T) {
 	done := make(chan bool, 10)
 	for i := 0; i < 10; i++ {
 		go func() {
-			rl.WaitForDownload(ctx)
+			if err := rl.WaitForDownload(ctx); err != nil {
+				t.Errorf("WaitForDownload() failed: %v", err)
+			}
 			done <- true
 		}()
 	}
@@ -69,4 +75,3 @@ func TestRateLimiterFromConfig(t *testing.T) {
 		t.Fatal("expected non-nil rate limiter with nil config")
 	}
 }
-

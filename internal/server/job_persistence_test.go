@@ -501,8 +501,8 @@ func TestPersistencePreservesConfigFields(t *testing.T) {
 	if retrieved.Config.Quality != "720" {
 		t.Errorf("expected quality '720', got %s", retrieved.Config.Quality)
 	}
-	if retrieved.Config.Views != "first" {
-		t.Errorf("expected views 'first', got %s", retrieved.Config.Views)
+	if retrieved.Config.Views != "left" {
+		t.Errorf("expected views 'left', got %s", retrieved.Config.Views)
 	}
 	if !retrieved.Config.AudioOnly {
 		t.Error("expected audioOnly to be true")

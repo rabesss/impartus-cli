@@ -180,6 +180,34 @@ func TestGenerateTokenLength(t *testing.T) {
 	}
 }
 
+func TestConstantTimeStringEqual(t *testing.T) {
+	tests := []struct {
+		name string
+		a    string
+		b    string
+		want bool
+	}{
+		{name: "equal", a: "secret", b: "secret", want: true},
+		{name: "different value", a: "secret", b: "Secret", want: false},
+		{name: "different length", a: "secret", b: "secrets", want: false},
+		{name: "both empty", a: "", b: "", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := constantTimeStringEqual(tt.a, tt.b); got != tt.want {
+				t.Fatalf("constantTimeStringEqual(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStartTokenCleanupStopIsIdempotent(t *testing.T) {
+	stop := StartTokenCleanup(NewTokenStore())
+	stop()
+	stop()
+}
+
 func TestRespondWithErrorWritesJSONResponse(t *testing.T) {
 	rec := httptest.NewRecorder()
 	respondWithError(rec, http.StatusBadRequest, "TEST_ERROR", "Test error message", "testCommand", nil)

@@ -353,9 +353,9 @@ func TestNormalizeViews(t *testing.T) {
 
 func TestSelectLectureRangeValidAndInvalidRanges(t *testing.T) {
 	lectures := client.Lectures{
-		{SeqNo: 1, Topic: "Lecture 1"},
-		{SeqNo: 2, Topic: "Lecture 2"},
-		{SeqNo: 3, Topic: "Lecture 3"},
+		client.Lecture{SeqNo: 1, Topic: "Lecture 1"},
+		client.Lecture{SeqNo: 2, Topic: "Lecture 2"},
+		client.Lecture{SeqNo: 3, Topic: "Lecture 3"},
 	}
 
 	selected, err := lectures.SelectRange(1, 2)
@@ -401,12 +401,12 @@ func TestSelectLectureRangeValidAndInvalidRanges(t *testing.T) {
 
 func TestFilterEmptyLecturesRemovesNoClassAndNoLectureVariants(t *testing.T) {
 	lectures := client.Lectures{
-		{Topic: "No class"},
-		{Topic: "  no lecture  "},
-		{Topic: "NO CLASS due to holiday"},
-		{Topic: "There is no lecture today"},
-		{Topic: "Regular Lecture"},
-		{Topic: "Tutorial"},
+		client.Lecture{Topic: "No class"},
+		client.Lecture{Topic: "  no lecture  "},
+		client.Lecture{Topic: "NO CLASS due to holiday"},
+		client.Lecture{Topic: "There is no lecture today"},
+		client.Lecture{Topic: "Regular Lecture"},
+		client.Lecture{Topic: "Tutorial"},
 	}
 
 	filtered := filterEmptyLectures(lectures)
@@ -427,27 +427,27 @@ func TestFilterNoAudioLectures(t *testing.T) {
 	}{
 		{
 			name:     "all have audio",
-			lectures: client.Lectures{{NoAudio: 0}, {NoAudio: 0}},
+			lectures: client.Lectures{client.Lecture{NoAudio: 0}, client.Lecture{NoAudio: 0}},
 			wantLen:  2,
 		},
 		{
 			name:     "all no audio",
-			lectures: client.Lectures{{NoAudio: 1}, {NoAudio: 1}},
+			lectures: client.Lectures{client.Lecture{NoAudio: 1}, client.Lecture{NoAudio: 1}},
 			wantLen:  0,
 		},
 		{
 			name:     "mixed",
-			lectures: client.Lectures{{NoAudio: 0}, {NoAudio: 1}, {NoAudio: 0}},
+			lectures: client.Lectures{client.Lecture{NoAudio: 0}, client.Lecture{NoAudio: 1}, client.Lecture{NoAudio: 0}},
 			wantLen:  2,
 		},
 		{
 			name:     "single with audio",
-			lectures: client.Lectures{{NoAudio: 0}},
+			lectures: client.Lectures{client.Lecture{NoAudio: 0}},
 			wantLen:  1,
 		},
 		{
 			name:     "single no audio",
-			lectures: client.Lectures{{NoAudio: 1}},
+			lectures: client.Lectures{client.Lecture{NoAudio: 1}},
 			wantLen:  0,
 		},
 		{
@@ -456,9 +456,12 @@ func TestFilterNoAudioLectures(t *testing.T) {
 			wantLen:  0,
 		},
 		{
-			name:     "preserves other fields",
-			lectures: client.Lectures{{SeqNo: 5, Topic: "Lecture 5", NoAudio: 0}, {SeqNo: 10, Topic: "Lecture 10", NoAudio: 1}},
-			wantLen:  1,
+			name: "preserves other fields",
+			lectures: client.Lectures{
+				client.Lecture{SeqNo: 5, Topic: "Lecture 5", NoAudio: 0},
+				client.Lecture{SeqNo: 10, Topic: "Lecture 10", NoAudio: 1},
+			},
+			wantLen: 1,
 		},
 	}
 
@@ -491,8 +494,8 @@ func TestApplyLectureFilters(t *testing.T) {
 		{
 			name: "no filtering",
 			lectures: client.Lectures{
-				{Topic: "Lecture 1", NoAudio: 0},
-				{Topic: "Lecture 2", NoAudio: 0},
+				client.Lecture{Topic: "Lecture 1", NoAudio: 0},
+				client.Lecture{Topic: "Lecture 2", NoAudio: 0},
 			},
 			skipEmpty:        false,
 			skipNoAudio:      false,
@@ -503,9 +506,9 @@ func TestApplyLectureFilters(t *testing.T) {
 		{
 			name: "filter empty only",
 			lectures: client.Lectures{
-				{Topic: "No class"},
-				{Topic: "Lecture 1"},
-				{Topic: "no lecture today"},
+				client.Lecture{Topic: "No class"},
+				client.Lecture{Topic: "Lecture 1"},
+				client.Lecture{Topic: "no lecture today"},
 			},
 			skipEmpty:        true,
 			skipNoAudio:      false,
@@ -516,9 +519,9 @@ func TestApplyLectureFilters(t *testing.T) {
 		{
 			name: "filter noaudio only",
 			lectures: client.Lectures{
-				{Topic: "Lecture 1", NoAudio: 0},
-				{Topic: "Lecture 2", NoAudio: 1},
-				{Topic: "Lecture 3", NoAudio: 0},
+				client.Lecture{Topic: "Lecture 1", NoAudio: 0},
+				client.Lecture{Topic: "Lecture 2", NoAudio: 1},
+				client.Lecture{Topic: "Lecture 3", NoAudio: 0},
 			},
 			skipEmpty:        false,
 			skipNoAudio:      true,
@@ -529,10 +532,10 @@ func TestApplyLectureFilters(t *testing.T) {
 		{
 			name: "filter both empty and noaudio",
 			lectures: client.Lectures{
-				{Topic: "No class", NoAudio: 0},
-				{Topic: "Lecture 1", NoAudio: 1},
-				{Topic: "no lecture", NoAudio: 0},
-				{Topic: "Lecture 2", NoAudio: 0},
+				client.Lecture{Topic: "No class", NoAudio: 0},
+				client.Lecture{Topic: "Lecture 1", NoAudio: 1},
+				client.Lecture{Topic: "no lecture", NoAudio: 0},
+				client.Lecture{Topic: "Lecture 2", NoAudio: 0},
 			},
 			skipEmpty:        true,
 			skipNoAudio:      true,
@@ -543,7 +546,7 @@ func TestApplyLectureFilters(t *testing.T) {
 		{
 			name: "empty input",
 			lectures: client.Lectures{
-				{Topic: "No class", NoAudio: 1},
+				client.Lecture{Topic: "No class", NoAudio: 1},
 			},
 			skipEmpty:        true,
 			skipNoAudio:      true,
@@ -712,10 +715,10 @@ func TestValidateFlagOverrides(t *testing.T) {
 
 func TestFilterEmptyLectures(t *testing.T) {
 	lectures := client.Lectures{
-		{SeqNo: 1, Topic: "Normal Lecture"},
-		{SeqNo: 2, Topic: "No Class Today"},
-		{SeqNo: 3, Topic: "No lecture scheduled"},
-		{SeqNo: 4, Topic: "Advanced Topics"},
+		client.Lecture{SeqNo: 1, Topic: "Normal Lecture"},
+		client.Lecture{SeqNo: 2, Topic: "No Class Today"},
+		client.Lecture{SeqNo: 3, Topic: "No lecture scheduled"},
+		client.Lecture{SeqNo: 4, Topic: "Advanced Topics"},
 	}
 
 	filtered := filterEmptyLectures(lectures)
@@ -732,8 +735,8 @@ func TestFilterEmptyLectures(t *testing.T) {
 
 func TestFilterEmptyLectures_AllEmpty(t *testing.T) {
 	lectures := client.Lectures{
-		{SeqNo: 1, Topic: "No Class"},
-		{SeqNo: 2, Topic: "No Lecture Today"},
+		client.Lecture{SeqNo: 1, Topic: "No Class"},
+		client.Lecture{SeqNo: 2, Topic: "No Lecture Today"},
 	}
 	filtered := filterEmptyLectures(lectures)
 	if len(filtered) != 0 {
@@ -743,8 +746,8 @@ func TestFilterEmptyLectures_AllEmpty(t *testing.T) {
 
 func TestFilterEmptyLectures_None(t *testing.T) {
 	lectures := client.Lectures{
-		{SeqNo: 1, Topic: "Math"},
-		{SeqNo: 2, Topic: "Physics"},
+		client.Lecture{SeqNo: 1, Topic: "Math"},
+		client.Lecture{SeqNo: 2, Topic: "Physics"},
 	}
 	filtered := filterEmptyLectures(lectures)
 	if len(filtered) != 2 {

@@ -1,6 +1,8 @@
 package downloader
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -280,13 +282,42 @@ func TestLecturePipelineSubmitDownload(t *testing.T) {
 	}
 }
 
-// TestLecturePipelineSubmitDownloadAfterCancel tests that SubmitDownload returns
-// an error after Cancel is called. This test was removed because the production
-// code's SubmitDownload uses a non-deterministic select - after Cancel(), both
-// ctx.Done() being closed and the channel send are ready, causing random behavior.
-// To fix properly, the production code should close the downloadQueue in Cancel()
-// or use a different synchronization mechanism. This test cannot pass reliably
-// without modifying production code.
+func TestLecturePipelineSubmitDownloadAfterCancel(t *testing.T) {
+	p := NewLecturePipeline(PipelineConfig{
+		DownloadWorkers: 1,
+		DecryptWorkers:  1,
+	}, nil)
+
+	p.Cancel()
+
+	err := p.SubmitDownload(ChunkTask{ChunkID: 1, URL: "http://example.com/chunk.ts", View: "first"})
+	if !errors.Is(err, errPipelineCancelled) {
+		t.Fatalf("SubmitDownload() error = %v, want %v", err, errPipelineCancelled)
+	}
+}
+
+func TestNewLecturePipelineUsesParentContext(t *testing.T) {
+	parentCtx, cancel := context.WithCancel(context.Background())
+	p := NewLecturePipeline(PipelineConfig{
+		Context:         parentCtx,
+		DownloadWorkers: 1,
+		DecryptWorkers:  1,
+	}, nil)
+
+	cancel()
+
+	select {
+	case <-p.ctx.Done():
+	case <-time.After(100 * time.Millisecond):
+		//nolint:misspell // Prefer UK English in test messages.
+		t.Fatal("expected pipeline context to be cancelled with parent context")
+	}
+
+	err := p.SubmitDownload(ChunkTask{ChunkID: 1, URL: "http://example.com/chunk.ts", View: "first"})
+	if !errors.Is(err, errPipelineCancelled) {
+		t.Fatalf("SubmitDownload() error = %v, want %v", err, errPipelineCancelled)
+	}
+}
 
 func TestLecturePipelineFinishSubmission(t *testing.T) {
 	p := NewLecturePipeline(PipelineConfig{

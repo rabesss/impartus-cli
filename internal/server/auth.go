@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -34,15 +35,16 @@ func (ts *TokenStore) Store(token string, info TokenInfo) {
 }
 
 func (ts *TokenStore) IsValid(token string) bool {
-	ts.mu.RLock()
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+
 	info, ok := ts.tokens[token]
-	ts.mu.RUnlock()
 	if !ok {
 		return false
 	}
 
 	if time.Now().After(info.Expiry) {
-		ts.Delete(token)
+		delete(ts.tokens, token)
 		return false
 	}
 
@@ -67,13 +69,28 @@ func (ts *TokenStore) CleanupExpired() {
 	}
 }
 
-func StartTokenCleanup(tokenStore *TokenStore) {
+func StartTokenCleanup(tokenStore *TokenStore) func() {
 	ticker := time.NewTicker(1 * time.Hour)
+	stop := make(chan struct{})
+	var stopOnce sync.Once
+
 	go func() {
-		for range ticker.C {
-			tokenStore.CleanupExpired()
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				tokenStore.CleanupExpired()
+			case <-stop:
+				return
+			}
 		}
 	}()
+
+	return func() {
+		stopOnce.Do(func() {
+			close(stop)
+		})
+	}
 }
 
 func GenerateToken() (string, error) {
@@ -158,6 +175,10 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
+func constantTimeStringEqual(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
 func (s *APIServer) loginHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)
@@ -170,7 +191,7 @@ func (s *APIServer) loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.cfg == nil || s.cfg.Username != req.Username || s.cfg.Password != req.Password {
+	if s.cfg == nil || !constantTimeStringEqual(s.cfg.Username, req.Username) || !constantTimeStringEqual(s.cfg.Password, req.Password) {
 		respondWithError(w, http.StatusUnauthorized, "AUTH_FAILED", "Invalid username or password", "login", nil)
 		return
 	}

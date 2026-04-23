@@ -2,7 +2,6 @@ package downloader
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -21,8 +20,6 @@ func (d *Downloader) JoinViews(leftFile, rightFile, name string) (string, error)
 		return "", fmt.Errorf("ffmpeg join views failed: %w: %s", err, string(output))
 	}
 
-	_ = os.Remove(leftFile)
-	_ = os.Remove(rightFile)
 	return outfile, nil
 }
 
@@ -69,14 +66,14 @@ func (d *Downloader) JoinChunksFromM3U8AudioOnly(m3u8File, title, format string)
 	return outfile, nil
 }
 
-func (d *Downloader) JoinViewsAudioOnly(leftFile, rightFile, name, format string) (string, error) {
+func (d *Downloader) CreateBothViewsAudioOutput(sourceFile, name, format string) (string, error) {
 	ext := "." + format
 	if format == "aac" {
 		ext = ".m4a"
 	}
 	title := fmt.Sprintf("%s BOTH%s", name, ext)
 	outfile := filepath.Join(d.config.DownloadLocation, title)
-	if err := validateFFmpegArgs(leftFile, outfile); err != nil {
+	if err := validateFFmpegArgs(sourceFile, outfile); err != nil {
 		return "", err
 	}
 
@@ -84,7 +81,7 @@ func (d *Downloader) JoinViewsAudioOnly(leftFile, rightFile, name, format string
 		"-y",
 		"-hide_banner",
 		"-loglevel", "error",
-		"-i", leftFile,
+		"-i", sourceFile,
 		"-vn",
 		"-acodec", getAudioCodec(format),
 		"-ab", "192k",
@@ -93,11 +90,9 @@ func (d *Downloader) JoinViewsAudioOnly(leftFile, rightFile, name, format string
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("ffmpeg views audio join failed: %w: %s", err, string(output))
+		return "", fmt.Errorf("ffmpeg combined audio output failed: %w: %s", err, string(output))
 	}
 
-	_ = os.Remove(leftFile)
-	_ = os.Remove(rightFile)
 	return outfile, nil
 }
 

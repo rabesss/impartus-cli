@@ -2,6 +2,7 @@ package alerts
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -103,9 +104,11 @@ func TestSend_Disabled(t *testing.T) {
 func TestSend_GenericWebhook(t *testing.T) {
 	var receivedBody string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		buf := make([]byte, 1024)
-		n, _ := r.Body.Read(buf)
-		receivedBody = string(buf[:n])
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll() failed: %v", err)
+		}
+		receivedBody = string(body)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -131,9 +134,11 @@ func TestSend_GenericWebhook(t *testing.T) {
 func TestSend_SlackWebhook(t *testing.T) {
 	var receivedBody string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		buf := make([]byte, 4096)
-		n, _ := r.Body.Read(buf)
-		receivedBody = string(buf[:n])
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll() failed: %v", err)
+		}
+		receivedBody = string(body)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -174,9 +179,11 @@ func TestSend_RateLimiting(t *testing.T) {
 	}
 
 	alert := Alert{Severity: SeverityInfo, Title: "rate-test", Message: "msg"}
-	_ = alerter.Send(context.Background(), alert)
-	_ = alerter.Send(context.Background(), alert)
-	_ = alerter.Send(context.Background(), alert)
+	for i := 0; i < 3; i++ {
+		if err := alerter.Send(context.Background(), alert); err != nil {
+			t.Fatalf("Send() failed: %v", err)
+		}
+	}
 
 	if callCount != 1 {
 		t.Fatalf("expected 1 webhook call (rate limited), got %d", callCount)
@@ -233,9 +240,11 @@ func TestSendAlertHelpersDisabled(t *testing.T) {
 func TestSend_PagerDutyFormat(t *testing.T) {
 	var receivedBody string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		buf := make([]byte, 4096)
-		n, _ := r.Body.Read(buf)
-		receivedBody = string(buf[:n])
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll() failed: %v", err)
+		}
+		receivedBody = string(body)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -263,9 +272,11 @@ func TestSend_PagerDutyFormat(t *testing.T) {
 func TestSend_DefaultsFields(t *testing.T) {
 	var receivedBody string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		buf := make([]byte, 4096)
-		n, _ := r.Body.Read(buf)
-		receivedBody = string(buf[:n])
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll() failed: %v", err)
+		}
+		receivedBody = string(body)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -289,7 +300,9 @@ func TestSend_DefaultsFields(t *testing.T) {
 
 func TestSendAlertHelpers(t *testing.T) {
 	Reset()
-	_ = Init()
+	if err := Init(); err != nil {
+		t.Fatalf("Init() failed: %v", err)
+	}
 	// These should all succeed (disabled since no webhook set)
 	ctx := context.Background()
 	if err := SendInfo(ctx, "info-test", "info msg"); err != nil {

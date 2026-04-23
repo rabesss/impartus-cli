@@ -1,6 +1,7 @@
 .PHONY: build test run-cli run-api lint clean install pre-commit-install pre-commit quality-gate quality-gate-scan quality-gate-next docs docs-toc agents-md-validate security security-scan security-gitleaks security-gosec security-trivy security-govulncheck
 
 DESLOPPIFY_VERSION ?= 0.9.12
+GO_TOOLCHAIN ?= $(shell awk '/^toolchain / { print $$2 }' go.mod)
 
 # Build the impartus binary
 build:
@@ -33,9 +34,9 @@ run-api:
 lint:
 	@echo "Running golangci-lint..."
 	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run --timeout 5m; \
+		GOTOOLCHAIN=$(GO_TOOLCHAIN) golangci-lint run --timeout 5m; \
 	elif [ -f "$$(go env GOPATH)/bin/golangci-lint" ]; then \
-		$$(go env GOPATH)/bin/golangci-lint run --timeout 5m; \
+		GOTOOLCHAIN=$(GO_TOOLCHAIN) $$(go env GOPATH)/bin/golangci-lint run --timeout 5m; \
 	else \
 		echo "golangci-lint not found. Install with:"; \
 		echo "  curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b \$$(go env GOPATH)/bin"; \

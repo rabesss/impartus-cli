@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/downloader"
@@ -90,7 +91,9 @@ func TestProbeUpstreamHTTP_SuccessfulProbe(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/user/profile" {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"name":"test"}`))
+			if _, err := w.Write([]byte(`{"name":"test"}`)); err != nil {
+				t.Fatalf("Write() failed: %v", err)
+			}
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -252,7 +255,9 @@ func TestCoursesHandler_WithMockedUpstream(t *testing.T) {
 	// Create a test upstream server
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`[{"sessionId":1,"subjectName":"Math","professorName":"Prof X"}]`))
+		if _, err := w.Write([]byte(`[{"sessionId":1,"subjectName":"Math","professorName":"Prof X"}]`)); err != nil {
+			t.Fatalf("Write() failed: %v", err)
+		}
 	}))
 	defer ts.Close()
 
@@ -291,7 +296,9 @@ func TestCoursesHandler_WithMockedUpstream(t *testing.T) {
 func TestLecturesHandler_WithMockedUpstream(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`[{"ttid":1,"topic":"Intro","seqNo":1}]`))
+		if _, err := w.Write([]byte(`[{"ttid":1,"topic":"Intro","seqNo":1}]`)); err != nil {
+			t.Fatalf("Write() failed: %v", err)
+		}
 	}))
 	defer ts.Close()
 
@@ -318,7 +325,9 @@ func TestLecturesHandler_WithMockedUpstream(t *testing.T) {
 func TestLecturesHandler_CamelCaseParams(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`[{"ttid":1,"topic":"Intro","seqNo":1}]`))
+		if _, err := w.Write([]byte(`[{"ttid":1,"topic":"Intro","seqNo":1}]`)); err != nil {
+			t.Fatalf("Write() failed: %v", err)
+		}
 	}))
 	defer ts.Close()
 
@@ -350,7 +359,9 @@ func TestLecturesHandler_CamelCaseParams(t *testing.T) {
 func TestCreateJobHandler_SuccessWithUpstream(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`[{"ttid":1,"topic":"Intro","seqNo":1}]`))
+		if _, err := w.Write([]byte(`[{"ttid":1,"topic":"Intro","seqNo":1}]`)); err != nil {
+			t.Fatalf("Write() failed: %v", err)
+		}
 	}))
 	defer ts.Close()
 
@@ -434,13 +445,13 @@ func TestDefaultUpstreamLogin_NilConfig(t *testing.T) {
 
 func TestSelectJobLectures_EndIndexClamped(t *testing.T) {
 	lectures := client.Lectures{
-		{SeqNo: 1, Topic: "L1"},
-		{SeqNo: 2, Topic: "L2"},
+		client.Lecture{SeqNo: 1, Topic: "L1"},
+		client.Lecture{SeqNo: 2, Topic: "L2"},
 	}
 
 	// endIndex > len(lectures) — SelectRange returns error for out-of-range
 	job := &Job{StartIndex: 1, EndIndex: 10}
-	_, err := selectJobLectures(job, lectures)
+	_, _, err := selectJobLectures(job, lectures)
 	if err == nil {
 		t.Fatal("expected error for out-of-range end index")
 	}

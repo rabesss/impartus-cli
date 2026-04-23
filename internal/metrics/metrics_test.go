@@ -9,8 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rabesss/impartus-cli/internal/buildinfo"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+
+	"github.com/rabesss/impartus-cli/internal/buildinfo"
 )
 
 func TestGetReturnsNilWhenNotInitialized(t *testing.T) {
@@ -68,7 +69,11 @@ func TestMetricsHandler(t *testing.T) {
 func TestMetricsHandlerWithReader(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	defer provider.Shutdown(context.Background())
+	defer func() {
+		if err := provider.Shutdown(context.Background()); err != nil {
+			t.Errorf("provider.Shutdown() failed: %v", err)
+		}
+	}()
 
 	m := &Metrics{
 		reader: reader,
@@ -132,15 +137,6 @@ func TestConstants(t *testing.T) {
 	if buildinfo.Version != "0.1.2" {
 		t.Errorf("buildinfo.Version = %q, want %q", buildinfo.Version, "0.1.2")
 	}
-}
-
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 func TestInitCreatesProviderAndMetrics(t *testing.T) {
@@ -216,7 +212,11 @@ func TestRecordDownloadWithInitializedMetrics(t *testing.T) {
 	if err := Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	defer Get().Shutdown(context.Background())
+	defer func() {
+		if err := Get().Shutdown(context.Background()); err != nil {
+			t.Errorf("Shutdown() failed: %v", err)
+		}
+	}()
 
 	m := Get()
 	ctx := context.Background()
@@ -229,7 +229,11 @@ func TestRecordDownloadWithInitializedMetrics(t *testing.T) {
 func TestMetricsHandlerCollectOutput(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	defer provider.Shutdown(context.Background())
+	defer func() {
+		if err := provider.Shutdown(context.Background()); err != nil {
+			t.Errorf("provider.Shutdown() failed: %v", err)
+		}
+	}()
 
 	m := &Metrics{reader: reader}
 
@@ -253,7 +257,11 @@ func TestRecordAPIRequestWithMetrics(t *testing.T) {
 	if err := Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	defer Get().Shutdown(context.Background())
+	defer func() {
+		if err := Get().Shutdown(context.Background()); err != nil {
+			t.Errorf("Shutdown() failed: %v", err)
+		}
+	}()
 
 	m := Get()
 	ctx := context.Background()
@@ -268,7 +276,11 @@ func TestRecordJobLifecycleWithMetrics(t *testing.T) {
 	if err := Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	defer Get().Shutdown(context.Background())
+	defer func() {
+		if err := Get().Shutdown(context.Background()); err != nil {
+			t.Errorf("Shutdown() failed: %v", err)
+		}
+	}()
 
 	m := Get()
 	ctx := context.Background()
@@ -293,7 +305,11 @@ func TestInitIdempotent(t *testing.T) {
 	if m1 != m2 {
 		t.Error("expected Init to be idempotent, got different instances")
 	}
-	defer m1.Shutdown(context.Background())
+	defer func() {
+		if err := m1.Shutdown(context.Background()); err != nil {
+			t.Errorf("Shutdown() failed: %v", err)
+		}
+	}()
 }
 
 func TestMetricsHandlerReaderError(t *testing.T) {

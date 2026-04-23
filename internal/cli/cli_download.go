@@ -84,8 +84,8 @@ func executeDownload(args []string) (downloadResult, error) {
 		return downloadResult{}, err
 	}
 
-	if err := ensureFFmpeg(); err != nil {
-		return downloadResult{}, err
+	if ffmpegErr := ensureFFmpeg(); ffmpegErr != nil {
+		return downloadResult{}, ffmpegErr
 	}
 
 	ctx := context.Background()

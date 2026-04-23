@@ -70,12 +70,16 @@ func newAPIServerFull(port string, cfg *config.Config, loginFn UpstreamLoginFunc
 		s.jobStore = NewJobStore()
 	}
 
-	StartTokenCleanup(s.tokenStore)
 	s.registerRoutes()
 	return s
 }
 
 func (s *APIServer) Start(ctxs ...context.Context) error {
+	if s.stopTokenCleanup == nil {
+		s.stopTokenCleanup = StartTokenCleanup(s.tokenStore)
+	}
+	defer s.stopTokenCleanup()
+
 	logFile, err := os.OpenFile("api.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o666)
 	if err == nil {
 		defer logFile.Close()
@@ -156,5 +160,3 @@ func (s *APIServer) getOrRefreshUpstreamClient(ctx context.Context) (*client.Cli
 
 	return apiClient, loginCfg, nil
 }
-
-

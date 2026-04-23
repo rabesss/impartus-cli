@@ -243,7 +243,10 @@ func TestParsePlaylist(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			scanner := bufio.NewScanner(strings.NewReader(tt.input))
-			got := ParsePlaylist(scanner, tt.wantID, tt.wantTitle, tt.wantSeqNo)
+			got, err := ParsePlaylist(scanner, tt.wantID, tt.wantTitle, tt.wantSeqNo)
+			if err != nil {
+				t.Fatalf("ParsePlaylist() unexpected error: %v", err)
+			}
 			if got.ID != tt.wantID {
 				t.Errorf("ID = %d, want %d", got.ID, tt.wantID)
 			}
@@ -260,6 +263,38 @@ func TestParsePlaylist(t *testing.T) {
 				t.Error("HasMultipleViews = false, want true")
 			}
 		})
+	}
+}
+
+type errOnceReader struct {
+	remaining []byte
+	err       error
+}
+
+func (r *errOnceReader) Read(p []byte) (int, error) {
+	if len(r.remaining) > 0 {
+		n := copy(p, r.remaining)
+		r.remaining = r.remaining[n:]
+		if len(r.remaining) == 0 {
+			return n, r.err
+		}
+		return n, nil
+	}
+	return 0, r.err
+}
+
+func TestParsePlaylistReturnsScannerError(t *testing.T) {
+	scanner := bufio.NewScanner(&errOnceReader{
+		remaining: []byte("#EXTM3U\nsegment1.ts\n"),
+		err:       errors.New("scanner boom"),
+	})
+
+	_, err := ParsePlaylist(scanner, 42, "Broken", 3)
+	if err == nil {
+		t.Fatal("expected scanner error")
+	}
+	if !strings.Contains(err.Error(), "scan playlist") {
+		t.Fatalf("expected wrapped scanner error, got %v", err)
 	}
 }
 

@@ -149,7 +149,10 @@ chunk2.ts
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			scanner := bufio.NewScanner(strings.NewReader(tt.input))
-			result := client.ParsePlaylist(scanner, tt.id, tt.title, tt.seqNo)
+			result, err := client.ParsePlaylist(scanner, tt.id, tt.title, tt.seqNo)
+			if err != nil {
+				t.Fatalf("ParsePlaylist() unexpected error: %v", err)
+			}
 
 			if result.ID != tt.id {
 				t.Errorf("ID = %d, want %d", result.ID, tt.id)
@@ -226,7 +229,10 @@ func TestParsePlaylistKeyURLPattern(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			input := tt.keyLine + "\n#EXTINF:1\nchunk.ts\n"
 			scanner := bufio.NewScanner(strings.NewReader(input))
-			result := client.ParsePlaylist(scanner, 1, "Test", 1)
+			result, err := client.ParsePlaylist(scanner, 1, "Test", 1)
+			if err != nil {
+				t.Fatalf("ParsePlaylist() unexpected error: %v", err)
+			}
 
 			if result.KeyURL != tt.wantKeyURL {
 				t.Errorf("KeyURL = %q, want %q", result.KeyURL, tt.wantKeyURL)
@@ -237,7 +243,10 @@ func TestParsePlaylistKeyURLPattern(t *testing.T) {
 
 func TestParsePlaylistEmptyScanner(t *testing.T) {
 	scanner := bufio.NewScanner(strings.NewReader(""))
-	result := client.ParsePlaylist(scanner, 1, "Empty", 1)
+	result, err := client.ParsePlaylist(scanner, 1, "Empty", 1)
+	if err != nil {
+		t.Fatalf("ParsePlaylist() unexpected error: %v", err)
+	}
 
 	if result.ID != 1 {
 		t.Errorf("ID = %d, want 1", result.ID)

@@ -37,7 +37,7 @@ The OpenClaw manifest (`docs/openclaw-manifest.json`) was updated on 2026-02-26 
 | Authentication | ✅ PASS | Documented as required with Bearer header; matches `auth.go:155-181` |
 | Login tool | ✅ PASS | Response format `{success, data: {token, expires}}` matches `auth.go:149-152` |
 | Courses tool | ✅ PASS | Route, auth requirement, response schema match `server.go:351,375-392` |
-| Lectures tool | ✅ PASS | Query params (`subject_id`/`session_id` + camelCase aliases) match `server.go:352,397-435` |
+| Lectures tool | ✅ PASS | Canonical query params (`subjectId`/`sessionId`) plus legacy snake_case aliases match the server handler |
 | Download tool | ✅ PASS | Job creation params, jobConfig overrides, response schema match `server.go:353,437-479` |
 | List jobs tool | ✅ PASS | Route and response match `server.go:354` |
 | Get job tool | ✅ PASS | Route and response match `server.go:355,481-496` |

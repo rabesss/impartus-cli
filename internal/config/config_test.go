@@ -276,12 +276,19 @@ func TestLoadResolvedNoConfigFileUsesEnvOnly(t *testing.T) {
 	t.Setenv("IMPARTUS_QUALITY", "450")
 
 	// Use temp dir as CWD so config.json is not found
-	origDir, _ := os.Getwd()
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Skipf("cannot get cwd: %v", err)
+	}
 	chdirErr := os.Chdir(t.TempDir())
 	if chdirErr != nil {
 		t.Skipf("cannot chdir: %v", chdirErr)
 	}
-	defer os.Chdir(origDir)
+	defer func() {
+		if restoreErr := os.Chdir(origDir); restoreErr != nil {
+			t.Fatalf("cannot restore cwd: %v", restoreErr)
+		}
+	}()
 
 	cfg, err := LoadResolved("")
 	if err != nil {

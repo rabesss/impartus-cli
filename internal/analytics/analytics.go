@@ -30,9 +30,9 @@ import (
 
 // Event represents an analytics event
 type Event struct {
-	Event      string                 `json:"event"`
+	Event      string         `json:"event"`
 	Properties map[string]any `json:"properties"`
-	Timestamp  time.Time              `json:"timestamp"`
+	Timestamp  time.Time      `json:"timestamp"`
 }
 
 // Config holds analytics configuration
