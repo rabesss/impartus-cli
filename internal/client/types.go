@@ -1,5 +1,10 @@
 package client
 
+import (
+	"errors"
+	"fmt"
+)
+
 type LoginResponse struct {
 	Message  string `json:"message"`
 	Token    string `json:"token"`
@@ -15,7 +20,7 @@ type Course struct {
 	SessionName          string `json:"sessionName"`
 	ProfessorName        string `json:"professorName"`
 	Department           string `json:"department"`
-	Coverpic             string `json:"coverpic"`
+	CoverPic             string `json:"coverpic"`
 	SessionID            int    `json:"sessionId"`
 	ProfessorID          int    `json:"professorId"`
 	DepartmentID         int    `json:"departmentId"`
@@ -28,7 +33,7 @@ type Course struct {
 type Lectures []Lecture
 
 type Lecture struct {
-	SubjectDescription  any    `json:"subjectDescription"`
+	SubjectDescription  string `json:"subjectDescription"`
 	SessionName         string `json:"sessionName"`
 	ClassroomName       string `json:"classroomName"`
 	FilePath2           string `json:"filePath2"`
@@ -36,7 +41,7 @@ type Lecture struct {
 	EndTime             string `json:"endTime"`
 	Topic               string `json:"topic"`
 	StartTime           string `json:"startTime"`
-	Coverpic            string `json:"coverpic"`
+	CoverPic            string `json:"coverpic"`
 	SubjectCode         string `json:"subjectCode"`
 	ProfessorImageURL   string `json:"professorImageUrl"`
 	ProfessorName       string `json:"professorName"`
@@ -50,15 +55,15 @@ type Lecture struct {
 	DepartmentID        int    `json:"departmentId"`
 	ProfessorID         int    `json:"professorId"`
 	InstituteID         int    `json:"instituteId"`
-	Ttid                int    `json:"ttid"`
-	Selfenroll          int    `json:"selfenroll"`
+	TTID                int    `json:"ttid"`
+	SelfEnroll          int    `json:"selfenroll"`
 	SubjectID           int    `json:"subjectId"`
 	ActualDuration      int    `json:"actualDuration"`
 	ClassroomID         int    `json:"classroomId"`
 	Type                int    `json:"type"`
 	Status              int    `json:"status"`
 	SlideCount          int    `json:"slideCount"`
-	Noaudio             int    `json:"noaudio"`
+	NoAudio             int    `json:"noaudio"`
 	Views               int    `json:"views"`
 	DocumentCount       int    `json:"documentCount"`
 	LessonPlanAvailable int    `json:"lessonPlanAvailable"`
@@ -76,7 +81,47 @@ type ParsedPlaylist struct {
 	Title            string
 	FirstViewURLs    []string
 	SecondViewURLs   []string
-	Id               int
+	ID               int
 	SeqNo            int
 	HasMultipleViews bool
+}
+
+func (l Lectures) Reverse() Lectures {
+	reversed := make(Lectures, len(l))
+	for i := range l {
+		reversed[i] = l[len(l)-1-i]
+	}
+	return reversed
+}
+
+func (l Lectures) FilterNoAudio() Lectures {
+	filtered := make(Lectures, 0, len(l))
+	for _, lecture := range l {
+		if lecture.NoAudio == 1 {
+			continue
+		}
+		filtered = append(filtered, lecture)
+	}
+	return filtered
+}
+
+// SelectRange returns a 1-indexed slice of the lectures.
+// It reverses the lectures first (matching the platform's chronological order),
+// then returns lectures[start..end] where start and end are 1-based inclusive.
+// Pass start=0 or end=0 to use defaults (1 and len respectively).
+func (l Lectures) SelectRange(start, end int) (Lectures, error) {
+	reversed := l.Reverse()
+	if len(reversed) == 0 {
+		return nil, errors.New("no lectures found")
+	}
+	if start <= 0 {
+		start = 1
+	}
+	if end <= 0 {
+		end = len(reversed)
+	}
+	if start < 1 || end > len(reversed) || start > end {
+		return nil, fmt.Errorf("invalid lecture range: start=%d end=%d (available 1-%d)", start, end, len(reversed))
+	}
+	return append(Lectures(nil), reversed[start-1:end]...), nil
 }

@@ -2,10 +2,24 @@ package downloader
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 )
+
+//nolint:misspell // Prefer UK English in user-facing error text.
+var errPipelineCancelled = errors.New("pipeline cancelled")
+
+type PipelineStats struct {
+	TotalChunks      int
+	FirstViewChunks  int
+	SecondViewChunks int
+	FailedChunks     int
+	ElapsedTime      time.Duration
+	DownloadWorkers  int
+	DecryptWorkers   int
+}
 
 type ChunkTask struct {
 	ChunkID      int
@@ -33,6 +47,7 @@ type DecryptedChunk struct {
 }
 
 type PipelineConfig struct {
+	Context         context.Context
 	DownloadWorkers int
 	DecryptWorkers  int
 	DecryptionKey   []byte
@@ -70,10 +85,16 @@ type LecturePipeline struct {
 
 	downloadWg sync.WaitGroup
 	decryptWg  sync.WaitGroup
+
+	submissionsClosed atomic.Bool
 }
 
 func NewLecturePipeline(config PipelineConfig, downloader *Downloader) *LecturePipeline {
-	ctx, cancel := context.WithCancel(context.Background())
+	baseCtx := config.Context
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	ctx, cancel := context.WithCancel(baseCtx)
 	downloadBufSize := config.DownloadWorkers * 2
 	decryptBufSize := config.DecryptWorkers * 2
 	if downloadBufSize < 1 {
@@ -83,7 +104,7 @@ func NewLecturePipeline(config PipelineConfig, downloader *Downloader) *LectureP
 		decryptBufSize = 1
 	}
 
-	return &LecturePipeline{
+	pipeline := &LecturePipeline{
 		config:           config,
 		downloader:       downloader,
 		downloadQueue:    make(chan ChunkTask, downloadBufSize),
@@ -96,6 +117,11 @@ func NewLecturePipeline(config PipelineConfig, downloader *Downloader) *LectureP
 		failedChunks:     make([]int, 0),
 		startTime:        time.Now(),
 	}
+	go func() {
+		<-ctx.Done()
+		pipeline.submissionsClosed.Store(true)
+	}()
+	return pipeline
 }
 
 func (p *LecturePipeline) Start() {
@@ -188,9 +214,12 @@ func (p *LecturePipeline) decryptWorker() {
 }
 
 func (p *LecturePipeline) SubmitDownload(task ChunkTask) error {
+	if p.submissionsClosed.Load() || p.ctx.Err() != nil {
+		return errPipelineCancelled
+	}
 	select {
 	case <-p.ctx.Done():
-		return fmt.Errorf("pipeline canceled")
+		return errPipelineCancelled
 	case p.downloadQueue <- task:
 		return nil
 	}
@@ -200,6 +229,7 @@ func (p *LecturePipeline) FinishSubmission(totalChunks int) {
 	p.mu.Lock()
 	p.totalChunks = totalChunks
 	p.mu.Unlock()
+	p.submissionsClosed.Store(true)
 	close(p.downloadQueue)
 }
 
@@ -247,20 +277,21 @@ func (p *LecturePipeline) buildOrderedList(chunkMap map[int]string) []string {
 }
 
 func (p *LecturePipeline) Cancel() {
+	p.submissionsClosed.Store(true)
 	p.cancel()
 }
 
-func (p *LecturePipeline) GetStats() map[string]interface{} {
+func (p *LecturePipeline) GetStats() PipelineStats {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	return map[string]interface{}{
-		"total_chunks":       p.totalChunks,
-		"first_view_chunks":  len(p.firstViewMap),
-		"second_view_chunks": len(p.secondViewMap),
-		"failed_chunks":      len(p.failedChunks),
-		"elapsed_time":       time.Since(p.startTime),
-		"download_workers":   p.config.DownloadWorkers,
-		"decrypt_workers":    p.config.DecryptWorkers,
+	return PipelineStats{
+		TotalChunks:      p.totalChunks,
+		FirstViewChunks:  len(p.firstViewMap),
+		SecondViewChunks: len(p.secondViewMap),
+		FailedChunks:     len(p.failedChunks),
+		ElapsedTime:      time.Since(p.startTime),
+		DownloadWorkers:  p.config.DownloadWorkers,
+		DecryptWorkers:   p.config.DecryptWorkers,
 	}
 }

@@ -255,7 +255,11 @@ let reconnectAttempts = 0;
 const maxReconnectAttempts = 5;
 
 function connect() {
-  const ws = new WebSocket('ws://localhost:8080/api/v1/ws');
+  const ws = new WebSocket('ws://localhost:8080/api/v1/ws', {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
 
   ws.onclose = () => {
     if (reconnectAttempts < maxReconnectAttempts) {

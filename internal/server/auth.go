@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -34,15 +35,16 @@ func (ts *TokenStore) Store(token string, info TokenInfo) {
 }
 
 func (ts *TokenStore) IsValid(token string) bool {
-	ts.mu.RLock()
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+
 	info, ok := ts.tokens[token]
-	ts.mu.RUnlock()
 	if !ok {
 		return false
 	}
 
 	if time.Now().After(info.Expiry) {
-		ts.Delete(token)
+		delete(ts.tokens, token)
 		return false
 	}
 
@@ -67,13 +69,28 @@ func (ts *TokenStore) CleanupExpired() {
 	}
 }
 
-func StartTokenCleanup(tokenStore *TokenStore) {
+func StartTokenCleanup(tokenStore *TokenStore) func() {
 	ticker := time.NewTicker(1 * time.Hour)
+	stop := make(chan struct{})
+	var stopOnce sync.Once
+
 	go func() {
-		for range ticker.C {
-			tokenStore.CleanupExpired()
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				tokenStore.CleanupExpired()
+			case <-stop:
+				return
+			}
 		}
 	}()
+
+	return func() {
+		stopOnce.Do(func() {
+			close(stop)
+		})
+	}
 }
 
 func GenerateToken() (string, error) {
@@ -96,21 +113,35 @@ type retryHint struct {
 	RetryAfter int  `json:"retryAfter"`
 }
 
+type successEnvelope struct {
+	Success bool         `json:"success"`
+	Data    any          `json:"data"`
+	Error   any          `json:"error"`
+	Meta    responseMeta `json:"meta"`
+}
+
+type errorEnvelope struct {
+	Success bool         `json:"success"`
+	Data    any          `json:"data"`
+	Error   *errorBody   `json:"error"`
+	Meta    responseMeta `json:"meta"`
+}
+
+type errorBody struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Details any    `json:"details,omitempty"`
+}
+
 func respondWithEnvelope(w http.ResponseWriter, status int, command string, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
-	envelope := map[string]any{
-		"success": true,
-		"data":    data,
-		"error":   nil,
-		"meta": responseMeta{
-			Command: command,
-			Mode:    "api",
-		},
-	}
-
-	if err := json.NewEncoder(w).Encode(envelope); err != nil {
+	if err := json.NewEncoder(w).Encode(successEnvelope{
+		Success: true,
+		Data:    data,
+		Meta:    responseMeta{Command: command, Mode: "api"},
+	}); err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 	}
 }
@@ -119,55 +150,33 @@ func respondWithError(w http.ResponseWriter, status int, code, message, command 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
-	errorResp := map[string]any{
-		"success": false,
-		"error": map[string]any{
-			"code":    code,
-			"message": message,
-		},
-		"meta": responseMeta{
-			Command: command,
-			Mode:    "api",
-		},
-	}
-
+	body := &errorBody{Code: code, Message: message}
 	if hint != nil {
-		errorData, ok := errorResp["error"].(map[string]any)
-		if ok {
-			errorData["details"] = hint
-		}
+		body.Details = hint
+	} else if len(details) > 0 {
+		body.Details = details[0]
 	}
 
-	if len(details) > 0 && hint == nil {
-		errorData, ok := errorResp["error"].(map[string]any)
-		if ok {
-			errorData["details"] = details[0]
-		}
-	}
-
-	if err := json.NewEncoder(w).Encode(errorResp); err != nil {
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-	}
-}
-
-func respondWithSuccess(w http.ResponseWriter, command string, data map[string]any) {
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]any{
-		"success": true,
-		"data":    data,
-		"error":   nil,
-		"meta": responseMeta{
-			Command: command,
-			Mode:    "api",
-		},
+	if err := json.NewEncoder(w).Encode(errorEnvelope{
+		Success: false,
+		Error:   body,
+		Meta:    responseMeta{Command: command, Mode: "api"},
 	}); err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 	}
 }
 
+func respondWithSuccess(w http.ResponseWriter, command string, data any) {
+	respondWithEnvelope(w, http.StatusOK, command, data)
+}
+
 type loginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+}
+
+func constantTimeStringEqual(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 func (s *APIServer) loginHandler(w http.ResponseWriter, r *http.Request) {
@@ -182,7 +191,7 @@ func (s *APIServer) loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.cfg == nil || s.cfg.Username != req.Username || s.cfg.Password != req.Password {
+	if s.cfg == nil || !constantTimeStringEqual(s.cfg.Username, req.Username) || !constantTimeStringEqual(s.cfg.Password, req.Password) {
 		respondWithError(w, http.StatusUnauthorized, "AUTH_FAILED", "Invalid username or password", "login", nil)
 		return
 	}
@@ -200,10 +209,7 @@ func (s *APIServer) loginHandler(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: time.Now(),
 	})
 
-	respondWithSuccess(w, "login", map[string]any{
-		"token":   token,
-		"expires": expires,
-	})
+	respondWithSuccess(w, "login", loginResponse{Token: token, Expires: expires})
 }
 
 func (s *APIServer) authMiddleware(next http.Handler) http.Handler {
@@ -215,18 +221,18 @@ func (s *APIServer) authMiddleware(next http.Handler) http.Handler {
 
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
-			respondWithError(w, http.StatusUnauthorized, "MISSING_TOKEN", "Authorization header required", "auth", nil)
+			respondWithError(w, http.StatusUnauthorized, "MISSING_TOKEN", "Authorization header required", "validateAuth", nil)
 			return
 		}
 
 		if !strings.HasPrefix(authHeader, "Bearer ") {
-			respondWithError(w, http.StatusUnauthorized, "INVALID_TOKEN_FORMAT", "Expected 'Bearer <token>'", "auth", nil)
+			respondWithError(w, http.StatusUnauthorized, "INVALID_TOKEN_FORMAT", "Expected 'Bearer <token>'", "validateAuth", nil)
 			return
 		}
 
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 		if !s.tokenStore.IsValid(token) {
-			respondWithError(w, http.StatusUnauthorized, "INVALID_TOKEN", "Token is invalid or expired", "auth", nil)
+			respondWithError(w, http.StatusUnauthorized, "INVALID_TOKEN", "Token is invalid or expired", "validateAuth", nil)
 			return
 		}
 

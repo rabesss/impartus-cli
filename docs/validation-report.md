@@ -34,7 +34,7 @@ See also: [`api-reference.md`](api-reference.md), [`error-codes.md`](error-codes
 | `POST /auth/login` public | ✅ Match | `server.go:346` |
 | `GET /ws` protected (Bearer) | ✅ Match | `server.go:350` — behind `authMiddleware` |
 | `GET /courses` protected | ✅ Match | `server.go:351` |
-| `GET /lectures` protected, query params | ✅ Match | `server.go:352`, handler reads `subject_id`/`session_id` + camelCase |
+| `GET /lectures` protected, query params | ✅ Match | Handler accepts canonical `subjectId`/`sessionId` with legacy snake_case aliases |
 | `POST /jobs` protected, 201 | ✅ Match | `server.go:353`, handler returns `http.StatusCreated` |
 | `GET /jobs` protected | ✅ Match | `server.go:354` |
 | `GET /jobs/{id}` protected | ✅ Match | `server.go:355` |

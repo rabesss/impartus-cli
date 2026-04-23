@@ -104,11 +104,11 @@ Returned by route handlers in `internal/server/server.go`.
 | Code | Status | Message(s) | Trigger |
 |------|--------|------------|---------|
 | `INVALID_REQUEST` | 400 | Invalid request body | Malformed JSON on `POST /auth/login` or `POST /jobs` |
-| `INVALID_REQUEST` | 400 | subjectId must be a valid integer | Non-integer `subject_id` query param on `GET /lectures` |
-| `INVALID_REQUEST` | 400 | sessionId must be a valid integer | Non-integer `session_id` query param on `GET /lectures` |
+| `INVALID_REQUEST` | 400 | subjectId must be a valid integer | Non-integer `subjectId`/`subject_id` query param on `GET /lectures` |
+| `INVALID_REQUEST` | 400 | sessionId must be a valid integer | Non-integer `sessionId`/`session_id` query param on `GET /lectures` |
 | `INVALID_REQUEST` | 400 | startIndex must be >= 1 | `startIndex < 1` on `POST /jobs` |
 | `INVALID_REQUEST` | 400 | endIndex must be >= startIndex | `endIndex < startIndex` on `POST /jobs` |
-| `MISSING_PARAMETER` | 400 | subject_id and session_id query parameters required | Missing query params on `GET /lectures` |
+| `MISSING_PARAMETER` | 400 | subjectId and sessionId query parameters required | Missing query params on `GET /lectures` |
 | `MISSING_PARAMETER` | 400 | subjectId is required and must be > 0 | Missing or zero `subjectId` on `POST /jobs` |
 | `MISSING_PARAMETER` | 400 | sessionId is required and must be > 0 | Missing or zero `sessionId` on `POST /jobs` |
 | `MISSING_PARAMETER` | 400 | Job ID is required | Empty `{id}` on `GET /jobs/{id}` or `DELETE /jobs/{id}` |
@@ -154,8 +154,6 @@ Returned when the Impartus API or internal login fails.
 
 | Code | Status | Message | Trigger |
 |------|--------|---------|---------|
-| `LOGIN_FAILED` | 502 | *(upstream error)* | Failed to authenticate with Impartus API |
-| `COURSES_FETCH_FAILED` | 502 | *(upstream error)* | Failed to fetch courses from Impartus |
-| `LECTURES_FETCH_FAILED` | 502 | *(upstream error)* | Failed to fetch lectures from Impartus |
-
-> **Note:** These currently pass through the upstream `err.Error()` string, which may expose backend details. A future hardening pass could replace these with generic messages while logging details server-side.
+| `LOGIN_FAILED` | 502 | Failed to authenticate with Impartus API | Upstream login failed |
+| `COURSES_FETCH_FAILED` | 502 | Failed to fetch courses from Impartus | Upstream course fetch failed |
+| `LECTURES_FETCH_FAILED` | 502 | Failed to fetch lectures from Impartus | Upstream lecture fetch failed |

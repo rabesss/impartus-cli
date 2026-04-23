@@ -20,7 +20,7 @@ type persistedJob struct {
 	SessionID         int              `json:"sessionId"`
 	StartIndex        int              `json:"startIndex"`
 	EndIndex          int              `json:"endIndex"`
-	Status            string           `json:"status"`
+	Status            JobStatus        `json:"status"`
 	Progress          float64          `json:"progress"`
 	Error             string           `json:"error,omitempty"`
 	TotalLectures     int              `json:"totalLectures,omitempty"`

@@ -6,14 +6,13 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 
@@ -43,6 +42,7 @@ type Metrics struct {
 
 	// Provider and meter
 	provider *sdkmetric.MeterProvider
+	reader   *sdkmetric.ManualReader
 	meter    metric.Meter
 	shutdown func(context.Context) error
 }
@@ -56,7 +56,7 @@ var (
 func Init() error {
 	var initErr error
 	once.Do(func() {
-		instance, initErr = initMetrics(context.Background())
+		instance, initErr = initMetrics()
 	})
 	return initErr
 }
@@ -74,41 +74,24 @@ func (m *Metrics) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func initMetrics(ctx context.Context) (*Metrics, error) {
+func initMetrics() (*Metrics, error) {
 	m := &Metrics{}
 
-	// Create resource with service info
-	res, err := resource.Merge(
-		resource.Default(),
-		resource.NewWithAttributes(
-			semconv.SchemaURL,
-			semconv.ServiceName(serviceName),
-			semconv.ServiceVersion(buildinfo.Version),
-		),
+	// Create resource with service info (avoid schema conflict by using NewSchemaless)
+	res := resource.NewSchemaless(
+		semconv.ServiceName(serviceName),
+		semconv.ServiceVersion(buildinfo.Version),
 	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create resource: %w", err)
-	}
 
-	// Check for OTLP endpoint
-	otlpEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-
-	var opts []sdkmetric.Option
-	opts = append(opts, sdkmetric.WithResource(res))
-
-	if otlpEndpoint != "" {
-		// Use OTLP exporter for production
-		exporter, err := otlpmetrichttp.New(ctx,
-			otlpmetrichttp.WithEndpoint(otlpEndpoint),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create OTLP exporter: %w", err)
-		}
-		opts = append(opts, sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter)))
-	} else {
-		// Use manual reader for development (metrics accessible via /metrics endpoint)
-		reader := sdkmetric.NewManualReader()
-		opts = append(opts, sdkmetric.WithReader(reader))
+	// Use ManualReader (metrics collected on-demand via /metrics endpoint).
+	// This avoids pulling in the heavy OTLP HTTP exporter and its transitive
+	// dependencies (grpc, protobuf, grpc-gateway). To export to an OTLP
+	// collector, set OTEL_EXPORTER_OTLP_ENDPOINT and wire the OTLP exporter
+	// in a future iteration.
+	m.reader = sdkmetric.NewManualReader()
+	opts := []sdkmetric.Option{
+		sdkmetric.WithResource(res),
+		sdkmetric.WithReader(m.reader),
 	}
 
 	m.provider = sdkmetric.NewMeterProvider(opts...)
@@ -283,7 +266,9 @@ func (m *Metrics) RecordAPIRequest(ctx context.Context, method, path string, dur
 	}
 
 	attr := metric.WithAttributes(
-	// Method and path as string attributes
+		semconv.HTTPRequestMethodKey.String(method),
+		semconv.URLPathKey.String(path),
+		semconv.HTTPStatusCodeKey.Int(statusCode),
 	)
 
 	m.APIRequestsTotal.Add(ctx, 1, attr)
@@ -319,10 +304,23 @@ func (m *Metrics) RecordJobComplete(ctx context.Context, success bool) {
 // MetricsHandler returns an HTTP handler for exposing metrics
 func (m *Metrics) MetricsHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// In production, this would use promhttp.Handler()
-		// For now, return a simple status
+		if m.reader == nil {
+			http.Error(w, "metrics reader not available (OTLP exporter in use)", http.StatusServiceUnavailable)
+			return
+		}
+
+		var col metricdata.ResourceMetrics
+		if err := m.reader.Collect(r.Context(), &col); err != nil {
+			http.Error(w, fmt.Sprintf("failed to collect metrics: %v", err), http.StatusInternalServerError)
+			return
+		}
+
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintf(w, "# impartus-cli metrics\n")
-		fmt.Fprintf(w, "# Use OTEL_EXPORTER_OTLP_ENDPOINT to export to OpenTelemetry collector\n")
+		for _, scopeMetrics := range col.ScopeMetrics {
+			for _, sm := range scopeMetrics.Metrics {
+				fmt.Fprintf(w, "# %s\n", sm.Name)
+			}
+		}
 	}
 }

@@ -9,7 +9,7 @@ package analytics
 //
 // Usage:
 //
-//	analytics.Track("download_completed", map[string]interface{}{
+//	analytics.Track("download_completed", map[string]any{
 //	    "quality": "720",
 //	    "duration_ms": 45000,
 //	})
@@ -30,9 +30,9 @@ import (
 
 // Event represents an analytics event
 type Event struct {
-	Event      string                 `json:"event"`
-	Properties map[string]interface{} `json:"properties"`
-	Timestamp  time.Time              `json:"timestamp"`
+	Event      string         `json:"event"`
+	Properties map[string]any `json:"properties"`
+	Timestamp  time.Time      `json:"timestamp"`
 }
 
 // Config holds analytics configuration
@@ -93,7 +93,6 @@ func getEnvOrDefault(key, defaultVal string) string {
 
 // Init initializes the analytics client
 func Init() error {
-	var initErr error
 	once.Do(func() {
 		cfg := DefaultConfig()
 		instance = &Analytics{
@@ -108,7 +107,7 @@ func Init() error {
 			go instance.startFlusher()
 		}
 	})
-	return initErr
+	return nil
 }
 
 // Get returns the analytics instance
@@ -122,7 +121,7 @@ func (a *Analytics) IsEnabled() bool {
 }
 
 // Track sends an analytics event
-func (a *Analytics) Track(eventName string, properties map[string]interface{}) {
+func (a *Analytics) Track(eventName string, properties map[string]any) {
 	if !a.config.Enabled {
 		return
 	}
@@ -151,9 +150,9 @@ func (a *Analytics) Track(eventName string, properties map[string]interface{}) {
 }
 
 // TrackFeatureUsage tracks a feature being used
-func (a *Analytics) TrackFeatureUsage(featureName string, properties map[string]interface{}) {
+func (a *Analytics) TrackFeatureUsage(featureName string, properties map[string]any) {
 	if properties == nil {
-		properties = make(map[string]interface{})
+		properties = make(map[string]any)
 	}
 	properties["feature"] = featureName
 	a.Track("feature_used", properties)
@@ -161,7 +160,7 @@ func (a *Analytics) TrackFeatureUsage(featureName string, properties map[string]
 
 // TrackCommandExecution tracks CLI command execution
 func (a *Analytics) TrackCommandExecution(command string, success bool, duration time.Duration) {
-	properties := map[string]interface{}{
+	properties := map[string]any{
 		"command":     command,
 		"success":     success,
 		"duration_ms": duration.Milliseconds(),
@@ -171,7 +170,7 @@ func (a *Analytics) TrackCommandExecution(command string, success bool, duration
 
 // TrackDownload tracks download statistics
 func (a *Analytics) TrackDownload(quality, views string, bytes int64, duration time.Duration, success bool) {
-	properties := map[string]interface{}{
+	properties := map[string]any{
 		"quality":     quality,
 		"views":       views,
 		"bytes":       bytes,
@@ -181,26 +180,9 @@ func (a *Analytics) TrackDownload(quality, views string, bytes int64, duration t
 	a.Track("download_completed", properties)
 }
 
-// Flush sends all buffered events
+// Flush sends all buffered events.
 func (a *Analytics) Flush() {
-	a.mu.Lock()
-	if len(a.events) == 0 {
-		a.mu.Unlock()
-		return
-	}
-	events := a.events
-	a.events = make([]Event, 0, a.config.BatchSize)
-	a.mu.Unlock()
-
-	// Send to PostHog if configured
-	if a.config.PostHogAPIKey != "" {
-		a.sendToPostHog(events)
-	}
-
-	// Send to custom endpoint if configured
-	if a.config.CustomEndpoint != "" {
-		go a.sendToCustomEndpoint(events)
-	}
+	a.FlushWithContext(context.Background())
 }
 
 // FlushWithContext sends all buffered events with context
@@ -214,12 +196,10 @@ func (a *Analytics) FlushWithContext(ctx context.Context) {
 	a.events = make([]Event, 0, a.config.BatchSize)
 	a.mu.Unlock()
 
-	// Send to PostHog if configured
 	if a.config.PostHogAPIKey != "" {
 		a.sendToPostHogWithContext(ctx, events)
 	}
 
-	// Send to custom endpoint if configured
 	if a.config.CustomEndpoint != "" {
 		go a.sendToCustomEndpoint(events)
 	}
@@ -234,12 +214,8 @@ func (a *Analytics) startFlusher() {
 	}
 }
 
-func (a *Analytics) sendToPostHog(events []Event) {
-	a.sendToPostHogWithContext(context.Background(), events)
-}
-
 func (a *Analytics) sendToPostHogWithContext(ctx context.Context, events []Event) {
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"api_key": a.config.PostHogAPIKey,
 		"batch":   a.formatPostHogEvents(events),
 	}
@@ -258,10 +234,10 @@ func (a *Analytics) sendToPostHogWithContext(ctx context.Context, events []Event
 	defer resp.Body.Close()
 }
 
-func (a *Analytics) formatPostHogEvents(events []Event) []map[string]interface{} {
-	result := make([]map[string]interface{}, len(events))
+func (a *Analytics) formatPostHogEvents(events []Event) []map[string]any {
+	result := make([]map[string]any, len(events))
 	for i, event := range events {
-		result[i] = map[string]interface{}{
+		result[i] = map[string]any{
 			"event":       event.Event,
 			"timestamp":   event.Timestamp.Format(time.RFC3339),
 			"distinct_id": a.distinctID,
@@ -272,7 +248,7 @@ func (a *Analytics) formatPostHogEvents(events []Event) []map[string]interface{}
 }
 
 func (a *Analytics) sendToCustomEndpoint(events []Event) {
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"events": events,
 		"source": "impartus-cli",
 	}
@@ -294,8 +270,8 @@ func (a *Analytics) sendToCustomEndpoint(events []Event) {
 	defer resp.Body.Close()
 }
 
-func mergeProperties(props map[string]interface{}) map[string]interface{} {
-	result := map[string]interface{}{
+func mergeProperties(props map[string]any) map[string]any {
+	result := map[string]any{
 		"library":         "impartus-cli",
 		"library_version": buildinfo.Version,
 		"os":              runtime.GOOS,

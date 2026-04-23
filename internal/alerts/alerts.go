@@ -26,14 +26,14 @@ const (
 
 // Alert represents an alert to be sent
 type Alert struct {
-	Timestamp   time.Time              `json:"timestamp"`
-	Severity    Severity               `json:"severity"`
-	Title       string                 `json:"title"`
-	Message     string                 `json:"message"`
-	Source      string                 `json:"source"`
-	RequestID   string                 `json:"request_id,omitempty"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
-	Environment string                 `json:"environment"`
+	Timestamp   time.Time      `json:"timestamp"`
+	Severity    Severity       `json:"severity"`
+	Title       string         `json:"title"`
+	Message     string         `json:"message"`
+	Source      string         `json:"source"`
+	RequestID   string         `json:"request_id,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+	Environment string         `json:"environment"`
 }
 
 // Config holds alerting configuration
@@ -128,7 +128,7 @@ func (a *Alerter) Send(ctx context.Context, alert Alert) error {
 	return a.sendWebhook(ctx, payload)
 }
 
-func (a *Alerter) formatPayload(alert Alert) interface{} {
+func (a *Alerter) formatPayload(alert Alert) any {
 	// Check if it's a Slack webhook (contains "slack.com")
 	if len(a.config.WebhookURL) > 0 && strings.Contains(a.config.WebhookURL, "slack.com") {
 		return a.formatSlack(alert)
@@ -141,7 +141,7 @@ func (a *Alerter) formatPayload(alert Alert) interface{} {
 	return alert
 }
 
-func (a *Alerter) formatSlack(alert Alert) map[string]interface{} {
+func (a *Alerter) formatSlack(alert Alert) map[string]any {
 	color := "#36a64f" // green for info
 	if alert.Severity == SeverityWarning {
 		color = "#ff9900" // orange
@@ -149,14 +149,14 @@ func (a *Alerter) formatSlack(alert Alert) map[string]interface{} {
 		color = "#ff0000" // red
 	}
 
-	return map[string]interface{}{
-		"attachments": []map[string]interface{}{
+	return map[string]any{
+		"attachments": []map[string]any{
 			{
 				"color":     color,
 				"title":     alert.Title,
 				"text":      alert.Message,
 				"timestamp": alert.Timestamp.Unix(),
-				"fields": []map[string]interface{}{
+				"fields": []map[string]any{
 					{"title": "Severity", "value": string(alert.Severity), "short": true},
 					{"title": "Environment", "value": alert.Environment, "short": true},
 					{"title": "Source", "value": alert.Source, "short": true},
@@ -166,12 +166,12 @@ func (a *Alerter) formatSlack(alert Alert) map[string]interface{} {
 	}
 }
 
-func (a *Alerter) formatPagerDuty(alert Alert) map[string]interface{} {
-	return map[string]interface{}{
+func (a *Alerter) formatPagerDuty(alert Alert) map[string]any {
+	return map[string]any{
 		"routing_key":  os.Getenv("PAGERDUTY_ROUTING_KEY"),
 		"event_action": "trigger",
 		"dedup_key":    alert.Title,
-		"payload": map[string]interface{}{
+		"payload": map[string]any{
 			"summary":   fmt.Sprintf("%s: %s", alert.Severity, alert.Title),
 			"severity":  string(alert.Severity),
 			"source":    alert.Source,
@@ -181,7 +181,7 @@ func (a *Alerter) formatPagerDuty(alert Alert) map[string]interface{} {
 	}
 }
 
-func (a *Alerter) sendWebhook(ctx context.Context, payload interface{}) error {
+func (a *Alerter) sendWebhook(ctx context.Context, payload any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal alert payload: %w", err)
@@ -207,15 +207,17 @@ func (a *Alerter) sendWebhook(ctx context.Context, payload interface{}) error {
 	return nil
 }
 
-// Reset clears the default alerter, allowing it to be reinitialized from current environment.
+// Reset clears the default alerter and resets the init guard,
+// allowing it to be reinitialized from current environment.
 // This is useful for tests and alternate boot flows that need to pick up new environment
 // variables without being coupled to first-call order.
 func Reset() {
 	defaultAlerter = nil
+	once = sync.Once{}
 }
 
 // SendAlert sends an alert using the default alerter
-func SendAlert(ctx context.Context, severity Severity, title, message string, metadata map[string]interface{}) error {
+func SendAlert(ctx context.Context, severity Severity, title, message string, metadata map[string]any) error {
 	return Get().Send(ctx, Alert{
 		Severity: severity,
 		Title:    title,

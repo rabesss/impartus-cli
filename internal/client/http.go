@@ -47,16 +47,8 @@ func (c *Client) doRequestWithToken(ctx context.Context, method, url string, bod
 
 	response, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request failed with error %v for %s %s", err, method, url)
+		return nil, fmt.Errorf("request failed with error %w for %s %s", err, method, url)
 	}
 
 	return response, nil
-}
-
-func (c *Client) GetAuthorized(url string) (*http.Response, error) {
-	token := c.Token()
-	if token == "" {
-		return nil, fmt.Errorf("token is not set")
-	}
-	return c.doRequestWithToken(context.Background(), http.MethodGet, url, nil, token)
 }

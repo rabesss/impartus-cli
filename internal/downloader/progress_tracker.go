@@ -16,6 +16,19 @@ type SpeedSample struct {
 	bytes     int64
 }
 
+type ProgressStats struct {
+	TotalLectures     int32
+	CompletedLectures int32
+	TotalChunks       int32
+	CompletedChunks   int32
+	TotalBytes        int64
+	DownloadedBytes   int64
+	Progress          float64
+	Speed             float64
+	ETA               time.Duration
+	Elapsed           time.Duration
+}
+
 type ProgressTracker struct {
 	totalLectures     int32
 	completedLectures int32
@@ -35,6 +48,7 @@ type ProgressTracker struct {
 	statsBar     *mpb.Bar
 	updateTicker *time.Ticker
 	stopChan     chan struct{}
+	stopOnce     sync.Once
 
 	mu sync.RWMutex
 }
@@ -260,35 +274,37 @@ func (pt *ProgressTracker) Stop() {
 	if pt == nil {
 		return
 	}
-	if pt.updateTicker != nil {
-		pt.updateTicker.Stop()
-	}
-	close(pt.stopChan)
-	if pt.statsBar != nil {
-		pt.statsBar.SetCurrent(100)
-		pt.statsBar.Abort(true)
-	}
+	pt.stopOnce.Do(func() {
+		if pt.updateTicker != nil {
+			pt.updateTicker.Stop()
+		}
+		close(pt.stopChan)
+		if pt.statsBar != nil {
+			pt.statsBar.SetCurrent(100)
+			pt.statsBar.Abort(true)
+		}
+	})
 }
 
-func (pt *ProgressTracker) GetStats() map[string]interface{} {
+func (pt *ProgressTracker) GetStats() ProgressStats {
 	if pt == nil {
-		return nil
+		return ProgressStats{}
 	}
 
 	pt.mu.RLock()
 	totalBytes := pt.totalBytes
 	pt.mu.RUnlock()
 
-	return map[string]interface{}{
-		"totalLectures":     pt.totalLectures,
-		"completedLectures": atomic.LoadInt32(&pt.completedLectures),
-		"totalChunks":       pt.totalChunks,
-		"completedChunks":   atomic.LoadInt32(&pt.completedChunks),
-		"totalBytes":        totalBytes,
-		"downloadedBytes":   atomic.LoadInt64(&pt.downloadedBytes),
-		"progress":          pt.GetOverallProgress(),
-		"speed":             pt.GetCurrentSpeed(),
-		"eta":               pt.GetETA(),
-		"elapsed":           time.Since(pt.startTime),
+	return ProgressStats{
+		TotalLectures:     pt.totalLectures,
+		CompletedLectures: atomic.LoadInt32(&pt.completedLectures),
+		TotalChunks:       pt.totalChunks,
+		CompletedChunks:   atomic.LoadInt32(&pt.completedChunks),
+		TotalBytes:        totalBytes,
+		DownloadedBytes:   atomic.LoadInt64(&pt.downloadedBytes),
+		Progress:          pt.GetOverallProgress(),
+		Speed:             pt.GetCurrentSpeed(),
+		ETA:               pt.GetETA(),
+		Elapsed:           time.Since(pt.startTime),
 	}
 }

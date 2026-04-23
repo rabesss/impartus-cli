@@ -189,9 +189,11 @@ Returns the authenticated user's courses as a JSON array.
 
 ## Lectures
 
-`GET /lectures?subject_id={subjectId}&session_id={sessionId}`
+`GET /lectures?subjectId={subjectId}&sessionId={sessionId}`
 
-Also accepts camelCase query keys `subjectId` and `sessionId`.
+Canonical query keys are camelCase: `subjectId` and `sessionId`.
+
+Legacy snake_case aliases `subject_id` and `session_id` are still accepted for backward compatibility, but error messages and new integrations should use the canonical camelCase names.
 
 Returns lectures as a JSON array.
 
@@ -222,7 +224,8 @@ Returns lectures as a JSON array.
     "numWorkers": 4,
     "downloadWorkersPerLecture": 4,
     "decryptWorkersPerLecture": 2,
-    "slides": false
+    "slides": false,
+    "skipNoAudio": false
   },
   "createdAt": "2025-02-12T12:00:00Z",
   "updatedAt": "2025-02-12T12:01:00Z"
@@ -251,6 +254,8 @@ Per-job config overrides are supported in two forms:
 1. Preferred nested object: `jobConfig`
 2. Backward-compatible top-level fields with same names
 
+Legacy top-level override fields are normalized at the request boundary. New clients should send `jobConfig`.
+
 Supported override keys:
 - `quality`
 - `views`
@@ -261,6 +266,7 @@ Supported override keys:
 - `numWorkers`
 - `downloadWorkersPerLecture`
 - `decryptWorkersPerLecture`
+- `skipNoAudio`
 
 If `jobConfig` is provided, top-level compatibility fields are ignored.
 

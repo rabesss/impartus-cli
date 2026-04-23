@@ -5,16 +5,17 @@ import (
 	"strings"
 )
 
+var resolutionRe = regexp.MustCompile(`\d*x\d*`)
+
 // ParseStreamInfosFromBody extracts stream information from response body.
 // Each line is checked for URL pattern and resolution in format "WIDTHxHEIGHT".
 func ParseStreamInfosFromBody(body []byte) ([]StreamInfo, error) {
 	lines := strings.Split(string(body), "\n")
-	re := regexp.MustCompile(`\d*x\d*`)
 
 	streamInfos := make([]StreamInfo, 0)
 	for _, line := range lines {
 		if strings.HasPrefix(line, "http") || strings.HasPrefix(line, "https") {
-			match := re.FindStringSubmatch(line)
+			match := resolutionRe.FindStringSubmatch(line)
 			if len(match) > 0 {
 				resolution := strings.Split(match[0], "x")
 				if len(resolution) == 2 {

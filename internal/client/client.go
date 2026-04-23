@@ -16,8 +16,10 @@ import (
 	"github.com/rabesss/impartus-cli/internal/config"
 )
 
+var invalidFileNameRe = regexp.MustCompile(`[<>:"/\\|?*\n\r]`)
+var uriValueRe = regexp.MustCompile(`URI="([^"]+)"`)
+
 type Client struct {
-	HTTPClient        *http.Client
 	httpClient        *http.Client
 	UserAgentProvider func() string
 	token             string
@@ -32,20 +34,17 @@ func New(httpClient *http.Client, userAgentProvider func() string) *Client {
 	}
 
 	return &Client{
-		HTTPClient:        httpClient,
 		httpClient:        httpClient,
 		UserAgentProvider: userAgentProvider,
 	}
 }
 
+// initialize is a defensive fallback ensuring httpClient and UserAgentProvider
+// are set even if Client was constructed without New(). Called from randomUseragent
+// and prepareLogin to guarantee safe access.
 func (c *Client) initialize() {
 	if c.httpClient == nil {
-		if c.HTTPClient != nil {
-			c.httpClient = c.HTTPClient
-		} else {
-			c.httpClient = NewHTTPClient(0)
-			c.HTTPClient = c.httpClient
-		}
+		c.httpClient = NewHTTPClient(0)
 	}
 	if c.UserAgentProvider == nil {
 		c.UserAgentProvider = func() string { return "impartus-downloader" }
@@ -78,23 +77,7 @@ func (c *Client) GetAuthorizedWithToken(ctx context.Context, url string, token s
 	}
 	cli.initialize()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request for GET %s: %w", url, err)
-	}
-
-	if token != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
-	}
-	req.Header.Set("User-Agent", cli.randomUserAgent())
-	req.Header.Set("Accept", "application/json, text/plain, */*")
-
-	response, err := cli.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed for GET %s: %w", url, err)
-	}
-
-	return response, nil
+	return cli.doRequestWithToken(ctx, http.MethodGet, url, nil, token)
 }
 
 func (c *Client) LoginAndSetToken(ctx context.Context, cfg *config.Config) error {
@@ -112,28 +95,33 @@ func (c *Client) LoginAndSetToken(ctx context.Context, cfg *config.Config) error
 	return cli.storeToken(cfg, token)
 }
 
-func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, error) {
-	if cfg == nil {
-		return nil, errors.New("config is required")
-	}
-
-	baseURL := cfg.BaseUrl
-	if baseURL == "" {
-		baseURL = cfg.BaseURL
-	}
-	if baseURL == "" {
-		return nil, errors.New("baseUrl is required")
-	}
-
+// resolveToken returns the token from config, falling back to the client's stored token.
+func (c *Client) resolveToken(cfg *config.Config) (string, error) {
 	token := cfg.Token
 	if token == "" {
 		token = c.Token()
 	}
 	if token == "" {
-		return nil, errors.New("token is not set")
+		return "", errors.New("token is not set")
+	}
+	return token, nil
+}
+
+func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, error) {
+	if cfg == nil {
+		return nil, errors.New("config is required")
 	}
 
-	url := fmt.Sprintf("%s/subjects", baseURL)
+	if cfg.BaseURL == "" {
+		return nil, errors.New("baseUrl is required")
+	}
+
+	token, err := c.resolveToken(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	url := fmt.Sprintf("%s/subjects", cfg.BaseURL)
 	resp, err := c.GetAuthorizedWithToken(ctx, url, token)
 	if err != nil {
 		return nil, err
@@ -154,7 +142,7 @@ func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, e
 	}
 
 	for i := range courses {
-		courses[i].SubjectName = sanitiseFileName(courses[i].SubjectName)
+		courses[i].SubjectName = sanitizeFileName(courses[i].SubjectName)
 	}
 
 	return courses, nil
@@ -165,23 +153,16 @@ func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Cou
 		return nil, errors.New("config is required")
 	}
 
-	baseURL := cfg.BaseUrl
-	if baseURL == "" {
-		baseURL = cfg.BaseURL
-	}
-	if baseURL == "" {
+	if cfg.BaseURL == "" {
 		return nil, errors.New("baseUrl is required")
 	}
 
-	token := cfg.Token
-	if token == "" {
-		token = c.Token()
-	}
-	if token == "" {
-		return nil, errors.New("token is not set")
+	token, err := c.resolveToken(cfg)
+	if err != nil {
+		return nil, err
 	}
 
-	url := fmt.Sprintf("%s/subjects/%d/lectures/%d", baseURL, course.SubjectID, course.SessionID)
+	url := fmt.Sprintf("%s/subjects/%d/lectures/%d", cfg.BaseURL, course.SubjectID, course.SessionID)
 	resp, err := c.GetAuthorizedWithToken(ctx, url, token)
 	if err != nil {
 		return nil, err
@@ -202,8 +183,8 @@ func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Cou
 	}
 
 	for i := range lectures {
-		lectures[i].Topic = sanitiseFileName(lectures[i].Topic)
-		lectures[i].SubjectName = sanitiseFileName(lectures[i].SubjectName)
+		lectures[i].Topic = sanitizeFileName(lectures[i].Topic)
+		lectures[i].SubjectName = sanitizeFileName(lectures[i].SubjectName)
 	}
 
 	return lectures, nil
@@ -214,30 +195,23 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 		return nil, errors.New("config is required")
 	}
 
-	baseURL := cfg.BaseUrl
-	if baseURL == "" {
-		baseURL = cfg.BaseURL
-	}
-	if baseURL == "" {
+	if cfg.BaseURL == "" {
 		return nil, errors.New("baseUrl is required")
 	}
 
-	token := cfg.Token
-	if token == "" {
-		token = c.Token()
-	}
-	if token == "" {
-		return nil, errors.New("token is not set")
+	token, err := c.resolveToken(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	parsedPlaylists := make([]ParsedPlaylist, 0, len(lectures))
 	for _, lecture := range lectures {
-		streamInfos, err := c.getStreamInfos(ctx, baseURL, token, lecture)
+		streamInfos, err := c.GetStreamInfos(ctx, cfg.BaseURL, token, lecture)
 		if err != nil {
 			return parsedPlaylists, err
 		}
 
-		streamURL := getStreamURL(streamInfos, cfg)
+		streamURL := SelectStreamByQuality(streamInfos, cfg.Quality, cfg.AudioOnly)
 		if streamURL == "" {
 			continue
 		}
@@ -256,15 +230,19 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 		}
 
 		scanner := bufio.NewScanner(resp.Body)
-		parsedPlaylists = append(parsedPlaylists, playlistParser(scanner, lecture.Ttid, lecture.Topic, lecture.SeqNo))
+		parsed, parseErr := ParsePlaylist(scanner, lecture.TTID, lecture.Topic, lecture.SeqNo)
 		resp.Body.Close()
+		if parseErr != nil {
+			return parsedPlaylists, fmt.Errorf("parse playlist for lecture %d (%s): %w", lecture.TTID, lecture.Topic, parseErr)
+		}
+		parsedPlaylists = append(parsedPlaylists, parsed)
 	}
 
 	return parsedPlaylists, nil
 }
 
-func (c *Client) getStreamInfos(ctx context.Context, baseURL, token string, lecture Lecture) ([]StreamInfo, error) {
-	uri := fmt.Sprintf("%s/fetchvideo?ttid=%d&token=%s&type=index.m3u8", baseURL, lecture.Ttid, token)
+func (c *Client) GetStreamInfos(ctx context.Context, baseURL, token string, lecture Lecture) ([]StreamInfo, error) {
+	uri := fmt.Sprintf("%s/fetchvideo?ttid=%d&token=%s&type=index.m3u8", baseURL, lecture.TTID, token)
 	resp, err := c.GetAuthorizedWithToken(ctx, uri, token)
 	if err != nil {
 		return nil, err
@@ -287,13 +265,9 @@ func (c *Client) getStreamInfos(ctx context.Context, baseURL, token string, lect
 	return ParseStreamInfosFromBody(body)
 }
 
-func getStreamURL(streamInfos []StreamInfo, cfg *config.Config) string {
-	return SelectStreamByQuality(streamInfos, cfg.Quality, cfg.AudioOnly)
-}
-
-func playlistParser(scanner *bufio.Scanner, id int, title string, seqNo int) ParsedPlaylist {
+func ParsePlaylist(scanner *bufio.Scanner, id int, title string, seqNo int) (ParsedPlaylist, error) {
 	parsedOutput := ParsedPlaylist{
-		Id:    id,
+		ID:    id,
 		Title: title,
 		SeqNo: seqNo,
 	}
@@ -301,12 +275,11 @@ func playlistParser(scanner *bufio.Scanner, id int, title string, seqNo int) Par
 	isFirstView := true
 	firstViewURLs := make([]string, 0)
 	secondViewURLs := make([]string, 0)
-	re := regexp.MustCompile(`URI="([^"]+)"`)
 
 	for scanner.Scan() {
 		line := scanner.Text()
 		if parsedOutput.KeyURL == "" && strings.HasPrefix(line, "#EXT-X-KEY") {
-			match := re.FindStringSubmatch(line)
+			match := uriValueRe.FindStringSubmatch(line)
 			if len(match) == 2 {
 				parsedOutput.KeyURL = match[1]
 			}
@@ -321,18 +294,21 @@ func playlistParser(scanner *bufio.Scanner, id int, title string, seqNo int) Par
 		}
 	}
 
+	if err := scanner.Err(); err != nil {
+		return ParsedPlaylist{}, fmt.Errorf("scan playlist: %w", err)
+	}
+
 	parsedOutput.FirstViewURLs = firstViewURLs
 	if !isFirstView {
 		parsedOutput.HasMultipleViews = true
 		parsedOutput.SecondViewURLs = secondViewURLs
 	}
 
-	return parsedOutput
+	return parsedOutput, nil
 }
 
-func sanitiseFileName(name string) string {
-	re := regexp.MustCompile(`[<>:"/\\|?*\n\r]`)
-	name = re.ReplaceAllString(name, "_")
+func sanitizeFileName(name string) string {
+	name = invalidFileNameRe.ReplaceAllString(name, "_")
 	name = strings.TrimSpace(name)
 	return strings.Trim(name, ".")
 }
@@ -378,14 +354,10 @@ func (c *Client) prepareLogin(cfg *config.Config) (*Client, string, error) {
 		cli = New(nil, nil)
 	}
 	cli.initialize()
-	baseURL := cfg.BaseUrl
-	if baseURL == "" {
-		baseURL = cfg.BaseURL
-	}
-	if baseURL == "" {
+	if cfg.BaseURL == "" {
 		return nil, "", errors.New("baseUrl is required")
 	}
-	return cli, baseURL, nil
+	return cli, cfg.BaseURL, nil
 }
 
 func (c *Client) tryStoredToken(ctx context.Context, cfg *config.Config, baseURL string) bool {

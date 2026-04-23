@@ -23,8 +23,7 @@ type ProgressConfig struct {
 type Config struct {
 	Username         string  `json:"username"`
 	Password         string  `json:"password"`
-	BaseUrl          string  `json:"baseUrl"`
-	BaseURL          string  `json:"-"`
+	BaseURL          string  `json:"baseUrl"`
 	Quality          string  `json:"quality"`
 	Views            string  `json:"views"`
 	DownloadLocation string  `json:"downloadLocation"`
@@ -53,25 +52,18 @@ var (
 )
 
 func (c *Config) ApplyDefaults() {
-	c.applyURLDefaults()
 	c.applyPathDefaults()
 	c.applyWorkerDefaults()
 	c.applyRateLimitDefaults()
 	c.applyProgressDefaults()
 }
 
-func (c *Config) applyURLDefaults() {
-	if c.BaseUrl == "" && c.BaseURL != "" {
-		c.BaseUrl = c.BaseURL
-	}
-	if c.BaseURL == "" && c.BaseUrl != "" {
-		c.BaseURL = c.BaseUrl
-	}
-}
-
 func (c *Config) applyPathDefaults() {
 	if c.TempDirLocation == "" {
 		c.TempDirLocation = "./temp"
+	}
+	if c.DownloadLocation == "" {
+		c.DownloadLocation = "./downloads"
 	}
 }
 
@@ -94,6 +86,8 @@ func (c *Config) applyRateLimitDefaults() {
 	if c.APIRateLimit == 0 {
 		c.APIRateLimit = 2
 	}
+	// Jitter is always enabled to prevent thundering herd on upstream API
+	// when multiple downloads start simultaneously.
 	c.EnableJitter = true
 }
 
@@ -110,16 +104,27 @@ func (c *Config) applyProgressDefaults() {
 	if c.HTTPTimeout == "" {
 		c.HTTPTimeout = "10m"
 	}
+	if c.Views == "" {
+		c.Views = "both"
+	} else {
+		c.Views = NormalizeViews(c.Views)
+	}
+}
+
+// NormalizeViews maps view aliases to canonical downloader names.
+// "first" → "left", "second" → "right", others pass through lowercased.
+func NormalizeViews(views string) string {
+	switch strings.ToLower(strings.TrimSpace(views)) {
+	case "first":
+		return "left"
+	case "second":
+		return "right"
+	default:
+		return strings.ToLower(strings.TrimSpace(views))
+	}
 }
 
 func (c *Config) Validate() error {
-	if c.BaseUrl == "" && c.BaseURL != "" {
-		c.BaseUrl = c.BaseURL
-	}
-	if c.BaseURL == "" && c.BaseUrl != "" {
-		c.BaseURL = c.BaseUrl
-	}
-
 	if err := c.validateCore(); err != nil {
 		return err
 	}
@@ -136,19 +141,19 @@ func (c *Config) validateCore() error {
 	if c.Username == "" || c.Password == "" {
 		return fmt.Errorf("username and password are required")
 	}
-	if c.BaseUrl == "" {
+	if c.BaseURL == "" {
 		return fmt.Errorf("baseUrl is required")
 	}
 	if c.NumWorkers < 1 || c.NumWorkers > 50 {
 		return fmt.Errorf("numWorkers must be between 1 and 50, got %d", c.NumWorkers)
 	}
-	if !map[string]bool{"144": true, "450": true, "720": true}[c.Quality] {
+	if !OneOf(c.Quality, "144", "450", "720") {
 		return fmt.Errorf("quality must be one of: 144, 450, 720")
 	}
-	if !map[string]bool{"first": true, "second": true, "both": true, "left": true, "right": true}[c.Views] {
+	if !OneOf(c.Views, "first", "second", "both", "left", "right") {
 		return fmt.Errorf("views must be one of: first, second, both, left, right")
 	}
-	if c.AudioOnly && !map[string]bool{"mp3": true, "m4a": true, "aac": true, "opus": true}[c.AudioFormat] {
+	if c.AudioOnly && !OneOf(c.AudioFormat, "mp3", "m4a", "aac", "opus") {
 		return fmt.Errorf("audioFormat must be one of: mp3, m4a, aac, opus")
 	}
 	if c.RateLimit < 0.1 || c.RateLimit > 100 {
@@ -226,13 +231,6 @@ func Parse(path string) (*Config, error) {
 		return nil, fmt.Errorf("could not parse config json: %w", err)
 	}
 
-	if cfg.BaseUrl == "" && cfg.BaseURL != "" {
-		cfg.BaseUrl = cfg.BaseURL
-	}
-	if cfg.BaseURL == "" && cfg.BaseUrl != "" {
-		cfg.BaseURL = cfg.BaseUrl
-	}
-
 	return &cfg, nil
 }
 
@@ -269,7 +267,7 @@ func LoadResolved(path string) (*Config, error) {
 func applyEnvOverrides(cfg *Config) {
 	applyStringEnv("IMPARTUS_USERNAME", &cfg.Username)
 	applyStringEnv("IMPARTUS_PASSWORD", &cfg.Password)
-	applyStringEnv("IMPARTUS_BASE_URL", &cfg.BaseUrl)
+	applyStringEnv("IMPARTUS_BASE_URL", &cfg.BaseURL)
 	applyStringEnv("IMPARTUS_QUALITY", &cfg.Quality)
 	applyStringEnv("IMPARTUS_VIEWS", &cfg.Views)
 	applyStringEnv("IMPARTUS_DOWNLOAD_LOCATION", &cfg.DownloadLocation)
@@ -286,12 +284,6 @@ func applyEnvOverrides(cfg *Config) {
 }
 
 func applyCanonicalFields(cfg *Config) {
-	if cfg.BaseUrl == "" && cfg.BaseURL != "" {
-		cfg.BaseUrl = cfg.BaseURL
-	}
-	if cfg.BaseURL == "" && cfg.BaseUrl != "" {
-		cfg.BaseURL = cfg.BaseUrl
-	}
 	if cfg.Views != "" {
 		cfg.Views = strings.ToLower(strings.TrimSpace(cfg.Views))
 	}
@@ -350,7 +342,9 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
-func Get() *Config {
+// Get returns the singleton config, loading it on first call.
+// Returns an error if config loading fails instead of panicking.
+func Get() (*Config, error) {
 	loadOnce.Do(func() {
 		cfg, err := Load(ConfigLocation)
 		if err != nil {
@@ -361,8 +355,28 @@ func Get() *Config {
 	})
 
 	if loadErr != nil {
-		panic(loadErr)
+		return nil, loadErr
 	}
 
-	return &loadedConfig
+	return &loadedConfig, nil
+}
+
+// MustGet returns the singleton config, panicking on load failure.
+// Use this in init paths where config is a hard requirement.
+func MustGet() *Config {
+	cfg, err := Get()
+	if err != nil {
+		panic(err)
+	}
+	return cfg
+}
+
+// OneOf checks if a value is in the allowed set.
+func OneOf(val string, allowed ...string) bool {
+	for _, a := range allowed {
+		if val == a {
+			return true
+		}
+	}
+	return false
 }
