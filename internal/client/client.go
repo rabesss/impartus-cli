@@ -56,14 +56,14 @@ func (c *Client) randomUserAgent() string {
 	return c.UserAgentProvider()
 }
 
-func (c *Client) Token() string {
+func (c *Client) tokenValue() string {
 	if c == nil {
 		return ""
 	}
 	return c.token
 }
 
-func (c *Client) SetToken(token string) {
+func (c *Client) setToken(token string) {
 	if c == nil {
 		return
 	}
@@ -99,7 +99,7 @@ func (c *Client) LoginAndSetToken(ctx context.Context, cfg *config.Config) error
 func (c *Client) resolveToken(cfg *config.Config) (string, error) {
 	token := cfg.Token
 	if token == "" {
-		token = c.Token()
+		token = c.tokenValue()
 	}
 	if token == "" {
 		return "", errors.New("token is not set")
@@ -370,7 +370,7 @@ func (c *Client) tryStoredToken(ctx context.Context, cfg *config.Config, baseURL
 		return false
 	}
 	cfg.Token = token
-	c.SetToken(token)
+	c.setToken(token)
 	return true
 }
 
@@ -430,7 +430,7 @@ func validateLoginResponse(response *http.Response) error {
 
 func (c *Client) storeToken(cfg *config.Config, token string) error {
 	cfg.Token = token
-	c.SetToken(token)
+	c.setToken(token)
 	if err := os.WriteFile(".token", []byte(token), 0o600); err != nil {
 		return fmt.Errorf("failed to persist token: %w", err)
 	}

@@ -6,7 +6,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -44,12 +43,6 @@ type Config struct {
 	ProgressTracking          ProgressConfig `json:"progressTracking"`
 	HTTPTimeout               string         `json:"httpTimeout"`
 }
-
-var (
-	loadedConfig Config
-	loadOnce     sync.Once
-	loadErr      error
-)
 
 func (c *Config) ApplyDefaults() {
 	c.applyPathDefaults()
@@ -326,49 +319,6 @@ func applyFloatEnv(key string, target *float64) {
 	if err == nil {
 		*target = parsed
 	}
-}
-
-func Load(path string) (*Config, error) {
-	cfg, err := Parse(path)
-	if err != nil {
-		return nil, err
-	}
-
-	cfg.ApplyDefaults()
-	if err := cfg.Validate(); err != nil {
-		return nil, err
-	}
-
-	return cfg, nil
-}
-
-// Get returns the singleton config, loading it on first call.
-// Returns an error if config loading fails instead of panicking.
-func Get() (*Config, error) {
-	loadOnce.Do(func() {
-		cfg, err := Load(ConfigLocation)
-		if err != nil {
-			loadErr = err
-			return
-		}
-		loadedConfig = *cfg
-	})
-
-	if loadErr != nil {
-		return nil, loadErr
-	}
-
-	return &loadedConfig, nil
-}
-
-// MustGet returns the singleton config, panicking on load failure.
-// Use this in init paths where config is a hard requirement.
-func MustGet() *Config {
-	cfg, err := Get()
-	if err != nil {
-		panic(err)
-	}
-	return cfg
 }
 
 // OneOf checks if a value is in the allowed set.

@@ -182,7 +182,7 @@ func TestNormalizeViewsViaConfig(t *testing.T) {
 }
 
 func TestWebSocketRouteRequiresAuth(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/ws", nil)
 	rec := httptest.NewRecorder()
@@ -199,7 +199,7 @@ func TestWebSocketRouteRequiresAuth(t *testing.T) {
 func TestRequestIDMiddlewareAddsHeader(t *testing.T) {
 	// Test that middleware generates a request ID when none provided
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestID := GetRequestID(r)
+		requestID := requestIDFrom(r)
 		if requestID == "" {
 			t.Error("expected request ID in context")
 		}
@@ -223,7 +223,7 @@ func TestRequestIDMiddlewarePropagatesExistingID(t *testing.T) {
 	existingID := "existing-request-id-12345"
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestID := GetRequestID(r)
+		requestID := requestIDFrom(r)
 		if requestID != existingID {
 			t.Errorf("expected request ID %q, got %q", existingID, requestID)
 		}
@@ -627,7 +627,7 @@ func TestUpstreamCacheConcurrentAccess(t *testing.T) {
 // ============================================================================
 
 func TestHealthEndpointReturnsStructuredStatus(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()
@@ -708,7 +708,7 @@ func TestHealthEndpointReturnsStructuredStatus(t *testing.T) {
 }
 
 func TestHealthConfigStatusOkWithValidConfig(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()
@@ -737,7 +737,7 @@ func TestHealthConfigStatusOkWithValidConfig(t *testing.T) {
 }
 
 func TestHealthConfigStatusMisconfiguredWithMissingFields(t *testing.T) {
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer("8080", &config.Config{
 		Username:         "", // missing
 		Password:         "pass",
 		BaseURL:          "https://example.com",
@@ -771,7 +771,7 @@ func TestHealthConfigStatusMisconfiguredWithMissingFields(t *testing.T) {
 }
 
 func TestHealthConfigStatusMisconfiguredWithAllMissingFields(t *testing.T) {
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer("8080", &config.Config{
 		Username:         "",
 		Password:         "",
 		BaseURL:          "",
@@ -805,7 +805,7 @@ func TestHealthConfigStatusMisconfiguredWithAllMissingFields(t *testing.T) {
 }
 
 func TestHealthConfigStatusMisconfiguredWithNilConfig(t *testing.T) {
-	s := NewAPIServer("8080", nil)
+	s := newAPIServer("8080", nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()
@@ -834,7 +834,7 @@ func TestHealthConfigStatusMisconfiguredWithNilConfig(t *testing.T) {
 }
 
 func TestHealthUpstreamStatusWithValidBaseUrl(t *testing.T) {
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer("8080", &config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          "https://example.com",
@@ -860,7 +860,7 @@ func TestHealthUpstreamStatusWithValidBaseUrl(t *testing.T) {
 }
 
 func TestHealthUpstreamStatusWithUnreachableBaseUrl(t *testing.T) {
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer("8080", &config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          "https://this-domain-does-not-exist-12345.com",
@@ -886,7 +886,7 @@ func TestHealthUpstreamStatusWithUnreachableBaseUrl(t *testing.T) {
 }
 
 func TestHealthFFmpegStatus(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()
@@ -907,7 +907,7 @@ func TestHealthFFmpegStatus(t *testing.T) {
 }
 
 func TestHealthOverallStatusOk(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()
@@ -929,7 +929,7 @@ func TestHealthOverallStatusOk(t *testing.T) {
 }
 
 func TestHealthOverallStatusDegradedWithMisconfiguredConfig(t *testing.T) {
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer("8080", &config.Config{
 		Username:         "", // missing - causes misconfiguration
 		Password:         "pass",
 		BaseURL:          "https://example.com",
@@ -958,7 +958,7 @@ func TestHealthOverallStatusDegradedWithMisconfiguredConfig(t *testing.T) {
 }
 
 func TestHealthNoAuthRequired(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	// Request without Authorization header
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
@@ -1088,7 +1088,7 @@ func TestIdempotencyKeyOmittedAlwaysCreatesNewJob(t *testing.T) {
 // the max length are rejected by the handler.
 // (VAL-IDEM-004)
 func TestIdempotencyKeyValidationTooLong(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 	token := setupAuth(t, s)
 
 	longKey := strings.Repeat("a", maxIdempotencyKeyLength+1)
@@ -1140,7 +1140,7 @@ func TestIdempotencyKeyStoredOnJob(t *testing.T) {
 	}
 
 	// Verify lookup by key works
-	retrieved, ok := js.GetJobByIdempotencyKey("my-key-123")
+	retrieved, ok := js.jobByIdempotencyKey("my-key-123")
 	if !ok {
 		t.Fatal("expected to find job by idempotency key")
 	}
@@ -1155,7 +1155,7 @@ func TestIdempotencyKeyStoredOnJob(t *testing.T) {
 func TestIdempotencyKeyNonExistentReturnsFalse(t *testing.T) {
 	js := NewJobStore()
 
-	_, ok := js.GetJobByIdempotencyKey("nonexistent-key")
+	_, ok := js.jobByIdempotencyKey("nonexistent-key")
 	if ok {
 		t.Error("expected false for non-existent idempotency key")
 	}
@@ -1241,7 +1241,7 @@ func TestIdempotencyKeyInPersistedFile(t *testing.T) {
 // without an idempotencyKey field always creates a new job (handler level).
 // (VAL-IDEM-003)
 func TestIdempotencyKeyHandlerMissingNoKeyAlwaysCreates(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	// First request without key - this would try to executeJob which needs upstream,
 	// so we test the job store behavior instead.

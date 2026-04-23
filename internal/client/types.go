@@ -14,6 +14,9 @@ type LoginResponse struct {
 
 type Courses []Course
 
+// Course preserves the upstream API shape because course payloads are returned
+// to CLI JSON mode and API consumers without projection. Fields that are not
+// used in local business logic may still be part of that public payload contract.
 type Course struct {
 	Institute            string `json:"institute"`
 	SubjectName          string `json:"subjectName"`
@@ -32,6 +35,9 @@ type Course struct {
 
 type Lectures []Lecture
 
+// Lecture likewise mirrors the upstream payload. The downloader uses only a
+// subset of fields, but the full struct is retained so downstream JSON output
+// stays faithful to the upstream schema exposed by this application.
 type Lecture struct {
 	SubjectDescription  string `json:"subjectDescription"`
 	SessionName         string `json:"sessionName"`

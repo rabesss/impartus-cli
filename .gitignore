@@ -70,5 +70,9 @@ coverage*.out
 scorecard.png
 query.json
 
-specs/
 
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key

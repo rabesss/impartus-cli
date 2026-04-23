@@ -331,7 +331,7 @@ func TestProgressTrackerStopNilReceiver(t *testing.T) {
 	pt.Stop()
 }
 
-func TestFormatDuration(t *testing.T) {
+func TestFormatDurationValue(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    time.Duration
@@ -376,9 +376,9 @@ func TestFormatDuration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FormatDuration(tt.input)
+			result := formatDurationValue(tt.input)
 			if result != tt.expected {
-				t.Errorf("FormatDuration(%v) = %q; want %q", tt.input, result, tt.expected)
+				t.Errorf("formatDurationValue(%v) = %q; want %q", tt.input, result, tt.expected)
 			}
 		})
 	}
@@ -497,8 +497,7 @@ func TestProgressTrackerFormatDuration(t *testing.T) {
 	pt := NewProgressTracker(1, 1, nil)
 	defer pt.Stop()
 
-	// formatDuration is a thin wrapper around FormatDuration
-	// Test that it delegates correctly
+	// formatDuration delegates to the package-local duration formatter
 	result := pt.formatDuration(30 * time.Second)
 	if result != "30s" {
 		t.Errorf("formatDuration(30s) = %q, want %q", result, "30s")

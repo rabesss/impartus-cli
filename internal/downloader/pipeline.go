@@ -276,7 +276,7 @@ func (p *LecturePipeline) buildOrderedList(chunkMap map[int]string) []string {
 	return orderedList
 }
 
-func (p *LecturePipeline) Cancel() {
+func (p *LecturePipeline) cancelPipeline() {
 	p.submissionsClosed.Store(true)
 	p.cancel()
 }

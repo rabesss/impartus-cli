@@ -65,8 +65,8 @@ func TestNew(t *testing.T) {
 	}
 }
 
-// TestClient_Token tests the Token getter with nil and valid receivers
-func TestClient_Token(t *testing.T) {
+// TestClient_tokenValue tests the Token getter with nil and valid receivers
+func TestClient_tokenValue(t *testing.T) {
 	tests := []struct {
 		name   string
 		client *Client
@@ -91,15 +91,15 @@ func TestClient_Token(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.client.Token(); got != tt.want {
-				t.Errorf("Token() = %q, want %q", got, tt.want)
+			if got := tt.client.tokenValue(); got != tt.want {
+				t.Errorf("tokenValue() = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
-// TestClient_SetToken tests the SetToken setter with nil and valid receivers
-func TestClient_SetToken(t *testing.T) {
+// TestClient_setToken tests the SetToken setter with nil and valid receivers
+func TestClient_setToken(t *testing.T) {
 	tests := []struct {
 		name   string
 		client *Client
@@ -120,9 +120,9 @@ func TestClient_SetToken(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// This should not panic for nil receiver
-			tt.client.SetToken(tt.token)
+			tt.client.setToken(tt.token)
 			if tt.client != nil && tt.client.token != tt.token {
-				t.Errorf("SetToken() token = %q, want %q", tt.client.token, tt.token)
+				t.Errorf("setToken() token = %q, want %q", tt.client.token, tt.token)
 			}
 		})
 	}

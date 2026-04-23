@@ -124,15 +124,12 @@ main.go → cli.Execute(version, date) → Command Handlers
 
 | Package | Responsibility | Key Files |
 |---------|---------------|-----------|
+| `buildinfo` | Build-time version/date metadata used by entrypoints and release tooling | `buildinfo.go` |
 | `cli` | CLI commands, JSON envelope, interactive mode | `cli.go`, `cli_test.go` |
 | `client` | HTTP client, API calls, playlist parsing | `client.go`, `http.go`, `types.go` |
 | `config` | Configuration loading, validation, defaults | `config.go`, `config_test.go` |
 | `downloader` | Chunk download, AES decryption, FFmpeg operations | `downloader.go`, `pipeline.go`, `ffmpeg.go`, `rate_limiter.go`, `progress_tracker.go` |
-| `server` | REST API, WebSocket, job management, persistence, upstream token cache (23h TTL) | `server.go`, `auth.go`, `job_runner.go`, `job_persistence.go` |
-| `alerts` | Webhook alerting (Slack, PagerDuty) | `alerts.go` |
-| `metrics` | OpenTelemetry metrics instrumentation | `metrics.go` |
-| `sentryhook` | Sentry error tracking integration | `sentryhook.go` |
-| `logutil` | Log sanitization for sensitive data | `logutil.go` |
+| `server` | REST API, WebSocket, job management, persistence, upstream token cache (23h TTL) | `server.go`, `handlers.go`, `auth.go`, `middleware.go`, `store.go`, `job_runner.go`, `job_executor.go`, `job_persistence.go`, `hub.go`, `types.go` |
 
 ### Data Flow
 
@@ -417,14 +414,13 @@ func New(cfg *config.Config, apiClient *client.Client) *Downloader {
 ### External Packages
 
 | Package | Purpose |
-|---------|---------|
+| Package | Purpose |
+|---|---|
 | `github.com/gorilla/mux` | HTTP router with URL variables and middleware |
 | `github.com/gorilla/websocket` | WebSocket server for real-time job updates |
 | `github.com/google/uuid` | UUID generation for request IDs and tokens |
 | `github.com/vbauerster/mpb/v8` | Multi-progress bar for CLI downloads |
 | `golang.org/x/time/rate` | Token bucket rate limiting |
-| `go.opentelemetry.io/otel` | OpenTelemetry metrics SDK |
-| `github.com/getsentry/sentry-go` | Sentry error tracking |
 
 ### Internal Package Dependencies
 
@@ -528,7 +524,7 @@ When `enablePipeline: true`:
 
 ### Memory Management
 
-- Temporary files stored in `tempDirLocation` (default: `./.temp`)
+- Temporary files stored in `tempDirLocation` (default: `./temp`)
 - Chunks written to disk immediately, not held in memory
 - Large file handling via streaming (`io.Copy`)
 
@@ -550,16 +546,10 @@ When `enablePipeline: true`:
 
 ### Log Scrubbing
 
-Use `internal/logutil` to prevent leaking sensitive data:
-```go
-import "github.com/rabesss/impartus-cli/internal/logutil"
-
-// Redact passwords, tokens, emails (security utility)
-log.Println(logutil.RedactSensitive(message))
-
-// Sanitize maps before logging
-safeMap := logutil.SanitizeMap(configMap)
-```
+There is no centralized sanitization helper in the current tree. When adding logs:
+- Never log passwords, bearer tokens, cookies, or full config payloads
+- Prefer request IDs, job IDs, lecture IDs, and status summaries
+- Redact or omit user-identifying fields before writing to `api.log`
 
 ---
 

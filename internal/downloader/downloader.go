@@ -86,7 +86,7 @@ func (d *Downloader) FetchLecturePlaylists(ctx context.Context, lectures []clien
 	return d.client.GetPlaylists(ctx, d.config, lectures)
 }
 
-func (d *Downloader) DownloadLecturePlaylists(ctx context.Context, playlists []client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) ([]DownloadedPlaylist, error) {
+func (d *Downloader) downloadLecturePlaylists(ctx context.Context, playlists []client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) ([]DownloadedPlaylist, error) {
 	results := make([]DownloadedPlaylist, 0, len(playlists))
 	for _, playlist := range playlists {
 		downloadedPlaylist, err := d.DownloadPlaylist(ctx, playlist, p, tracker)

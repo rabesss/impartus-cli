@@ -1,19 +1,6 @@
 package buildinfo
 
-import (
-	"strings"
-	"testing"
-)
-
-func TestSentryRelease(t *testing.T) {
-	release := SentryRelease()
-	if !strings.HasPrefix(release, "impartus-cli@") {
-		t.Errorf("expected release to start with 'impartus-cli@', got %s", release)
-	}
-	if release == "impartus-cli@" {
-		t.Error("expected non-empty version in release")
-	}
-}
+import "testing"
 
 func TestVersionNotEmpty(t *testing.T) {
 	if Version == "" {
@@ -21,8 +8,8 @@ func TestVersionNotEmpty(t *testing.T) {
 	}
 }
 
-func TestDefaultValues(t *testing.T) {
-	if Commit == "" {
-		t.Error("expected non-empty Commit")
+func TestDefaultDateValue(t *testing.T) {
+	if Date != "" {
+		t.Errorf("expected default empty Date, got %q", Date)
 	}
 }

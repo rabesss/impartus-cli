@@ -873,7 +873,7 @@ func TestSubmitPipelineTasks(t *testing.T) {
 		DownloadWorkers: 2,
 		DecryptWorkers:  2,
 	}, d)
-	defer p.Cancel()
+	defer p.cancelPipeline()
 
 	playlist := client.ParsedPlaylist{
 		ID:    123,
@@ -906,7 +906,7 @@ func TestSubmitPipelineTasksLeftViewOnly(t *testing.T) {
 		DownloadWorkers: 2,
 		DecryptWorkers:  2,
 	}, d)
-	defer p.Cancel()
+	defer p.cancelPipeline()
 
 	playlist := client.ParsedPlaylist{
 		ID:    123,
@@ -970,7 +970,7 @@ func TestDownloadAndJoinPlaylistNoChunks(t *testing.T) {
 
 func TestDownloadLecturePlaylists_EmptyInput(t *testing.T) {
 	d := &Downloader{}
-	results, err := d.DownloadLecturePlaylists(context.Background(), nil, nil, nil)
+	results, err := d.downloadLecturePlaylists(context.Background(), nil, nil, nil)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}

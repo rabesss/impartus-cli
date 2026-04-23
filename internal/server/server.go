@@ -23,7 +23,7 @@ func defaultUpstreamLogin(ctx context.Context, cfg *config.Config) (*client.Clie
 	return apiClient, cfg, nil
 }
 
-func NewAPIServer(port string, cfg *config.Config) *APIServer {
+func newAPIServer(port string, cfg *config.Config) *APIServer {
 	return NewAPIServerWithLogin(port, cfg, nil)
 }
 

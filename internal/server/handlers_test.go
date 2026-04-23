@@ -35,7 +35,7 @@ func TestEnsureScheme(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := NewAPIServer("8080", validServerConfig())
+			s := newAPIServer("8080", validServerConfig())
 			got := s.ensureScheme(tt.raw)
 			if got != tt.want {
 				t.Errorf("ensureScheme(%q) = %q, want %q", tt.raw, got, tt.want)
@@ -49,7 +49,7 @@ func TestEnsureScheme(t *testing.T) {
 // ============================================================================
 
 func TestProbeUpstreamHTTP_NoCache(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 	// No upstream cache set
 	result := s.probeUpstreamHTTP()
 	if result {
@@ -58,7 +58,7 @@ func TestProbeUpstreamHTTP_NoCache(t *testing.T) {
 }
 
 func TestProbeUpstreamHTTP_EmptyToken(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 	s.upstreamCacheMu.Lock()
 	s.upstreamCache = &upstreamCacheEntry{token: ""}
 	s.upstreamCacheMu.Unlock()
@@ -70,7 +70,7 @@ func TestProbeUpstreamHTTP_EmptyToken(t *testing.T) {
 }
 
 func TestProbeUpstreamHTTP_InvalidURL(t *testing.T) {
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer("8080", &config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          "://invalid",
@@ -101,7 +101,7 @@ func TestProbeUpstreamHTTP_SuccessfulProbe(t *testing.T) {
 	defer ts.Close()
 
 	baseURL := ts.URL
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer("8080", &config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          baseURL,
@@ -125,7 +125,7 @@ func TestProbeUpstreamHTTP_ServerReturnsError(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer("8080", &config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          ts.URL,
@@ -148,7 +148,7 @@ func TestProbeUpstreamHTTP_ServerReturnsError(t *testing.T) {
 // ============================================================================
 
 func TestProbeUpstreamTCP_InvalidURL(t *testing.T) {
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer("8080", &config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          "://invalid",
@@ -162,7 +162,7 @@ func TestProbeUpstreamTCP_InvalidURL(t *testing.T) {
 }
 
 func TestProbeUpstreamTCP_UnreachableHost(t *testing.T) {
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer("8080", &config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          "https://192.0.2.1:1", // RFC 5737 TEST-NET, should be unreachable
@@ -179,7 +179,7 @@ func TestProbeUpstreamTCP_ReachableServer(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer ts.Close()
 
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer("8080", &config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          ts.URL,
@@ -197,7 +197,7 @@ func TestProbeUpstreamTCP_ReachableServer(t *testing.T) {
 // ============================================================================
 
 func TestCheckUpstreamStatus_NilConfig(t *testing.T) {
-	s := NewAPIServer("8080", nil)
+	s := newAPIServer("8080", nil)
 	result := s.checkUpstreamStatus()
 	if result.Status != "not_configured" {
 		t.Errorf("expected not_configured, got %s", result.Status)
@@ -205,7 +205,7 @@ func TestCheckUpstreamStatus_NilConfig(t *testing.T) {
 }
 
 func TestCheckUpstreamStatus_EmptyBaseURL(t *testing.T) {
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer("8080", &config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          "",
@@ -221,7 +221,7 @@ func TestCheckUpstreamStatus_Reachable(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer ts.Close()
 
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer("8080", &config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          ts.URL,
@@ -239,7 +239,7 @@ func TestCheckUpstreamStatus_Reachable(t *testing.T) {
 // ============================================================================
 
 func TestCheckFFmpegStatus(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 	result := s.checkFFmpegStatus()
 	// Can be either "available" or "not_found" depending on system
 	if result.Status != "available" && result.Status != "not_found" {
@@ -539,7 +539,7 @@ func TestExtractJoinOutputs(t *testing.T) {
 // ============================================================================
 
 func TestGetJobHandler_Success(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 	token := setupAuth(t, s)
 
 	cfg := &config.Config{DownloadLocation: "./downloads"}
@@ -565,7 +565,7 @@ func TestGetJobHandler_Success(t *testing.T) {
 }
 
 func TestGetJobHandler_NotFound(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 	token := setupAuth(t, s)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/nonexistent", nil)
@@ -584,7 +584,7 @@ func TestGetJobHandler_NotFound(t *testing.T) {
 // ============================================================================
 
 func TestDeleteJobHandler_Success(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 	token := setupAuth(t, s)
 
 	cfg := &config.Config{DownloadLocation: "./downloads"}
@@ -605,7 +605,7 @@ func TestDeleteJobHandler_Success(t *testing.T) {
 }
 
 func TestDeleteJobHandler_NotFound(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 	token := setupAuth(t, s)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/jobs/nonexistent", nil)
@@ -620,7 +620,7 @@ func TestDeleteJobHandler_NotFound(t *testing.T) {
 }
 
 func TestDeleteJobHandler_TerminalJob(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 	token := setupAuth(t, s)
 
 	cfg := &config.Config{DownloadLocation: "./downloads"}

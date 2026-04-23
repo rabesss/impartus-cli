@@ -308,7 +308,7 @@ func TestJobStoreConcurrentAccess(t *testing.T) {
 // ============================================================================
 
 func TestAuthMiddlewareMissingAuthorizationHeader(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/courses", nil)
 	rec := httptest.NewRecorder()
@@ -323,7 +323,7 @@ func TestAuthMiddlewareMissingAuthorizationHeader(t *testing.T) {
 }
 
 func TestAuthMiddlewareInvalidTokenFormat(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/courses", nil)
 	req.Header.Set("Authorization", "InvalidFormat token123")
@@ -339,7 +339,7 @@ func TestAuthMiddlewareInvalidTokenFormat(t *testing.T) {
 }
 
 func TestAuthMiddlewareInvalidToken(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/courses", nil)
 	req.Header.Set("Authorization", "Bearer invalid-token")
@@ -355,7 +355,7 @@ func TestAuthMiddlewareInvalidToken(t *testing.T) {
 }
 
 func TestAuthMiddlewareValidToken(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	// Create a valid token
 	token, err := GenerateToken()
@@ -384,7 +384,7 @@ func TestAuthMiddlewareValidToken(t *testing.T) {
 }
 
 func TestAuthMiddlewareOptionsRequest(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	req := httptest.NewRequest(http.MethodOptions, "/api/v1/courses", nil)
 	rec := httptest.NewRecorder()
@@ -401,7 +401,7 @@ func TestAuthMiddlewareOptionsRequest(t *testing.T) {
 // ============================================================================
 
 func TestHealthHandler(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()
@@ -443,7 +443,7 @@ func TestHealthHandler(t *testing.T) {
 }
 
 func TestLoginHandler(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	// Valid login
 	reqBody := `{"username":"user","password":"pass"}`
@@ -476,7 +476,7 @@ func TestLoginHandler(t *testing.T) {
 }
 
 func TestLoginHandlerInvalidCredentials(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	reqBody := `{"username":"wrong","password":"wrong"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(reqBody))
@@ -498,7 +498,7 @@ func TestLoginHandlerInvalidCredentials(t *testing.T) {
 }
 
 func TestLoginHandlerInvalidJSON(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader("invalid json"))
 	req.Header.Set("Content-Type", "application/json")
@@ -511,7 +511,7 @@ func TestLoginHandlerInvalidJSON(t *testing.T) {
 }
 
 func TestLoginHandlerOptionsRequest(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	req := httptest.NewRequest(http.MethodOptions, "/api/v1/auth/login", nil)
 	rec := httptest.NewRecorder()
@@ -523,7 +523,7 @@ func TestLoginHandlerOptionsRequest(t *testing.T) {
 }
 
 func TestListJobsHandler(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	// Create a valid token
 	token, err := GenerateToken()
@@ -552,7 +552,7 @@ func TestListJobsHandler(t *testing.T) {
 }
 
 func TestGetJobHandlerJobNotFound(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	// Create a valid token
 	token, err := GenerateToken()
@@ -576,7 +576,7 @@ func TestGetJobHandlerJobNotFound(t *testing.T) {
 }
 
 func TestGetJobHandlerSuccess(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	// Create a valid token
 	token, err := GenerateToken()
@@ -627,7 +627,7 @@ func TestGetJobHandlerSuccess(t *testing.T) {
 }
 
 func TestDeleteJobHandlerCancel(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	// Create a valid token
 	token, err := GenerateToken()
@@ -661,7 +661,7 @@ func TestDeleteJobHandlerCancel(t *testing.T) {
 }
 
 func TestDeleteJobHandlerNotFound(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	// Create a valid token
 	token, err := GenerateToken()
@@ -685,7 +685,7 @@ func TestDeleteJobHandlerNotFound(t *testing.T) {
 }
 
 func TestDeleteJobHandlerTerminalState(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	// Create a valid token
 	token, err := GenerateToken()
@@ -895,10 +895,10 @@ func TestApplyJobConfigOverridesNilOpts(t *testing.T) {
 	}
 }
 
-func TestGetRequestID(t *testing.T) {
+func TestRequestIDFrom(t *testing.T) {
 	// Test with no request ID in context
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
-	id := GetRequestID(req)
+	id := requestIDFrom(req)
 	if id != "" {
 		t.Errorf("expected empty string when no request ID, got %s", id)
 	}
@@ -906,7 +906,7 @@ func TestGetRequestID(t *testing.T) {
 	// Test with request ID in context
 	ctx := context.WithValue(req.Context(), requestIDKey{}, "test-request-id")
 	req = req.WithContext(ctx)
-	id = GetRequestID(req)
+	id = requestIDFrom(req)
 	if id != "test-request-id" {
 		t.Errorf("expected 'test-request-id', got %s", id)
 	}
@@ -995,7 +995,7 @@ func TestEffectiveJobConfigWithNeither(t *testing.T) {
 }
 
 func TestCreateJobHandlerValidation(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	// Create a valid token
 	token, err := GenerateToken()
@@ -1071,7 +1071,7 @@ func TestCreateJobHandlerValidation(t *testing.T) {
 }
 
 func TestLecturesHandlerValidation(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer("8080", validServerConfig())
 
 	// Create a valid token
 	token, err := GenerateToken()
@@ -1173,7 +1173,7 @@ func TestMergeConfigWithJobOptionsInvalidWorkers(t *testing.T) {
 }
 
 func TestNewAPIServerWithNilConfig(t *testing.T) {
-	s := NewAPIServer("8080", nil)
+	s := newAPIServer("8080", nil)
 
 	if s == nil {
 		t.Fatal("expected non-nil server")
@@ -1195,7 +1195,7 @@ func TestNewAPIServerWithPartialConfig(t *testing.T) {
 		Username: "user",
 		Password: "pass",
 	}
-	s := NewAPIServer("8080", cfg)
+	s := newAPIServer("8080", cfg)
 
 	if s.cfg.DownloadLocation != "./downloads" {
 		t.Errorf("expected default download location, got %s", s.cfg.DownloadLocation)

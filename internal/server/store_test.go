@@ -156,7 +156,7 @@ func TestJobStore_IdempotencyKey(t *testing.T) {
 		t.Errorf("returned job ID = %q, want %q", job2.ID, job1.ID)
 	}
 
-	found, ok := store.GetJobByIdempotencyKey("key-1")
+	found, ok := store.jobByIdempotencyKey("key-1")
 	if !ok {
 		t.Fatal("expected to find job by idempotency key")
 	}

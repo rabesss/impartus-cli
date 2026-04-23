@@ -24,7 +24,7 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func GetRequestID(r *http.Request) string {
+func requestIDFrom(r *http.Request) string {
 	if id, ok := r.Context().Value(requestIDKey{}).(string); ok {
 		return id
 	}

@@ -219,10 +219,10 @@ func (pt *ProgressTracker) getStatusString() string {
 }
 
 func (pt *ProgressTracker) formatDuration(d time.Duration) string {
-	return FormatDuration(d)
+	return formatDurationValue(d)
 }
 
-func FormatDuration(d time.Duration) string {
+func formatDurationValue(d time.Duration) string {
 	if d <= 0 {
 		return "0s"
 	}
