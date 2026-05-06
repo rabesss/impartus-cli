@@ -51,11 +51,8 @@ jobs:
           go-version-file: 'go.mod'
           cache: true
 
-      - name: Pre-install patched x/tools
-        run: go get golang.org/x/tools@latest
-
       - name: Install gosec
-        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.21.4
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.26.1
 
       - name: Run gosec security scanner
         run: |
