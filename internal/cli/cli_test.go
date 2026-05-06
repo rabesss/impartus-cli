@@ -21,7 +21,8 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 	}
 	os.Stdout = w
 	runErr := fn()
-	_ = w.Close()
+	//nolint:errcheck // closing write end of pipe in test helper
+	w.Close()
 	os.Stdout = oldStdout
 
 	out, readErr := io.ReadAll(r)

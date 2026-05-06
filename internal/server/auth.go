@@ -11,29 +11,34 @@ import (
 	"time"
 )
 
+// TokenInfo holds metadata for an authenticated API token.
 type TokenInfo struct {
 	Username  string
 	Expiry    time.Time
 	CreatedAt time.Time
 }
 
+// TokenStore manages API authentication tokens with thread-safe access.
 type TokenStore struct {
 	tokens map[string]TokenInfo
 	mu     sync.RWMutex
 }
 
+// NewTokenStore creates a new empty token store.
 func NewTokenStore() *TokenStore {
 	return &TokenStore{
 		tokens: make(map[string]TokenInfo),
 	}
 }
 
+// Store adds a token with its metadata to the store.
 func (ts *TokenStore) Store(token string, info TokenInfo) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 	ts.tokens[token] = info
 }
 
+// IsValid checks whether a token is present and not expired, removing it if expired.
 func (ts *TokenStore) IsValid(token string) bool {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
@@ -51,12 +56,14 @@ func (ts *TokenStore) IsValid(token string) bool {
 	return true
 }
 
+// Delete removes a token from the store.
 func (ts *TokenStore) Delete(token string) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 	delete(ts.tokens, token)
 }
 
+// CleanupExpired removes all expired tokens from the store.
 func (ts *TokenStore) CleanupExpired() {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
@@ -69,6 +76,8 @@ func (ts *TokenStore) CleanupExpired() {
 	}
 }
 
+// StartTokenCleanup starts a background goroutine that periodically removes expired tokens.
+// It returns a stop function that should be called on shutdown.
 func StartTokenCleanup(tokenStore *TokenStore) func() {
 	ticker := time.NewTicker(1 * time.Hour)
 	stop := make(chan struct{})
@@ -93,6 +102,7 @@ func StartTokenCleanup(tokenStore *TokenStore) func() {
 	}
 }
 
+// GenerateToken creates a cryptographically secure random token encoded in URL-safe base64.
 func GenerateToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {

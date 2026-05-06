@@ -10,6 +10,7 @@ import (
 	"github.com/rabesss/impartus-cli/internal/config"
 )
 
+// JobStore provides thread-safe in-memory storage for download jobs with optional disk persistence.
 type JobStore struct {
 	jobs            map[string]*Job
 	idempotencyKeys map[string]string // idempotencyKey -> jobID
@@ -37,6 +38,7 @@ func NewJobStoreWithPersistence(path string) *JobStore {
 	return js
 }
 
+// CreateJob creates a new download job and stores it. Returns the created job.
 func (js *JobStore) CreateJob(subjectID, sessionID, startIndex, endIndex int, cfg *config.Config) *Job {
 	js.mu.Lock()
 	defer js.mu.Unlock()
@@ -124,6 +126,7 @@ func (js *JobStore) jobByIdempotencyKey(key string) (*Job, bool) {
 	return job, ok
 }
 
+// GetJob retrieves a job by ID. Returns the job and whether it was found.
 func (js *JobStore) GetJob(id string) (*Job, bool) {
 	js.mu.RLock()
 	defer js.mu.RUnlock()
@@ -131,6 +134,7 @@ func (js *JobStore) GetJob(id string) (*Job, bool) {
 	return job, ok
 }
 
+// ListJobs returns a snapshot of all jobs in the store.
 func (js *JobStore) ListJobs() []*Job {
 	js.mu.RLock()
 	defer js.mu.RUnlock()
@@ -142,6 +146,7 @@ func (js *JobStore) ListJobs() []*Job {
 	return jobs
 }
 
+// UpdateJob updates a job's status, progress, and error message.
 func (js *JobStore) UpdateJob(id string, status JobStatus, progress float64, errMsg string) {
 	js.mu.Lock()
 	defer js.mu.Unlock()
@@ -158,6 +163,7 @@ func (js *JobStore) UpdateJob(id string, status JobStatus, progress float64, err
 	js.saveToDisk()
 }
 
+// SetLectureProgress updates the completed and total lecture counts for a job.
 func (js *JobStore) SetLectureProgress(id string, completed, total int) {
 	js.mu.Lock()
 	defer js.mu.Unlock()
@@ -172,6 +178,7 @@ func (js *JobStore) SetLectureProgress(id string, completed, total int) {
 	js.saveToDisk()
 }
 
+// SetOutputs sets the output file paths for a completed job, copying the slice to avoid aliasing.
 func (js *JobStore) SetOutputs(id string, outputs []string) {
 	js.mu.Lock()
 	defer js.mu.Unlock()
@@ -185,6 +192,8 @@ func (js *JobStore) SetOutputs(id string, outputs []string) {
 	js.saveToDisk()
 }
 
+// CancelJob transitions a non-terminal job to canceled status and cancels its context.
+// Returns an error if the job is not found or already in a terminal state.
 func (js *JobStore) CancelJob(id string) (*Job, error) {
 	js.mu.Lock()
 	defer js.mu.Unlock()

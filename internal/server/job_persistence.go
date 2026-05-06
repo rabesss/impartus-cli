@@ -71,6 +71,7 @@ func (p *jobPersistence) save(jobs map[string]*Job) error {
 
 	if err := os.Rename(tmpPath, p.path); err != nil {
 		// Clean up temp file on rename failure
+		//nolint:errcheck
 		_ = os.Remove(tmpPath)
 		return err
 	}

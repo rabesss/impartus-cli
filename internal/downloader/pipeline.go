@@ -11,6 +11,7 @@ import (
 //nolint:misspell // Prefer UK English in user-facing error text.
 var errPipelineCancelled = errors.New("pipeline cancelled")
 
+// PipelineStats holds aggregate statistics for a completed pipeline run.
 type PipelineStats struct {
 	TotalChunks      int
 	FirstViewChunks  int
@@ -21,6 +22,7 @@ type PipelineStats struct {
 	DecryptWorkers   int
 }
 
+// ChunkTask represents a single chunk to be downloaded and decrypted by the pipeline.
 type ChunkTask struct {
 	ChunkID      int
 	URL          string
@@ -29,6 +31,7 @@ type ChunkTask struct {
 	LectureSeqNo int
 }
 
+// DownloadedChunk holds the result of downloading a single chunk, including its encrypted file path.
 type DownloadedChunk struct {
 	ChunkID       int
 	View          string
@@ -38,6 +41,7 @@ type DownloadedChunk struct {
 	Err           error
 }
 
+// DecryptedChunk holds the result of decrypting a downloaded chunk.
 type DecryptedChunk struct {
 	ChunkID       int
 	View          string
@@ -46,6 +50,7 @@ type DecryptedChunk struct {
 	Err           error
 }
 
+// PipelineConfig configures the concurrency and context for a lecture download pipeline.
 type PipelineConfig struct {
 	Context         context.Context
 	DownloadWorkers int
@@ -56,6 +61,7 @@ type PipelineConfig struct {
 	ProgressTracker *ProgressTracker
 }
 
+// PipelineResult contains the ordered chunk paths and any failures from a completed pipeline.
 type PipelineResult struct {
 	FirstViewChunks  []string
 	SecondViewChunks []string
@@ -63,6 +69,7 @@ type PipelineResult struct {
 	FailedChunks     []int
 }
 
+// LecturePipeline manages concurrent download and decrypt workers for a single lecture.
 type LecturePipeline struct {
 	config PipelineConfig
 
@@ -89,6 +96,7 @@ type LecturePipeline struct {
 	submissionsClosed atomic.Bool
 }
 
+// NewLecturePipeline creates a new pipeline with the given config and downloader.
 func NewLecturePipeline(config PipelineConfig, downloader *Downloader) *LecturePipeline {
 	baseCtx := config.Context
 	if baseCtx == nil {
@@ -124,6 +132,7 @@ func NewLecturePipeline(config PipelineConfig, downloader *Downloader) *LectureP
 	return pipeline
 }
 
+// Start launches the download and decrypt worker goroutines.
 func (p *LecturePipeline) Start() {
 	for i := 0; i < p.config.DownloadWorkers; i++ {
 		p.downloadWg.Add(1)
@@ -213,6 +222,7 @@ func (p *LecturePipeline) decryptWorker() {
 	}
 }
 
+// SubmitDownload enqueues a chunk download task. Returns an error if the pipeline is canceled.
 func (p *LecturePipeline) SubmitDownload(task ChunkTask) error {
 	if p.submissionsClosed.Load() || p.ctx.Err() != nil {
 		return errPipelineCancelled
@@ -225,6 +235,7 @@ func (p *LecturePipeline) SubmitDownload(task ChunkTask) error {
 	}
 }
 
+// FinishSubmission marks submission as complete and records the total expected chunk count.
 func (p *LecturePipeline) FinishSubmission(totalChunks int) {
 	p.mu.Lock()
 	p.totalChunks = totalChunks
@@ -233,6 +244,7 @@ func (p *LecturePipeline) FinishSubmission(totalChunks int) {
 	close(p.downloadQueue)
 }
 
+// Collect waits for all workers to finish and returns the ordered pipeline result.
 func (p *LecturePipeline) Collect() PipelineResult {
 	for decrypted := range p.decryptedChunks {
 		p.mu.Lock()
@@ -281,6 +293,7 @@ func (p *LecturePipeline) cancelPipeline() {
 	p.cancel()
 }
 
+// GetStats returns a snapshot of the current pipeline progress.
 func (p *LecturePipeline) GetStats() PipelineStats {
 	p.mu.Lock()
 	defer p.mu.Unlock()

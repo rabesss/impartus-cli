@@ -29,6 +29,7 @@ func main() {
 }
 
 func processFile(filepath string) error {
+	//nolint:gosec // G304: script operates on known local files
 	content, err := os.ReadFile(filepath)
 	if err != nil {
 		return fmt.Errorf("reading file: %w", err)
@@ -62,6 +63,7 @@ func processFile(filepath string) error {
 	newContent.WriteString("\n")
 	newContent.Write(content[endIdx+len(endMarker):])
 
+	//nolint:gosec // G304: script operates on known local paths
 	return os.WriteFile(filepath, newContent.Bytes(), 0600)
 }
 
@@ -105,7 +107,7 @@ func generateTOC(headers []string) string {
 
 		// Indent based on level
 		indent := strings.Repeat("  ", level)
-		buf.WriteString(fmt.Sprintf("%s* [%s](#%s)\n", indent, text, anchor))
+		fmt.Fprintf(&buf, "%s* [%s](#%s)\n", indent, text, anchor)
 	}
 
 	buf.WriteString("\n<!---toc end-->\n")

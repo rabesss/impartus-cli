@@ -11,11 +11,13 @@ import (
 	"github.com/vbauerster/mpb/v8/decor"
 )
 
+// SpeedSample records bytes downloaded at a specific point in time for speed estimation.
 type SpeedSample struct {
 	timestamp time.Time
 	bytes     int64
 }
 
+// ProgressStats holds a snapshot of download progress including speed, ETA, and byte counts.
 type ProgressStats struct {
 	TotalLectures     int32
 	CompletedLectures int32
@@ -29,6 +31,7 @@ type ProgressStats struct {
 	Elapsed           time.Duration
 }
 
+// ProgressTracker tracks download progress across lectures and chunks, estimating speed and ETA.
 type ProgressTracker struct {
 	totalLectures     int32
 	completedLectures int32
@@ -53,6 +56,7 @@ type ProgressTracker struct {
 	mu sync.RWMutex
 }
 
+// NewProgressTracker creates a new progress tracker with the given lecture and chunk totals.
 func NewProgressTracker(totalLectures, totalChunks int, p *mpb.Progress) *ProgressTracker {
 	lectures := clampIntToInt32(totalLectures)
 	chunks := clampIntToInt32(totalChunks)
@@ -92,6 +96,7 @@ func clampIntToInt32(v int) int32 {
 	return int32(v)
 }
 
+// ChunkCompleted records a completed chunk download and updates byte counters.
 func ChunkCompleted(pt *ProgressTracker, bytesDownloaded int64) {
 	if pt == nil {
 		return
@@ -101,6 +106,7 @@ func ChunkCompleted(pt *ProgressTracker, bytesDownloaded int64) {
 	pt.updateTotalBytesEstimate()
 }
 
+// LectureCompleted increments the completed lecture counter.
 func LectureCompleted(pt *ProgressTracker) {
 	if pt == nil {
 		return
@@ -120,6 +126,7 @@ func (pt *ProgressTracker) updateTotalBytesEstimate() {
 	}
 }
 
+// GetCurrentSpeed returns the current download speed in MB/s based on recent samples.
 func (pt *ProgressTracker) GetCurrentSpeed() float64 {
 	pt.speedMutex.RLock()
 	defer pt.speedMutex.RUnlock()
@@ -144,6 +151,7 @@ func (pt *ProgressTracker) GetCurrentSpeed() float64 {
 	return bytesPerSecond / (1024 * 1024)
 }
 
+// GetETA returns the estimated time remaining for the download to complete.
 func (pt *ProgressTracker) GetETA() time.Duration {
 	pt.mu.RLock()
 	totalBytes := pt.totalBytes
@@ -171,6 +179,7 @@ func (pt *ProgressTracker) GetETA() time.Duration {
 	return eta
 }
 
+// GetOverallProgress returns the overall download progress as a percentage (0–100).
 func (pt *ProgressTracker) GetOverallProgress() float64 {
 	pt.mu.RLock()
 	totalBytes := pt.totalBytes
@@ -270,6 +279,7 @@ func (pt *ProgressTracker) updateDisplay() {
 	pt.statsBar.SetCurrent(int64(pt.GetOverallProgress()))
 }
 
+// Stop halts the progress tracker's update loop and finalizes the display.
 func (pt *ProgressTracker) Stop() {
 	if pt == nil {
 		return
@@ -286,6 +296,7 @@ func (pt *ProgressTracker) Stop() {
 	})
 }
 
+// GetStats returns a snapshot of the current download progress statistics.
 func (pt *ProgressTracker) GetStats() ProgressStats {
 	if pt == nil {
 		return ProgressStats{}

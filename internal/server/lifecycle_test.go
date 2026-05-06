@@ -308,9 +308,9 @@ func TestJobStoreConcurrentAccess(t *testing.T) {
 // ============================================================================
 
 func TestAuthMiddlewareMissingAuthorizationHeader(t *testing.T) {
-	s := newAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/courses", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/courses", nil)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
 
@@ -323,9 +323,9 @@ func TestAuthMiddlewareMissingAuthorizationHeader(t *testing.T) {
 }
 
 func TestAuthMiddlewareInvalidTokenFormat(t *testing.T) {
-	s := newAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/courses", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/courses", nil)
 	req.Header.Set("Authorization", "InvalidFormat token123")
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
@@ -339,9 +339,9 @@ func TestAuthMiddlewareInvalidTokenFormat(t *testing.T) {
 }
 
 func TestAuthMiddlewareInvalidToken(t *testing.T) {
-	s := newAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/courses", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/courses", nil)
 	req.Header.Set("Authorization", "Bearer invalid-token")
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
@@ -355,7 +355,7 @@ func TestAuthMiddlewareInvalidToken(t *testing.T) {
 }
 
 func TestAuthMiddlewareValidToken(t *testing.T) {
-	s := newAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
 	// Create a valid token
 	token, err := GenerateToken()
@@ -368,7 +368,7 @@ func TestAuthMiddlewareValidToken(t *testing.T) {
 		CreatedAt: time.Now(),
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/courses", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/courses", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 
@@ -384,9 +384,9 @@ func TestAuthMiddlewareValidToken(t *testing.T) {
 }
 
 func TestAuthMiddlewareOptionsRequest(t *testing.T) {
-	s := newAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
-	req := httptest.NewRequest(http.MethodOptions, "/api/v1/courses", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodOptions, "/api/v1/courses", nil)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
 
@@ -401,9 +401,9 @@ func TestAuthMiddlewareOptionsRequest(t *testing.T) {
 // ============================================================================
 
 func TestHealthHandler(t *testing.T) {
-	s := newAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
 
@@ -445,11 +445,11 @@ func TestHealthHandler(t *testing.T) {
 }
 
 func TestLoginHandler(t *testing.T) {
-	s := newAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
 	// Valid login
 	reqBody := `{"username":"user","password":"pass"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(reqBody))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/auth/login", strings.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
@@ -478,10 +478,10 @@ func TestLoginHandler(t *testing.T) {
 }
 
 func TestLoginHandlerInvalidCredentials(t *testing.T) {
-	s := newAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
 	reqBody := `{"username":"wrong","password":"wrong"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(reqBody))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/auth/login", strings.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
@@ -500,9 +500,9 @@ func TestLoginHandlerInvalidCredentials(t *testing.T) {
 }
 
 func TestLoginHandlerInvalidJSON(t *testing.T) {
-	s := newAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader("invalid json"))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/auth/login", strings.NewReader("invalid json"))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
@@ -513,9 +513,9 @@ func TestLoginHandlerInvalidJSON(t *testing.T) {
 }
 
 func TestLoginHandlerOptionsRequest(t *testing.T) {
-	s := newAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
-	req := httptest.NewRequest(http.MethodOptions, "/api/v1/auth/login", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodOptions, "/api/v1/auth/login", nil)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
 
@@ -525,7 +525,7 @@ func TestLoginHandlerOptionsRequest(t *testing.T) {
 }
 
 func TestListJobsHandler(t *testing.T) {
-	s := newAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
 	// Create a valid token
 	token, err := GenerateToken()
@@ -538,7 +538,7 @@ func TestListJobsHandler(t *testing.T) {
 		CreatedAt: time.Now(),
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/jobs", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
@@ -554,7 +554,7 @@ func TestListJobsHandler(t *testing.T) {
 }
 
 func TestGetJobHandlerJobNotFound(t *testing.T) {
-	s := newAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
 	// Create a valid token
 	token, err := GenerateToken()
@@ -567,7 +567,7 @@ func TestGetJobHandlerJobNotFound(t *testing.T) {
 		CreatedAt: time.Now(),
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/nonexistent", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/jobs/nonexistent", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
@@ -578,7 +578,7 @@ func TestGetJobHandlerJobNotFound(t *testing.T) {
 }
 
 func TestGetJobHandlerSuccess(t *testing.T) {
-	s := newAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
 	// Create a valid token
 	token, err := GenerateToken()
@@ -595,7 +595,7 @@ func TestGetJobHandlerSuccess(t *testing.T) {
 	cfg := &config.Config{DownloadLocation: "./downloads"}
 	job := s.jobStore.CreateJob(1, 1, 1, 1, cfg)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+job.ID, nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/jobs/"+job.ID, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
@@ -629,7 +629,7 @@ func TestGetJobHandlerSuccess(t *testing.T) {
 }
 
 func TestDeleteJobHandlerCancel(t *testing.T) {
-	s := newAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
 	// Create a valid token
 	token, err := GenerateToken()
@@ -646,7 +646,7 @@ func TestDeleteJobHandlerCancel(t *testing.T) {
 	cfg := &config.Config{DownloadLocation: "./downloads"}
 	job := s.jobStore.CreateJob(1, 1, 1, 1, cfg)
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/jobs/"+job.ID, nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/api/v1/jobs/"+job.ID, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
@@ -663,7 +663,7 @@ func TestDeleteJobHandlerCancel(t *testing.T) {
 }
 
 func TestDeleteJobHandlerNotFound(t *testing.T) {
-	s := newAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
 	// Create a valid token
 	token, err := GenerateToken()
@@ -676,7 +676,7 @@ func TestDeleteJobHandlerNotFound(t *testing.T) {
 		CreatedAt: time.Now(),
 	})
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/jobs/nonexistent", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/api/v1/jobs/nonexistent", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
@@ -687,7 +687,7 @@ func TestDeleteJobHandlerNotFound(t *testing.T) {
 }
 
 func TestDeleteJobHandlerTerminalState(t *testing.T) {
-	s := newAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
 	// Create a valid token
 	token, err := GenerateToken()
@@ -705,7 +705,7 @@ func TestDeleteJobHandlerTerminalState(t *testing.T) {
 	job := s.jobStore.CreateJob(1, 1, 1, 1, cfg)
 	s.jobStore.UpdateJob(job.ID, "completed", 100.0, "")
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/jobs/"+job.ID, nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/api/v1/jobs/"+job.ID, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
@@ -899,7 +899,7 @@ func TestApplyJobConfigOverridesNilOpts(t *testing.T) {
 
 func TestRequestIDFrom(t *testing.T) {
 	// Test with no request ID in context
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 	id := requestIDFrom(req)
 	if id != "" {
 		t.Errorf("expected empty string when no request ID, got %s", id)
@@ -997,7 +997,7 @@ func TestEffectiveJobConfigWithNeither(t *testing.T) {
 }
 
 func TestCreateJobHandlerValidation(t *testing.T) {
-	s := newAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
 	// Create a valid token
 	token, err := GenerateToken()
@@ -1056,7 +1056,7 @@ func TestCreateJobHandlerValidation(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(tc.body))
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/jobs", strings.NewReader(tc.body))
 			req.Header.Set("Authorization", "Bearer "+token)
 			req.Header.Set("Content-Type", "application/json")
 			rec := httptest.NewRecorder()
@@ -1073,7 +1073,7 @@ func TestCreateJobHandlerValidation(t *testing.T) {
 }
 
 func TestLecturesHandlerValidation(t *testing.T) {
-	s := newAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
 	// Create a valid token
 	token, err := GenerateToken()
@@ -1120,7 +1120,7 @@ func TestLecturesHandlerValidation(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/lectures"+tc.query, nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/lectures"+tc.query, nil)
 			req.Header.Set("Authorization", "Bearer "+token)
 			rec := httptest.NewRecorder()
 			s.router.ServeHTTP(rec, req)
@@ -1175,7 +1175,7 @@ func TestMergeConfigWithJobOptionsInvalidWorkers(t *testing.T) {
 }
 
 func TestNewAPIServerWithNilConfig(t *testing.T) {
-	s := newAPIServer("8080", nil)
+	s := newAPIServer(nil)
 
 	if s == nil {
 		t.Fatal("expected non-nil server")
@@ -1197,7 +1197,7 @@ func TestNewAPIServerWithPartialConfig(t *testing.T) {
 		Username: "user",
 		Password: "pass",
 	}
-	s := newAPIServer("8080", cfg)
+	s := newAPIServer(cfg)
 
 	if s.cfg.DownloadLocation != "./downloads" {
 		t.Errorf("expected default download location, got %s", s.cfg.DownloadLocation)

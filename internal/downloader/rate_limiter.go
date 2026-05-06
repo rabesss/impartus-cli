@@ -12,6 +12,7 @@ import (
 	"github.com/rabesss/impartus-cli/internal/config"
 )
 
+// RateLimiter provides token-bucket rate limiting for download and API requests with optional jitter.
 type RateLimiter struct {
 	downloadLimiter *rate.Limiter
 	apiLimiter      *rate.Limiter
@@ -19,6 +20,7 @@ type RateLimiter struct {
 	rngMutex        sync.Mutex
 }
 
+// NewRateLimiter creates a new RateLimiter with the specified requests-per-second for downloads and API calls.
 func NewRateLimiter(downloadRPS, apiRPS float64, enableJitter bool) *RateLimiter {
 	downloadBurst := int(downloadRPS * 2)
 	if downloadBurst < 1 {
@@ -37,6 +39,7 @@ func NewRateLimiter(downloadRPS, apiRPS float64, enableJitter bool) *RateLimiter
 	}
 }
 
+// NewRateLimiterFromConfig creates a RateLimiter using values from the application config.
 func NewRateLimiterFromConfig(cfg *config.Config) *RateLimiter {
 	if cfg == nil {
 		cfg = &config.Config{}
@@ -45,6 +48,7 @@ func NewRateLimiterFromConfig(cfg *config.Config) *RateLimiter {
 	return NewRateLimiter(cfg.RateLimit, cfg.APIRateLimit, cfg.EnableJitter)
 }
 
+// WaitForDownload blocks until the download rate limiter allows the next request.
 func (rl *RateLimiter) WaitForDownload(ctx context.Context) error {
 	if err := rl.downloadLimiter.Wait(ctx); err != nil {
 		return err
@@ -55,6 +59,7 @@ func (rl *RateLimiter) WaitForDownload(ctx context.Context) error {
 	return nil
 }
 
+// WaitForAPI blocks until the API rate limiter allows the next request.
 func (rl *RateLimiter) WaitForAPI(ctx context.Context) error {
 	if err := rl.apiLimiter.Wait(ctx); err != nil {
 		return err

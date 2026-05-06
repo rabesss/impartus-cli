@@ -1,12 +1,14 @@
 package downloader
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
+// JoinViews merges two video view files into a single combined output using FFmpeg.
 func (d *Downloader) JoinViews(leftFile, rightFile, name string) (string, error) {
 	title := fmt.Sprintf("%s BOTH.mkv", name)
 	outfile := filepath.Join(d.config.DownloadLocation, title)
@@ -14,7 +16,7 @@ func (d *Downloader) JoinViews(leftFile, rightFile, name string) (string, error)
 		return "", err
 	}
 
-	cmd := exec.Command(d.ffmpegPath, "-y", "-hide_banner", "-i", leftFile, "-i", rightFile, "-map", "0", "-map", "1", "-c", "copy", outfile) // #nosec G204 -- arguments are validated local file paths and fixed ffmpeg flags
+	cmd := exec.CommandContext(context.Background(), d.ffmpegPath, "-y", "-hide_banner", "-i", leftFile, "-i", rightFile, "-map", "0", "-map", "1", "-c", "copy", outfile) // #nosec G204 -- arguments are validated local file paths and fixed ffmpeg flags
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("ffmpeg join views failed: %w: %s", err, string(output))
@@ -23,12 +25,13 @@ func (d *Downloader) JoinViews(leftFile, rightFile, name string) (string, error)
 	return outfile, nil
 }
 
+// JoinChunksFromM3U8 concatenates video chunks listed in an M3U8 manifest into a single output file.
 func (d *Downloader) JoinChunksFromM3U8(m3u8File, title string) (string, error) {
 	outfile := filepath.Join(d.config.DownloadLocation, title)
 	if err := validateFFmpegArgs(m3u8File, outfile); err != nil {
 		return "", err
 	}
-	cmd := exec.Command(d.ffmpegPath, "-y", "-hide_banner", "-i", m3u8File, "-c", "copy", outfile) // #nosec G204 -- arguments are validated local file paths and fixed ffmpeg flags
+	cmd := exec.CommandContext(context.Background(), d.ffmpegPath, "-y", "-hide_banner", "-i", m3u8File, "-c", "copy", outfile) // #nosec G204 -- arguments are validated local file paths and fixed ffmpeg flags
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("ffmpeg join chunks failed: %w: %s", err, string(output))
@@ -36,6 +39,7 @@ func (d *Downloader) JoinChunksFromM3U8(m3u8File, title string) (string, error) 
 	return outfile, nil
 }
 
+// JoinChunksFromM3U8AudioOnly extracts and joins audio from an M3U8 manifest into a single audio file.
 func (d *Downloader) JoinChunksFromM3U8AudioOnly(m3u8File, title, format string) (string, error) {
 	ext := "." + format
 	if format == "aac" {
@@ -47,7 +51,7 @@ func (d *Downloader) JoinChunksFromM3U8AudioOnly(m3u8File, title, format string)
 		return "", err
 	}
 
-	cmd := exec.Command(d.ffmpegPath,
+	cmd := exec.CommandContext(context.Background(), d.ffmpegPath,
 		"-y",
 		"-hide_banner",
 		"-loglevel", "error",
@@ -66,6 +70,7 @@ func (d *Downloader) JoinChunksFromM3U8AudioOnly(m3u8File, title, format string)
 	return outfile, nil
 }
 
+// CreateBothViewsAudioOutput produces a combined audio-only file from a source video using FFmpeg.
 func (d *Downloader) CreateBothViewsAudioOutput(sourceFile, name, format string) (string, error) {
 	ext := "." + format
 	if format == "aac" {
@@ -77,7 +82,7 @@ func (d *Downloader) CreateBothViewsAudioOutput(sourceFile, name, format string)
 		return "", err
 	}
 
-	cmd := exec.Command(d.ffmpegPath,
+	cmd := exec.CommandContext(context.Background(), d.ffmpegPath,
 		"-y",
 		"-hide_banner",
 		"-loglevel", "error",

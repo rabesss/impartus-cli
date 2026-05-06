@@ -10,6 +10,7 @@ import (
 
 const defaultHTTPTimeout = 10 * time.Minute
 
+// NewHTTPClient creates a new HTTP client with sensible defaults and the given timeout.
 func NewHTTPClient(timeout time.Duration) *http.Client {
 	if timeout <= 0 {
 		timeout = defaultHTTPTimeout

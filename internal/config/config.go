@@ -1,3 +1,4 @@
+// Package config handles loading, validating, and defaulting application configuration.
 package config
 
 import (
@@ -9,8 +10,10 @@ import (
 	"time"
 )
 
+// ConfigLocation is the default path to the configuration file.
 const ConfigLocation = "./config.json"
 
+// ProgressConfig controls progress bar behavior during downloads.
 type ProgressConfig struct {
 	Enabled         bool   `json:"enabled"`
 	ShowSpeed       bool   `json:"showSpeed"`
@@ -19,6 +22,7 @@ type ProgressConfig struct {
 	SpeedWindowSize int    `json:"speedWindowSize"`
 }
 
+// Config holds all application configuration values.
 type Config struct {
 	Username         string  `json:"username"`
 	Password         string  `json:"password"`
@@ -44,6 +48,7 @@ type Config struct {
 	HTTPTimeout               string         `json:"httpTimeout"`
 }
 
+// ApplyDefaults fills in zero-valued fields with sensible defaults.
 func (c *Config) ApplyDefaults() {
 	c.applyPathDefaults()
 	c.applyWorkerDefaults()
@@ -117,6 +122,7 @@ func NormalizeViews(views string) string {
 	}
 }
 
+// Validate checks the configuration for errors and returns the first one found.
 func (c *Config) Validate() error {
 	if err := c.validateCore(); err != nil {
 		return err
@@ -209,11 +215,13 @@ func (c *Config) validateTimeout() error {
 	return nil
 }
 
+// Parse reads and unmarshals the configuration file at the given path.
 func Parse(path string) (*Config, error) {
 	if path == "" {
 		path = ConfigLocation
 	}
 
+	//nolint:gosec // G304: config path is user-provided by design
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("could not open config file: %w", err)
@@ -227,6 +235,7 @@ func Parse(path string) (*Config, error) {
 	return &cfg, nil
 }
 
+// LoadResolved loads config from the given path (or default), applies env overrides, defaults, and validation.
 func LoadResolved(path string) (*Config, error) {
 	var cfg *Config
 	var err error

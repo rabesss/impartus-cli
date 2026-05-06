@@ -1,3 +1,4 @@
+// Package main contains integration tests for the impartus CLI.
 package main
 
 import (

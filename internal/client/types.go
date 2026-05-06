@@ -5,6 +5,7 @@ import (
 	"fmt"
 )
 
+// LoginResponse represents the response from the Impartus authentication endpoint.
 type LoginResponse struct {
 	Message  string `json:"message"`
 	Token    string `json:"token"`
@@ -12,6 +13,7 @@ type LoginResponse struct {
 	Success  bool   `json:"success"`
 }
 
+// Courses is a collection of Course entries returned by the Impartus API.
 type Courses []Course
 
 // Course preserves the upstream API shape because course payloads are returned
@@ -33,6 +35,7 @@ type Course struct {
 	FlippedLecturesCount int    `json:"flippedLecturesCount"`
 }
 
+// Lectures is a collection of Lecture entries returned by the Impartus API.
 type Lectures []Lecture
 
 // Lecture likewise mirrors the upstream payload. The downloader uses only a
@@ -77,11 +80,13 @@ type Lecture struct {
 	LastPosition        int    `json:"lastPosition"`
 }
 
+// StreamInfo holds the quality label and URL for a single HLS stream variant.
 type StreamInfo struct {
 	Quality string
 	URL     string
 }
 
+// ParsedPlaylist holds the parsed contents of an HLS playlist for a single lecture.
 type ParsedPlaylist struct {
 	KeyURL           string
 	Title            string
@@ -92,6 +97,7 @@ type ParsedPlaylist struct {
 	HasMultipleViews bool
 }
 
+// Reverse returns a new Lectures slice with the order reversed.
 func (l Lectures) Reverse() Lectures {
 	reversed := make(Lectures, len(l))
 	for i := range l {
@@ -100,6 +106,7 @@ func (l Lectures) Reverse() Lectures {
 	return reversed
 }
 
+// FilterNoAudio returns a new Lectures slice excluding entries marked as having no audio.
 func (l Lectures) FilterNoAudio() Lectures {
 	filtered := make(Lectures, 0, len(l))
 	for _, lecture := range l {

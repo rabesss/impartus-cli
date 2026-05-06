@@ -1,3 +1,4 @@
+// Package cli implements the command-line interface for the Impartus downloader.
 package cli
 
 import (
@@ -20,6 +21,7 @@ var (
 	runServeFn       = runServe
 )
 
+// Execute runs the root CLI command with the given version and build date.
 func Execute(version, date string) error {
 	args, jsonMode := stripGlobalJSONFlag(os.Args[1:])
 	if len(args) == 0 {

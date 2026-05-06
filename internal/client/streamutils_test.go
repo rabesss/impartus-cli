@@ -135,7 +135,7 @@ func TestGetAuthorizedWithToken_NilToken(t *testing.T) {
 
 	resp, err := client.GetAuthorizedWithToken(context.Background(), "http://example.com/test", "")
 	if resp != nil {
-		resp.Body.Close()
+		_ = resp.Body.Close() //nolint:errcheck
 	}
 	if err != nil {
 		t.Errorf("GetAuthorizedWithToken() with empty token should not error on request creation: %v", err)
@@ -149,7 +149,7 @@ func TestGetAuthorizedWithToken_NilClient(t *testing.T) {
 
 	resp, err := nilClient.GetAuthorizedWithToken(ctx, "http://example.com/test", "some-token")
 	if resp != nil {
-		resp.Body.Close()
+		_ = resp.Body.Close() //nolint:errcheck
 	}
 	if err != nil && !strings.Contains(err.Error(), "request failed") {
 		t.Errorf("GetAuthorizedWithToken() unexpected error: %v", err)
@@ -214,7 +214,7 @@ func TestDoRequestWithTokenRequestBuilding(t *testing.T) {
 				t.Errorf("doRequestWithToken() unexpected error: %v", err)
 			}
 			if resp != nil {
-				resp.Body.Close()
+				_ = resp.Body.Close() //nolint:errcheck
 			}
 		})
 	}
@@ -238,7 +238,7 @@ func TestStoreToken_Success(t *testing.T) {
 
 	// Cleanup: remove .token file after test
 	t.Cleanup(func() {
-		os.Remove(".token")
+		_ = os.Remove(".token") //nolint:errcheck
 	})
 }
 
@@ -359,7 +359,7 @@ func TestDoRequestWithToken_Headers(t *testing.T) {
 		t.Errorf("doRequestWithToken() error = %v", err)
 	}
 	if resp != nil {
-		resp.Body.Close()
+		_ = resp.Body.Close() //nolint:errcheck
 	}
 }
 
@@ -462,7 +462,7 @@ func TestNewLoginRequest_MarshalError(t *testing.T) {
 
 	// Read body to verify it's valid JSON
 	body, err := io.ReadAll(req.Body)
-	req.Body.Close()
+	_ = req.Body.Close() //nolint:errcheck
 	if err != nil {
 		t.Errorf("io.ReadAll() error: %v", err)
 		return
