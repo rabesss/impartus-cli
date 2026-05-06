@@ -299,9 +299,12 @@ func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go s.executeJob(job.ID)
-
+	// Respond before starting the background goroutine to avoid a data race:
+	// respondWithEnvelope marshals the job to JSON, which reads job fields
+	// concurrently with executeJob writing to the same job via UpdateJob.
 	respondWithEnvelope(w, http.StatusCreated, "createJob", job)
+
+	go s.executeJob(job.ID)
 }
 
 func (s *APIServer) listJobsHandler(w http.ResponseWriter, _ *http.Request) {

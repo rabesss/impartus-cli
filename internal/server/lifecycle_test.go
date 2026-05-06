@@ -427,8 +427,10 @@ func TestHealthHandler(t *testing.T) {
 	if !ok {
 		t.Fatal("expected data object in response")
 	}
-	if data["status"] != "ok" {
-		t.Errorf("expected status 'ok', got %v", data["status"])
+	// Overall status may be "ok" or "degraded" depending on upstream
+	// reachability and FFmpeg availability (environment-dependent).
+	if data["status"] != "ok" && data["status"] != "degraded" {
+		t.Errorf("expected status 'ok' or 'degraded', got %v", data["status"])
 	}
 	meta, ok := resp["meta"].(map[string]any)
 	if !ok {

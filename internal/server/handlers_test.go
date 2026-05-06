@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -365,12 +366,22 @@ func TestCreateJobHandler_SuccessWithUpstream(t *testing.T) {
 	}))
 	defer ts.Close()
 
+	// Use os.MkdirTemp instead of t.TempDir() to avoid a race condition:
+	// createJobHandler starts executeJob in a background goroutine that may
+	// outlive the test. t.TempDir() auto-cleans on test exit, causing the
+	// goroutine to encounter a missing directory. os.MkdirTemp avoids this
+	// by not tying cleanup to test lifecycle.
+	tmpDir, err := os.MkdirTemp("", "impartus-test-createjob-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+
 	counter := &mockLoginCallCounter{}
 	s := NewAPIServerWithLogin("8080", &config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          ts.URL,
-		DownloadLocation: t.TempDir(),
+		DownloadLocation: tmpDir,
 		Quality:          "450",
 	}, mockUpstreamLogin(counter))
 
