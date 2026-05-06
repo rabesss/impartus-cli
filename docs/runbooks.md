@@ -73,9 +73,9 @@ curl -s http://localhost:8080/api/v1/health
     "status": "ok",
     "config": {
       "status": "ok",
-      "username": "ok",
-      "password": "ok",
-      "baseUrl": "ok"
+      "username": "configured",
+      "password": "[REDACTED]",
+      "baseUrl": "configured"
     },
     "upstream": {
       "status": "reachable"
@@ -294,9 +294,9 @@ Expected health response shape:
     "status": "ok",
     "config": {
       "status": "ok",
-      "username": "ok",
-      "password": "ok",
-      "baseUrl": "ok"
+      "username": "configured",
+      "password": "[REDACTED]",
+      "baseUrl": "configured"
     },
     "upstream": {
       "status": "reachable"

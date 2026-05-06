@@ -414,7 +414,6 @@ func New(cfg *config.Config, apiClient *client.Client) *Downloader {
 ### External Packages
 
 | Package | Purpose |
-| Package | Purpose |
 |---|---|
 | `github.com/gorilla/mux` | HTTP router with URL variables and middleware |
 | `github.com/gorilla/websocket` | WebSocket server for real-time job updates |
