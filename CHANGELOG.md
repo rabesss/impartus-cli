@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.4...impartus-cli-v0.1.5) (2026-05-07)
+
+
+### Bug Fixes
+
+* **docker:** bump Go base image from 1.24.7 to 1.25-bookworm ([83a5194](https://github.com/rabesss/impartus-cli/commit/83a51940d97f6a549a3cf857fb88849b1f8725f3))
+
 ## [0.1.4](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.3...impartus-cli-v0.1.4) (2026-05-07)
 
 
