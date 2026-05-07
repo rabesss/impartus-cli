@@ -1,5 +1,22 @@
 # Pull Request
 
+## Conventional Commits
+
+> ⚠️ **Your PR title must follow [Conventional Commits](https://www.conventionalcommits.org/).**
+>
+> - The PR title becomes the squash commit message on `main`.
+> - `release-please` only sees the squash commit title, not the inner commits.
+
+**Valid types:** `feat`, `fix`, `chore`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `revert`
+
+**Valid scopes (optional):** `cli`, `api`, `downloader`, `config`, `server`, `ci`, `deps`, `security`, `lint`, `test`, `docs`
+
+**Examples:**
+- `feat(cli): add interactive download prompt`
+- `fix(api): resolve race condition in job store`
+- `chore(deps): bump gorilla/websocket to v1.5.3`
+- `docs: update AGENTS.md with new workflow`
+
 ## Description
 <!-- Provide a clear and concise description of your changes -->
 

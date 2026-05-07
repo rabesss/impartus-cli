@@ -1,0 +1,48 @@
+name: Lint PR
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - synchronize
+
+permissions:
+  pull-requests: read
+
+jobs:
+  semantic-pr:
+    name: Validate PR title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            chore
+            docs
+            style
+            refactor
+            perf
+            test
+            build
+            ci
+            revert
+          scopes: |
+            cli
+            api
+            downloader
+            config
+            server
+            ci
+            deps
+            security
+            lint
+            test
+            docs
+          requireScope: false
+          validateSingleCommit: true
+          validateSingleCommitMatchesPrTitle: true
