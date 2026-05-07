@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.4](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.3...impartus-cli-v0.1.4) (2026-05-07)
+
+
+### Bug Fixes
+
+* **ci:** resolve CI pipeline failures after Go 1.25 upgrade ([7ba91ba](https://github.com/rabesss/impartus-cli/commit/7ba91bad45951dea425fa85ff4cd6c0a32af18e4))
+
+
+### CI/CD
+
+* add semantic PR title validation workflow and PR template ([8b5811d](https://github.com/rabesss/impartus-cli/commit/8b5811dae2c96ba996d979634f610d027db90f67))
+
 ## [0.1.3](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.2...impartus-cli-v0.1.3) (2026-04-23)
 
 
