@@ -6,7 +6,6 @@ ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 ARG VERSION=dev
 ARG BUILD_DATE=""
-ARG COMMIT=unknown
 
 WORKDIR /src
 
@@ -16,12 +15,11 @@ RUN go mod download
 COPY . .
 
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath \
-    -ldflags "-s -w \
-      -X github.com/rabesss/impartus-cli/internal/buildinfo.Version=${VERSION} \
-      -X github.com/rabesss/impartus-cli/internal/buildinfo.Date=${BUILD_DATE} \
-      -X github.com/rabesss/impartus-cli/internal/buildinfo.Commit=${COMMIT}" \
-    -o /out/impartus .
+	go build -trimpath \
+	-ldflags "-s -w \
+	  -X github.com/rabesss/impartus-cli/internal/buildinfo.Version=${VERSION} \
+	  -X github.com/rabesss/impartus-cli/internal/buildinfo.Date=${BUILD_DATE}" \
+	-o /out/impartus .
 
 FROM debian:bookworm-slim
 

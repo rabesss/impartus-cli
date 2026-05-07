@@ -51,20 +51,20 @@ func TestNewHTTPClient(t *testing.T) {
 func TestClientTokenMethods(t *testing.T) {
 	client := New(nil, nil)
 
-	// Test Token on nil token
-	if token := client.Token(); token != "" {
+	// Test tokenValue on nil token
+	if token := client.tokenValue(); token != "" {
 		t.Errorf("expected empty token, got %q", token)
 	}
 
-	// Test SetToken and Token
-	client.SetToken("test-token")
-	if token := client.Token(); token != "test-token" {
+	// Test setToken and tokenValue
+	client.setToken("test-token")
+	if token := client.tokenValue(); token != "test-token" {
 		t.Errorf("expected 'test-token', got %q", token)
 	}
 
-	// Test SetToken on nil client
+	// Test setToken on nil client
 	var nilClient *Client
-	nilClient.SetToken("should-not-panic")
+	nilClient.setToken("should-not-panic")
 }
 
 func TestClientEnsure(t *testing.T) {

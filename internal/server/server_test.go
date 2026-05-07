@@ -182,9 +182,9 @@ func TestNormalizeViewsViaConfig(t *testing.T) {
 }
 
 func TestWebSocketRouteRequiresAuth(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/ws", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/ws", nil)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
 
@@ -199,7 +199,7 @@ func TestWebSocketRouteRequiresAuth(t *testing.T) {
 func TestRequestIDMiddlewareAddsHeader(t *testing.T) {
 	// Test that middleware generates a request ID when none provided
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestID := GetRequestID(r)
+		requestID := requestIDFrom(r)
 		if requestID == "" {
 			t.Error("expected request ID in context")
 		}
@@ -208,7 +208,7 @@ func TestRequestIDMiddlewareAddsHeader(t *testing.T) {
 
 	middleware := requestIDMiddleware(handler)
 
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 	rec := httptest.NewRecorder()
 	middleware.ServeHTTP(rec, req)
 
@@ -223,7 +223,7 @@ func TestRequestIDMiddlewarePropagatesExistingID(t *testing.T) {
 	existingID := "existing-request-id-12345"
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestID := GetRequestID(r)
+		requestID := requestIDFrom(r)
 		if requestID != existingID {
 			t.Errorf("expected request ID %q, got %q", existingID, requestID)
 		}
@@ -232,7 +232,7 @@ func TestRequestIDMiddlewarePropagatesExistingID(t *testing.T) {
 
 	middleware := requestIDMiddleware(handler)
 
-	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/test", nil)
 	req.Header.Set("X-Request-ID", existingID)
 	rec := httptest.NewRecorder()
 	middleware.ServeHTTP(rec, req)
@@ -627,9 +627,9 @@ func TestUpstreamCacheConcurrentAccess(t *testing.T) {
 // ============================================================================
 
 func TestHealthEndpointReturnsStructuredStatus(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
 
@@ -708,9 +708,9 @@ func TestHealthEndpointReturnsStructuredStatus(t *testing.T) {
 }
 
 func TestHealthConfigStatusOkWithValidConfig(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
 
@@ -737,14 +737,14 @@ func TestHealthConfigStatusOkWithValidConfig(t *testing.T) {
 }
 
 func TestHealthConfigStatusMisconfiguredWithMissingFields(t *testing.T) {
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer(&config.Config{
 		Username:         "", // missing
 		Password:         "pass",
 		BaseURL:          "https://example.com",
 		DownloadLocation: "./downloads",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
 
@@ -771,14 +771,14 @@ func TestHealthConfigStatusMisconfiguredWithMissingFields(t *testing.T) {
 }
 
 func TestHealthConfigStatusMisconfiguredWithAllMissingFields(t *testing.T) {
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer(&config.Config{
 		Username:         "",
 		Password:         "",
 		BaseURL:          "",
 		DownloadLocation: "./downloads",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
 
@@ -805,9 +805,9 @@ func TestHealthConfigStatusMisconfiguredWithAllMissingFields(t *testing.T) {
 }
 
 func TestHealthConfigStatusMisconfiguredWithNilConfig(t *testing.T) {
-	s := NewAPIServer("8080", nil)
+	s := newAPIServer(nil)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
 
@@ -834,14 +834,14 @@ func TestHealthConfigStatusMisconfiguredWithNilConfig(t *testing.T) {
 }
 
 func TestHealthUpstreamStatusWithValidBaseUrl(t *testing.T) {
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer(&config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          "https://example.com",
 		DownloadLocation: "./downloads",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
 
@@ -860,14 +860,14 @@ func TestHealthUpstreamStatusWithValidBaseUrl(t *testing.T) {
 }
 
 func TestHealthUpstreamStatusWithUnreachableBaseUrl(t *testing.T) {
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer(&config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          "https://this-domain-does-not-exist-12345.com",
 		DownloadLocation: "./downloads",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
 
@@ -886,9 +886,9 @@ func TestHealthUpstreamStatusWithUnreachableBaseUrl(t *testing.T) {
 }
 
 func TestHealthFFmpegStatus(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
 
@@ -907,9 +907,9 @@ func TestHealthFFmpegStatus(t *testing.T) {
 }
 
 func TestHealthOverallStatusOk(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
 
@@ -929,14 +929,14 @@ func TestHealthOverallStatusOk(t *testing.T) {
 }
 
 func TestHealthOverallStatusDegradedWithMisconfiguredConfig(t *testing.T) {
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer(&config.Config{
 		Username:         "", // missing - causes misconfiguration
 		Password:         "pass",
 		BaseURL:          "https://example.com",
 		DownloadLocation: "./downloads",
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
 
@@ -958,10 +958,10 @@ func TestHealthOverallStatusDegradedWithMisconfiguredConfig(t *testing.T) {
 }
 
 func TestHealthNoAuthRequired(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
 	// Request without Authorization header
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
 
@@ -1088,12 +1088,12 @@ func TestIdempotencyKeyOmittedAlwaysCreatesNewJob(t *testing.T) {
 // the max length are rejected by the handler.
 // (VAL-IDEM-004)
 func TestIdempotencyKeyValidationTooLong(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 	token := setupAuth(t, s)
 
 	longKey := strings.Repeat("a", maxIdempotencyKeyLength+1)
 	body := fmt.Sprintf(`{"subjectId":1,"sessionId":1,"startIndex":1,"endIndex":1,"idempotencyKey":"%s"}`, longKey)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/jobs", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -1140,7 +1140,7 @@ func TestIdempotencyKeyStoredOnJob(t *testing.T) {
 	}
 
 	// Verify lookup by key works
-	retrieved, ok := js.GetJobByIdempotencyKey("my-key-123")
+	retrieved, ok := js.jobByIdempotencyKey("my-key-123")
 	if !ok {
 		t.Fatal("expected to find job by idempotency key")
 	}
@@ -1155,7 +1155,7 @@ func TestIdempotencyKeyStoredOnJob(t *testing.T) {
 func TestIdempotencyKeyNonExistentReturnsFalse(t *testing.T) {
 	js := NewJobStore()
 
-	_, ok := js.GetJobByIdempotencyKey("nonexistent-key")
+	_, ok := js.jobByIdempotencyKey("nonexistent-key")
 	if ok {
 		t.Error("expected false for non-existent idempotency key")
 	}
@@ -1241,7 +1241,7 @@ func TestIdempotencyKeyInPersistedFile(t *testing.T) {
 // without an idempotencyKey field always creates a new job (handler level).
 // (VAL-IDEM-003)
 func TestIdempotencyKeyHandlerMissingNoKeyAlwaysCreates(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 
 	// First request without key - this would try to executeJob which needs upstream,
 	// so we test the job store behavior instead.

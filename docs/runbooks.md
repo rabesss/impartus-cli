@@ -34,22 +34,9 @@
 * [Restore previous config](#restore-previous-config)
     * [Database/State Recovery](#databasestate-recovery)
   * [Monitoring & Alerts](#monitoring--alerts)
-    * [Observability Stack](#observability-stack)
-    * [Deployment Observability](#deployment-observability)
-* [Verify service health](#verify-service-health)
-* [Check recent logs for errors](#check-recent-logs-for-errors)
-* [Verify download functionality](#verify-download-functionality)
-* [Mark deployment in logs](#mark-deployment-in-logs)
-    * [Alerting Configuration](#alerting-configuration)
-* [Alert webhook URL (Slack, PagerDuty, custom)](#alert-webhook-url-slack-pagerduty-custom)
-* [Alert on critical errors](#alert-on-critical-errors)
-* [Alert threshold (errors per minute)](#alert-threshold-errors-per-minute)
-    * [Error Tracking (Sentry)](#error-tracking-sentry)
-    * [Key Metrics to Monitor](#key-metrics-to-monitor)
+    * [Operational Signals](#operational-signals)
+    * [Deployment Verification](#deployment-verification)
     * [Log Analysis](#log-analysis)
-* [Count errors by type](#count-errors-by-type)
-* [Recent WebSocket errors](#recent-websocket-errors)
-* [Failed downloads](#failed-downloads)
   * [Contact & Escalation](#contact--escalation)
   * [Related Documentation](#related-documentation)
 
@@ -86,9 +73,9 @@ curl -s http://localhost:8080/api/v1/health
     "status": "ok",
     "config": {
       "status": "ok",
-      "username": "ok",
-      "password": "ok",
-      "baseUrl": "ok"
+      "username": "configured",
+      "password": "[REDACTED]",
+      "baseUrl": "configured"
     },
     "upstream": {
       "status": "reachable"
@@ -236,7 +223,7 @@ sudo pacman -S ffmpeg
 1. Check system resources: `top`, `free -h`, `df -h`
 2. Review concurrent job count
 3. Adjust worker pool settings
-4. Clear temp directory: `rm -rf ./.temp/*`
+4. Clear temp directory: `rm -rf ./temp/*`
 
 ---
 
@@ -271,27 +258,22 @@ Jobs are persisted to `.jobs.json` on disk. On restart:
 
 ## Monitoring & Alerts
 
-### Observability Stack
+### Operational Signals
 
-This application supports the following observability infrastructure:
+Current operational visibility is intentionally simple and built from live features:
 
-| Component | Tool | Purpose |
-|-----------|------|---------|
-| **Metrics** | OpenTelemetry | Performance counters, download stats |
-| **Tracing** | X-Request-ID | Request correlation across handlers |
-| **Error Tracking** | Sentry | Error aggregation and stack traces |
-| **Alerting** | Configurable webhooks | Incident notifications |
+| Signal | Source | Purpose |
+|--------|--------|---------|
+| Health endpoint | `GET /api/v1/health` | Verify config, upstream reachability, and FFmpeg availability |
+| Request correlation | `X-Request-ID` header | Trace a request across handler logs |
+| API logs | `api.log` | Inspect server/runtime failures after deploys or incidents |
+| CI/CD status | GitHub Actions | Confirm build/test state before and after rollouts |
+| Coverage reports | GitHub Actions artifacts | Watch for regressions in exercised code paths |
 
-### Deployment Observability
+There is no built-in metrics export, Sentry integration, or webhook alerting in the current codebase.
 
-**Where to check deploy impact:**
+### Deployment Verification
 
-1. **Health Endpoint**: `GET /api/v1/health` - Verify service is running
-2. **API Logs**: `api.log` - Check for errors after deployment
-3. **CI/CD Status**: GitHub Actions workflow runs - Verify build/test passed
-4. **Coverage Reports**: GitHub Actions artifacts - Check coverage didn't drop
-
-**Post-deployment verification:**
 ```bash
 # Verify service health
 curl -s http://localhost:8080/api/v1/health | jq
@@ -299,82 +281,51 @@ curl -s http://localhost:8080/api/v1/health | jq
 # Check recent logs for errors
 tail -50 api.log | grep -i error
 
-# Verify download functionality
+# Verify CLI access against the configured upstream
 ./impartus courses --json | jq
 ```
 
-**Deployment annotations**: Add deployment markers to logs:
-```bash
-# Mark deployment in logs
-echo "[$(date -Iseconds)] DEPLOYMENT: version=$(./impartus version)" >> api.log
+Expected health response shape:
+
+```json
+{
+  "success": true,
+  "data": {
+    "status": "ok",
+    "config": {
+      "status": "ok",
+      "username": "configured",
+      "password": "[REDACTED]",
+      "baseUrl": "configured"
+    },
+    "upstream": {
+      "status": "reachable"
+    },
+    "ffmpeg": {
+      "status": "available"
+    }
+  },
+  "error": null,
+  "meta": {
+    "command": "health",
+    "mode": "api"
+  }
+}
 ```
 
-### Alerting Configuration
-
-Alerts can be configured via webhook integration. Set environment variable:
-
-```bash
-# Alert webhook URL (Slack, PagerDuty, custom)
-ALERT_WEBHOOK_URL=https://hooks.slack.com/services/...
-
-# Alert on critical errors
-ALERT_ON_ERRORS=true
-
-# Alert threshold (errors per minute)
-ALERT_THRESHOLD=10
-```
-
-**Alert types supported:**
-- Service health failures
-- Download failure rate exceeds threshold
-- Authentication failures spike
-- Memory usage exceeds limit
-
-### Error Tracking (Sentry)
-
-To enable Sentry error tracking:
-
-1. Set environment variables:
-```bash
-SENTRY_DSN=https://xxx@xxx.ingest.sentry.io/xxx
-SENTRY_ENVIRONMENT=production
-```
-
-2. Errors are automatically reported with:
-   - Stack traces
-   - Request context (X-Request-ID)
-   - User context (session ID)
-   - Custom tags (download type, lecture ID)
-
-### Key Metrics to Monitor
-
-| Metric | Description | Threshold |
-|--------|-------------|-----------|
-| Health check | API server response | Alert if down > 1 min |
-| Download success rate | Completed/total downloads | Alert if < 90% |
-| Average download time | Per-lecture duration | Alert if > 2x normal |
-| Memory usage | Process RAM | Alert if > 1GB |
-| Error rate | API errors/hour | Alert if > 10/hour |
-| Active connections | WebSocket clients | Monitor for anomalies |
-
-**Metrics exposed via OpenTelemetry:**
-- `impartus_downloads_total` - Total download count
-- `impartus_download_duration_seconds` - Download duration histogram
-- `impartus_download_errors_total` - Error count by type
-- `impartus_api_requests_total` - API request count by endpoint
-- `impartus_active_jobs` - Currently active download jobs
+If any sub-check fails, the top-level `data.status` becomes `degraded`.
 
 ### Log Analysis
 
 ```bash
-# Count errors by type
-grep -i error api.log | cut -d: -f3 | sort | uniq -c
+# Count recent error-like log lines
+grep -i error api.log | tail -20
 
-# Recent WebSocket errors
-grep "WebSocket" api.log | tail -20
+# Inspect recent failures
+grep -i "failed" api.log | tail -20
 
-# Failed downloads
-grep -i "failed" api.log | tail -50
+# Fall back to the raw tail when a pattern is not obvious
+tail -50 api.log
 ```
 
 ---

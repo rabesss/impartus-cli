@@ -254,7 +254,7 @@ func TestLecturePipelineCancel(t *testing.T) {
 	}, nil)
 
 	// Cancel should not panic
-	p.Cancel()
+	p.cancelPipeline()
 
 	// Verify context is canceled by checking GetStats still works
 	stats := p.GetStats()
@@ -288,7 +288,7 @@ func TestLecturePipelineSubmitDownloadAfterCancel(t *testing.T) {
 		DecryptWorkers:  1,
 	}, nil)
 
-	p.Cancel()
+	p.cancelPipeline()
 
 	err := p.SubmitDownload(ChunkTask{ChunkID: 1, URL: "http://example.com/chunk.ts", View: "first"})
 	if !errors.Is(err, errPipelineCancelled) {
@@ -438,7 +438,7 @@ func TestSubmitPipelineViewTasks(t *testing.T) {
 		DownloadWorkers: 2,
 		DecryptWorkers:  2,
 	}, nil)
-	defer p.Cancel()
+	defer p.cancelPipeline()
 
 	playlist := client.ParsedPlaylist{
 		ID:    123,
@@ -489,7 +489,7 @@ func TestSubmitPipelineViewTasks(t *testing.T) {
 				DownloadWorkers: 2,
 				DecryptWorkers:  2,
 			}, nil)
-			defer p.Cancel()
+			defer p.cancelPipeline()
 
 			err := submitPipelineViewTasks(p, tt.urls, tt.enabled, tt.view, playlist)
 			if err != nil {
@@ -512,7 +512,7 @@ func TestUpdatePipelineBar(t *testing.T) {
 		DownloadWorkers: 1,
 		DecryptWorkers:  1,
 	}, nil)
-	defer p.Cancel()
+	defer p.cancelPipeline()
 
 	// updatePipelineBar is a method on Downloader, not Pipeline
 	// We test it indirectly by checking that GetStats works
@@ -533,7 +533,7 @@ func TestStopPipelineMonitorNilChan(t *testing.T) {
 		DownloadWorkers: 1,
 		DecryptWorkers:  1,
 	}, nil)
-	defer p.Cancel()
+	defer p.cancelPipeline()
 
 	// The monitorDone is nil when downloadBar is nil
 	// stopPipelineMonitor just does: if monitorDone == nil { return }
@@ -547,7 +547,7 @@ func TestMonitorPipelineProgress(t *testing.T) {
 		DownloadWorkers: 1,
 		DecryptWorkers:  1,
 	}, nil)
-	defer p.Cancel()
+	defer p.cancelPipeline()
 
 	// Start the pipeline
 	p.Start()

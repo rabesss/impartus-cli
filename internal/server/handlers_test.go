@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -35,7 +36,7 @@ func TestEnsureScheme(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := NewAPIServer("8080", validServerConfig())
+			s := newAPIServer(validServerConfig())
 			got := s.ensureScheme(tt.raw)
 			if got != tt.want {
 				t.Errorf("ensureScheme(%q) = %q, want %q", tt.raw, got, tt.want)
@@ -49,7 +50,7 @@ func TestEnsureScheme(t *testing.T) {
 // ============================================================================
 
 func TestProbeUpstreamHTTP_NoCache(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 	// No upstream cache set
 	result := s.probeUpstreamHTTP()
 	if result {
@@ -58,7 +59,7 @@ func TestProbeUpstreamHTTP_NoCache(t *testing.T) {
 }
 
 func TestProbeUpstreamHTTP_EmptyToken(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 	s.upstreamCacheMu.Lock()
 	s.upstreamCache = &upstreamCacheEntry{token: ""}
 	s.upstreamCacheMu.Unlock()
@@ -70,7 +71,7 @@ func TestProbeUpstreamHTTP_EmptyToken(t *testing.T) {
 }
 
 func TestProbeUpstreamHTTP_InvalidURL(t *testing.T) {
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer(&config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          "://invalid",
@@ -101,7 +102,7 @@ func TestProbeUpstreamHTTP_SuccessfulProbe(t *testing.T) {
 	defer ts.Close()
 
 	baseURL := ts.URL
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer(&config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          baseURL,
@@ -125,7 +126,7 @@ func TestProbeUpstreamHTTP_ServerReturnsError(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer(&config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          ts.URL,
@@ -148,7 +149,7 @@ func TestProbeUpstreamHTTP_ServerReturnsError(t *testing.T) {
 // ============================================================================
 
 func TestProbeUpstreamTCP_InvalidURL(t *testing.T) {
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer(&config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          "://invalid",
@@ -162,7 +163,7 @@ func TestProbeUpstreamTCP_InvalidURL(t *testing.T) {
 }
 
 func TestProbeUpstreamTCP_UnreachableHost(t *testing.T) {
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer(&config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          "https://192.0.2.1:1", // RFC 5737 TEST-NET, should be unreachable
@@ -179,7 +180,7 @@ func TestProbeUpstreamTCP_ReachableServer(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer ts.Close()
 
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer(&config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          ts.URL,
@@ -197,7 +198,7 @@ func TestProbeUpstreamTCP_ReachableServer(t *testing.T) {
 // ============================================================================
 
 func TestCheckUpstreamStatus_NilConfig(t *testing.T) {
-	s := NewAPIServer("8080", nil)
+	s := newAPIServer(nil)
 	result := s.checkUpstreamStatus()
 	if result.Status != "not_configured" {
 		t.Errorf("expected not_configured, got %s", result.Status)
@@ -205,7 +206,7 @@ func TestCheckUpstreamStatus_NilConfig(t *testing.T) {
 }
 
 func TestCheckUpstreamStatus_EmptyBaseURL(t *testing.T) {
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer(&config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          "",
@@ -221,7 +222,7 @@ func TestCheckUpstreamStatus_Reachable(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer ts.Close()
 
-	s := NewAPIServer("8080", &config.Config{
+	s := newAPIServer(&config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          ts.URL,
@@ -239,7 +240,7 @@ func TestCheckUpstreamStatus_Reachable(t *testing.T) {
 // ============================================================================
 
 func TestCheckFFmpegStatus(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 	result := s.checkFFmpegStatus()
 	// Can be either "available" or "not_found" depending on system
 	if result.Status != "available" && result.Status != "not_found" {
@@ -271,7 +272,7 @@ func TestCoursesHandler_WithMockedUpstream(t *testing.T) {
 
 	token := setupAuth(t, s)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/courses", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/courses", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
@@ -312,7 +313,7 @@ func TestLecturesHandler_WithMockedUpstream(t *testing.T) {
 
 	token := setupAuth(t, s)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/lectures?subject_id=1&session_id=1", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/lectures?subject_id=1&session_id=1", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
@@ -342,7 +343,7 @@ func TestLecturesHandler_CamelCaseParams(t *testing.T) {
 	token := setupAuth(t, s)
 
 	// Test camelCase query params
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/lectures?subjectId=1&sessionId=1", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/lectures?subjectId=1&sessionId=1", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
@@ -365,19 +366,29 @@ func TestCreateJobHandler_SuccessWithUpstream(t *testing.T) {
 	}))
 	defer ts.Close()
 
+	// Use os.MkdirTemp instead of t.TempDir() to avoid a race condition:
+	// createJobHandler starts executeJob in a background goroutine that may
+	// outlive the test. t.TempDir() auto-cleans on test exit, causing the
+	// goroutine to encounter a missing directory. os.MkdirTemp avoids this
+	// by not tying cleanup to test lifecycle.
+	tmpDir, err := os.MkdirTemp("", "impartus-test-createjob-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+
 	counter := &mockLoginCallCounter{}
 	s := NewAPIServerWithLogin("8080", &config.Config{
 		Username:         "user",
 		Password:         "pass",
 		BaseURL:          ts.URL,
-		DownloadLocation: t.TempDir(),
+		DownloadLocation: tmpDir,
 		Quality:          "450",
 	}, mockUpstreamLogin(counter))
 
 	token := setupAuth(t, s)
 
 	body := `{"subjectId":1,"sessionId":1,"startIndex":1,"endIndex":1}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/jobs", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -471,7 +482,7 @@ func TestLecturesHandler_UpstreamLoginFails(t *testing.T) {
 
 	token := setupAuth(t, s)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/lectures?subject_id=1&session_id=1", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/lectures?subject_id=1&session_id=1", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
@@ -494,7 +505,7 @@ func TestCoursesHandler_UpstreamLoginFails(t *testing.T) {
 
 	token := setupAuth(t, s)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/courses", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/courses", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
@@ -539,13 +550,13 @@ func TestExtractJoinOutputs(t *testing.T) {
 // ============================================================================
 
 func TestGetJobHandler_Success(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 	token := setupAuth(t, s)
 
 	cfg := &config.Config{DownloadLocation: "./downloads"}
 	job := s.jobStore.CreateJob(1, 1, 1, 5, cfg)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+job.ID, nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/jobs/"+job.ID, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req = mux.SetURLVars(req, map[string]string{"id": job.ID})
 	rec := httptest.NewRecorder()
@@ -565,10 +576,10 @@ func TestGetJobHandler_Success(t *testing.T) {
 }
 
 func TestGetJobHandler_NotFound(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 	token := setupAuth(t, s)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/nonexistent", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/jobs/nonexistent", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req = mux.SetURLVars(req, map[string]string{"id": "nonexistent"})
 	rec := httptest.NewRecorder()
@@ -584,13 +595,13 @@ func TestGetJobHandler_NotFound(t *testing.T) {
 // ============================================================================
 
 func TestDeleteJobHandler_Success(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 	token := setupAuth(t, s)
 
 	cfg := &config.Config{DownloadLocation: "./downloads"}
 	job := s.jobStore.CreateJob(1, 1, 1, 5, cfg)
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/jobs/"+job.ID, nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/api/v1/jobs/"+job.ID, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req = mux.SetURLVars(req, map[string]string{"id": job.ID})
 	rec := httptest.NewRecorder()
@@ -605,10 +616,10 @@ func TestDeleteJobHandler_Success(t *testing.T) {
 }
 
 func TestDeleteJobHandler_NotFound(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 	token := setupAuth(t, s)
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/jobs/nonexistent", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/api/v1/jobs/nonexistent", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req = mux.SetURLVars(req, map[string]string{"id": "nonexistent"})
 	rec := httptest.NewRecorder()
@@ -620,14 +631,14 @@ func TestDeleteJobHandler_NotFound(t *testing.T) {
 }
 
 func TestDeleteJobHandler_TerminalJob(t *testing.T) {
-	s := NewAPIServer("8080", validServerConfig())
+	s := newAPIServer(validServerConfig())
 	token := setupAuth(t, s)
 
 	cfg := &config.Config{DownloadLocation: "./downloads"}
 	job := s.jobStore.CreateJob(1, 1, 1, 5, cfg)
 	s.jobStore.UpdateJob(job.ID, StatusCompleted, 100, "")
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/jobs/"+job.ID, nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/api/v1/jobs/"+job.ID, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req = mux.SetURLVars(req, map[string]string{"id": job.ID})
 	rec := httptest.NewRecorder()

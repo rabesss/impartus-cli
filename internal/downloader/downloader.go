@@ -1,3 +1,4 @@
+// Package downloader handles downloading, decrypting, and joining video lecture chunks.
 package downloader
 
 import (
@@ -23,18 +24,21 @@ import (
 	"github.com/rabesss/impartus-cli/internal/config"
 )
 
+// DownloadedPlaylist holds the result of downloading a complete playlist including chunk paths for both views.
 type DownloadedPlaylist struct {
 	FirstViewChunks  []string
 	SecondViewChunks []string
 	Playlist         client.ParsedPlaylist
 }
 
+// M3U8File represents temporary M3U8 manifest files created for FFmpeg input.
 type M3U8File struct {
 	FirstViewFile  string
 	SecondViewFile string
 	Playlist       client.ParsedPlaylist
 }
 
+// JoinResult contains the output file paths produced by joining downloaded chunks.
 type JoinResult struct {
 	LeftOutput  string
 	RightOutput string
@@ -54,6 +58,7 @@ var (
 	secondViewConfig = viewConfig{SkipView: "left", Label: "right"}
 )
 
+// Downloader orchestrates chunk downloading, AES decryption, and FFmpeg-based joining of video lectures.
 type Downloader struct {
 	config      *config.Config
 	client      *client.Client
@@ -62,6 +67,7 @@ type Downloader struct {
 	ffmpegPath  string
 }
 
+// New creates a new Downloader with the given config and API client.
 func New(cfg *config.Config, apiClient *client.Client) *Downloader {
 	if cfg == nil {
 		cfg = &config.Config{}
@@ -86,7 +92,7 @@ func (d *Downloader) FetchLecturePlaylists(ctx context.Context, lectures []clien
 	return d.client.GetPlaylists(ctx, d.config, lectures)
 }
 
-func (d *Downloader) DownloadLecturePlaylists(ctx context.Context, playlists []client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) ([]DownloadedPlaylist, error) {
+func (d *Downloader) downloadLecturePlaylists(ctx context.Context, playlists []client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) ([]DownloadedPlaylist, error) {
 	results := make([]DownloadedPlaylist, 0, len(playlists))
 	for _, playlist := range playlists {
 		downloadedPlaylist, err := d.DownloadPlaylist(ctx, playlist, p, tracker)
@@ -98,6 +104,7 @@ func (d *Downloader) DownloadLecturePlaylists(ctx context.Context, playlists []c
 	return results, nil
 }
 
+// DownloadPlaylist downloads all chunks for both views of a playlist and returns the result.
 func (d *Downloader) DownloadPlaylist(ctx context.Context, playlist client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) (DownloadedPlaylist, error) {
 	decryptionKey, err := d.fetchDecryptionKey(ctx, playlist.KeyURL)
 	if err != nil {
@@ -152,6 +159,7 @@ func (d *Downloader) downloadPlaylistPipelined(ctx context.Context, playlist cli
 	return downloadedPlaylist, nil
 }
 
+// DownloadAndJoinPlaylist downloads a playlist and then joins the chunks into the final output file(s).
 func (d *Downloader) DownloadAndJoinPlaylist(ctx context.Context, playlist client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) (JoinResult, error) {
 	downloadedPlaylist, err := d.DownloadPlaylist(ctx, playlist, p, tracker)
 	if err != nil {
@@ -166,6 +174,7 @@ func (d *Downloader) DownloadAndJoinPlaylist(ctx context.Context, playlist clien
 	return d.JoinLectureOutput(metadataFile)
 }
 
+// JoinLectureOutput joins the chunks described by the M3U8 file into final output, choosing audio or video mode based on config.
 func (d *Downloader) JoinLectureOutput(file M3U8File) (JoinResult, error) {
 	if d.config.AudioOnly {
 		return d.joinAudioOutput(file)
@@ -173,8 +182,10 @@ func (d *Downloader) JoinLectureOutput(file M3U8File) (JoinResult, error) {
 	return d.joinVideoOutput(file)
 }
 
+// CreateTempM3U8File writes temporary M3U8 manifest files for each view and returns the file references.
 func (d *Downloader) CreateTempM3U8File(downloadedPlaylist DownloadedPlaylist) (M3U8File, error) {
 	m3u8File := M3U8File{Playlist: downloadedPlaylist.Playlist}
+	//nolint:gosec // G301: 0755 is standard for user download directories
 	if err := os.MkdirAll(d.config.TempDirLocation, 0o755); err != nil {
 		return m3u8File, err
 	}
@@ -199,11 +210,12 @@ func (d *Downloader) CreateTempM3U8File(downloadedPlaylist DownloadedPlaylist) (
 }
 
 func writeM3U8File(path string, chunks []string) error {
+	//nolint:gosec // G304: file paths are constructed from validated config and internal data
 	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { closeErr := f.Close(); _ = closeErr }()
 
 	_, err = f.WriteString(`#EXTM3U
 #EXT-X-VERSION:3
@@ -240,7 +252,7 @@ func (d *Downloader) fetchDecryptionKey(ctx context.Context, keyURL string) ([]b
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { closeErr := resp.Body.Close(); _ = closeErr }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("decryption key request failed with status %d", resp.StatusCode)
@@ -281,6 +293,7 @@ func (d *Downloader) decryptChunk(filePath string, key []byte) (string, error) {
 	}
 
 	outPath := strings.TrimSuffix(filePath, ".temp")
+	//nolint:gosec // G304: file paths are constructed from validated config and internal data
 	infile, err := os.ReadFile(filePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read encrypted file %s: %w", filePath, err)
@@ -299,6 +312,7 @@ func (d *Downloader) decryptChunk(filePath string, key []byte) (string, error) {
 	plainText := make([]byte, len(infile))
 	mode.CryptBlocks(plainText, infile)
 
+	//nolint:gosec // G703: path components are from validated config and sanitized input
 	if err := os.WriteFile(outPath, plainText, 0o600); err != nil {
 		return "", fmt.Errorf("failed to write decrypted file %s: %w", outPath, err)
 	}
@@ -314,7 +328,7 @@ func (d *Downloader) downloadURL(ctx context.Context, url string, id int, chunk 
 	if err != nil {
 		return "", 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { closeErr := resp.Body.Close(); _ = closeErr }()
 	if resp.StatusCode != http.StatusOK {
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
 		if readErr != nil {
@@ -327,17 +341,19 @@ func (d *Downloader) downloadURL(ctx context.Context, url string, id int, chunk 
 		return "", 0, fmt.Errorf("chunk request failed with status %d: %s", resp.StatusCode, message)
 	}
 
+	//nolint:gosec // G301: 0755 is standard for user download directories
 	err = os.MkdirAll(d.config.TempDirLocation, 0o755)
 	if err != nil {
 		return "", 0, err
 	}
 
 	outFilepath := filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_%s_%04d.ts.temp", id, view, chunk))
+	//nolint:gosec // G304: file paths are constructed from validated config and internal data
 	outFile, err := os.Create(outFilepath)
 	if err != nil {
 		return "", 0, fmt.Errorf("could not create file for chunk %d: %w", chunk, err)
 	}
-	defer outFile.Close()
+	defer func() { closeErr := outFile.Close(); _ = closeErr }()
 
 	bytesWritten, err := io.Copy(outFile, resp.Body)
 	if err != nil {

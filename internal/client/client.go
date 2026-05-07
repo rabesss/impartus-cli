@@ -1,3 +1,4 @@
+// Package client implements the Impartus API client for fetching courses, lectures, and playlists.
 package client
 
 import (
@@ -19,12 +20,14 @@ import (
 var invalidFileNameRe = regexp.MustCompile(`[<>:"/\\|?*\n\r]`)
 var uriValueRe = regexp.MustCompile(`URI="([^"]+)"`)
 
+// Client is the HTTP client for interacting with the Impartus API.
 type Client struct {
 	httpClient        *http.Client
 	UserAgentProvider func() string
 	token             string
 }
 
+// New creates a new Impartus API client with the given HTTP client and user agent provider.
 func New(httpClient *http.Client, userAgentProvider func() string) *Client {
 	if httpClient == nil {
 		httpClient = NewHTTPClient(0)
@@ -56,20 +59,21 @@ func (c *Client) randomUserAgent() string {
 	return c.UserAgentProvider()
 }
 
-func (c *Client) Token() string {
+func (c *Client) tokenValue() string {
 	if c == nil {
 		return ""
 	}
 	return c.token
 }
 
-func (c *Client) SetToken(token string) {
+func (c *Client) setToken(token string) {
 	if c == nil {
 		return
 	}
 	c.token = token
 }
 
+// GetAuthorizedWithToken performs an authenticated GET request with the given token.
 func (c *Client) GetAuthorizedWithToken(ctx context.Context, url string, token string) (*http.Response, error) {
 	cli := c
 	if cli == nil {
@@ -80,6 +84,7 @@ func (c *Client) GetAuthorizedWithToken(ctx context.Context, url string, token s
 	return cli.doRequestWithToken(ctx, http.MethodGet, url, nil, token)
 }
 
+// LoginAndSetToken authenticates with the Impartus API and stores the resulting token.
 func (c *Client) LoginAndSetToken(ctx context.Context, cfg *config.Config) error {
 	cli, baseURL, err := c.prepareLogin(cfg)
 	if err != nil {
@@ -99,7 +104,7 @@ func (c *Client) LoginAndSetToken(ctx context.Context, cfg *config.Config) error
 func (c *Client) resolveToken(cfg *config.Config) (string, error) {
 	token := cfg.Token
 	if token == "" {
-		token = c.Token()
+		token = c.tokenValue()
 	}
 	if token == "" {
 		return "", errors.New("token is not set")
@@ -107,6 +112,7 @@ func (c *Client) resolveToken(cfg *config.Config) (string, error) {
 	return token, nil
 }
 
+// GetCourses fetches the list of courses for the authenticated user.
 func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, error) {
 	if cfg == nil {
 		return nil, errors.New("config is required")
@@ -126,7 +132,7 @@ func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, e
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		body, readErr := io.ReadAll(resp.Body)
@@ -148,6 +154,7 @@ func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, e
 	return courses, nil
 }
 
+// GetLectures fetches the list of lectures for a given course.
 func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Course) (Lectures, error) {
 	if cfg == nil {
 		return nil, errors.New("config is required")
@@ -167,7 +174,7 @@ func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Cou
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		body, readErr := io.ReadAll(resp.Body)
@@ -190,6 +197,7 @@ func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Cou
 	return lectures, nil
 }
 
+// GetPlaylists fetches and parses HLS playlists for the given lectures.
 func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures Lectures) ([]ParsedPlaylist, error) {
 	if cfg == nil {
 		return nil, errors.New("config is required")
@@ -222,7 +230,7 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 		}
 		if resp.StatusCode != http.StatusOK {
 			body, readErr := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close() //nolint:errcheck
 			if readErr != nil {
 				return parsedPlaylists, fmt.Errorf("playlist request failed with status %d and unreadable body: %w", resp.StatusCode, readErr)
 			}
@@ -231,7 +239,7 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 
 		scanner := bufio.NewScanner(resp.Body)
 		parsed, parseErr := ParsePlaylist(scanner, lecture.TTID, lecture.Topic, lecture.SeqNo)
-		resp.Body.Close()
+		_ = resp.Body.Close() //nolint:errcheck
 		if parseErr != nil {
 			return parsedPlaylists, fmt.Errorf("parse playlist for lecture %d (%s): %w", lecture.TTID, lecture.Topic, parseErr)
 		}
@@ -241,13 +249,14 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 	return parsedPlaylists, nil
 }
 
+// GetStreamInfos fetches stream information for a given lecture.
 func (c *Client) GetStreamInfos(ctx context.Context, baseURL, token string, lecture Lecture) ([]StreamInfo, error) {
 	uri := fmt.Sprintf("%s/fetchvideo?ttid=%d&token=%s&type=index.m3u8", baseURL, lecture.TTID, token)
 	resp, err := c.GetAuthorizedWithToken(ctx, uri, token)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		body, readErr := io.ReadAll(resp.Body)
@@ -265,6 +274,7 @@ func (c *Client) GetStreamInfos(ctx context.Context, baseURL, token string, lect
 	return ParseStreamInfosFromBody(body)
 }
 
+// ParsePlaylist parses an HLS playlist from the given scanner, extracting chunk URLs and key information.
 func ParsePlaylist(scanner *bufio.Scanner, id int, title string, seqNo int) (ParsedPlaylist, error) {
 	parsedOutput := ParsedPlaylist{
 		ID:    id,
@@ -340,7 +350,7 @@ func (c *Client) validateStoredToken(ctx context.Context, baseURL, token string)
 	if err != nil {
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() //nolint:errcheck
 
 	return resp.StatusCode == http.StatusOK, nil
 }
@@ -370,7 +380,7 @@ func (c *Client) tryStoredToken(ctx context.Context, cfg *config.Config, baseURL
 		return false
 	}
 	cfg.Token = token
-	c.SetToken(token)
+	c.setToken(token)
 	return true
 }
 
@@ -383,7 +393,7 @@ func (c *Client) login(ctx context.Context, cfg *config.Config, baseURL string) 
 	if err != nil {
 		return "", fmt.Errorf("login failed: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }() //nolint:errcheck
 	if err := validateLoginResponse(response); err != nil {
 		return "", err
 	}
@@ -430,7 +440,7 @@ func validateLoginResponse(response *http.Response) error {
 
 func (c *Client) storeToken(cfg *config.Config, token string) error {
 	cfg.Token = token
-	c.SetToken(token)
+	c.setToken(token)
 	if err := os.WriteFile(".token", []byte(token), 0o600); err != nil {
 		return fmt.Errorf("failed to persist token: %w", err)
 	}

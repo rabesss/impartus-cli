@@ -34,14 +34,20 @@ func (e *TerminalStatusError) Unwrap() error {
 	return ErrJobTerminated
 }
 
+// JobStatus represents the current state of a download job.
 type JobStatus string
 
 const (
-	StatusPending   JobStatus = "pending"
-	StatusRunning   JobStatus = "running"
+	// StatusPending indicates a job has been created but not yet started.
+	StatusPending JobStatus = "pending"
+	// StatusRunning indicates a job is actively downloading.
+	StatusRunning JobStatus = "running"
+	// StatusCompleted indicates a job finished successfully.
 	StatusCompleted JobStatus = "completed"
-	StatusFailed    JobStatus = "failed"
-	StatusCanceled  JobStatus = "canceled"
+	// StatusFailed indicates a job terminated with an error.
+	StatusFailed JobStatus = "failed"
+	// StatusCanceled indicates a job was manually canceled.
+	StatusCanceled JobStatus = "canceled"
 )
 
 const maxIdempotencyKeyLength = 256
@@ -84,6 +90,7 @@ type statusCheckResult struct {
 	Status string `json:"status"`
 }
 
+// JobConfigOptions contains optional per-job configuration overrides for download settings.
 type JobConfigOptions struct {
 	Quality                   *string `json:"quality,omitempty"`
 	Views                     *string `json:"views,omitempty"`
@@ -199,13 +206,14 @@ func (r *createJobRequest) UnmarshalJSON(data []byte) error {
 			cp.Views = &normalized
 		}
 		r.JobConfig = &cp
-	case raw.legacyJobConfigOptions.hasValues():
-		r.JobConfig = raw.legacyJobConfigOptions.toJobConfigOptions()
+	case raw.hasValues():
+		r.JobConfig = raw.toJobConfigOptions()
 	}
 
 	return nil
 }
 
+// JobRuntimeConfig holds the resolved configuration used during job execution.
 type JobRuntimeConfig struct {
 	Quality                   string `json:"quality"`
 	Views                     string `json:"views"`
@@ -220,6 +228,7 @@ type JobRuntimeConfig struct {
 	SkipNoAudio               bool   `json:"skipNoAudio"`
 }
 
+// Job represents a download job with its metadata, status, and runtime configuration.
 type Job struct {
 	ID                string           `json:"id"`
 	SubjectID         int              `json:"subjectId"`
@@ -250,6 +259,8 @@ type upstreamCacheEntry struct {
 	expiresAt time.Time
 }
 
+// UpstreamLoginFunc is a function that authenticates with the upstream Impartus API
+// and returns an initialized client and config with a valid token.
 type UpstreamLoginFunc func(ctx context.Context, cfg *config.Config) (*client.Client, *config.Config, error)
 
 type loginResponse struct {
@@ -267,6 +278,7 @@ type createJobConflictResponse struct {
 	Duplicate bool `json:"duplicate"`
 }
 
+// APIServer is the main REST API and WebSocket server for managing download jobs.
 type APIServer struct {
 	cfg              *config.Config
 	jobStore         *JobStore

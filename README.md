@@ -525,7 +525,7 @@ impartus/
 - **`internal/config`** - Configuration loading, defaults, and validation
 - **`internal/client`** - Impartus API HTTP client with authentication
 - **`internal/downloader`** - Video pipeline: playlist parsing, chunk download, AES decryption, FFmpeg join
-- **`internal/server`** - HTTP API server with JWT auth and WebSocket broadcasting
+- **`internal/server`** - HTTP API server with bearer-token auth, background jobs, and WebSocket broadcasting
 
 For detailed flow diagrams, see [`docs/architecture.md`](docs/architecture.md).
 
@@ -567,8 +567,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [gorilla/websocket](https://github.com/gorilla/websocket) - WebSocket implementation
 - [vbauerster/mpb](https://github.com/vbauerster/mpb) - Progress bars
 - [google/uuid](https://github.com/google/uuid) - UUID generation
-- [getsentry/sentry-go](https://github.com/getsentry/sentry-go) - Error tracking
-- [go.opentelemetry.io/otel](https://opentelemetry.io/) - Metrics and tracing
 - [golang.org/x/time](https://pkg.go.dev/golang.org/x/time) - Rate limiting
 
 ## Documentation

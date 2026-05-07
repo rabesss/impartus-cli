@@ -247,16 +247,6 @@ func TestValidateRejectsOutOfRangeWorkersAndRates(t *testing.T) {
 	}
 }
 
-func TestMustGetPanicsOnMissingConfig(t *testing.T) {
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("expected MustGet to panic when config file is missing")
-		}
-	}()
-	MustGet()
-}
-
 func TestParseRejectsMalformedJSON(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.json")

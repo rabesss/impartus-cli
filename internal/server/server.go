@@ -1,3 +1,4 @@
+// Package server implements the REST API and WebSocket server for managing download jobs.
 package server
 
 import (
@@ -23,8 +24,8 @@ func defaultUpstreamLogin(ctx context.Context, cfg *config.Config) (*client.Clie
 	return apiClient, cfg, nil
 }
 
-func NewAPIServer(port string, cfg *config.Config) *APIServer {
-	return NewAPIServerWithLogin(port, cfg, nil)
+func newAPIServer(cfg *config.Config) *APIServer {
+	return NewAPIServerWithLogin("8080", cfg, nil)
 }
 
 // NewAPIServerWithPersistence creates an APIServer with job persistence enabled.
@@ -74,15 +75,20 @@ func newAPIServerFull(port string, cfg *config.Config, loginFn UpstreamLoginFunc
 	return s
 }
 
+// Start starts the API server on the configured port. Accepts an optional context
+// for graceful shutdown.
 func (s *APIServer) Start(ctxs ...context.Context) error {
 	if s.stopTokenCleanup == nil {
 		s.stopTokenCleanup = StartTokenCleanup(s.tokenStore)
 	}
 	defer s.stopTokenCleanup()
 
+	//nolint:gosec // G302: 0666 is standard for log files, umask applies
 	logFile, err := os.OpenFile("api.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o666)
 	if err == nil {
-		defer logFile.Close()
+		defer func() {
+			_ = logFile.Close() //nolint:errcheck
+		}()
 		log.SetOutput(logFile)
 	}
 

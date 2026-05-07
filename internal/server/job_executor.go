@@ -123,9 +123,11 @@ func (s *APIServer) prepareJobRuntime(ctx context.Context, jobCtx context.Contex
 }
 
 func ensureJobDirectories(cfg *config.Config) error {
+	//nolint:gosec // G301: 0755 is standard for user download directories
 	if err := os.MkdirAll(cfg.DownloadLocation, 0o755); err != nil {
 		return err
 	}
+	//nolint:gosec // G301: 0755 is standard for temp directories
 	return os.MkdirAll(cfg.TempDirLocation, 0o755)
 }
 
@@ -320,6 +322,7 @@ func downloadLectureSlide(ctx context.Context, c *client.Client, cfg *config.Con
 		return errors.New("baseUrl is required")
 	}
 
+	//nolint:gosec // G301: 0755 is standard for user download directories
 	if err := os.MkdirAll(cfg.DownloadLocation, 0o755); err != nil {
 		return err
 	}
@@ -329,7 +332,9 @@ func downloadLectureSlide(ctx context.Context, c *client.Client, cfg *config.Con
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { //nolint:errcheck
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, readErr := io.ReadAll(resp.Body)
@@ -340,11 +345,14 @@ func downloadLectureSlide(ctx context.Context, c *client.Client, cfg *config.Con
 	}
 
 	filePath := filepath.Join(cfg.DownloadLocation, fmt.Sprintf("LEC %03d %s.pdf", lecture.SeqNo, lecture.Topic))
+	//nolint:gosec // G304: file paths are constructed from validated config and internal data
 	f, err := os.Create(filePath)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close() //nolint:errcheck
+	}()
 
 	_, err = io.Copy(f, resp.Body)
 	return err

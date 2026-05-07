@@ -11,9 +11,3 @@ func TestBuildinfoIntegration(t *testing.T) {
 		t.Error("buildinfo.Version should not be empty")
 	}
 }
-
-func TestMainPackageImports(t *testing.T) {
-	if buildinfo.SentryRelease() == "" {
-		t.Fatal("buildinfo.SentryRelease() should not be empty")
-	}
-}

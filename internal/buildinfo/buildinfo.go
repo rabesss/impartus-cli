@@ -1,11 +1,9 @@
+// Package buildinfo holds build-time metadata (version and date).
 package buildinfo
 
 var (
+	// Version is the application version, set at build time.
 	Version = "0.1.3" // x-release-please-version
-	Date    = ""
-	Commit  = "unknown"
+	// Date is the build date, set at build time.
+	Date = ""
 )
-
-func SentryRelease() string {
-	return "impartus-cli@" + Version
-}

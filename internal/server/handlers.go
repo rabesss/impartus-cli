@@ -138,7 +138,8 @@ func (s *APIServer) probeUpstreamHTTP() bool {
 	if err != nil {
 		return false
 	}
-	resp.Body.Close()
+	//nolint:errcheck
+	_ = resp.Body.Close()
 	return true
 }
 
@@ -167,7 +168,8 @@ func (s *APIServer) probeUpstreamTCP() bool {
 	if err != nil {
 		return false
 	}
-	conn.Close()
+	//nolint:errcheck
+	_ = conn.Close()
 	return true
 }
 
@@ -299,9 +301,12 @@ func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go s.executeJob(job.ID)
-
+	// Respond before starting the background goroutine to avoid a data race:
+	// respondWithEnvelope marshals the job to JSON, which reads job fields
+	// concurrently with executeJob writing to the same job via UpdateJob.
 	respondWithEnvelope(w, http.StatusCreated, "createJob", job)
+
+	go s.executeJob(job.ID)
 }
 
 func (s *APIServer) listJobsHandler(w http.ResponseWriter, _ *http.Request) {
@@ -360,7 +365,9 @@ func (s *APIServer) websocketHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("WebSocket upgrade error: %v", err)
 		return
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close() //nolint:errcheck
+	}()
 
 	s.wsHub.Register(conn)
 	defer s.wsHub.Unregister(conn)
