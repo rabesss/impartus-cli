@@ -70,10 +70,10 @@ func (c *Config) applyWorkerDefaults() {
 		c.NumWorkers = 5
 	}
 	if c.DownloadWorkersPerLecture == 0 {
-		c.DownloadWorkersPerLecture = 6
+		c.DownloadWorkersPerLecture = 10
 	}
 	if c.DecryptWorkersPerLecture == 0 {
-		c.DecryptWorkersPerLecture = 3
+		c.DecryptWorkersPerLecture = 5
 	}
 }
 
