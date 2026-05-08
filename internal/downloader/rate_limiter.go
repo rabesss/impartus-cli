@@ -22,9 +22,9 @@ type RateLimiter struct {
 
 // NewRateLimiter creates a new RateLimiter with the specified requests-per-second for downloads and API calls.
 func NewRateLimiter(downloadRPS, apiRPS float64, enableJitter bool) *RateLimiter {
-	// Keep sustained media rate fixed while allowing short browser-scale bursts;
-	// actual in-flight requests remain bounded by download worker counts.
-	downloadBurst := int(downloadRPS * 22)
+	// Keep sustained media rate fixed while allowing larger browser-scale batches;
+	// actual in-flight requests remain bounded by download workers and playlist fanout.
+	downloadBurst := int(downloadRPS * 34)
 	if downloadBurst < 1 {
 		downloadBurst = 1
 	}
