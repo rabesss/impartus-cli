@@ -110,6 +110,10 @@ func (d *Downloader) DownloadPlaylist(ctx context.Context, playlist client.Parse
 	if err != nil {
 		return DownloadedPlaylist{}, err
 	}
+	//nolint:gosec // G301: 0755 is standard for user download directories
+	if err := os.MkdirAll(d.config.TempDirLocation, 0o755); err != nil {
+		return DownloadedPlaylist{}, err
+	}
 
 	if d.config.EnablePipeline {
 		return d.downloadPlaylistPipelined(ctx, playlist, decryptionKey, p, tracker)
@@ -352,12 +356,6 @@ func (d *Downloader) downloadURL(ctx context.Context, url string, id int, chunk 
 		return "", 0, fmt.Errorf("chunk request failed with status %d: %s", resp.StatusCode, message)
 	}
 
-	//nolint:gosec // G301: 0755 is standard for user download directories
-	err = os.MkdirAll(d.config.TempDirLocation, 0o755)
-	if err != nil {
-		return "", 0, err
-	}
-
 	outFilepath := filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_%s_%04d.ts.temp", id, view, chunk))
 	//nolint:gosec // G304: file paths are constructed from validated config and internal data
 	outFile, err := os.Create(outFilepath)
@@ -394,11 +392,6 @@ func (d *Downloader) downloadURLBytes(ctx context.Context, url string, id int, c
 			return "", nil, 0, fmt.Errorf("chunk request failed with status %d", resp.StatusCode)
 		}
 		return "", nil, 0, fmt.Errorf("chunk request failed with status %d: %s", resp.StatusCode, message)
-	}
-
-	//nolint:gosec // G301: 0755 is standard for user download directories
-	if err := os.MkdirAll(d.config.TempDirLocation, 0o755); err != nil {
-		return "", nil, 0, err
 	}
 
 	outFilepath := filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_%s_%04d.ts.temp", id, view, chunk))
