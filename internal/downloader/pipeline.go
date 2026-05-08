@@ -164,7 +164,6 @@ func (p *LecturePipeline) downloadWorker() {
 				return
 			}
 
-			startTime := time.Now()
 			encryptedPath, encryptedBytes, err := p.downloader.downloadBytesWithRetry(p.ctx, task.URL, task.LectureID, task.ChunkID, task.View, 3, p.config.ProgressTracker)
 			result := DownloadedChunk{
 				ChunkID:        task.ChunkID,
@@ -172,7 +171,6 @@ func (p *LecturePipeline) downloadWorker() {
 				EncryptedPath:  encryptedPath,
 				EncryptedBytes: encryptedBytes,
 				LectureID:      task.LectureID,
-				DownloadTime:   time.Since(startTime),
 				Err:            err,
 			}
 
@@ -205,13 +203,11 @@ func (p *LecturePipeline) decryptWorker() {
 				continue
 			}
 
-			startTime := time.Now()
 			decryptedPath, err := p.downloader.decryptChunkBytes(downloaded.EncryptedPath, downloaded.EncryptedBytes, p.config.DecryptionKey)
 			result := DecryptedChunk{
 				ChunkID:       downloaded.ChunkID,
 				View:          downloaded.View,
 				DecryptedPath: decryptedPath,
-				DecryptTime:   time.Since(startTime),
 				Err:           err,
 			}
 
