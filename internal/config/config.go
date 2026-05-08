@@ -84,8 +84,8 @@ func (c *Config) applyRateLimitDefaults() {
 	if c.APIRateLimit == 0 {
 		c.APIRateLimit = 2
 	}
-	// Jitter is always enabled to prevent thundering herd on upstream API
-	// when multiple downloads start simultaneously.
+	// Small API jitter is always enabled to avoid perfectly synchronized upstream
+	// API calls when multiple downloads start simultaneously.
 	c.EnableJitter = true
 }
 

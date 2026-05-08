@@ -35,7 +35,7 @@
 
   // === HTTP Settings ===
   "httpTimeout": "10m",                                // HTTP timeout for chunk downloads (30s-60m, default: 10m)
-  "enableJitter": true,                                // Add random delays to reduce server load (true/false)
+  "enableJitter": true,                                // Add small random delays to API requests (true/false)
 
   // === Progress Tracking ===
   "progressTracking": {

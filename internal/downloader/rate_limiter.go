@@ -12,7 +12,7 @@ import (
 	"github.com/rabesss/impartus-cli/internal/config"
 )
 
-// RateLimiter provides token-bucket rate limiting for download and API requests with optional jitter.
+// RateLimiter provides token-bucket rate limiting for download and API requests with optional API jitter.
 type RateLimiter struct {
 	downloadLimiter *rate.Limiter
 	apiLimiter      *rate.Limiter
