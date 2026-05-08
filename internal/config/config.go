@@ -70,7 +70,7 @@ func (c *Config) applyWorkerDefaults() {
 		c.NumWorkers = 5
 	}
 	if c.DownloadWorkersPerLecture == 0 {
-		c.DownloadWorkersPerLecture = 10
+		c.DownloadWorkersPerLecture = 12
 	}
 	if c.DecryptWorkersPerLecture == 0 {
 		c.DecryptWorkersPerLecture = 4
@@ -186,8 +186,8 @@ func (c *Config) validateProgressTracking() error {
 func (c *Config) validatePipeline() error {
 	// Always validate worker count ranges regardless of pipeline enablement
 	// since these values can be set via API and should always be valid
-	if c.DownloadWorkersPerLecture < 1 || c.DownloadWorkersPerLecture > 10 {
-		return fmt.Errorf("downloadWorkersPerLecture must be between 1 and 10, got %d", c.DownloadWorkersPerLecture)
+	if c.DownloadWorkersPerLecture < 1 || c.DownloadWorkersPerLecture > 12 {
+		return fmt.Errorf("downloadWorkersPerLecture must be between 1 and 12, got %d", c.DownloadWorkersPerLecture)
 	}
 	if c.DecryptWorkersPerLecture < 1 || c.DecryptWorkersPerLecture > 10 {
 		return fmt.Errorf("decryptWorkersPerLecture must be between 1 and 10, got %d", c.DecryptWorkersPerLecture)
