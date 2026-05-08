@@ -24,7 +24,7 @@
 
   // === Concurrency Settings ===
   "numWorkers": 5,                                     // Concurrent workers for downloads (1-50, default: 5)
-  "rateLimit": 50,                                     // Download rate limit (requests/second, 0.1-100; default: 50)
+  "rateLimit": 100,                                    // Download rate limit (requests/second, 0.1-100; default: 100)
   "apiRateLimit": 2,                                   // API rate limit (requests/second, 0.1-20)
 
   // === Pipeline Settings ===

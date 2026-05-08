@@ -79,7 +79,7 @@ func (c *Config) applyWorkerDefaults() {
 
 func (c *Config) applyRateLimitDefaults() {
 	if c.RateLimit == 0 {
-		c.RateLimit = 50
+		c.RateLimit = 100
 	}
 	if c.APIRateLimit == 0 {
 		c.APIRateLimit = 2
