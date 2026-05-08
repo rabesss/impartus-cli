@@ -31,14 +31,15 @@ type ChunkTask struct {
 	LectureSeqNo int
 }
 
-// DownloadedChunk holds the result of downloading a single chunk, including its encrypted file path.
+// DownloadedChunk holds the result of downloading a single chunk for decryption.
 type DownloadedChunk struct {
-	ChunkID       int
-	View          string
-	EncryptedPath string
-	LectureID     int
-	DownloadTime  time.Duration
-	Err           error
+	ChunkID        int
+	View           string
+	EncryptedPath  string
+	EncryptedBytes []byte
+	LectureID      int
+	DownloadTime   time.Duration
+	Err            error
 }
 
 // DecryptedChunk holds the result of decrypting a downloaded chunk.
@@ -164,14 +165,15 @@ func (p *LecturePipeline) downloadWorker() {
 			}
 
 			startTime := time.Now()
-			encryptedPath, err := p.downloader.downloadWithRetry(p.ctx, task.URL, task.LectureID, task.ChunkID, task.View, 3, p.config.ProgressTracker)
+			encryptedPath, encryptedBytes, err := p.downloader.downloadBytesWithRetry(p.ctx, task.URL, task.LectureID, task.ChunkID, task.View, 3, p.config.ProgressTracker)
 			result := DownloadedChunk{
-				ChunkID:       task.ChunkID,
-				View:          task.View,
-				EncryptedPath: encryptedPath,
-				LectureID:     task.LectureID,
-				DownloadTime:  time.Since(startTime),
-				Err:           err,
+				ChunkID:        task.ChunkID,
+				View:           task.View,
+				EncryptedPath:  encryptedPath,
+				EncryptedBytes: encryptedBytes,
+				LectureID:      task.LectureID,
+				DownloadTime:   time.Since(startTime),
+				Err:            err,
 			}
 
 			select {
@@ -204,7 +206,7 @@ func (p *LecturePipeline) decryptWorker() {
 			}
 
 			startTime := time.Now()
-			decryptedPath, err := p.downloader.decryptChunk(downloaded.EncryptedPath, p.config.DecryptionKey)
+			decryptedPath, err := p.downloader.decryptChunkBytes(downloaded.EncryptedPath, downloaded.EncryptedBytes, p.config.DecryptionKey)
 			result := DecryptedChunk{
 				ChunkID:       downloaded.ChunkID,
 				View:          downloaded.View,
