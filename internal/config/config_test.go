@@ -25,7 +25,7 @@ func TestApplyDefaultsAndValidateWithMinimalValidConfig(t *testing.T) {
 	if cfg.NumWorkers != 5 || cfg.AudioFormat != "mp3" || cfg.TempDirLocation != "./temp" {
 		t.Fatalf("expected core defaults to be applied, got %+v", cfg)
 	}
-	if cfg.RateLimit != 10 || cfg.APIRateLimit != 2 || cfg.HTTPTimeout != "10m" {
+	if cfg.RateLimit != 100 || cfg.APIRateLimit != 2 || cfg.HTTPTimeout != "10m" {
 		t.Fatalf("expected rate/time defaults to be applied, got %+v", cfg)
 	}
 	if err := cfg.Validate(); err != nil {
