@@ -77,7 +77,7 @@ func (rl *RateLimiter) addJitter() {
 }
 
 func secureJitterDuration() (time.Duration, error) {
-	n, err := rand.Int(rand.Reader, big.NewInt(3))
+	n, err := rand.Int(rand.Reader, big.NewInt(2))
 	if err != nil {
 		return 0, err
 	}
