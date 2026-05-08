@@ -123,7 +123,7 @@ cp sample.config.json config.json
 | `slides` | bool | No | `false` | Download slides alongside video |
 | `audioOnly` | bool | No | `false` | Download audio only |
 | `audioFormat` | string | No | `"mp3"` | Audio format: `mp3`, `m4a`, `aac`, `opus` |
-| `numWorkers` | int | No | `5` | Concurrent workers (1-50) |
+| `numWorkers` | int | No | `5` | Concurrent lecture workers (1-50); active playlist downloads are bounded by per-lecture media workers to preserve the browser-observed burst envelope |
 | `rateLimit` | float | No | `100` | Download rate limit (req/sec) |
 | `apiRateLimit` | float | No | `2` | API rate limit (req/sec) |
 | `enablePipeline` | bool | No | `false` | Enable concurrent download+decrypt |
