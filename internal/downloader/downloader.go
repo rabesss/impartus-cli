@@ -60,11 +60,12 @@ var (
 
 // Downloader orchestrates chunk downloading, AES decryption, and FFmpeg-based joining of video lectures.
 type Downloader struct {
-	config      *config.Config
-	client      *client.Client
-	rateLimiter *RateLimiter
-	maxRetries  int
-	ffmpegPath  string
+	config        *config.Config
+	client        *client.Client
+	rateLimiter   *RateLimiter
+	maxRetries    int
+	ffmpegPath    string
+	playlistSlots chan struct{}
 }
 
 // New creates a new Downloader with the given config and API client.
@@ -76,12 +77,14 @@ func New(cfg *config.Config, apiClient *client.Client) *Downloader {
 	if apiClient == nil {
 		apiClient = client.New(nil, nil)
 	}
+	playlistSlots := make(chan struct{}, safeConcurrentPlaylists(cfg))
 	return &Downloader{
-		config:      cfg,
-		client:      apiClient,
-		rateLimiter: NewRateLimiterFromConfig(cfg),
-		maxRetries:  3,
-		ffmpegPath:  "ffmpeg",
+		config:        cfg,
+		client:        apiClient,
+		rateLimiter:   NewRateLimiterFromConfig(cfg),
+		maxRetries:    3,
+		playlistSlots: playlistSlots,
+		ffmpegPath:    "ffmpeg",
 	}
 }
 
@@ -104,8 +107,41 @@ func (d *Downloader) downloadLecturePlaylists(ctx context.Context, playlists []c
 	return results, nil
 }
 
+func safeConcurrentPlaylists(cfg *config.Config) int {
+	const browserObservedMediaBurst = 24
+	if cfg.DownloadWorkersPerLecture <= 0 {
+		return 1
+	}
+	limit := browserObservedMediaBurst / cfg.DownloadWorkersPerLecture
+	if limit < 1 {
+		limit = 1
+	}
+	if cfg.NumWorkers > 0 && cfg.NumWorkers < limit {
+		return cfg.NumWorkers
+	}
+	return limit
+}
+
+func (d *Downloader) acquirePlaylistSlot(ctx context.Context) (func(), error) {
+	if d.playlistSlots == nil {
+		return func() {}, nil
+	}
+	select {
+	case d.playlistSlots <- struct{}{}:
+		return func() { <-d.playlistSlots }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 // DownloadPlaylist downloads all chunks for both views of a playlist and returns the result.
 func (d *Downloader) DownloadPlaylist(ctx context.Context, playlist client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) (DownloadedPlaylist, error) {
+	releasePlaylistSlot, err := d.acquirePlaylistSlot(ctx)
+	if err != nil {
+		return DownloadedPlaylist{}, err
+	}
+	defer releasePlaylistSlot()
+
 	decryptionKey, err := d.fetchDecryptionKey(ctx, playlist.KeyURL)
 	if err != nil {
 		return DownloadedPlaylist{}, err

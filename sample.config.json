@@ -23,7 +23,7 @@
   "skipNoAudio": false,                                // Skip lectures with no audio track (true/false)
 
   // === Concurrency Settings ===
-  "numWorkers": 5,                                     // Concurrent workers for downloads (1-50, default: 5)
+  "numWorkers": 5,                                     // Concurrent lecture workers (1-50, default: 5); active playlists are bounded by per-lecture media workers
   "rateLimit": 100,                                    // Download rate limit (requests/second, 0.1-100; default: 100)
   "apiRateLimit": 2,                                   // API rate limit (requests/second, 0.1-20)
 

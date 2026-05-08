@@ -63,6 +63,38 @@ func TestNewDownloaderWithConfigDefaults(t *testing.T) {
 	}
 }
 
+func TestSafeConcurrentPlaylists(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *config.Config
+		want int
+	}{
+		{
+			name: "default workers keep two active lectures within browser observed burst",
+			cfg:  &config.Config{NumWorkers: 5, DownloadWorkersPerLecture: 12},
+			want: 2,
+		},
+		{
+			name: "configured lecture worker cap is respected",
+			cfg:  &config.Config{NumWorkers: 1, DownloadWorkersPerLecture: 12},
+			want: 1,
+		},
+		{
+			name: "at least one playlist can run",
+			cfg:  &config.Config{NumWorkers: 5, DownloadWorkersPerLecture: 50},
+			want: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := safeConcurrentPlaylists(tt.cfg); got != tt.want {
+				t.Fatalf("safeConcurrentPlaylists() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 // TestSelectStreamByQuality tests the stream URL selection logic
 func TestSelectStreamByQuality(t *testing.T) {
 	tests := []struct {
