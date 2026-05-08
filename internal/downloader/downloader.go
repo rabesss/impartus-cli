@@ -138,16 +138,24 @@ func (d *Downloader) downloadPlaylistPipelined(ctx context.Context, playlist cli
 	pipeline.Start()
 
 	downloadBar := d.newPipelineBar(p, playlist.SeqNo, totalChunks)
-	if err := d.submitPipelineTasks(pipeline, playlist); err != nil {
-		return downloadedPlaylist, err
-	}
+	submitErrCh := make(chan error, 1)
+	go func() {
+		err := d.submitPipelineTasks(pipeline, playlist)
+		if err != nil {
+			pipeline.cancelPipeline()
+		}
+		pipeline.FinishSubmission(totalChunks)
+		submitErrCh <- err
+	}()
 
-	pipeline.FinishSubmission(totalChunks)
 	monitorDone := d.monitorPipelineProgress(downloadBar, pipeline, totalChunks)
-
 	result := pipeline.Collect()
+	submitErr := <-submitErrCh
 
 	d.stopPipelineMonitor(monitorDone, downloadBar, totalChunks)
+	if submitErr != nil {
+		return downloadedPlaylist, submitErr
+	}
 
 	if len(result.FailedChunks) > 0 {
 		return downloadedPlaylist, fmt.Errorf("%d chunks failed to download: %v", len(result.FailedChunks), result.FailedChunks)
