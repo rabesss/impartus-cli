@@ -367,9 +367,6 @@ func (d *Downloader) downloadURL(ctx context.Context, url string, id int, chunk 
 	if err != nil {
 		return "", 0, fmt.Errorf("could not write chunk %d: %w", chunk, err)
 	}
-	if err := outFile.Sync(); err != nil {
-		return "", 0, fmt.Errorf("could not sync chunk %d: %w", chunk, err)
-	}
 
 	return outFilepath, bytesWritten, nil
 }
