@@ -124,7 +124,7 @@ cp sample.config.json config.json
 | `audioOnly` | bool | No | `false` | Download audio only |
 | `audioFormat` | string | No | `"mp3"` | Audio format: `mp3`, `m4a`, `aac`, `opus` |
 | `numWorkers` | int | No | `5` | Concurrent workers (1-50) |
-| `rateLimit` | float | No | `10` | Download rate limit (req/sec) |
+| `rateLimit` | float | No | `50` | Download rate limit (req/sec) |
 | `apiRateLimit` | float | No | `2` | API rate limit (req/sec) |
 | `enablePipeline` | bool | No | `false` | Enable concurrent download+decrypt |
 | `downloadWorkersPerLecture` | int | No | `3` | Download workers per lecture (1-10) |
