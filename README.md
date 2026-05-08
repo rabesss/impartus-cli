@@ -152,7 +152,7 @@ cp sample.config.json config.json
 | `downloadWorkersPerLecture` | int | No | `10` | Download workers per lecture (1-10) |
 | `decryptWorkersPerLecture` | int | No | `4` | Decrypt workers per lecture (1-10) |
 | `httpTimeout` | string | No | `"10m"` | HTTP timeout for chunks (30s-60m) |
-| `enableJitter` | bool | No | `true` | Add random delays to reduce load |
+| `enableJitter` | bool | No | `true` | Add small random delays to API requests |
 | `skipNoAudio` | bool | No | `false` | Skip lectures with no audio track |
 | `progressTracking` | object | No | see below | Progress bar tracking configuration |
 
