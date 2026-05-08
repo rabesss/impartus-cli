@@ -128,7 +128,7 @@ cp sample.config.json config.json
 | `apiRateLimit` | float | No | `2` | API rate limit (req/sec) |
 | `enablePipeline` | bool | No | `false` | Enable concurrent download+decrypt |
 | `downloadWorkersPerLecture` | int | No | `10` | Download workers per lecture (1-10) |
-| `decryptWorkersPerLecture` | int | No | `5` | Decrypt workers per lecture (1-10) |
+| `decryptWorkersPerLecture` | int | No | `4` | Decrypt workers per lecture (1-10) |
 | `httpTimeout` | string | No | `"10m"` | HTTP timeout for chunks (30s-60m) |
 | `enableJitter` | bool | No | `true` | Add random delays to reduce load |
 | `skipNoAudio` | bool | No | `false` | Skip lectures with no audio track |
