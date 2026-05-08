@@ -31,7 +31,7 @@
   // When enablePipeline=true, downloads and decryption run concurrently for faster throughput
   "enablePipeline": false,                             // Enable pipelined download+decrypt mode (true/false)
   "downloadWorkersPerLecture": 10,                      // Parallel download workers per lecture (1-10, default: 10)
-  "decryptWorkersPerLecture": 5,                        // Parallel decrypt workers per lecture (1-10, default: 5)
+  "decryptWorkersPerLecture": 4,                        // Parallel decrypt workers per lecture (1-10, default: 4)
 
   // === HTTP Settings ===
   "httpTimeout": "10m",                                // HTTP timeout for chunk downloads (30s-60m, default: 10m)
