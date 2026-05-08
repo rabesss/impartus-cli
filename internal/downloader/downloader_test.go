@@ -52,8 +52,8 @@ func TestNewDownloaderWithConfigDefaults(t *testing.T) {
 	if d.config.NumWorkers != 5 {
 		t.Errorf("expected default NumWorkers=5, got %d", d.config.NumWorkers)
 	}
-	if d.config.DownloadWorkersPerLecture != 10 {
-		t.Errorf("expected default DownloadWorkersPerLecture=10, got %d", d.config.DownloadWorkersPerLecture)
+	if d.config.DownloadWorkersPerLecture != 12 {
+		t.Errorf("expected default DownloadWorkersPerLecture=12, got %d", d.config.DownloadWorkersPerLecture)
 	}
 	if d.config.DecryptWorkersPerLecture != 4 {
 		t.Errorf("expected default DecryptWorkersPerLecture=4, got %d", d.config.DecryptWorkersPerLecture)
