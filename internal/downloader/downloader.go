@@ -290,6 +290,15 @@ func getDecryptionKey(encryptionKey []byte) []byte {
 }
 
 func (d *Downloader) decryptChunk(filePath string, key []byte) (string, error) {
+	//nolint:gosec // G304: file paths are constructed from validated config and internal data
+	infile, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read encrypted file %s: %w", filePath, err)
+	}
+	return d.decryptChunkBytes(filePath, infile, key)
+}
+
+func (d *Downloader) decryptChunkBytes(filePath string, infile []byte, key []byte) (string, error) {
 	if len(filePath) < 6 {
 		return "", fmt.Errorf("invalid file path: %s", filePath)
 	}
@@ -301,12 +310,6 @@ func (d *Downloader) decryptChunk(filePath string, key []byte) (string, error) {
 	}
 
 	outPath := strings.TrimSuffix(filePath, ".temp")
-	//nolint:gosec // G304: file paths are constructed from validated config and internal data
-	infile, err := os.ReadFile(filePath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read encrypted file %s: %w", filePath, err)
-	}
-
 	length := 16 - (len(infile) % 16)
 	infile = append(infile, bytes.Repeat([]byte{byte(length)}, length)...)
 	iv := bytes.Repeat([]byte{0}, 16)
@@ -369,6 +372,64 @@ func (d *Downloader) downloadURL(ctx context.Context, url string, id int, chunk 
 	}
 
 	return outFilepath, bytesWritten, nil
+}
+
+func (d *Downloader) downloadURLBytes(ctx context.Context, url string, id int, chunk int, view string) (string, []byte, int64, error) {
+	if err := d.rateLimiter.WaitForDownload(ctx); err != nil {
+		return "", nil, 0, err
+	}
+
+	resp, err := d.client.GetAuthorizedWithToken(ctx, url, d.config.Token)
+	if err != nil {
+		return "", nil, 0, err
+	}
+	defer func() { closeErr := resp.Body.Close(); _ = closeErr }()
+	if resp.StatusCode != http.StatusOK {
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if readErr != nil {
+			return "", nil, 0, fmt.Errorf("chunk request failed with status %d and unreadable error body: %w", resp.StatusCode, readErr)
+		}
+		message := strings.TrimSpace(string(body))
+		if message == "" {
+			return "", nil, 0, fmt.Errorf("chunk request failed with status %d", resp.StatusCode)
+		}
+		return "", nil, 0, fmt.Errorf("chunk request failed with status %d: %s", resp.StatusCode, message)
+	}
+
+	//nolint:gosec // G301: 0755 is standard for user download directories
+	if err := os.MkdirAll(d.config.TempDirLocation, 0o755); err != nil {
+		return "", nil, 0, err
+	}
+
+	outFilepath := filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_%s_%04d.ts.temp", id, view, chunk))
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", nil, 0, fmt.Errorf("could not read chunk %d: %w", chunk, err)
+	}
+	return outFilepath, data, int64(len(data)), nil
+}
+
+func (d *Downloader) downloadBytesWithRetry(ctx context.Context, url string, id int, chunk int, view string, maxRetries int, tracker *ProgressTracker) (string, []byte, error) {
+	var lastErr error
+	baseDelay := 1 * time.Second
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		filePath, data, bytesDownloaded, err := d.downloadURLBytes(ctx, url, id, chunk, view)
+		if err == nil {
+			if tracker != nil {
+				ChunkCompleted(tracker, bytesDownloaded)
+			}
+			return filePath, data, nil
+		}
+
+		lastErr = err
+		if attempt < maxRetries-1 {
+			delay := retryDelay(baseDelay, attempt)
+			if waitErr := waitForRetry(ctx, delay); waitErr != nil {
+				return "", nil, waitErr
+			}
+		}
+	}
+	return "", nil, fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
 }
 
 func (d *Downloader) downloadWithRetry(ctx context.Context, url string, id int, chunk int, view string, maxRetries int, tracker *ProgressTracker) (string, error) {
