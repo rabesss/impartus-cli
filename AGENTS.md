@@ -69,6 +69,8 @@ Impartus CLI is a Go application for downloading video lectures from the Impartu
 - **API mode**: REST + WebSocket server for programmatic access
 - **JSON mode**: Machine-readable output for AI agent integration
 
+**Go Version:** The project requires **Go 1.25.0** (specified in `go.mod`). The Dockerfile uses `golang:1.25-bookworm`.
+
 ---
 
 <!-- bd:onboard:start -->
@@ -558,10 +560,17 @@ There is no centralized sanitization helper in the current tree. When adding log
 
 Run with `make lint` or `golangci-lint run`.
 
-Configuration: `.golangci.yml` enforces:
-- Cyclomatic complexity: max 15
-- Cognitive complexity: max 30
-- Function length: max 100 lines
+Configuration: `.golangci.yml` uses the **v2 schema** (`version: "2"`).
+
+**Enabled linters:** revive, gocyclo, funlen, gocognit, unused, unparam, dupl, govet, errcheck, staticcheck, ineffassign, bodyclose, noctx, prealloc, copyloopvar, sqlclosecheck, durationcheck, makezero, gosec, dogsled, dupword, exhaustive, misspell, nolintlint, whitespace, godox
+
+**Formatters:** gofmt, goimports
+
+**Thresholds:**
+- Cyclomatic complexity: min 15
+- Function length: 100 lines / 60 statements
+- Cognitive complexity: min 30
+- Duplicate code: threshold 100
 
 ### Pre-commit Hooks
 
@@ -585,12 +594,52 @@ go tool cover -func=coverage.out
 
 Coverage threshold: **40%** minimum.
 
+### Security
+
+The project runs multiple security checks in CI and provides local Makefile targets:
+
+| Tool | Purpose | Local Command |
+|------|---------|---------------|
+| **gitleaks** | Secret scanning in commits | `make security-gitleaks` |
+| **gosec** | Go security analysis | `make security-gosec` |
+| **trivy** | Vulnerability and misconfiguration scanning | `make security-trivy` |
+| **govulncheck** | Go vulnerability database check | `make security-govulncheck` |
+
+Run all scans locally with `make security`.
+
+Configuration:
+- `.gitleaks.toml` — v8 format with `[extend] useDefault = true` and allowlist for test files and documentation
+- SARIF uploads from `gosec` and `trivy` are conditional on GitHub Advanced Security being enabled
+
 ### CI/CD
 
-GitHub Actions workflow: `.github/workflows/ci.yml`
-- Runs on push/PR to `main`
-- Jobs: `lint`, `test`, `build`
-- Coverage reports uploaded to Codecov
+GitHub Actions workflows in `.github/workflows/`:
+
+| Workflow | Trigger | Description |
+|----------|---------|-------------|
+| `ci.yml` | Push/PR to `main` | Lint (golangci-lint v2.12.1), test with coverage (Codecov), build, PR review (reviewdog), AGENTS.md validation, documentation check, quality gate |
+| `release.yml` | Push/PR to `main`, manual | `release-please` automated versioning and release binary builds for linux/darwin/windows (amd64/arm64) |
+| `packages.yml` | Push to `main`, release published, manual | Build and publish Docker images to GHCR (multi-arch: linux/amd64, linux/arm64) |
+| `lint-pr.yml` | `pull_request_target` | Validate PR titles follow Conventional Commits using `amannn/action-semantic-pull-request@v6` |
+| `security.yml` | Push/PR to `main` | Secret scanning (gitleaks), Go security analysis (gosec), vulnerability scanning (trivy), dependency audit (govulncheck) |
+| `labels.yml` | Push to `.github/labels.yml`, manual | Sync GitHub issue labels |
+| `sentry-issues.yml` | Daily cron, manual | Sync Sentry issues to GitHub and generate error metrics reports |
+
+All workflows use `actions/setup-go@v6` with the Go version from `go.mod`.
+
+## Releases
+
+The project uses **release-please** for automated versioning and changelog management.
+
+- **Workflow:** `.github/workflows/release.yml` runs `googleapis/release-please-action@v4` on every push to `main`
+- **Merge strategy:** Squash merges — the PR title becomes the squash commit message
+- **PR titles:** MUST follow [Conventional Commits](https://www.conventionalcommits.org/). Validated by `lint-pr.yml`
+- **Valid types:** `feat`, `fix`, `chore`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `revert`
+- **Valid scopes:** `cli`, `api`, `downloader`, `config`, `server`, `ci`, `deps`, `security`, `lint`, `test`, `docs`
+- **Release assets:** Pre-built binaries for Linux, macOS, and Windows (amd64 and arm64)
+- **Docker images:** Published to `ghcr.io/rabesss/impartus-cli` on release
+
+See `.github/pull_request_template.md` for the Conventional Commits reminder.
 
 ---
 

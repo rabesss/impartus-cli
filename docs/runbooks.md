@@ -270,7 +270,7 @@ Current operational visibility is intentionally simple and built from live featu
 | CI/CD status | GitHub Actions | Confirm build/test state before and after rollouts |
 | Coverage reports | GitHub Actions artifacts | Watch for regressions in exercised code paths |
 
-There is no built-in metrics export, Sentry integration, or webhook alerting in the current codebase.
+There is no built-in metrics export or webhook alerting in the current codebase. Sentry integration is configured via `.github/workflows/sentry-issues.yml` for daily issue sync and error metrics reporting.
 
 ### Deployment Verification
 

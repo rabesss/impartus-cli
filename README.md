@@ -106,7 +106,7 @@ go build -o impartus .
 
 ### Requirements
 
-- **Go 1.24+** - Go toolchain for building
+- **Go 1.25+** - Go toolchain for building
 - **FFmpeg** - Required for video processing (must be in `PATH`)
 - **Impartus Account** - Valid credentials for your institution's Impartus platform
 
@@ -467,6 +467,14 @@ make quality-gate
 | `make run-cli` | Run CLI interactive mode |
 | `make run-api` | Start API server on port 8080 |
 | `make quality-gate` | Run quality gate scan |
+| `make docs` | Generate docs TOC and validate AGENTS.md |
+| `make docs-toc` | Generate documentation table of contents |
+| `make agents-md-validate` | Validate AGENTS.md references |
+| `make security` | Run all security scans (gitleaks, gosec, trivy, govulncheck) |
+| `make security-gitleaks` | Run secret scanning |
+| `make security-gosec` | Run Go security analysis |
+| `make security-trivy` | Run vulnerability scanning |
+| `make security-govulncheck` | Run Go vulnerability check |
 
 ### Code Quality
 
