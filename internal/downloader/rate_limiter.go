@@ -50,13 +50,7 @@ func NewRateLimiterFromConfig(cfg *config.Config) *RateLimiter {
 
 // WaitForDownload blocks until the download rate limiter allows the next request.
 func (rl *RateLimiter) WaitForDownload(ctx context.Context) error {
-	if err := rl.downloadLimiter.Wait(ctx); err != nil {
-		return err
-	}
-	if rl.jitterEnabled {
-		rl.addJitter()
-	}
-	return nil
+	return rl.downloadLimiter.Wait(ctx)
 }
 
 // WaitForAPI blocks until the API rate limiter allows the next request.
