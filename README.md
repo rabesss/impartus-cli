@@ -7,47 +7,25 @@
   * [Features](#features)
   * [Quick Start](#quick-start)
     * [Install](#install)
-* [Install from source](#install-from-source)
-* [Or build from source](#or-build-from-source)
     * [Requirements](#requirements)
     * [Configuration](#configuration)
   * [CLI Usage](#cli-usage)
     * [Interactive Mode](#interactive-mode)
     * [Deterministic JSON Mode](#deterministic-json-mode)
-* [Get capability metadata](#get-capability-metadata)
-* [List courses](#list-courses)
-* [List lectures](#list-lectures)
     * [Command Reference](#command-reference)
     * [Download Flags](#download-flags)
-* [Download lectures 1-5 from course](#download-lectures-1-5-from-course)
-* [Download audio only](#download-audio-only)
-* [Download to custom directory](#download-to-custom-directory)
     * [API Server](#api-server)
-* [Default port 8080](#default-port-8080)
-* [Custom port](#custom-port)
-* [JSON metadata (non-blocking)](#json-metadata-non-blocking)
   * [API Usage](#api-usage)
     * [Authentication](#authentication)
-* [Login](#login)
     * [Endpoints](#endpoints)
     * [Create Download Job](#create-download-job)
     * [WebSocket Connection](#websocket-connection)
     * [WebSocket Events](#websocket-events)
   * [Development](#development)
     * [Build & Test](#build--test)
-* [Build](#build)
-* [Run tests](#run-tests)
-* [Run linter](#run-linter)
-* [Run pre-commit hooks](#run-pre-commit-hooks)
-* [Quality gate scan](#quality-gate-scan)
     * [Makefile Targets](#makefile-targets)
     * [Code Quality](#code-quality)
-* [Install golangci-lint](#install-golangci-lint)
-* [Install pre-commit](#install-pre-commit)
     * [Running Tests](#running-tests)
-* [All tests](#all-tests)
-* [With coverage](#with-coverage)
-* [Verbose](#verbose)
   * [Architecture](#architecture)
     * [Package Structure](#package-structure)
     * [Key Components](#key-components)
@@ -269,12 +247,17 @@ On failure, `success` is `false`, `data` is `null`, and `error.message` contains
 
 ```bash
 # Download lectures 1-5 from course
-./impartus download -s 123-S 456--start 1 --end 5# Download in 720p quality
+./impartus download -s 123 -S 456 --start 1 --end 5
+
+# Download in 720p quality
 ./impartus download -s 123 -S 456 --quality 720
+
 # Download audio only
 ./impartus download -s 123 -S 456 --audio-only --format mp3
+
 # Download to custom directory
-./impartus download -s 123 -S 456 -o /path/to/output```
+./impartus download -s 123 -S 456 -o /path/to/output
+```
 
 ### API Server
 
@@ -293,6 +276,7 @@ Start the HTTP API server with job persistence:
 
 # Custom port
 ./impartus serve --port 9090
+
 # JSON metadata (non-blocking)
 ./impartus serve --json
 ```
@@ -305,7 +289,11 @@ Start the HTTP API server with job persistence:
 # Login
 curl -X POST http://localhost:8080/api/v1/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"your_user", "password":"your_pass"}'# Response
+  -d '{"username":"your_user", "password":"your_pass"}'
+```
+
+Response:
+```json
 {
   "success": true,
   "data": {

@@ -4,6 +4,7 @@
 <!---toc start-->
 
 * [Impartus API Reference](#impartus-api-reference)
+  * [Health](#health)
   * [Authentication](#authentication)
     * [Login](#login)
   * [Response formats](#response-formats)
@@ -18,6 +19,7 @@
     * [List jobs](#list-jobs)
     * [Get job](#get-job)
     * [Cancel job](#cancel-job)
+  * [Job Persistence](#job-persistence)
   * [WebSocket](#websocket)
 
 <!---toc end-->

@@ -16,7 +16,7 @@
 
 # Error Codes Reference
 
-All API errors use structured JSON responses via `respondWithError` in [`auth.go`](file:///home/ravish/Desktop/clawds-code-crib/impartus-go/impartus/internal/server/auth.go) and [`server.go`](file:///home/ravish/Desktop/clawds-code-crib/impartus-go/impartus/internal/server/server.go).
+All API errors use structured JSON responses via `respondWithError` in [`auth.go`](../internal/server/auth.go) and [`server.go`](../internal/server/server.go).
 
 See also: [`api-reference.md`](api-reference.md) for route details, [`websocket-events.md`](websocket-events.md) for event schemas.
 

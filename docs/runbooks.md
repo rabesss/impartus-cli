@@ -4,20 +4,11 @@
 <!---toc start-->
 
 * [Runbooks - Incident Response Playbooks](#runbooks---incident-response-playbooks)
-  * [Table of Contents](#table-of-contents)
   * [Service Health Checks](#service-health-checks)
     * [Check API Server Status](#check-api-server-status)
-* [Health endpoint](#health-endpoint)
-* [Expected response](#expected-response)
     * [Check Download Jobs](#check-download-jobs)
-* [List active jobs](#list-active-jobs)
-* [Check specific job](#check-specific-job)
   * [Common Issues & Troubleshooting](#common-issues--troubleshooting)
     * [Issue: "ffmpeg not found" Error](#issue-ffmpeg-not-found-error)
-* [Check ffmpeg is installed](#check-ffmpeg-is-installed)
-* [Install on Ubuntu/Debian](#install-on-ubuntudebian)
-* [Install on macOS](#install-on-macos)
-* [Install on Arch Linux](#install-on-arch-linux)
     * [Issue: Authentication Failed (401)](#issue-authentication-failed-401)
     * [Issue: Download Timeout](#issue-download-timeout)
     * [Issue: WebSocket Connection Drops](#issue-websocket-connection-drops)
@@ -28,10 +19,7 @@
     * [P3: Performance Degradation](#p3-performance-degradation)
   * [Rollback Procedures](#rollback-procedures)
     * [Binary Rollback](#binary-rollback)
-* [Keep previous version backup](#keep-previous-version-backup)
-* [Rollback to previous version](#rollback-to-previous-version)
     * [Config Rollback](#config-rollback)
-* [Restore previous config](#restore-previous-config)
     * [Database/State Recovery](#databasestate-recovery)
   * [Monitoring & Alerts](#monitoring--alerts)
     * [Operational Signals](#operational-signals)
@@ -48,14 +36,6 @@
 
 This document provides operational runbooks for common incidents and troubleshooting scenarios.
 
-## Table of Contents
-
-1. [Service Health Checks](#service-health-checks)
-2. [Common Issues & Troubleshooting](#common-issues--troubleshooting)
-3. [Incident Response Procedures](#incident-response-procedures)
-4. [Rollback Procedures](#rollback-procedures)
-5. [Monitoring & Alerts](#monitoring--alerts)
-
 ---
 
 ## Service Health Checks
@@ -63,10 +43,11 @@ This document provides operational runbooks for common incidents and troubleshoo
 ### Check API Server Status
 
 ```bash
-# Health endpoint
 curl -s http://localhost:8080/api/v1/health
+```
 
-# Expected response (structured envelope with sub-checks)
+Expected response (structured envelope with sub-checks):
+```json
 {
   "success": true,
   "data": {
