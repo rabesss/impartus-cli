@@ -161,26 +161,32 @@ jobs:
       - name: Run desloppify quality gate
         id: desloppify
         run: |
-          # Run desloppify scan and capture output
+          # Run desloppify scan and capture output. The scan may exit non-zero
+          # when it finds quality issues; keep the job alive long enough to
+          # print the report and apply the threshold policy below.
+          set +e
           OUTPUT=$(desloppify scan --path . 2>&1)
+          SCAN_EXIT=$?
+          set -e
           echo "$OUTPUT"
-          
+
           # Extract overall score from output
           # Look for patterns like "Overall Score: XX/100" or "Score: XX"
           SCORE=$(echo "$OUTPUT" | grep -i "overall" | grep -oE "[0-9]+(\.[0-9]+)?/100" | head -1 | cut -d'/' -f1)
           if [ -z "$SCORE" ]; then
             SCORE=$(echo "$OUTPUT" | grep -iE "^score:" | grep -oE "[0-9]+(\.[0-9]+)?" | head -1)
           fi
-          
+
+          echo "Desloppify exit code: $SCAN_EXIT"
           echo "Desloppify score: $SCORE"
           echo "score=$SCORE" >> $GITHUB_OUTPUT
-          
+
           # Write to step summary
           echo "## Desloppify Quality Gate" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Overall Score: $SCORE/100" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
+
           # Check if score exceeds threshold (80)
           if [ -n "$SCORE" ]; then
             SCORE_INT=$(echo "$SCORE" | cut -d'.' -f1)
@@ -190,6 +196,10 @@ jobs:
             else
               echo "Score $SCORE exceeds 80 threshold ✓" >> $GITHUB_STEP_SUMMARY
             fi
+          elif [ "$SCAN_EXIT" -ne 0 ]; then
+            echo "::error::desloppify exited with $SCAN_EXIT before reporting a score"
+            echo "desloppify exited with $SCAN_EXIT before reporting a score" >> $GITHUB_STEP_SUMMARY
+            exit "$SCAN_EXIT"
           else
             echo "::warning::Could not extract desloppify score"
           fi
