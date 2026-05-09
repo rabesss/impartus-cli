@@ -156,7 +156,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install desloppify
-        run: python3 -m pip install --user --upgrade "desloppify[full]==0.9.12"
+        run: python3 -m pip install --user --upgrade "desloppify[full]==0.9.12" "tree-sitter-language-pack==1.6.2"
 
       - name: Run desloppify quality gate
         id: desloppify
