@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.7](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.6...impartus-cli-v0.1.7) (2026-05-16)
+
+
+### Testing
+
+* **downloader:** tolerate rate limiter deadline errors ([77ddb48](https://github.com/rabesss/impartus-cli/commit/77ddb48abd2763cd81e35c16358abee0d464aa1a))
+
 ## [0.1.6](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.5...impartus-cli-v0.1.6) (2026-05-16)
 
 
