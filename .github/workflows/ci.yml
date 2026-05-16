@@ -162,7 +162,7 @@ jobs:
         id: desloppify
         run: |
           # Run desloppify scan and capture output
-          OUTPUT=$(desloppify scan --path . 2>&1)
+          OUTPUT=$(desloppify scan --path . 2>&1 || true)
           echo "$OUTPUT"
           
           # Extract overall score from output
