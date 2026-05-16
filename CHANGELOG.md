@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.1.6](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.5...impartus-cli-v0.1.6) (2026-05-16)
+
+
+### Performance
+
+* **downloader:** optimize bounded fanout downloads ([431d5b5](https://github.com/rabesss/impartus-cli/commit/431d5b520ae128811a44b5da6fe4b7da0077a7f3))
+
+
+### Documentation
+
+* fix rendering issues in README and docs ([4600cb5](https://github.com/rabesss/impartus-cli/commit/4600cb57584968ea9927868b6695a33dd52dd70f))
+* update project documentation to reflect current CI and tooling ([63f515c](https://github.com/rabesss/impartus-cli/commit/63f515c55f9a719e842a32dd438b810d57839ef7))
+
+
+### CI/CD
+
+* **deps:** bump actions/upload-artifact from 4 to 7 ([cd49bac](https://github.com/rabesss/impartus-cli/commit/cd49baceb45e6de1c9d098a40ac125318817472a))
+* **deps:** bump docker/metadata-action from 5 to 6 ([776dec2](https://github.com/rabesss/impartus-cli/commit/776dec22699201d3df02bb64cbacb6a664345c44))
+* **deps:** bump googleapis/release-please-action from 4 to 5 ([85dc281](https://github.com/rabesss/impartus-cli/commit/85dc281cf13efde8e7ae4927d69ec41b755ae0ea))
+* keep desloppify quality gate advisory ([351e935](https://github.com/rabesss/impartus-cli/commit/351e935b893555fd62db51c06bfcc7807e9ad17d))
+
 ## [0.1.5](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.4...impartus-cli-v0.1.5) (2026-05-07)
 
 
