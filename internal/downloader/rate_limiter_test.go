@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,7 +97,7 @@ func TestRateLimiterCancel(t *testing.T) {
 	// Just verify it doesn't hang indefinitely
 	err := rl.WaitForDownload(ctx)
 	// Context deadline exceeded is expected for very slow limiters with small timeout
-	if err != nil && err != context.DeadlineExceeded {
+	if err != nil && err != context.DeadlineExceeded && !strings.Contains(err.Error(), "would exceed context deadline") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
