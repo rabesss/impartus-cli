@@ -31,14 +31,15 @@ type ChunkTask struct {
 	LectureSeqNo int
 }
 
-// DownloadedChunk holds the result of downloading a single chunk, including its encrypted file path.
+// DownloadedChunk holds the result of downloading a single chunk for decryption.
 type DownloadedChunk struct {
-	ChunkID       int
-	View          string
-	EncryptedPath string
-	LectureID     int
-	DownloadTime  time.Duration
-	Err           error
+	ChunkID        int
+	View           string
+	EncryptedPath  string
+	EncryptedBytes []byte
+	LectureID      int
+	DownloadTime   time.Duration
+	Err            error
 }
 
 // DecryptedChunk holds the result of decrypting a downloaded chunk.
@@ -82,11 +83,13 @@ type LecturePipeline struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	firstViewMap  map[int]string
-	secondViewMap map[int]string
-	totalChunks   int
-	failedChunks  []int
-	mu            sync.Mutex
+	firstViewMap    map[int]string
+	secondViewMap   map[int]string
+	totalChunks     atomic.Int64
+	failedChunks    []int
+	firstViewCount  atomic.Int64
+	secondViewCount atomic.Int64
+	failedCount     atomic.Int64
 
 	startTime time.Time
 
@@ -163,15 +166,14 @@ func (p *LecturePipeline) downloadWorker() {
 				return
 			}
 
-			startTime := time.Now()
-			encryptedPath, err := p.downloader.downloadWithRetry(p.ctx, task.URL, task.LectureID, task.ChunkID, task.View, 3, p.config.ProgressTracker)
+			encryptedPath, encryptedBytes, err := p.downloader.downloadBytesWithRetry(p.ctx, task.URL, task.LectureID, task.ChunkID, task.View, 3, p.config.ProgressTracker)
 			result := DownloadedChunk{
-				ChunkID:       task.ChunkID,
-				View:          task.View,
-				EncryptedPath: encryptedPath,
-				LectureID:     task.LectureID,
-				DownloadTime:  time.Since(startTime),
-				Err:           err,
+				ChunkID:        task.ChunkID,
+				View:           task.View,
+				EncryptedPath:  encryptedPath,
+				EncryptedBytes: encryptedBytes,
+				LectureID:      task.LectureID,
+				Err:            err,
 			}
 
 			select {
@@ -203,13 +205,11 @@ func (p *LecturePipeline) decryptWorker() {
 				continue
 			}
 
-			startTime := time.Now()
-			decryptedPath, err := p.downloader.decryptChunk(downloaded.EncryptedPath, p.config.DecryptionKey)
+			decryptedPath, err := p.downloader.decryptChunkBytes(downloaded.EncryptedPath, downloaded.EncryptedBytes, p.config.DecryptionKey)
 			result := DecryptedChunk{
 				ChunkID:       downloaded.ChunkID,
 				View:          downloaded.View,
 				DecryptedPath: decryptedPath,
-				DecryptTime:   time.Since(startTime),
 				Err:           err,
 			}
 
@@ -237,9 +237,7 @@ func (p *LecturePipeline) SubmitDownload(task ChunkTask) error {
 
 // FinishSubmission marks submission as complete and records the total expected chunk count.
 func (p *LecturePipeline) FinishSubmission(totalChunks int) {
-	p.mu.Lock()
-	p.totalChunks = totalChunks
-	p.mu.Unlock()
+	p.totalChunks.Store(int64(totalChunks))
 	p.submissionsClosed.Store(true)
 	close(p.downloadQueue)
 }
@@ -247,15 +245,16 @@ func (p *LecturePipeline) FinishSubmission(totalChunks int) {
 // Collect waits for all workers to finish and returns the ordered pipeline result.
 func (p *LecturePipeline) Collect() PipelineResult {
 	for decrypted := range p.decryptedChunks {
-		p.mu.Lock()
 		if decrypted.Err != nil {
 			p.failedChunks = append(p.failedChunks, decrypted.ChunkID)
+			p.failedCount.Add(1)
 		} else if decrypted.View == "first" {
 			p.firstViewMap[decrypted.ChunkID] = decrypted.DecryptedPath
+			p.firstViewCount.Add(1)
 		} else if decrypted.View == "second" {
 			p.secondViewMap[decrypted.ChunkID] = decrypted.DecryptedPath
+			p.secondViewCount.Add(1)
 		}
-		p.mu.Unlock()
 	}
 
 	return PipelineResult{
@@ -295,14 +294,11 @@ func (p *LecturePipeline) cancelPipeline() {
 
 // GetStats returns a snapshot of the current pipeline progress.
 func (p *LecturePipeline) GetStats() PipelineStats {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	return PipelineStats{
-		TotalChunks:      p.totalChunks,
-		FirstViewChunks:  len(p.firstViewMap),
-		SecondViewChunks: len(p.secondViewMap),
-		FailedChunks:     len(p.failedChunks),
+		TotalChunks:      int(p.totalChunks.Load()),
+		FirstViewChunks:  int(p.firstViewCount.Load()),
+		SecondViewChunks: int(p.secondViewCount.Load()),
+		FailedChunks:     int(p.failedCount.Load()),
 		ElapsedTime:      time.Since(p.startTime),
 		DownloadWorkers:  p.config.DownloadWorkers,
 		DecryptWorkers:   p.config.DecryptWorkers,

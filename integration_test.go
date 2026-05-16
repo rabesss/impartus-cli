@@ -34,8 +34,8 @@ func TestInternalConfigDefaults(t *testing.T) {
 	if cfg.AudioFormat != "mp3" {
 		t.Fatalf("expected audioFormat default mp3, got %q", cfg.AudioFormat)
 	}
-	if cfg.RateLimit != 10 || cfg.APIRateLimit != 2 {
-		t.Fatalf("expected default rate limits 10/2, got %.1f/%.1f", cfg.RateLimit, cfg.APIRateLimit)
+	if cfg.RateLimit != 100 || cfg.APIRateLimit != 2 {
+		t.Fatalf("expected default rate limits 100/2, got %.1f/%.1f", cfg.RateLimit, cfg.APIRateLimit)
 	}
 	if cfg.HTTPTimeout != "10m" {
 		t.Fatalf("expected default httpTimeout 10m, got %q", cfg.HTTPTimeout)

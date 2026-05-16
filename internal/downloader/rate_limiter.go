@@ -12,7 +12,7 @@ import (
 	"github.com/rabesss/impartus-cli/internal/config"
 )
 
-// RateLimiter provides token-bucket rate limiting for download and API requests with optional jitter.
+// RateLimiter provides token-bucket rate limiting for download and API requests with optional API jitter.
 type RateLimiter struct {
 	downloadLimiter *rate.Limiter
 	apiLimiter      *rate.Limiter
@@ -22,7 +22,9 @@ type RateLimiter struct {
 
 // NewRateLimiter creates a new RateLimiter with the specified requests-per-second for downloads and API calls.
 func NewRateLimiter(downloadRPS, apiRPS float64, enableJitter bool) *RateLimiter {
-	downloadBurst := int(downloadRPS * 2)
+	// Keep sustained media rate fixed while allowing larger browser-scale batches;
+	// actual in-flight requests remain bounded by download workers and playlist fanout.
+	downloadBurst := int(downloadRPS * 34)
 	if downloadBurst < 1 {
 		downloadBurst = 1
 	}
@@ -50,13 +52,7 @@ func NewRateLimiterFromConfig(cfg *config.Config) *RateLimiter {
 
 // WaitForDownload blocks until the download rate limiter allows the next request.
 func (rl *RateLimiter) WaitForDownload(ctx context.Context) error {
-	if err := rl.downloadLimiter.Wait(ctx); err != nil {
-		return err
-	}
-	if rl.jitterEnabled {
-		rl.addJitter()
-	}
-	return nil
+	return rl.downloadLimiter.Wait(ctx)
 }
 
 // WaitForAPI blocks until the API rate limiter allows the next request.
@@ -83,9 +79,9 @@ func (rl *RateLimiter) addJitter() {
 }
 
 func secureJitterDuration() (time.Duration, error) {
-	n, err := rand.Int(rand.Reader, big.NewInt(400))
+	n, err := rand.Int(rand.Reader, big.NewInt(2))
 	if err != nil {
 		return 0, err
 	}
-	return time.Duration(n.Int64()-200) * time.Millisecond, nil
+	return time.Duration(n.Int64()) * time.Millisecond, nil
 }

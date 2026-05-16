@@ -23,19 +23,19 @@
   "skipNoAudio": false,                                // Skip lectures with no audio track (true/false)
 
   // === Concurrency Settings ===
-  "numWorkers": 5,                                     // Concurrent workers for downloads (1-50, default: 5)
-  "rateLimit": 10,                                     // Download rate limit (requests/second, 0.1-100)
+  "numWorkers": 5,                                     // Concurrent lecture workers (1-50, default: 5); active playlists are bounded by per-lecture media workers
+  "rateLimit": 100,                                    // Download rate limit (requests/second, 0.1-100; default: 100)
   "apiRateLimit": 2,                                   // API rate limit (requests/second, 0.1-20)
 
   // === Pipeline Settings ===
   // When enablePipeline=true, downloads and decryption run concurrently for faster throughput
   "enablePipeline": false,                             // Enable pipelined download+decrypt mode (true/false)
-  "downloadWorkersPerLecture": 3,                       // Parallel download workers per lecture (1-10, default: 3)
-  "decryptWorkersPerLecture": 2,                        // Parallel decrypt workers per lecture (1-10, default: 2)
+  "downloadWorkersPerLecture": 12,                      // Parallel download workers per lecture (1-12, default: 12)
+  "decryptWorkersPerLecture": 4,                        // Parallel decrypt workers per lecture (1-10, default: 4)
 
   // === HTTP Settings ===
   "httpTimeout": "10m",                                // HTTP timeout for chunk downloads (30s-60m, default: 10m)
-  "enableJitter": true,                                // Add random delays to reduce server load (true/false)
+  "enableJitter": true,                                // Add small random delays to API requests (true/false)
 
   // === Progress Tracking ===
   "progressTracking": {

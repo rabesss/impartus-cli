@@ -60,11 +60,12 @@ var (
 
 // Downloader orchestrates chunk downloading, AES decryption, and FFmpeg-based joining of video lectures.
 type Downloader struct {
-	config      *config.Config
-	client      *client.Client
-	rateLimiter *RateLimiter
-	maxRetries  int
-	ffmpegPath  string
+	config        *config.Config
+	client        *client.Client
+	rateLimiter   *RateLimiter
+	maxRetries    int
+	ffmpegPath    string
+	playlistSlots chan struct{}
 }
 
 // New creates a new Downloader with the given config and API client.
@@ -76,12 +77,14 @@ func New(cfg *config.Config, apiClient *client.Client) *Downloader {
 	if apiClient == nil {
 		apiClient = client.New(nil, nil)
 	}
+	playlistSlots := make(chan struct{}, safeConcurrentPlaylists(cfg))
 	return &Downloader{
-		config:      cfg,
-		client:      apiClient,
-		rateLimiter: NewRateLimiterFromConfig(cfg),
-		maxRetries:  3,
-		ffmpegPath:  "ffmpeg",
+		config:        cfg,
+		client:        apiClient,
+		rateLimiter:   NewRateLimiterFromConfig(cfg),
+		maxRetries:    3,
+		playlistSlots: playlistSlots,
+		ffmpegPath:    "ffmpeg",
 	}
 }
 
@@ -104,10 +107,47 @@ func (d *Downloader) downloadLecturePlaylists(ctx context.Context, playlists []c
 	return results, nil
 }
 
+func safeConcurrentPlaylists(cfg *config.Config) int {
+	const browserObservedMediaBurst = 24
+	if cfg.DownloadWorkersPerLecture <= 0 {
+		return 1
+	}
+	limit := browserObservedMediaBurst / cfg.DownloadWorkersPerLecture
+	if limit < 1 {
+		limit = 1
+	}
+	if cfg.NumWorkers > 0 && cfg.NumWorkers < limit {
+		return cfg.NumWorkers
+	}
+	return limit
+}
+
+func (d *Downloader) acquirePlaylistSlot(ctx context.Context) (func(), error) {
+	if d.playlistSlots == nil {
+		return func() {}, nil
+	}
+	select {
+	case d.playlistSlots <- struct{}{}:
+		return func() { <-d.playlistSlots }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 // DownloadPlaylist downloads all chunks for both views of a playlist and returns the result.
 func (d *Downloader) DownloadPlaylist(ctx context.Context, playlist client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) (DownloadedPlaylist, error) {
+	releasePlaylistSlot, err := d.acquirePlaylistSlot(ctx)
+	if err != nil {
+		return DownloadedPlaylist{}, err
+	}
+	defer releasePlaylistSlot()
+
 	decryptionKey, err := d.fetchDecryptionKey(ctx, playlist.KeyURL)
 	if err != nil {
+		return DownloadedPlaylist{}, err
+	}
+	//nolint:gosec // G301: 0755 is standard for user download directories
+	if err := os.MkdirAll(d.config.TempDirLocation, 0o755); err != nil {
 		return DownloadedPlaylist{}, err
 	}
 
@@ -138,16 +178,24 @@ func (d *Downloader) downloadPlaylistPipelined(ctx context.Context, playlist cli
 	pipeline.Start()
 
 	downloadBar := d.newPipelineBar(p, playlist.SeqNo, totalChunks)
-	if err := d.submitPipelineTasks(pipeline, playlist); err != nil {
-		return downloadedPlaylist, err
-	}
+	submitErrCh := make(chan error, 1)
+	go func() {
+		err := d.submitPipelineTasks(pipeline, playlist)
+		if err != nil {
+			pipeline.cancelPipeline()
+		}
+		pipeline.FinishSubmission(totalChunks)
+		submitErrCh <- err
+	}()
 
-	pipeline.FinishSubmission(totalChunks)
 	monitorDone := d.monitorPipelineProgress(downloadBar, pipeline, totalChunks)
-
 	result := pipeline.Collect()
+	submitErr := <-submitErrCh
 
 	d.stopPipelineMonitor(monitorDone, downloadBar, totalChunks)
+	if submitErr != nil {
+		return downloadedPlaylist, submitErr
+	}
 
 	if len(result.FailedChunks) > 0 {
 		return downloadedPlaylist, fmt.Errorf("%d chunks failed to download: %v", len(result.FailedChunks), result.FailedChunks)
@@ -282,6 +330,15 @@ func getDecryptionKey(encryptionKey []byte) []byte {
 }
 
 func (d *Downloader) decryptChunk(filePath string, key []byte) (string, error) {
+	//nolint:gosec // G304: file paths are constructed from validated config and internal data
+	infile, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read encrypted file %s: %w", filePath, err)
+	}
+	return d.decryptChunkBytes(filePath, infile, key)
+}
+
+func (d *Downloader) decryptChunkBytes(filePath string, infile []byte, key []byte) (string, error) {
 	if len(filePath) < 6 {
 		return "", fmt.Errorf("invalid file path: %s", filePath)
 	}
@@ -293,12 +350,6 @@ func (d *Downloader) decryptChunk(filePath string, key []byte) (string, error) {
 	}
 
 	outPath := strings.TrimSuffix(filePath, ".temp")
-	//nolint:gosec // G304: file paths are constructed from validated config and internal data
-	infile, err := os.ReadFile(filePath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read encrypted file %s: %w", filePath, err)
-	}
-
 	length := 16 - (len(infile) % 16)
 	infile = append(infile, bytes.Repeat([]byte{byte(length)}, length)...)
 	iv := bytes.Repeat([]byte{0}, 16)
@@ -341,12 +392,6 @@ func (d *Downloader) downloadURL(ctx context.Context, url string, id int, chunk 
 		return "", 0, fmt.Errorf("chunk request failed with status %d: %s", resp.StatusCode, message)
 	}
 
-	//nolint:gosec // G301: 0755 is standard for user download directories
-	err = os.MkdirAll(d.config.TempDirLocation, 0o755)
-	if err != nil {
-		return "", 0, err
-	}
-
 	outFilepath := filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_%s_%04d.ts.temp", id, view, chunk))
 	//nolint:gosec // G304: file paths are constructed from validated config and internal data
 	outFile, err := os.Create(outFilepath)
@@ -359,11 +404,61 @@ func (d *Downloader) downloadURL(ctx context.Context, url string, id int, chunk 
 	if err != nil {
 		return "", 0, fmt.Errorf("could not write chunk %d: %w", chunk, err)
 	}
-	if err := outFile.Sync(); err != nil {
-		return "", 0, fmt.Errorf("could not sync chunk %d: %w", chunk, err)
-	}
 
 	return outFilepath, bytesWritten, nil
+}
+
+func (d *Downloader) downloadURLBytes(ctx context.Context, url string, id int, chunk int, view string) (string, []byte, int64, error) {
+	if err := d.rateLimiter.WaitForDownload(ctx); err != nil {
+		return "", nil, 0, err
+	}
+
+	resp, err := d.client.GetAuthorizedWithToken(ctx, url, d.config.Token)
+	if err != nil {
+		return "", nil, 0, err
+	}
+	defer func() { closeErr := resp.Body.Close(); _ = closeErr }()
+	if resp.StatusCode != http.StatusOK {
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if readErr != nil {
+			return "", nil, 0, fmt.Errorf("chunk request failed with status %d and unreadable error body: %w", resp.StatusCode, readErr)
+		}
+		message := strings.TrimSpace(string(body))
+		if message == "" {
+			return "", nil, 0, fmt.Errorf("chunk request failed with status %d", resp.StatusCode)
+		}
+		return "", nil, 0, fmt.Errorf("chunk request failed with status %d: %s", resp.StatusCode, message)
+	}
+
+	outFilepath := filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_%s_%04d.ts.temp", id, view, chunk))
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", nil, 0, fmt.Errorf("could not read chunk %d: %w", chunk, err)
+	}
+	return outFilepath, data, int64(len(data)), nil
+}
+
+func (d *Downloader) downloadBytesWithRetry(ctx context.Context, url string, id int, chunk int, view string, maxRetries int, tracker *ProgressTracker) (string, []byte, error) {
+	var lastErr error
+	baseDelay := 1 * time.Second
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		filePath, data, bytesDownloaded, err := d.downloadURLBytes(ctx, url, id, chunk, view)
+		if err == nil {
+			if tracker != nil {
+				ChunkCompleted(tracker, bytesDownloaded)
+			}
+			return filePath, data, nil
+		}
+
+		lastErr = err
+		if attempt < maxRetries-1 {
+			delay := retryDelay(baseDelay, attempt)
+			if waitErr := waitForRetry(ctx, delay); waitErr != nil {
+				return "", nil, waitErr
+			}
+		}
+	}
+	return "", nil, fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
 }
 
 func (d *Downloader) downloadWithRetry(ctx context.Context, url string, id int, chunk int, view string, maxRetries int, tracker *ProgressTracker) (string, error) {

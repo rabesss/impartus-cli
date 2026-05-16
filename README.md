@@ -123,14 +123,14 @@ cp sample.config.json config.json
 | `slides` | bool | No | `false` | Download slides alongside video |
 | `audioOnly` | bool | No | `false` | Download audio only |
 | `audioFormat` | string | No | `"mp3"` | Audio format: `mp3`, `m4a`, `aac`, `opus` |
-| `numWorkers` | int | No | `5` | Concurrent workers (1-50) |
-| `rateLimit` | float | No | `10` | Download rate limit (req/sec) |
+| `numWorkers` | int | No | `5` | Concurrent lecture workers (1-50); active playlist downloads are bounded by per-lecture media workers to preserve the browser-observed burst envelope |
+| `rateLimit` | float | No | `100` | Download rate limit (req/sec) |
 | `apiRateLimit` | float | No | `2` | API rate limit (req/sec) |
 | `enablePipeline` | bool | No | `false` | Enable concurrent download+decrypt |
-| `downloadWorkersPerLecture` | int | No | `3` | Download workers per lecture (1-10) |
-| `decryptWorkersPerLecture` | int | No | `2` | Decrypt workers per lecture (1-10) |
+| `downloadWorkersPerLecture` | int | No | `12` | Download workers per lecture (1-12) |
+| `decryptWorkersPerLecture` | int | No | `4` | Decrypt workers per lecture (1-10) |
 | `httpTimeout` | string | No | `"10m"` | HTTP timeout for chunks (30s-60m) |
-| `enableJitter` | bool | No | `true` | Add random delays to reduce load |
+| `enableJitter` | bool | No | `true` | Add small random delays to API requests |
 | `skipNoAudio` | bool | No | `false` | Skip lectures with no audio track |
 | `progressTracking` | object | No | see below | Progress bar tracking configuration |
 
