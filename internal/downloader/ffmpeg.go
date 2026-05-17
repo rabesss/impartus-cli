@@ -123,7 +123,7 @@ func (d *Downloader) validateOutputPath(outfile string) error {
 	if err != nil {
 		return fmt.Errorf("cannot resolve download location: %w", err)
 	}
-	if !strings.HasPrefix(absOut, absDownload) {
+	if absOut != absDownload && !strings.HasPrefix(absOut, absDownload+string(filepath.Separator)) {
 		return fmt.Errorf("output path %q escapes download location %q", outfile, d.config.DownloadLocation)
 	}
 	return nil

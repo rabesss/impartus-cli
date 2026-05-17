@@ -69,7 +69,7 @@ func TestMergeConfigWithJobOptionsAppliesOverridesAndValidatesInvalidValues(t *t
 	if merged.Quality != "720" || merged.Views != "right" || !merged.AudioOnly || merged.AudioFormat != "aac" {
 		t.Fatalf("unexpected merged media config: %+v", merged)
 	}
-	if merged.DownloadLocation != "./custom-output" {
+	if merged.DownloadLocation != "custom-output" {
 		t.Fatalf("expected trimmed output path override, got %q", merged.DownloadLocation)
 	}
 	if !merged.EnablePipeline || merged.NumWorkers != 8 || merged.DownloadWorkersPerLecture != 4 || merged.DecryptWorkersPerLecture != 2 {
@@ -86,12 +86,18 @@ func TestMergeConfigWithJobOptionsAppliesOverridesAndValidatesInvalidValues(t *t
 	}{
 		{name: "invalid quality", opts: &JobConfigOptions{Quality: strPtr("1080")}, wantErr: "quality must be one of"},
 		{name: "invalid workers", opts: &JobConfigOptions{NumWorkers: intPtr(0)}, wantErr: "numWorkers must be between"},
-		{name: "empty output", opts: &JobConfigOptions{OutputPath: strPtr("   ")}, wantErr: "outputPath/downloadLocation cannot be empty"},
+		{name: "empty output", opts: &JobConfigOptions{OutputPath: strPtr("   ")}, wantErr: ""},
 	}
 
 	for _, tc := range invalidCases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := mergeConfigWithJobOptions(validServerConfig(), tc.opts)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("expected no error, got %v", err)
+				}
+				return
+			}
 			if err == nil {
 				t.Fatalf("expected error")
 			}

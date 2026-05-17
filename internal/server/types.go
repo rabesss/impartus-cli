@@ -309,16 +309,17 @@ type createJobConflictResponse struct {
 
 // APIServer is the main REST API and WebSocket server for managing download jobs.
 type APIServer struct {
-	cfg              *config.Config
-	jobStore         *JobStore
-	wsHub            *WSHub
-	tokenStore       *TokenStore
-	stopTokenCleanup func()
-	upgrader         websocket.Upgrader
-	router           *mux.Router
-	port             string
-	upstreamCache    *upstreamCacheEntry
-	upstreamCacheMu  sync.RWMutex
-	upstreamLogin    UpstreamLoginFunc
-	loginLimiter     *loginRateLimiter
+	cfg                *config.Config
+	jobStore           *JobStore
+	wsHub              *WSHub
+	tokenStore         *TokenStore
+	stopTokenCleanup   func()
+	stopLoginLimiter   func()
+	upgrader           websocket.Upgrader
+	router             *mux.Router
+	port               string
+	upstreamCache      *upstreamCacheEntry
+	upstreamCacheMu    sync.RWMutex
+	upstreamLogin      UpstreamLoginFunc
+	loginLimiter       *loginRateLimiter
 }

@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/rabesss/impartus-cli/internal/client"
@@ -257,14 +259,34 @@ func (s *APIServer) failJob(jobID, errMsg string) {
 	broadcastEvent(s.wsHub, evt)
 }
 
+var httpStatusRe = regexp.MustCompile(`status (\d{3})`)
+
 // sanitizeUpstreamErr returns a generic sanitized message for upstream errors
 // that may contain sensitive data (e.g., auth tokens in upstream API responses).
 func sanitizeUpstreamErr(err error) string {
 	if err == nil {
 		return ""
 	}
+	// Context cancellation/timeout
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "job was cancelled or timed out"
+	}
+	// DNS errors
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return "upstream connection failed"
+	}
+	// Network timeout errors
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "upstream connection failed"
+	}
+	// HTTP status code errors — extract status code from formatted error messages
 	errStr := err.Error()
-	// Match known upstream auth/fetch error patterns
+	if match := httpStatusRe.FindStringSubmatch(errStr); len(match) > 1 {
+		return fmt.Sprintf("upstream API returned HTTP %s", match[1])
+	}
+	// Auth errors
 	if containsAny(errStr, []string{"login", "authenticate", "token", "unauthorized", "forbidden", "auth"}) {
 		return "upstream authentication failed"
 	}
@@ -398,16 +420,20 @@ func applyJobConfigOverrides(cfg *config.Config, opts *JobConfigOptions) {
 		cfg.AudioFormat = *opts.AudioFormat
 	}
 	if opts.OutputPath != nil {
-		sanitized := filepath.Clean(strings.TrimSpace(*opts.OutputPath))
-		// Reject paths that escape the intended directory via ".."
-		if strings.Contains(sanitized, "..") {
-			// Check if ".." actually escapes (e.g., valid filename like "foo..bar" is OK)
-			cleaned := filepath.Clean(sanitized)
-			if strings.HasPrefix(cleaned, "..") || strings.Contains(cleaned, string(filepath.Separator)+"..") {
-				return // silently ignore malicious output path override
+		trimmed := strings.TrimSpace(*opts.OutputPath)
+		if trimmed == "" {
+			// skip empty output path override — keep original config value
+		} else {
+			sanitized := filepath.Clean(trimmed)
+			// Reject absolute paths — API users should only provide relative paths
+			if filepath.IsAbs(sanitized) {
+				// skip absolute path override
+			} else if strings.HasPrefix(sanitized, "..") || strings.Contains(sanitized, string(filepath.Separator)+"..") {
+				// skip path traversal override
+			} else {
+				cfg.DownloadLocation = sanitized
 			}
 		}
-		cfg.DownloadLocation = sanitized
 	}
 	if opts.EnablePipeline != nil {
 		cfg.EnablePipeline = *opts.EnablePipeline

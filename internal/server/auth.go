@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -18,11 +19,12 @@ type TokenInfo struct {
 	CreatedAt time.Time
 }
 
-// rateLimiterEntry tracks login attempts for a given IP.
+// rateLimiterEntry tracks login attempts for a given IP using a sliding window.
 type rateLimiterEntry struct {
-	lastAttempt time.Time
-	attempts    int
+	timestamps []time.Time
 }
+
+const maxRateLimiterEntries = 10000
 
 // loginRateLimiter provides per-IP rate limiting for login attempts.
 type loginRateLimiter struct {
@@ -47,21 +49,98 @@ func (l *loginRateLimiter) allow(ip string) bool {
 	now := time.Now()
 	entry, exists := l.entries[ip]
 	if !exists {
-		l.entries[ip] = &rateLimiterEntry{lastAttempt: now, attempts: 1}
+		// Evict oldest entries if at capacity
+		if len(l.entries) >= maxRateLimiterEntries {
+			l.evictOldestUnsafe()
+		}
+		l.entries[ip] = &rateLimiterEntry{timestamps: []time.Time{now}}
 		return true
 	}
 
-	// Reset if the window has elapsed
-	if now.Sub(entry.lastAttempt) > l.window {
-		entry.attempts = 1
-		entry.lastAttempt = now
-		return true
+	// Prune timestamps outside the window
+	cutoff := now.Add(-l.window)
+	pruned := entry.timestamps[:0]
+	for _, t := range entry.timestamps {
+		if t.After(cutoff) {
+			pruned = append(pruned, t)
+		}
+	}
+	entry.timestamps = pruned
+
+	// If still at or over limit, deny
+	if len(entry.timestamps) >= l.limit {
+		return false
 	}
 
-	entry.attempts++
-	entry.lastAttempt = now
+	entry.timestamps = append(entry.timestamps, now)
+	return true
+}
 
-	return entry.attempts <= l.limit
+// evictOldestUnsafe removes the entry with the oldest most-recent timestamp.
+// Must be called with l.mu held.
+func (l *loginRateLimiter) evictOldestUnsafe() {
+	var oldestIP string
+	var oldestTime time.Time
+	first := true
+	for ip, entry := range l.entries {
+		if len(entry.timestamps) == 0 {
+			delete(l.entries, ip)
+			continue
+		}
+		lastTS := entry.timestamps[len(entry.timestamps)-1]
+		if first || lastTS.Before(oldestTime) {
+			oldestIP = ip
+			oldestTime = lastTS
+			first = false
+		}
+	}
+	if !first {
+		delete(l.entries, oldestIP)
+	}
+}
+
+// cleanup removes entries whose most recent timestamp is older than 2x the window.
+// Must be called with l.mu held.
+func (l *loginRateLimiter) cleanup() {
+	cutoff := time.Now().Add(-2 * l.window)
+	for ip, entry := range l.entries {
+		if len(entry.timestamps) == 0 {
+			delete(l.entries, ip)
+			continue
+		}
+		lastTS := entry.timestamps[len(entry.timestamps)-1]
+		if lastTS.Before(cutoff) {
+			delete(l.entries, ip)
+		}
+	}
+}
+
+// startCleanup starts a background goroutine that periodically removes stale rate limiter entries.
+// It returns a stop function that should be called on shutdown.
+func (l *loginRateLimiter) startCleanup() func() {
+	ticker := time.NewTicker(l.window)
+	stop := make(chan struct{})
+	var stopOnce sync.Once
+
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				l.mu.Lock()
+				l.cleanup()
+				l.mu.Unlock()
+			case <-stop:
+				return
+			}
+		}
+	}()
+
+	return func() {
+		stopOnce.Do(func() {
+			close(stop)
+		})
+	}
 }
 
 func (l *loginRateLimiter) reset(ip string) {
@@ -248,18 +327,11 @@ func (s *APIServer) loginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract client IP for rate limiting
-	clientIP := r.RemoteAddr
-	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		if idx := strings.IndexByte(forwarded, ','); idx > 0 {
-			clientIP = strings.TrimSpace(forwarded[:idx])
-		} else {
-			clientIP = strings.TrimSpace(forwarded)
-		}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
 	}
-	// Remove port from IP
-	if idx := strings.LastIndexByte(clientIP, ':'); idx > 0 {
-		clientIP = clientIP[:idx]
-	}
+	clientIP := host
 
 	if !s.loginLimiter.allow(clientIP) {
 		respondWithError(w, http.StatusTooManyRequests, "RATE_LIMITED", "Too many login attempts. Please try again later.", "login", &retryHint{Retryable: true, RetryAfter: 60})

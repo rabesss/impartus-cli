@@ -52,6 +52,8 @@ func newAPIServerFull(port string, cfg *config.Config, loginFn UpstreamLoginFunc
 		loginFn = defaultUpstreamLogin
 	}
 
+	limiter := newLoginRateLimiter(5, 1*time.Minute)
+
 	s := &APIServer{
 		cfg:        baseCfg,
 		wsHub:      NewWSHub(),
@@ -59,11 +61,14 @@ func newAPIServerFull(port string, cfg *config.Config, loginFn UpstreamLoginFunc
 		upgrader: websocket.Upgrader{CheckOrigin: func(r *http.Request) bool {
 			return true
 		}},
-		router:       mux.NewRouter(),
-		port:         port,
+		router:        mux.NewRouter(),
+		port:          port,
 		upstreamLogin: loginFn,
-		loginLimiter: newLoginRateLimiter(5, 1*time.Minute),
+		loginLimiter:  limiter,
 	}
+
+	// Start rate limiter cleanup
+	s.stopLoginLimiter = limiter.startCleanup()
 
 	// Initialize job store (with persistence if enabled)
 	if persistenceEnabled {
@@ -83,6 +88,9 @@ func (s *APIServer) Start(ctxs ...context.Context) error {
 		s.stopTokenCleanup = StartTokenCleanup(s.tokenStore)
 	}
 	defer s.stopTokenCleanup()
+	if s.stopLoginLimiter != nil {
+		defer s.stopLoginLimiter()
+	}
 
 	//nolint:gosec // G302: 0666 is standard for log files, umask applies
 	logFile, err := os.OpenFile("api.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o666)

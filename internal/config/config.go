@@ -55,6 +55,7 @@ func (c *Config) ApplyDefaults() {
 	c.applyWorkerDefaults()
 	c.applyRateLimitDefaults()
 	c.applyProgressDefaults()
+	c.applyListenDefaults()
 }
 
 func (c *Config) applyPathDefaults() {
@@ -108,6 +109,9 @@ func (c *Config) applyProgressDefaults() {
 	} else {
 		c.Views = NormalizeViews(c.Views)
 	}
+}
+
+func (c *Config) applyListenDefaults() {
 	if c.ListenAddr == "" {
 		c.ListenAddr = "127.0.0.1"
 	}

@@ -12,6 +12,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,13 +64,10 @@ func redactURL(rawURL string) string {
 	if rawURL == "" {
 		return rawURL
 	}
-	// Find the query string start
-	idx := strings.IndexByte(rawURL, '?')
-	if idx < 0 {
+	u, err := url.Parse(rawURL)
+	if err != nil {
 		return rawURL
 	}
-	base := rawURL[:idx]
-	query := rawURL[idx+1:]
 	sensitiveParams := map[string]bool{
 		"access_token": true,
 		"token":        true,
@@ -80,19 +78,17 @@ func redactURL(rawURL string) string {
 		"api_key":      true,
 		"auth":         true,
 	}
-	parts := strings.Split(query, "&")
-	redacted := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if eqIdx := strings.IndexByte(part, '='); eqIdx > 0 {
-			key := part[:eqIdx]
-			if sensitiveParams[key] {
-				redacted = append(redacted, key+"=REDACTED")
-				continue
+	params := u.Query()
+	for key := range params {
+		for s := range sensitiveParams {
+			if strings.EqualFold(key, s) {
+				params.Set(key, "REDACTED")
+				break
 			}
 		}
-		redacted = append(redacted, part)
 	}
-	return base + "?" + strings.Join(redacted, "&")
+	u.RawQuery = params.Encode()
+	return u.String()
 }
 
 // Downloader orchestrates chunk downloading, AES decryption, and FFmpeg-based joining of video lectures.
