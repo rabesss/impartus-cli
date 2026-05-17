@@ -667,7 +667,10 @@ func TestJoinIfPresent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := d.joinIfPresent(tt.path, tt.enabled, tt.title, nil)
+			mockJoin := func(_ context.Context, path, title string) (string, error) {
+				return path, nil
+			}
+			got, err := d.joinIfPresent(context.Background(), tt.path, tt.enabled, tt.title, mockJoin)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("joinIfPresent() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -816,7 +819,7 @@ func TestJoinLectureOutput(t *testing.T) {
 	}
 
 	// JoinLectureOutput without audio-only mode
-	result, err := d.JoinLectureOutput(M3U8File{})
+	result, err := d.JoinLectureOutput(context.Background(), M3U8File{})
 	if err != nil {
 		t.Errorf("JoinLectureOutput() error = %v", err)
 	}
@@ -839,7 +842,7 @@ func TestJoinLectureOutputAudioOnly(t *testing.T) {
 	}
 
 	// JoinLectureOutput with audio-only mode
-	result, err := d.JoinLectureOutput(M3U8File{})
+	result, err := d.JoinLectureOutput(context.Background(), M3U8File{})
 	if err != nil {
 		t.Errorf("JoinLectureOutput() error = %v", err)
 	}
@@ -1154,7 +1157,7 @@ func TestJoinAudioOutputKeepsPerViewOutputsForBothViews(t *testing.T) {
 		ffmpegPath: ffmpegPath,
 	}
 
-	result, err := d.joinAudioOutput(M3U8File{
+	result, err := d.joinAudioOutput(context.Background(), M3U8File{
 		FirstViewFile:  leftM3U8,
 		SecondViewFile: rightM3U8,
 		Playlist: client.ParsedPlaylist{

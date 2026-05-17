@@ -295,7 +295,7 @@ func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 
 	if !created {
 		respondWithEnvelope(w, http.StatusConflict, "createJob", createJobConflictResponse{
-			Job:       job,
+			Job:       job.copy(),
 			Duplicate: true,
 		})
 		return
@@ -304,7 +304,7 @@ func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 	// Respond before starting the background goroutine to avoid a data race:
 	// respondWithEnvelope marshals the job to JSON, which reads job fields
 	// concurrently with executeJob writing to the same job via UpdateJob.
-	respondWithEnvelope(w, http.StatusCreated, "createJob", job)
+	respondWithEnvelope(w, http.StatusCreated, "createJob", job.copy())
 
 	go s.executeJob(job.ID)
 }

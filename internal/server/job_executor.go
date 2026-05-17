@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/rabesss/impartus-cli/internal/client"
@@ -114,7 +116,7 @@ func (s *APIServer) prepareJobRuntime(ctx context.Context, jobCtx context.Contex
 		if s.handleCancelIfNeeded(jobID, jobCtx.Err()) {
 			return nil, nil, false
 		}
-		s.failJob(jobID, loginErr.Error())
+		s.failJob(jobID, sanitizeUpstreamErr(loginErr))
 		return nil, nil, false
 	}
 	// Use the token from cached config to ensure consistency
@@ -123,11 +125,13 @@ func (s *APIServer) prepareJobRuntime(ctx context.Context, jobCtx context.Contex
 }
 
 func ensureJobDirectories(cfg *config.Config) error {
-	//nolint:gosec // G301: 0755 is standard for user download directories
+	// G301: 0755 is standard for user download directories
+	// #nosec G301
 	if err := os.MkdirAll(cfg.DownloadLocation, 0o755); err != nil {
 		return err
 	}
-	//nolint:gosec // G301: 0755 is standard for temp directories
+	// G301: 0755 is standard for temp directories
+	// #nosec G301
 	return os.MkdirAll(cfg.TempDirLocation, 0o755)
 }
 
@@ -257,6 +261,49 @@ func (s *APIServer) failJob(jobID, errMsg string) {
 	broadcastEvent(s.wsHub, evt)
 }
 
+var httpStatusRe = regexp.MustCompile(`status (\d{3})`)
+
+// sanitizeUpstreamErr returns a generic sanitized message for upstream errors
+// that may contain sensitive data (e.g., auth tokens in upstream API responses).
+func sanitizeUpstreamErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	// Context cancellation/timeout
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "job was canceled or timed out"
+	}
+	// DNS errors
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return "upstream connection failed"
+	}
+	// Network timeout errors
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "upstream connection failed"
+	}
+	// HTTP status code errors — extract status code from formatted error messages
+	errStr := err.Error()
+	if match := httpStatusRe.FindStringSubmatch(errStr); len(match) > 1 {
+		return fmt.Sprintf("upstream API returned HTTP %s", match[1])
+	}
+	// Auth errors
+	if containsAny(errStr, []string{"login", "authenticate", "token", "unauthorized", "forbidden", "auth"}) {
+		return "upstream authentication failed"
+	}
+	return "upstream API error"
+}
+
+func containsAny(s string, substrs []string) bool {
+	for _, sub := range substrs {
+		if strings.Contains(strings.ToLower(s), sub) {
+			return true
+		}
+	}
+	return false
+}
+
 func mergeConfigWithJobOptions(globalCfg *config.Config, opts *JobConfigOptions) (*config.Config, error) {
 	cfg := cloneConfig(globalCfg)
 	if cfg == nil {
@@ -322,7 +369,8 @@ func downloadLectureSlide(ctx context.Context, c *client.Client, cfg *config.Con
 		return errors.New("baseUrl is required")
 	}
 
-	//nolint:gosec // G301: 0755 is standard for user download directories
+	// G301: 0755 is standard for user download directories
+	// #nosec G301
 	if err := os.MkdirAll(cfg.DownloadLocation, 0o755); err != nil {
 		return err
 	}
@@ -345,7 +393,8 @@ func downloadLectureSlide(ctx context.Context, c *client.Client, cfg *config.Con
 	}
 
 	filePath := filepath.Join(cfg.DownloadLocation, fmt.Sprintf("LEC %03d %s.pdf", lecture.SeqNo, lecture.Topic))
-	//nolint:gosec // G304: file paths are constructed from validated config and internal data
+	// G304: file paths are constructed from validated config and internal data
+	// #nosec G304
 	f, err := os.Create(filePath)
 	if err != nil {
 		return err
@@ -356,6 +405,24 @@ func downloadLectureSlide(ctx context.Context, c *client.Client, cfg *config.Con
 
 	_, err = io.Copy(f, resp.Body)
 	return err
+}
+
+func applyOutputPathOverride(cfg *config.Config, outputPath *string) {
+	if outputPath == nil {
+		return
+	}
+	trimmed := strings.TrimSpace(*outputPath)
+	if trimmed == "" {
+		return
+	}
+	sanitized := filepath.Clean(trimmed)
+	if filepath.IsAbs(sanitized) {
+		return
+	}
+	if strings.HasPrefix(sanitized, "..") || strings.Contains(sanitized, string(filepath.Separator)+"..") {
+		return
+	}
+	cfg.DownloadLocation = sanitized
 }
 
 func applyJobConfigOverrides(cfg *config.Config, opts *JobConfigOptions) {
@@ -374,9 +441,7 @@ func applyJobConfigOverrides(cfg *config.Config, opts *JobConfigOptions) {
 	if opts.AudioFormat != nil {
 		cfg.AudioFormat = *opts.AudioFormat
 	}
-	if opts.OutputPath != nil {
-		cfg.DownloadLocation = strings.TrimSpace(*opts.OutputPath)
-	}
+	applyOutputPathOverride(cfg, opts.OutputPath)
 	if opts.EnablePipeline != nil {
 		cfg.EnablePipeline = *opts.EnablePipeline
 	}

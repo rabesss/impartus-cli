@@ -171,7 +171,8 @@ func downloadLectures(ctx context.Context, cfg *config.Config, apiClient *client
 		return downloadResult{}, errors.New("no lectures selected")
 	}
 
-	//nolint:gosec // G301: 0755 is standard for user download directories
+	// G301: 0755 is standard for user download directories
+	// #nosec G301
 	if err := os.MkdirAll(cfg.DownloadLocation, 0o755); err != nil {
 		return downloadResult{}, err
 	}
@@ -203,7 +204,7 @@ func downloadLectures(ctx context.Context, cfg *config.Config, apiClient *client
 			return downloadResult{}, err
 		}
 
-		joinResult, err := d.JoinLectureOutput(metadataFile)
+		joinResult, err := d.JoinLectureOutput(ctx, metadataFile)
 		if err != nil {
 			return downloadResult{}, err
 		}

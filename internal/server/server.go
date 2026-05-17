@@ -52,6 +52,8 @@ func newAPIServerFull(port string, cfg *config.Config, loginFn UpstreamLoginFunc
 		loginFn = defaultUpstreamLogin
 	}
 
+	limiter := newLoginRateLimiter(5, 1*time.Minute)
+
 	s := &APIServer{
 		cfg:        baseCfg,
 		wsHub:      NewWSHub(),
@@ -62,7 +64,11 @@ func newAPIServerFull(port string, cfg *config.Config, loginFn UpstreamLoginFunc
 		router:        mux.NewRouter(),
 		port:          port,
 		upstreamLogin: loginFn,
+		loginLimiter:  limiter,
 	}
+
+	// Start rate limiter cleanup
+	s.stopLoginLimiter = limiter.startCleanup()
 
 	// Initialize job store (with persistence if enabled)
 	if persistenceEnabled {
@@ -82,8 +88,12 @@ func (s *APIServer) Start(ctxs ...context.Context) error {
 		s.stopTokenCleanup = StartTokenCleanup(s.tokenStore)
 	}
 	defer s.stopTokenCleanup()
+	if s.stopLoginLimiter != nil {
+		defer s.stopLoginLimiter()
+	}
 
-	//nolint:gosec // G302: 0666 is standard for log files, umask applies
+	// G302: 0666 is standard for log files, umask applies
+	// #nosec G302
 	logFile, err := os.OpenFile("api.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o666)
 	if err == nil {
 		defer func() {
@@ -92,7 +102,11 @@ func (s *APIServer) Start(ctxs ...context.Context) error {
 		log.SetOutput(logFile)
 	}
 
-	addr := ":" + s.port
+	addr := "127.0.0.1:" + s.port
+	// Allow override via config field or env var (IMPARTUS_LISTEN_ADDR)
+	if s.cfg != nil && s.cfg.ListenAddr != "" {
+		addr = s.cfg.ListenAddr + ":" + s.port
+	}
 	server := &http.Server{
 		Addr:         addr,
 		Handler:      s.router,

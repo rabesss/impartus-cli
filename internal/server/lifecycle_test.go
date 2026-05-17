@@ -863,8 +863,8 @@ func TestApplyJobConfigOverrides(t *testing.T) {
 	if cfg.AudioFormat != "aac" {
 		t.Errorf("expected audioFormat 'aac', got %s", cfg.AudioFormat)
 	}
-	if cfg.DownloadLocation != "./custom-output" {
-		t.Errorf("expected downloadLocation './custom-output', got %s", cfg.DownloadLocation)
+	if cfg.DownloadLocation != "custom-output" {
+		t.Errorf("expected downloadLocation 'custom-output', got %s", cfg.DownloadLocation)
 	}
 	if !cfg.EnablePipeline {
 		t.Error("expected enablePipeline=true")
@@ -1136,17 +1136,24 @@ func TestLecturesHandlerValidation(t *testing.T) {
 }
 
 func TestMergeConfigWithJobOptionsEmptyOutputPath(t *testing.T) {
-	cfg := validServerConfig()
+	// Empty output path override should be skipped, leaving the default download location
+	cfg := &config.Config{
+		Username: "user",
+		Password: "pass",
+		BaseURL:  "https://example.com",
+		Quality:  "450",
+		// DownloadLocation intentionally empty — will get default via ApplyDefaults
+	}
 	opts := &JobConfigOptions{
 		OutputPath: strPtr(""),
 	}
 
-	_, err := mergeConfigWithJobOptions(cfg, opts)
-	if err == nil {
-		t.Error("expected error for empty output path")
+	result, err := mergeConfigWithJobOptions(cfg, opts)
+	if err != nil {
+		t.Fatalf("expected no error for empty output path override, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "empty") {
-		t.Errorf("expected 'empty' in error, got %v", err)
+	if result.DownloadLocation == "" {
+		t.Error("expected downloadLocation to be set to default")
 	}
 }
 

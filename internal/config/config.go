@@ -46,6 +46,7 @@ type Config struct {
 	DecryptWorkersPerLecture  int            `json:"decryptWorkersPerLecture"`
 	ProgressTracking          ProgressConfig `json:"progressTracking"`
 	HTTPTimeout               string         `json:"httpTimeout"`
+	ListenAddr                string         `json:"listenAddr,omitempty"`
 }
 
 // ApplyDefaults fills in zero-valued fields with sensible defaults.
@@ -54,6 +55,7 @@ func (c *Config) ApplyDefaults() {
 	c.applyWorkerDefaults()
 	c.applyRateLimitDefaults()
 	c.applyProgressDefaults()
+	c.applyListenDefaults()
 }
 
 func (c *Config) applyPathDefaults() {
@@ -106,6 +108,12 @@ func (c *Config) applyProgressDefaults() {
 		c.Views = "both"
 	} else {
 		c.Views = NormalizeViews(c.Views)
+	}
+}
+
+func (c *Config) applyListenDefaults() {
+	if c.ListenAddr == "" {
+		c.ListenAddr = "127.0.0.1"
 	}
 }
 
@@ -221,7 +229,8 @@ func Parse(path string) (*Config, error) {
 		path = ConfigLocation
 	}
 
-	//nolint:gosec // G304: config path is user-provided by design
+	// G304: config path is user-provided by design
+	// #nosec G304
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("could not open config file: %w", err)
@@ -281,6 +290,7 @@ func applyEnvOverrides(cfg *Config) {
 	applyIntEnv("IMPARTUS_NUM_WORKERS", &cfg.NumWorkers)
 	applyFloatEnv("IMPARTUS_RATE_LIMIT", &cfg.RateLimit)
 	applyFloatEnv("IMPARTUS_API_RATE_LIMIT", &cfg.APIRateLimit)
+	applyStringEnv("IMPARTUS_LISTEN_ADDR", &cfg.ListenAddr)
 
 	applyCanonicalFields(cfg)
 }

@@ -29,7 +29,8 @@ func main() {
 }
 
 func processFile(filepath string) error {
-	//nolint:gosec // G304: script operates on known local files
+	// G304: script operates on known local files
+	// #nosec
 	content, err := os.ReadFile(filepath)
 	if err != nil {
 		return fmt.Errorf("reading file: %w", err)
@@ -63,7 +64,8 @@ func processFile(filepath string) error {
 	newContent.WriteString("\n")
 	newContent.Write(content[endIdx+len(endMarker):])
 
-	//nolint:gosec // G304: script operates on known local paths
+	// G304: script operates on known local paths
+	// #nosec
 	return os.WriteFile(filepath, newContent.Bytes(), 0600)
 }
 
