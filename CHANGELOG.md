@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.1.8](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.7...impartus-cli-v0.1.8) (2026-05-17)
+
+
+### Bug Fixes
+
+* **security:** remediate all 25 deepsec security audit findings ([#34](https://github.com/rabesss/impartus-cli/issues/34)) ([49717ef](https://github.com/rabesss/impartus-cli/commit/49717ef5a7b0950c7f3083ea637057d9c3ff0e94))
+
+
+### Build System
+
+* **deps:** bump debian from `f065376` to `67b30a6` ([7268bc8](https://github.com/rabesss/impartus-cli/commit/7268bc8aa2b7b5f29a5260a7fcae5ce5fce1595d))
+* **deps:** bump golang from 1.25-bookworm to 1.26-bookworm ([18dc2bb](https://github.com/rabesss/impartus-cli/commit/18dc2bb5751de3f04ceec316a9323349a2d273ad))
+
+
+### CI/CD
+
+* **deps:** bump docker/login-action from 3 to 4 ([1fd66bd](https://github.com/rabesss/impartus-cli/commit/1fd66bde1b04b3984ace88d913e726d08ed35102))
+* **deps:** bump docker/setup-qemu-action from 3 to 4 ([c74f05c](https://github.com/rabesss/impartus-cli/commit/c74f05c50f714d6c0f3a00fe5c6e7aaddac57c2f))
+* **deps:** bump github/codeql-action ([717d24e](https://github.com/rabesss/impartus-cli/commit/717d24e2af8ce50589a60f86d0d18f6e21dfbb65))
+
 ## [0.1.7](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.6...impartus-cli-v0.1.7) (2026-05-16)
 
 
