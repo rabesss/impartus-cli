@@ -59,9 +59,10 @@ func newAPIServerFull(port string, cfg *config.Config, loginFn UpstreamLoginFunc
 		upgrader: websocket.Upgrader{CheckOrigin: func(r *http.Request) bool {
 			return true
 		}},
-		router:        mux.NewRouter(),
-		port:          port,
+		router:       mux.NewRouter(),
+		port:         port,
 		upstreamLogin: loginFn,
+		loginLimiter: newLoginRateLimiter(5, 1*time.Minute),
 	}
 
 	// Initialize job store (with persistence if enabled)
@@ -92,7 +93,11 @@ func (s *APIServer) Start(ctxs ...context.Context) error {
 		log.SetOutput(logFile)
 	}
 
-	addr := ":" + s.port
+	addr := "127.0.0.1:" + s.port
+	// Allow override via config field or env var (IMPARTUS_LISTEN_ADDR)
+	if s.cfg != nil && s.cfg.ListenAddr != "" {
+		addr = s.cfg.ListenAddr + ":" + s.port
+	}
 	server := &http.Server{
 		Addr:         addr,
 		Handler:      s.router,

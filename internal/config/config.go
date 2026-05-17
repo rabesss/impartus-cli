@@ -46,6 +46,7 @@ type Config struct {
 	DecryptWorkersPerLecture  int            `json:"decryptWorkersPerLecture"`
 	ProgressTracking          ProgressConfig `json:"progressTracking"`
 	HTTPTimeout               string         `json:"httpTimeout"`
+	ListenAddr                string         `json:"listenAddr,omitempty"`
 }
 
 // ApplyDefaults fills in zero-valued fields with sensible defaults.
@@ -106,6 +107,9 @@ func (c *Config) applyProgressDefaults() {
 		c.Views = "both"
 	} else {
 		c.Views = NormalizeViews(c.Views)
+	}
+	if c.ListenAddr == "" {
+		c.ListenAddr = "127.0.0.1"
 	}
 }
 
@@ -281,6 +285,7 @@ func applyEnvOverrides(cfg *Config) {
 	applyIntEnv("IMPARTUS_NUM_WORKERS", &cfg.NumWorkers)
 	applyFloatEnv("IMPARTUS_RATE_LIMIT", &cfg.RateLimit)
 	applyFloatEnv("IMPARTUS_API_RATE_LIMIT", &cfg.APIRateLimit)
+	applyStringEnv("IMPARTUS_LISTEN_ADDR", &cfg.ListenAddr)
 
 	applyCanonicalFields(cfg)
 }

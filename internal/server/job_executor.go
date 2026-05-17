@@ -114,7 +114,7 @@ func (s *APIServer) prepareJobRuntime(ctx context.Context, jobCtx context.Contex
 		if s.handleCancelIfNeeded(jobID, jobCtx.Err()) {
 			return nil, nil, false
 		}
-		s.failJob(jobID, loginErr.Error())
+		s.failJob(jobID, sanitizeUpstreamErr(loginErr))
 		return nil, nil, false
 	}
 	// Use the token from cached config to ensure consistency
@@ -257,6 +257,29 @@ func (s *APIServer) failJob(jobID, errMsg string) {
 	broadcastEvent(s.wsHub, evt)
 }
 
+// sanitizeUpstreamErr returns a generic sanitized message for upstream errors
+// that may contain sensitive data (e.g., auth tokens in upstream API responses).
+func sanitizeUpstreamErr(err error) string {
+	if err == nil {
+		return ""
+	}
+	errStr := err.Error()
+	// Match known upstream auth/fetch error patterns
+	if containsAny(errStr, []string{"login", "authenticate", "token", "unauthorized", "forbidden", "auth"}) {
+		return "upstream authentication failed"
+	}
+	return "upstream API error"
+}
+
+func containsAny(s string, substrs []string) bool {
+	for _, sub := range substrs {
+		if strings.Contains(strings.ToLower(s), sub) {
+			return true
+		}
+	}
+	return false
+}
+
 func mergeConfigWithJobOptions(globalCfg *config.Config, opts *JobConfigOptions) (*config.Config, error) {
 	cfg := cloneConfig(globalCfg)
 	if cfg == nil {
@@ -375,7 +398,16 @@ func applyJobConfigOverrides(cfg *config.Config, opts *JobConfigOptions) {
 		cfg.AudioFormat = *opts.AudioFormat
 	}
 	if opts.OutputPath != nil {
-		cfg.DownloadLocation = strings.TrimSpace(*opts.OutputPath)
+		sanitized := filepath.Clean(strings.TrimSpace(*opts.OutputPath))
+		// Reject paths that escape the intended directory via ".."
+		if strings.Contains(sanitized, "..") {
+			// Check if ".." actually escapes (e.g., valid filename like "foo..bar" is OK)
+			cleaned := filepath.Clean(sanitized)
+			if strings.HasPrefix(cleaned, "..") || strings.Contains(cleaned, string(filepath.Separator)+"..") {
+				return // silently ignore malicious output path override
+			}
+		}
+		cfg.DownloadLocation = sanitized
 	}
 	if opts.EnablePipeline != nil {
 		cfg.EnablePipeline = *opts.EnablePipeline

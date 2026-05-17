@@ -252,6 +252,35 @@ type Job struct {
 	cfg    *config.Config     `json:"-"`
 }
 
+// copy returns a deep copy of the Job's exported fields (not ctx/cancel/cfg).
+func (j *Job) copy() *Job {
+	if j == nil {
+		return nil
+	}
+	cp := &Job{
+		ID:                j.ID,
+		SubjectID:         j.SubjectID,
+		SessionID:         j.SessionID,
+		StartIndex:        j.StartIndex,
+		EndIndex:          j.EndIndex,
+		Status:            j.Status,
+		Progress:          j.Progress,
+		Error:             j.Error,
+		TotalLectures:     j.TotalLectures,
+		CompletedLectures: j.CompletedLectures,
+		FilteredLectures:  j.FilteredLectures,
+		Config:            j.Config,
+		IdempotencyKey:    j.IdempotencyKey,
+		CreatedAt:         j.CreatedAt,
+		UpdatedAt:         j.UpdatedAt,
+	}
+	if j.Outputs != nil {
+		cp.Outputs = make([]string, len(j.Outputs))
+		copy(cp.Outputs, j.Outputs)
+	}
+	return cp
+}
+
 type upstreamCacheEntry struct {
 	client    *client.Client
 	cfg       *config.Config
@@ -291,4 +320,5 @@ type APIServer struct {
 	upstreamCache    *upstreamCacheEntry
 	upstreamCacheMu  sync.RWMutex
 	upstreamLogin    UpstreamLoginFunc
+	loginLimiter     *loginRateLimiter
 }

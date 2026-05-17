@@ -18,6 +18,58 @@ type TokenInfo struct {
 	CreatedAt time.Time
 }
 
+// rateLimiterEntry tracks login attempts for a given IP.
+type rateLimiterEntry struct {
+	lastAttempt time.Time
+	attempts    int
+}
+
+// loginRateLimiter provides per-IP rate limiting for login attempts.
+type loginRateLimiter struct {
+	mu      sync.Mutex
+	entries map[string]*rateLimiterEntry
+	limit   int
+	window  time.Duration
+}
+
+func newLoginRateLimiter(limit int, window time.Duration) *loginRateLimiter {
+	return &loginRateLimiter{
+		entries: make(map[string]*rateLimiterEntry),
+		limit:   limit,
+		window:  window,
+	}
+}
+
+func (l *loginRateLimiter) allow(ip string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	now := time.Now()
+	entry, exists := l.entries[ip]
+	if !exists {
+		l.entries[ip] = &rateLimiterEntry{lastAttempt: now, attempts: 1}
+		return true
+	}
+
+	// Reset if the window has elapsed
+	if now.Sub(entry.lastAttempt) > l.window {
+		entry.attempts = 1
+		entry.lastAttempt = now
+		return true
+	}
+
+	entry.attempts++
+	entry.lastAttempt = now
+
+	return entry.attempts <= l.limit
+}
+
+func (l *loginRateLimiter) reset(ip string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.entries, ip)
+}
+
 // TokenStore manages API authentication tokens with thread-safe access.
 type TokenStore struct {
 	tokens map[string]TokenInfo
@@ -195,6 +247,25 @@ func (s *APIServer) loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Extract client IP for rate limiting
+	clientIP := r.RemoteAddr
+	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+		if idx := strings.IndexByte(forwarded, ','); idx > 0 {
+			clientIP = strings.TrimSpace(forwarded[:idx])
+		} else {
+			clientIP = strings.TrimSpace(forwarded)
+		}
+	}
+	// Remove port from IP
+	if idx := strings.LastIndexByte(clientIP, ':'); idx > 0 {
+		clientIP = clientIP[:idx]
+	}
+
+	if !s.loginLimiter.allow(clientIP) {
+		respondWithError(w, http.StatusTooManyRequests, "RATE_LIMITED", "Too many login attempts. Please try again later.", "login", &retryHint{Retryable: true, RetryAfter: 60})
+		return
+	}
+
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body", "login", nil)
@@ -205,6 +276,9 @@ func (s *APIServer) loginHandler(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusUnauthorized, "AUTH_FAILED", "Invalid username or password", "login", nil)
 		return
 	}
+
+	// Reset rate limiter on successful login
+	s.loginLimiter.reset(clientIP)
 
 	token, err := GenerateToken()
 	if err != nil {

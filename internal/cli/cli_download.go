@@ -203,7 +203,7 @@ func downloadLectures(ctx context.Context, cfg *config.Config, apiClient *client
 			return downloadResult{}, err
 		}
 
-		joinResult, err := d.JoinLectureOutput(metadataFile)
+		joinResult, err := d.JoinLectureOutput(ctx, metadataFile)
 		if err != nil {
 			return downloadResult{}, err
 		}
