@@ -269,7 +269,7 @@ func sanitizeUpstreamErr(err error) string {
 	}
 	// Context cancellation/timeout
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return "job was cancelled or timed out"
+		return "job was canceled or timed out"
 	}
 	// DNS errors
 	var dnsErr *net.DNSError
@@ -403,6 +403,24 @@ func downloadLectureSlide(ctx context.Context, c *client.Client, cfg *config.Con
 	return err
 }
 
+func applyOutputPathOverride(cfg *config.Config, outputPath *string) {
+	if outputPath == nil {
+		return
+	}
+	trimmed := strings.TrimSpace(*outputPath)
+	if trimmed == "" {
+		return
+	}
+	sanitized := filepath.Clean(trimmed)
+	if filepath.IsAbs(sanitized) {
+		return
+	}
+	if strings.HasPrefix(sanitized, "..") || strings.Contains(sanitized, string(filepath.Separator)+"..") {
+		return
+	}
+	cfg.DownloadLocation = sanitized
+}
+
 func applyJobConfigOverrides(cfg *config.Config, opts *JobConfigOptions) {
 	if opts == nil {
 		return
@@ -419,22 +437,7 @@ func applyJobConfigOverrides(cfg *config.Config, opts *JobConfigOptions) {
 	if opts.AudioFormat != nil {
 		cfg.AudioFormat = *opts.AudioFormat
 	}
-	if opts.OutputPath != nil {
-		trimmed := strings.TrimSpace(*opts.OutputPath)
-		if trimmed == "" {
-			// skip empty output path override — keep original config value
-		} else {
-			sanitized := filepath.Clean(trimmed)
-			// Reject absolute paths — API users should only provide relative paths
-			if filepath.IsAbs(sanitized) {
-				// skip absolute path override
-			} else if strings.HasPrefix(sanitized, "..") || strings.Contains(sanitized, string(filepath.Separator)+"..") {
-				// skip path traversal override
-			} else {
-				cfg.DownloadLocation = sanitized
-			}
-		}
-	}
+	applyOutputPathOverride(cfg, opts.OutputPath)
 	if opts.EnablePipeline != nil {
 		cfg.EnablePipeline = *opts.EnablePipeline
 	}

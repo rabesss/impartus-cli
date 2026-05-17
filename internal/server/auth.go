@@ -339,7 +339,7 @@ func (s *APIServer) loginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req loginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err = json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body", "login", nil)
 		return
 	}
