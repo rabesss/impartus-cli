@@ -92,7 +92,8 @@ func (s *APIServer) Start(ctxs ...context.Context) error {
 		defer s.stopLoginLimiter()
 	}
 
-	//nolint:gosec // G302: 0666 is standard for log files, umask applies
+	// G302: 0666 is standard for log files, umask applies
+	// #nosec G302
 	logFile, err := os.OpenFile("api.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o666)
 	if err == nil {
 		defer func() {

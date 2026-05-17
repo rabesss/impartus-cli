@@ -229,7 +229,8 @@ func Parse(path string) (*Config, error) {
 		path = ConfigLocation
 	}
 
-	//nolint:gosec // G304: config path is user-provided by design
+	// G304: config path is user-provided by design
+	// #nosec G304
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("could not open config file: %w", err)

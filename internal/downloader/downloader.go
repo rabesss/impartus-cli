@@ -179,7 +179,8 @@ func (d *Downloader) DownloadPlaylist(ctx context.Context, playlist client.Parse
 	if err != nil {
 		return DownloadedPlaylist{}, err
 	}
-	//nolint:gosec // G301: 0755 is standard for user download directories
+	// G301: 0755 is standard for user download directories
+	// #nosec G301
 	if err := os.MkdirAll(d.config.TempDirLocation, 0o755); err != nil {
 		return DownloadedPlaylist{}, err
 	}
@@ -266,7 +267,8 @@ func (d *Downloader) JoinLectureOutput(ctx context.Context, file M3U8File) (Join
 // CreateTempM3U8File writes temporary M3U8 manifest files for each view and returns the file references.
 func (d *Downloader) CreateTempM3U8File(downloadedPlaylist DownloadedPlaylist) (M3U8File, error) {
 	m3u8File := M3U8File{Playlist: downloadedPlaylist.Playlist}
-	//nolint:gosec // G301: 0755 is standard for user download directories
+	// G301: 0755 is standard for user download directories
+	// #nosec G301
 	if err := os.MkdirAll(d.config.TempDirLocation, 0o755); err != nil {
 		return m3u8File, err
 	}
@@ -291,7 +293,8 @@ func (d *Downloader) CreateTempM3U8File(downloadedPlaylist DownloadedPlaylist) (
 }
 
 func writeM3U8File(path string, chunks []string) error {
-	//nolint:gosec // G304: file paths are constructed from validated config and internal data
+	// G304: file paths are constructed from validated config and internal data
+	// #nosec G304
 	f, err := os.Create(path)
 	if err != nil {
 		return err
@@ -372,7 +375,8 @@ func getDecryptionKey(encryptionKey []byte) []byte {
 }
 
 func (d *Downloader) decryptChunk(filePath string, key []byte) (string, error) {
-	//nolint:gosec // G304: file paths are constructed from validated config and internal data
+	// G304: file paths are constructed from validated config and internal data
+	// #nosec G304
 	infile, err := os.ReadFile(filePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read encrypted file %s: %w", filePath, err)
@@ -409,7 +413,8 @@ func (d *Downloader) decryptChunkBytes(filePath string, infile []byte, key []byt
 	// Remove PKCS7 padding from plaintext
 	plainText = removePKCS7Padding(plainText)
 
-	//nolint:gosec // G703: path components are from validated config and sanitized input
+	// G703: path components are from validated config and sanitized input
+	// #nosec G703
 	if err := os.WriteFile(outPath, plainText, 0o600); err != nil {
 		return "", fmt.Errorf("failed to write decrypted file %s: %w", outPath, err)
 	}
@@ -458,7 +463,8 @@ func (d *Downloader) downloadURL(ctx context.Context, url string, id int, chunk 
 	}
 
 	outFilepath := filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_%s_%04d.ts.temp", id, view, chunk))
-	//nolint:gosec // G304: file paths are constructed from validated config and internal data
+	// G304: file paths are constructed from validated config and internal data
+	// #nosec G304
 	outFile, err := os.Create(outFilepath)
 	if err != nil {
 		return "", 0, fmt.Errorf("could not create file for chunk %d: %w", chunk, err)
