@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -157,5 +158,242 @@ func TestPlayServerWorkflow(t *testing.T) {
 
 	if string(segContent) != string(plaintext) {
 		t.Fatalf("decrypted segment content mismatch. Got %q, want %q", string(segContent), string(plaintext))
+	}
+}
+
+func TestBuildLocalM3U8(t *testing.T) {
+	tests := []struct {
+		name         string
+		view         string
+		urls         []string
+		wantSegments int
+	}{
+		{
+			name:         "zero URLs produces valid M3U8 with no segments",
+			view:         "left",
+			urls:         []string{},
+			wantSegments: 0,
+		},
+		{
+			name:         "single URL produces one segment entry",
+			view:         "left",
+			urls:         []string{"https://example.com/chunk0.ts"},
+			wantSegments: 1,
+		},
+		{
+			name:         "multiple URLs produce correct segment count",
+			view:         "right",
+			urls:         []string{"https://a.test/0", "https://a.test/1", "https://a.test/2"},
+			wantSegments: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildLocalM3U8(tt.view, tt.urls, 9999, "test-token")
+
+			// Verify required HLS headers are always present
+			for _, header := range []string{
+				"#EXTM3U",
+				"#EXT-X-VERSION:3",
+				"#EXT-X-TARGETDURATION:11",
+				"#EXT-X-KEY:METHOD=NONE",
+				"#EXT-X-ENDLIST",
+			} {
+				if !strings.Contains(result, header) {
+					t.Errorf("missing required header %q in output:\n%s", header, result)
+				}
+			}
+
+			// Count #EXTINF entries
+			gotSegments := strings.Count(result, "#EXTINF:")
+			if gotSegments != tt.wantSegments {
+				t.Errorf("segment count = %d, want %d", gotSegments, tt.wantSegments)
+			}
+
+			// Verify URL format for each segment
+			for i := range tt.urls {
+				wantURL := fmt.Sprintf("http://127.0.0.1:9999/test-token/segment/%s/%d", tt.view, i)
+				if !strings.Contains(result, wantURL) {
+					t.Errorf("missing expected segment URL %q in output:\n%s", wantURL, result)
+				}
+			}
+		})
+	}
+}
+
+func TestHandleSegmentErrorPaths(t *testing.T) {
+	// Create a Downloader with a working rate limiter via New() + ApplyDefaults()
+	d := New(&config.Config{Views: "both"}, client.New(nil, nil))
+
+	playlist := client.ParsedPlaylist{
+		FirstViewURLs:    []string{"https://example.com/seg0", "https://example.com/seg1"},
+		SecondViewURLs:   []string{"https://example.com/rseg0"},
+		HasMultipleViews: true,
+	}
+	key := []byte("0123456789abcdef") // 16-byte AES key
+
+	handler := d.handleSegment(playlist, key)
+
+	tests := []struct {
+		name       string
+		path       string
+		wantStatus int
+		wantBody   string
+	}{
+		{
+			name:       "too few path parts",
+			path:       "/token/segment",
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "invalid segment path",
+		},
+		{
+			name:       "too many path parts",
+			path:       "/token/segment/left/0/extra",
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "invalid segment path",
+		},
+		{
+			name:       "non-numeric segment index",
+			path:       "/token/segment/left/abc",
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "invalid segment index",
+		},
+		{
+			name:       "invalid view name",
+			path:       "/token/segment/center/0",
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "invalid view name",
+		},
+		{
+			name:       "negative segment index",
+			path:       "/token/segment/left/-1",
+			wantStatus: http.StatusNotFound,
+			wantBody:   "segment index out of range",
+		},
+		{
+			name:       "segment index out of range for first view",
+			path:       "/token/segment/left/99",
+			wantStatus: http.StatusNotFound,
+			wantBody:   "segment index out of range",
+		},
+		{
+			name:       "segment index out of range for second view",
+			path:       "/token/segment/right/1",
+			wantStatus: http.StatusNotFound,
+			wantBody:   "segment index out of range",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://localhost"+tt.path, nil) //nolint:noctx // test handler invocation
+			req.URL.Path = tt.path
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+			if !strings.Contains(rec.Body.String(), tt.wantBody) {
+				t.Errorf("body = %q, want substring %q", rec.Body.String(), tt.wantBody)
+			}
+		})
+	}
+}
+
+func TestHandleMasterViewConfigurations(t *testing.T) {
+	tests := []struct {
+		name             string
+		views            string
+		hasMultipleViews bool
+		firstViewURLs    []string
+		secondViewURLs   []string
+		wantLeft         bool
+		wantRight        bool
+	}{
+		{
+			name:             "both views with multiple views available",
+			views:            "both",
+			hasMultipleViews: true,
+			firstViewURLs:    []string{"https://a.test/0"},
+			secondViewURLs:   []string{"https://b.test/0"},
+			wantLeft:         true,
+			wantRight:        true,
+		},
+		{
+			name:             "left view only",
+			views:            "left",
+			hasMultipleViews: true,
+			firstViewURLs:    []string{"https://a.test/0"},
+			secondViewURLs:   []string{"https://b.test/0"},
+			wantLeft:         true,
+			wantRight:        false,
+		},
+		{
+			name:             "right view only with multiple views",
+			views:            "right",
+			hasMultipleViews: true,
+			firstViewURLs:    []string{"https://a.test/0"},
+			secondViewURLs:   []string{"https://b.test/0"},
+			wantLeft:         false,
+			wantRight:        true,
+		},
+		{
+			name:             "HasMultipleViews false shows only left",
+			views:            "both",
+			hasMultipleViews: false,
+			firstViewURLs:    []string{"https://a.test/0"},
+			secondViewURLs:   []string{"https://b.test/0"},
+			wantLeft:         true,
+			wantRight:        false,
+		},
+		{
+			name:             "empty URLs falls back to left",
+			views:            "both",
+			hasMultipleViews: true,
+			firstViewURLs:    []string{},
+			secondViewURLs:   []string{},
+			wantLeft:         true, // fallback branch
+			wantRight:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{Views: tt.views}
+			cfg.ApplyDefaults()
+			d := New(cfg, client.New(nil, nil))
+
+			playlist := client.ParsedPlaylist{
+				FirstViewURLs:    tt.firstViewURLs,
+				SecondViewURLs:   tt.secondViewURLs,
+				HasMultipleViews: tt.hasMultipleViews,
+			}
+
+			handler := d.handleMaster(playlist, 8888, "test-token")
+
+			req := httptest.NewRequest(http.MethodGet, "http://localhost/test-token/master.m3u8", nil) //nolint:noctx // test handler invocation
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			body := rec.Body.String()
+
+			hasLeft := strings.Contains(body, "left.m3u8")
+			hasRight := strings.Contains(body, "right.m3u8")
+
+			if hasLeft != tt.wantLeft {
+				t.Errorf("left.m3u8 present = %v, want %v; body:\n%s", hasLeft, tt.wantLeft, body)
+			}
+			if hasRight != tt.wantRight {
+				t.Errorf("right.m3u8 present = %v, want %v; body:\n%s", hasRight, tt.wantRight, body)
+			}
+
+			// Verify content type
+			if ct := rec.Header().Get("Content-Type"); ct != "application/vnd.apple.mpegurl" {
+				t.Errorf("Content-Type = %q, want %q", ct, "application/vnd.apple.mpegurl")
+			}
+		})
 	}
 }

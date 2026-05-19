@@ -56,8 +56,9 @@ func (d *Downloader) StartPlayServer(ctx context.Context, playlist client.Parsed
 	}()
 
 	cleanup := func() {
-		_ = server.Close()   //nolint:errcheck
-		_ = listener.Close() //nolint:errcheck
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx) //nolint:errcheck
 	}
 
 	masterURL := fmt.Sprintf("http://127.0.0.1:%d/%s/master.m3u8", port, sessionToken)
@@ -157,7 +158,8 @@ func (d *Downloader) handleSegment(playlist client.ParsedPlaylist, decryptionKey
 			return
 		}
 
-		encryptedBytes, err := io.ReadAll(resp.Body)
+		const maxSegmentSize = 50 * 1024 * 1024 // 50 MB
+		encryptedBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxSegmentSize))
 		if err != nil {
 			http.Error(w, fmt.Sprintf("failed to read segment bytes: %v", err), http.StatusInternalServerError)
 			return
@@ -182,6 +184,7 @@ func buildLocalM3U8(view string, urls []string, port int, token string) string {
 	sb.WriteString("#EXT-X-MEDIA-SEQUENCE:0\n")
 	sb.WriteString("#EXT-X-ALLOW-CACHE:YES\n")
 	sb.WriteString("#EXT-X-TARGETDURATION:11\n")
+	sb.WriteString("#EXT-X-KEY:METHOD=NONE\n")
 	for i := range urls {
 		_, _ = fmt.Fprintf(&sb, "#EXTINF:11.0,\nhttp://127.0.0.1:%d/%s/segment/%s/%d\n", port, token, view, i)
 	}

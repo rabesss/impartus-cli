@@ -142,27 +142,32 @@ func playLectures(ctx context.Context, cfg *config.Config, apiClient *client.Cli
 	}
 
 	for _, playlist := range playlists {
-		fmt.Printf("[INFO] Playing Lec %03d: %s\n", playlist.SeqNo, playlist.Title)
-		fmt.Printf("[INFO] Views: %s (Press '_' in mpv to cycle views, 'q' to exit/next)\n", cfg.Views)
-
-		playURL, cleanup, err := d.StartPlayServer(ctx, playlist)
-		if err != nil {
-			return fmt.Errorf("failed to start local playback server: %w", err)
-		}
-
-		cmd := exec.CommandContext(ctx, "mpv", playURL) // #nosec G204
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		runErr := cmd.Run()
-		cleanup()
-
-		if runErr != nil {
-			return fmt.Errorf("mpv execution failed: %w", runErr)
+		if err := playOnePlaylist(ctx, cfg, d, playlist); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+func playOnePlaylist(ctx context.Context, cfg *config.Config, d *downloader.Downloader, playlist client.ParsedPlaylist) error {
+	fmt.Printf("[INFO] Playing Lec %03d: %s\n", playlist.SeqNo, playlist.Title)
+	fmt.Printf("[INFO] Views: %s (Press '_' in mpv to cycle views, 'q' to exit/next)\n", cfg.Views)
+
+	playURL, cleanup, err := d.StartPlayServer(ctx, playlist)
+	if err != nil {
+		return fmt.Errorf("failed to start local playback server: %w", err)
+	}
+	defer cleanup()
+
+	cmd := exec.CommandContext(ctx, "mpv", playURL) // #nosec G204
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if runErr := cmd.Run(); runErr != nil {
+		return fmt.Errorf("mpv execution failed: %w", runErr)
+	}
 	return nil
 }
 

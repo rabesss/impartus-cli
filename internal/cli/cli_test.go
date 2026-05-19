@@ -870,3 +870,103 @@ func TestExecuteJSONPlayRejects(t *testing.T) {
 		t.Fatalf("expected JSON envelope, got: %s", raw)
 	}
 }
+
+func TestParsePlayFlags(t *testing.T) {
+	tests := []struct {
+		name          string
+		args          []string
+		wantErr       bool
+		wantSubject   int
+		wantSession   int
+		wantStart     int
+		wantEnd       int
+		wantQuality   string
+		wantViews     string
+		wantSkipNA    bool
+		wantIncludeNA bool
+	}{
+		{
+			name:    "empty args gives all defaults",
+			args:    []string{},
+			wantErr: false,
+		},
+		{
+			name:        "-s 1 -S 2 sets subject and session",
+			args:        []string{"-s", "1", "-S", "2"},
+			wantSubject: 1,
+			wantSession: 2,
+		},
+		{
+			name:      "-l 3 sets start and end to same value",
+			args:      []string{"-l", "3"},
+			wantStart: 3,
+			wantEnd:   3,
+		},
+		{
+			name:      "--start 2 --end 5 sets range",
+			args:      []string{"--start", "2", "--end", "5"},
+			wantStart: 2,
+			wantEnd:   5,
+		},
+		{
+			name:        "--quality 720 --views left",
+			args:        []string{"--quality", "720", "--views", "left"},
+			wantQuality: "720",
+			wantViews:   "left",
+		},
+		{
+			name:       "--skip-no-audio sets flag",
+			args:       []string{"--skip-no-audio"},
+			wantSkipNA: true,
+		},
+		{
+			name:          "--include-noaudio sets flag",
+			args:          []string{"--include-noaudio"},
+			wantIncludeNA: true,
+		},
+		{
+			name:    "unknown flag returns error",
+			args:    []string{"--unknown"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := parsePlayFlags(tt.args)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error but got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if f.subject != tt.wantSubject {
+				t.Errorf("subject = %d, want %d", f.subject, tt.wantSubject)
+			}
+			if f.session != tt.wantSession {
+				t.Errorf("session = %d, want %d", f.session, tt.wantSession)
+			}
+			if f.start != tt.wantStart {
+				t.Errorf("start = %d, want %d", f.start, tt.wantStart)
+			}
+			if f.end != tt.wantEnd {
+				t.Errorf("end = %d, want %d", f.end, tt.wantEnd)
+			}
+			if f.quality != tt.wantQuality {
+				t.Errorf("quality = %q, want %q", f.quality, tt.wantQuality)
+			}
+			if f.views != tt.wantViews {
+				t.Errorf("views = %q, want %q", f.views, tt.wantViews)
+			}
+			if f.skipNoAudio != tt.wantSkipNA {
+				t.Errorf("skipNoAudio = %v, want %v", f.skipNoAudio, tt.wantSkipNA)
+			}
+			if f.includeNoAudio != tt.wantIncludeNA {
+				t.Errorf("includeNoAudio = %v, want %v", f.includeNoAudio, tt.wantIncludeNA)
+			}
+		})
+	}
+}

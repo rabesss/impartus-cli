@@ -61,11 +61,7 @@ CLAUDE.md
 *.token
 config.json
 
-# Test files - keep private
-*_test.go
-!/internal/downloader/play_test.go
-coverage*.out
-*.test
+
 
 # Desloppify quality gate local state
 .desloppify/

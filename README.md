@@ -118,6 +118,7 @@ go build -o impartus .
 
 - **Go 1.25+** - Go toolchain for building
 - **FFmpeg** - Required for video processing (must be in `PATH`)
+- **mpv** - Required for the `play` command (must be in `PATH`)
 - **Impartus Account** - Valid credentials for your institution's Impartus platform
 
 ### Configuration
