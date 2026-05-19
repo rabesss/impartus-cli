@@ -28,6 +28,7 @@
     * [Internal Package Dependencies](#internal-package-dependencies)
   * [Debugging Tips](#debugging-tips)
     * [CLI Issues](#cli-issues)
+    * [CLI Refactoring Patterns](#cli-refactoring-patterns)
     * [API Issues](#api-issues)
     * [Download Issues](#download-issues)
   * [Performance Considerations](#performance-considerations)
@@ -45,7 +46,9 @@
 * [Run all tests](#run-all-tests)
 * [Run with coverage](#run-with-coverage)
 * [View coverage](#view-coverage)
+    * [Security](#security)
     * [CI/CD](#cicd)
+  * [Releases](#releases)
   * [Issue & PR Labels](#issue--pr-labels)
   * [OpenClaw Integration](#openclaw-integration)
     * [Tool Manifest](#tool-manifest)
@@ -54,6 +57,8 @@
 
 <!---toc end-->
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+
 
 
 # AGENTS.md - AI Agent Guide for Impartus CLI

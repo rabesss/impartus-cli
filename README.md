@@ -7,25 +7,55 @@
   * [Features](#features)
   * [Quick Start](#quick-start)
     * [Install](#install)
+* [Install from source](#install-from-source)
+* [Or run the container package](#or-run-the-container-package)
+* [Or download the latest release asset](#or-download-the-latest-release-asset)
+* [Or build from source](#or-build-from-source)
     * [Requirements](#requirements)
     * [Configuration](#configuration)
   * [CLI Usage](#cli-usage)
     * [Interactive Mode](#interactive-mode)
     * [Deterministic JSON Mode](#deterministic-json-mode)
+* [Get capability metadata](#get-capability-metadata)
+* [List courses](#list-courses)
+* [List lectures](#list-lectures)
     * [Command Reference](#command-reference)
-    * [Download Flags](#download-flags)
+    * [Download / Play Flags](#download--play-flags)
+* [Download lectures 1-5 from course](#download-lectures-1-5-from-course)
+* [Download in 720p quality](#download-in-720p-quality)
+* [Download audio only](#download-audio-only)
+* [Download to custom directory](#download-to-custom-directory)
+* [Play lectures 1-5 from course](#play-lectures-1-5-from-course)
+* [Play a specific lecture](#play-a-specific-lecture)
     * [API Server](#api-server)
+* [Jobs are persisted to .jobs.json and survive server restarts](#jobs-are-persisted-to-jobsjson-and-survive-server-restarts)
+* [Default port 8080](#default-port-8080)
+* [Custom port](#custom-port)
+* [JSON metadata (non-blocking)](#json-metadata-non-blocking)
   * [API Usage](#api-usage)
     * [Authentication](#authentication)
+* [Login](#login)
     * [Endpoints](#endpoints)
+    * [Health Endpoint](#health-endpoint)
+* [Check API health](#check-api-health)
     * [Create Download Job](#create-download-job)
     * [WebSocket Connection](#websocket-connection)
     * [WebSocket Events](#websocket-events)
   * [Development](#development)
     * [Build & Test](#build--test)
+* [Build](#build)
+* [Run tests](#run-tests)
+* [Run linter](#run-linter)
+* [Run pre-commit hooks](#run-pre-commit-hooks)
+* [Quality gate scan](#quality-gate-scan)
     * [Makefile Targets](#makefile-targets)
     * [Code Quality](#code-quality)
+* [Install golangci-lint](#install-golangci-lint)
+* [Install pre-commit](#install-pre-commit)
     * [Running Tests](#running-tests)
+* [All tests](#all-tests)
+* [With coverage](#with-coverage)
+* [Verbose](#verbose)
   * [Architecture](#architecture)
     * [Package Structure](#package-structure)
     * [Key Components](#key-components)
@@ -40,6 +70,8 @@
 
 <!---toc end-->
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+
 
 
 # Impartus CLI
@@ -222,26 +254,29 @@ On failure, `success` is `false`, `data` is `null`, and `error.message` contains
 | `impartus courses` | List available courses |
 | `impartus lectures -s ID -S ID` | List lectures for subject/session |
 | `impartus download [flags]` | Download lectures |
+| `impartus play [flags]` | Play lectures in mpv |
 | `impartus serve [--port PORT]` | Start HTTP API server |
 
-### Download Flags
+### Download / Play Flags
 
 ```bash
 ./impartus download --subject 123 --session 456 [flags]
+./impartus play --subject 123 --session 456 [flags]
 ```
 
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--subject` | `-s` | Subject ID (required) |
-| `--session` | `-S` | Session ID (required) |
-| `--start` | | Start lecture index (1-based) |
-| `--end` | | End lecture index (1-based, inclusive) |
-| `--quality` | | Quality: `144`, `450`, `720` |
-| `--views` | | Views: `left`, `right`, `both`, `first`, `second` |
-| `--audio-only` | | Audio-only mode |
-| `--format` | | Audio format: `mp3`, `m4a`, `aac`, `opus` |
-| `--output` | `-o` | Output directory |
-| `--json` | | JSON output (non-blocking) |
+| Flag | Short | Description | Applicable To |
+|------|-------|-------------|---------------|
+| `--subject` | `-s` | Subject ID (required) | Both |
+| `--session` | `-S` | Session ID (required) | Both |
+| `--start` | | Start lecture index (1-based) | Both |
+| `--end` | | End lecture index (1-based, inclusive) | Both |
+| `--lecture` | `-l` | Specific lecture index (shortcut for start & end) | Play Only |
+| `--quality` | | Quality: `144`, `450`, `720` | Both |
+| `--views` | | Views: `left`, `right`, `both`, `first`, `second` | Both |
+| `--audio-only` | | Audio-only mode | Download Only |
+| `--format` | | Audio format: `mp3`, `m4a`, `aac`, `opus` | Download Only |
+| `--output` | `-o` | Output directory | Download Only |
+| `--json` | | JSON output (non-blocking) | Download Only |
 
 **Examples:**
 
@@ -257,6 +292,12 @@ On failure, `success` is `false`, `data` is `null`, and `error.message` contains
 
 # Download to custom directory
 ./impartus download -s 123 -S 456 -o /path/to/output
+
+# Play lectures 1-5 from course
+./impartus play -s 123 -S 456 --start 1 --end 5
+
+# Play a specific lecture
+./impartus play -s 123 -S 456 --lecture 3
 ```
 
 ### API Server

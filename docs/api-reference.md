@@ -20,10 +20,15 @@
     * [Get job](#get-job)
     * [Cancel job](#cancel-job)
   * [Job Persistence](#job-persistence)
+    * [Persisted Data](#persisted-data)
+    * [NOT Persisted (runtime-only)](#not-persisted-runtime-only)
+    * [Restart Behavior](#restart-behavior)
   * [WebSocket](#websocket)
 
 <!---toc end-->
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+
 
 
 # Impartus API Reference

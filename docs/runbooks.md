@@ -7,8 +7,14 @@
   * [Service Health Checks](#service-health-checks)
     * [Check API Server Status](#check-api-server-status)
     * [Check Download Jobs](#check-download-jobs)
+* [List active jobs](#list-active-jobs)
+* [Check specific job](#check-specific-job)
   * [Common Issues & Troubleshooting](#common-issues--troubleshooting)
     * [Issue: "ffmpeg not found" Error](#issue-ffmpeg-not-found-error)
+* [Check ffmpeg is installed](#check-ffmpeg-is-installed)
+* [Install on Ubuntu/Debian](#install-on-ubuntudebian)
+* [Install on macOS](#install-on-macos)
+* [Install on Arch Linux](#install-on-arch-linux)
     * [Issue: Authentication Failed (401)](#issue-authentication-failed-401)
     * [Issue: Download Timeout](#issue-download-timeout)
     * [Issue: WebSocket Connection Drops](#issue-websocket-connection-drops)
@@ -19,17 +25,28 @@
     * [P3: Performance Degradation](#p3-performance-degradation)
   * [Rollback Procedures](#rollback-procedures)
     * [Binary Rollback](#binary-rollback)
+* [Keep previous version backup](#keep-previous-version-backup)
+* [Rollback to previous version](#rollback-to-previous-version)
     * [Config Rollback](#config-rollback)
+* [Restore previous config](#restore-previous-config)
     * [Database/State Recovery](#databasestate-recovery)
   * [Monitoring & Alerts](#monitoring--alerts)
     * [Operational Signals](#operational-signals)
     * [Deployment Verification](#deployment-verification)
+* [Verify service health](#verify-service-health)
+* [Check recent logs for errors](#check-recent-logs-for-errors)
+* [Verify CLI access against the configured upstream](#verify-cli-access-against-the-configured-upstream)
     * [Log Analysis](#log-analysis)
+* [Count recent error-like log lines](#count-recent-error-like-log-lines)
+* [Inspect recent failures](#inspect-recent-failures)
+* [Fall back to the raw tail when a pattern is not obvious](#fall-back-to-the-raw-tail-when-a-pattern-is-not-obvious)
   * [Contact & Escalation](#contact--escalation)
   * [Related Documentation](#related-documentation)
 
 <!---toc end-->
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+
 
 
 # Runbooks - Incident Response Playbooks

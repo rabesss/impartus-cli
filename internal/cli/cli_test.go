@@ -40,6 +40,7 @@ func restoreCLIState(t *testing.T) {
 	oldLectures := runLecturesFn
 	oldDownload := runDownloadFn
 	oldServe := runServeFn
+	oldPlay := runPlayFn
 	t.Cleanup(func() {
 		os.Args = oldArgs
 		runInteractiveFn = oldInteractive
@@ -47,6 +48,7 @@ func restoreCLIState(t *testing.T) {
 		runLecturesFn = oldLectures
 		runDownloadFn = oldDownload
 		runServeFn = oldServe
+		runPlayFn = oldPlay
 	})
 }
 
@@ -818,5 +820,53 @@ func TestApplyAndValidateFlags_ValidFlags(t *testing.T) {
 	}
 	if !result.AudioOnly {
 		t.Error("AudioOnly should be true")
+	}
+}
+
+func TestExecutePlayDelegates(t *testing.T) {
+	restoreCLIState(t)
+	called := false
+	runPlayFn = func(args []string) error {
+		called = true
+		if len(args) != 2 || args[0] != "-s" || args[1] != "1" {
+			t.Errorf("unexpected args passed to play: %v", args)
+		}
+		return nil
+	}
+	os.Args = []string{"impartus", "play", "-s", "1"}
+
+	if err := Execute("dev", ""); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !called {
+		t.Fatal("expected play subcommand to be executed")
+	}
+}
+
+func TestPlayRejectsPositionalArguments(t *testing.T) {
+	_, err := parsePlayFlags([]string{"extra_arg"})
+	if err == nil {
+		t.Fatal("expected positional argument error")
+	}
+	if !strings.Contains(err.Error(), "does not accept positional arguments") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+func TestExecuteJSONPlayRejects(t *testing.T) {
+	restoreCLIState(t)
+	os.Args = []string{"impartus", "play", "--json"}
+
+	_, err := captureStdout(t, func() error { return Execute("v1", "d1") })
+	if err == nil {
+		t.Fatal("expected json error for play command")
+	}
+	raw := err.Error()
+	if !strings.Contains(raw, "play command is not supported in JSON mode") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+	var envelope map[string]json.RawMessage
+	if unmarshalErr := json.Unmarshal([]byte(raw), &envelope); unmarshalErr != nil {
+		t.Fatalf("expected JSON envelope, got: %s", raw)
 	}
 }

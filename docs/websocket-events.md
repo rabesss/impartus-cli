@@ -20,6 +20,8 @@
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 
+
+
 # WebSocket Events
 
 Real-time progress updates for download jobs.
