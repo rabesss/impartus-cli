@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
+	"syscall"
 
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
@@ -36,7 +38,9 @@ func runPlay(args []string) error {
 		return err
 	}
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	cfg, apiClient, err := initClient(ctx)
 	if err != nil {
 		return err
@@ -155,12 +159,6 @@ func playLectures(ctx context.Context, cfg *config.Config, apiClient *client.Cli
 		cleanup()
 
 		if runErr != nil {
-			var execErr *exec.ExitError
-			if errors.As(runErr, &execErr) {
-				if execErr.ExitCode() == 0 {
-					continue
-				}
-			}
 			return fmt.Errorf("mpv execution failed: %w", runErr)
 		}
 	}

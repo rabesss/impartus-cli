@@ -2,8 +2,6 @@ package downloader
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"fmt"
 	"io"
 	"net"
@@ -12,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rabesss/impartus-cli/internal/client"
 )
 
@@ -36,11 +35,12 @@ func (d *Downloader) StartPlayServer(ctx context.Context, playlist client.Parsed
 	}
 	port := tcpAddr.Port
 
+	sessionToken := uuid.New().String()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/master.m3u8", d.handleMaster(playlist, port))
-	mux.HandleFunc("/left.m3u8", d.handleLeft(playlist, port))
-	mux.HandleFunc("/right.m3u8", d.handleRight(playlist, port))
-	mux.HandleFunc("/segment/", d.handleSegment(playlist, decryptionKey))
+	mux.HandleFunc(fmt.Sprintf("/%s/master.m3u8", sessionToken), d.handleMaster(playlist, port, sessionToken))
+	mux.HandleFunc(fmt.Sprintf("/%s/left.m3u8", sessionToken), d.handleLeft(playlist, port, sessionToken))
+	mux.HandleFunc(fmt.Sprintf("/%s/right.m3u8", sessionToken), d.handleRight(playlist, port, sessionToken))
+	mux.HandleFunc(fmt.Sprintf("/%s/segment/", sessionToken), d.handleSegment(playlist, decryptionKey))
 
 	server := &http.Server{
 		Handler:           mux,
@@ -59,11 +59,11 @@ func (d *Downloader) StartPlayServer(ctx context.Context, playlist client.Parsed
 		_ = listener.Close() //nolint:errcheck
 	}
 
-	masterURL := fmt.Sprintf("http://127.0.0.1:%d/master.m3u8", port)
+	masterURL := fmt.Sprintf("http://127.0.0.1:%d/%s/master.m3u8", port, sessionToken)
 	return masterURL, cleanup, nil
 }
 
-func (d *Downloader) handleMaster(playlist client.ParsedPlaylist, port int) http.HandlerFunc {
+func (d *Downloader) handleMaster(playlist client.ParsedPlaylist, port int, token string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 
@@ -74,45 +74,47 @@ func (d *Downloader) handleMaster(playlist client.ParsedPlaylist, port int) http
 		hasSecond := d.config.Views != "left" && len(playlist.SecondViewURLs) > 0 && playlist.HasMultipleViews
 
 		if hasFirst {
-			_, _ = fmt.Fprintf(&sb, "#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=1280x720,NAME=\"Left View\"\nhttp://127.0.0.1:%d/left.m3u8\n", port)
+			_, _ = fmt.Fprintf(&sb, "#EXT-X-STREAM-INF:BANDWIDTH=1000000,NAME=\"Left View\"\nhttp://127.0.0.1:%d/%s/left.m3u8\n", port, token)
 		}
 		if hasSecond {
-			_, _ = fmt.Fprintf(&sb, "#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=1280x720,NAME=\"Right View\"\nhttp://127.0.0.1:%d/right.m3u8\n", port)
+			_, _ = fmt.Fprintf(&sb, "#EXT-X-STREAM-INF:BANDWIDTH=1000000,NAME=\"Right View\"\nhttp://127.0.0.1:%d/%s/right.m3u8\n", port, token)
 		}
 
 		if !hasFirst && !hasSecond {
-			_, _ = fmt.Fprintf(&sb, "#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=1280x720,NAME=\"Left View\"\nhttp://127.0.0.1:%d/left.m3u8\n", port)
+			_, _ = fmt.Fprintf(&sb, "#EXT-X-STREAM-INF:BANDWIDTH=1000000,NAME=\"Left View\"\nhttp://127.0.0.1:%d/%s/left.m3u8\n", port, token)
 		}
 
 		_, _ = w.Write([]byte(sb.String())) //nolint:errcheck
 	}
 }
 
-func (d *Downloader) handleLeft(playlist client.ParsedPlaylist, port int) http.HandlerFunc {
+func (d *Downloader) handleLeft(playlist client.ParsedPlaylist, port int, token string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-		playlistStr := buildLocalM3U8("left", playlist.FirstViewURLs, port)
+		playlistStr := buildLocalM3U8("left", playlist.FirstViewURLs, port, token)
 		_, _ = w.Write([]byte(playlistStr)) //nolint:errcheck
 	}
 }
 
-func (d *Downloader) handleRight(playlist client.ParsedPlaylist, port int) http.HandlerFunc {
+func (d *Downloader) handleRight(playlist client.ParsedPlaylist, port int, token string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-		playlistStr := buildLocalM3U8("right", playlist.SecondViewURLs, port)
+		playlistStr := buildLocalM3U8("right", playlist.SecondViewURLs, port, token)
 		_, _ = w.Write([]byte(playlistStr)) //nolint:errcheck
 	}
 }
 
 func (d *Downloader) handleSegment(playlist client.ParsedPlaylist, decryptionKey []byte) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/segment/"), "/")
-		if len(parts) != 2 {
+		// Expecting path like /<token>/segment/<view>/<idx>
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		parts := strings.Split(path, "/")
+		if len(parts) != 4 {
 			http.Error(w, "invalid segment path", http.StatusBadRequest)
 			return
 		}
-		view := parts[0]
-		idxStr := parts[1]
+		view := parts[2]
+		idxStr := parts[3]
 		idx, err := strconv.Atoi(idxStr)
 		if err != nil {
 			http.Error(w, "invalid segment index", http.StatusBadRequest)
@@ -160,7 +162,7 @@ func (d *Downloader) handleSegment(playlist client.ParsedPlaylist, decryptionKey
 			return
 		}
 
-		decryptedBytes, err := decryptInMemory(encryptedBytes, decryptionKey)
+		decryptedBytes, err := DecryptAES(encryptedBytes, decryptionKey)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("failed to decrypt segment: %v", err), http.StatusInternalServerError)
 			return
@@ -172,25 +174,8 @@ func (d *Downloader) handleSegment(playlist client.ParsedPlaylist, decryptionKey
 	}
 }
 
-func decryptInMemory(encrypted []byte, key []byte) ([]byte, error) {
-	if len(key) != 16 && len(key) != 24 && len(key) != 32 {
-		return nil, fmt.Errorf("invalid AES key length: %d", len(key))
-	}
-	if len(encrypted) == 0 || len(encrypted)%aes.BlockSize != 0 {
-		return nil, fmt.Errorf("ciphertext length %d is not a multiple of block size %d", len(encrypted), aes.BlockSize)
-	}
-	iv := make([]byte, 16)
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	mode := cipher.NewCBCDecrypter(block, iv)
-	plainText := make([]byte, len(encrypted))
-	mode.CryptBlocks(plainText, encrypted)
-	return removePKCS7Padding(plainText), nil
-}
 
-func buildLocalM3U8(view string, urls []string, port int) string {
+func buildLocalM3U8(view string, urls []string, port int, token string) string {
 	var sb strings.Builder
 	sb.WriteString("#EXTM3U\n")
 	sb.WriteString("#EXT-X-VERSION:3\n")
@@ -198,7 +183,7 @@ func buildLocalM3U8(view string, urls []string, port int) string {
 	sb.WriteString("#EXT-X-ALLOW-CACHE:YES\n")
 	sb.WriteString("#EXT-X-TARGETDURATION:11\n")
 	for i := range urls {
-		_, _ = fmt.Fprintf(&sb, "#EXTINF:11.0,\nhttp://127.0.0.1:%d/segment/%s/%d\n", port, view, i)
+		_, _ = fmt.Fprintf(&sb, "#EXTINF:11.0,\nhttp://127.0.0.1:%d/%s/segment/%s/%d\n", port, token, view, i)
 	}
 	sb.WriteString("#EXT-X-ENDLIST\n")
 	return sb.String()
