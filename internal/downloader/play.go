@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/rabesss/impartus-cli/internal/client"
 )
 
@@ -173,7 +174,6 @@ func (d *Downloader) handleSegment(playlist client.ParsedPlaylist, decryptionKey
 		_, _ = w.Write(decryptedBytes) //nolint:errcheck
 	}
 }
-
 
 func buildLocalM3U8(view string, urls []string, port int, token string) string {
 	var sb strings.Builder
