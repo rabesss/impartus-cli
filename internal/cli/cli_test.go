@@ -853,6 +853,52 @@ func TestPlayRejectsPositionalArguments(t *testing.T) {
 	}
 }
 
+func TestValidatePlayFlagsRejectsPartialDirectSelection(t *testing.T) {
+	tests := []struct {
+		name string
+		in   playFlags
+		want string
+	}{
+		{
+			name: "subject without session",
+			in:   playFlags{subject: 1},
+			want: "requires both",
+		},
+		{
+			name: "session without subject",
+			in:   playFlags{session: 2},
+			want: "requires both",
+		},
+		{
+			name: "lecture range without direct course",
+			in:   playFlags{start: 1, end: 2},
+			want: "range flags require",
+		},
+		{
+			name: "negative subject",
+			in:   playFlags{subject: -1, session: 2},
+			want: "positive",
+		},
+		{
+			name: "negative lecture",
+			in:   playFlags{lecture: -1},
+			want: "selection values must be positive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validatePlayFlags(tt.in)
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error containing %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
 func TestExecuteJSONPlayRejects(t *testing.T) {
 	restoreCLIState(t)
 	os.Args = []string{"impartus", "play", "--json"}

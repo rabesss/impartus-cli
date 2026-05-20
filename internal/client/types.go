@@ -92,6 +92,8 @@ type ParsedPlaylist struct {
 	Title            string
 	FirstViewURLs    []string
 	SecondViewURLs   []string
+	FirstDurations   []float64
+	SecondDurations  []float64
 	ID               int
 	SeqNo            int
 	HasMultipleViews bool

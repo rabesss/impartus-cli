@@ -29,13 +29,15 @@ type playFlags struct {
 }
 
 func runPlay(args []string) error {
-	if err := ensureMpv(); err != nil {
-		return err
-	}
-
 	f, err := parsePlayFlags(args)
 	if err != nil {
 		return err
+	}
+	if validateErr := validatePlayFlags(f); validateErr != nil {
+		return validateErr
+	}
+	if mpvErr := ensureMpv(); mpvErr != nil {
+		return mpvErr
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -112,6 +114,26 @@ func parsePlayFlags(args []string) (playFlags, error) {
 	}
 
 	return f, nil
+}
+
+func validatePlayFlags(f playFlags) error {
+	hasSubject := f.subject > 0
+	hasSession := f.session > 0
+	hasRangeSelection := f.start > 0 || f.end > 0
+
+	if f.subject < 0 || f.session < 0 {
+		return errors.New("play requires positive --subject/-s and --session/-S values")
+	}
+	if f.start < 0 || f.end < 0 || f.lecture < 0 {
+		return errors.New("play lecture selection values must be positive")
+	}
+	if hasSubject != hasSession {
+		return errors.New("play requires both --subject/-s and --session/-S for direct playback")
+	}
+	if hasRangeSelection && (!hasSubject || !hasSession) {
+		return errors.New("play lecture range flags require --subject/-s and --session/-S")
+	}
+	return nil
 }
 
 func runPlayInteractive(ctx context.Context, cfg *config.Config, apiClient *client.Client) error {

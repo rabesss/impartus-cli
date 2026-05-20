@@ -259,10 +259,30 @@ func TestParsePlaylist(t *testing.T) {
 			if len(got.FirstViewURLs) != tt.wantFirstViews {
 				t.Errorf("FirstViewURLs len = %d, want %d", len(got.FirstViewURLs), tt.wantFirstViews)
 			}
+			if len(got.FirstDurations) != len(got.FirstViewURLs) {
+				t.Errorf("FirstDurations len = %d, want %d", len(got.FirstDurations), len(got.FirstViewURLs))
+			}
 			if tt.wantHasMulti && !got.HasMultipleViews {
 				t.Error("HasMultipleViews = false, want true")
 			}
 		})
+	}
+}
+
+func TestParsePlaylistPreservesExtinfDurations(t *testing.T) {
+	input := "#EXTM3U\n#EXTINF:4.25,\nleft0.ts\n#EXTINF:7.1,\nleft1.ts\n#EXT-X-DISCONTINUITY\n#EXTINF:9.5,\nright0.ts\n"
+	scanner := bufio.NewScanner(strings.NewReader(input))
+
+	got, err := ParsePlaylist(scanner, 42, "Durations", 1)
+	if err != nil {
+		t.Fatalf("ParsePlaylist() unexpected error: %v", err)
+	}
+
+	if len(got.FirstDurations) != 2 || got.FirstDurations[0] != 4.25 || got.FirstDurations[1] != 7.1 {
+		t.Fatalf("unexpected first durations: %+v", got.FirstDurations)
+	}
+	if len(got.SecondDurations) != 1 || got.SecondDurations[0] != 9.5 {
+		t.Fatalf("unexpected second durations: %+v", got.SecondDurations)
 	}
 }
 

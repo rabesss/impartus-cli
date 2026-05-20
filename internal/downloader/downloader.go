@@ -407,6 +407,12 @@ func (d *Downloader) decryptChunkBytes(filePath string, infile []byte, key []byt
 
 // DecryptAES performs AES-128-CBC decryption with a zero IV and removes PKCS7 padding.
 func DecryptAES(encrypted []byte, key []byte) ([]byte, error) {
+	ciphertext := append([]byte(nil), encrypted...)
+	return DecryptAESInPlace(ciphertext, key)
+}
+
+// DecryptAESInPlace performs AES-CBC decryption in the provided byte slice and removes PKCS7 padding.
+func DecryptAESInPlace(encrypted []byte, key []byte) ([]byte, error) {
 	if len(key) != 16 && len(key) != 24 && len(key) != 32 {
 		return nil, fmt.Errorf("invalid AES key length: %d", len(key))
 	}
@@ -421,10 +427,9 @@ func DecryptAES(encrypted []byte, key []byte) ([]byte, error) {
 	}
 
 	mode := cipher.NewCBCDecrypter(block, iv)
-	plainText := make([]byte, len(encrypted))
-	mode.CryptBlocks(plainText, encrypted)
+	mode.CryptBlocks(encrypted, encrypted)
 
-	return removePKCS7Padding(plainText), nil
+	return removePKCS7Padding(encrypted), nil
 }
 
 // removePKCS7Padding strips PKCS7 padding from decrypted data.

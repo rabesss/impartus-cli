@@ -72,6 +72,8 @@ func TestPlayServerWorkflow(t *testing.T) {
 		KeyURL:           ts.URL + "/key",
 		FirstViewURLs:    []string{ts.URL + "/segment/left/0"},
 		SecondViewURLs:   []string{ts.URL + "/segment/right/0"},
+		FirstDurations:   []float64{6.5},
+		SecondDurations:  []float64{6.5},
 		HasMultipleViews: true,
 	}
 
@@ -190,7 +192,7 @@ func TestBuildLocalM3U8(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildLocalM3U8(tt.view, tt.urls, 9999, "test-token")
+			result := buildLocalM3U8(tt.view, tt.urls, nil, 9999, "test-token")
 
 			// Verify required HLS headers are always present
 			for _, header := range []string{
@@ -219,6 +221,17 @@ func TestBuildLocalM3U8(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBuildLocalM3U8UsesSegmentDurations(t *testing.T) {
+	result := buildLocalM3U8("left", []string{"a.ts", "b.ts"}, []float64{4.25, 7.1}, 9999, "test-token")
+
+	if !strings.Contains(result, "#EXT-X-TARGETDURATION:8") {
+		t.Fatalf("expected target duration rounded from segment durations, got:\n%s", result)
+	}
+	if !strings.Contains(result, "#EXTINF:4.250,") || !strings.Contains(result, "#EXTINF:7.100,") {
+		t.Fatalf("expected EXTINF durations to be preserved, got:\n%s", result)
 	}
 }
 
@@ -312,6 +325,7 @@ func TestHandleMasterViewConfigurations(t *testing.T) {
 		secondViewURLs   []string
 		wantLeft         bool
 		wantRight        bool
+		wantStatus       int
 	}{
 		{
 			name:             "both views with multiple views available",
@@ -321,6 +335,7 @@ func TestHandleMasterViewConfigurations(t *testing.T) {
 			secondViewURLs:   []string{"https://b.test/0"},
 			wantLeft:         true,
 			wantRight:        true,
+			wantStatus:       http.StatusOK,
 		},
 		{
 			name:             "left view only",
@@ -330,6 +345,7 @@ func TestHandleMasterViewConfigurations(t *testing.T) {
 			secondViewURLs:   []string{"https://b.test/0"},
 			wantLeft:         true,
 			wantRight:        false,
+			wantStatus:       http.StatusOK,
 		},
 		{
 			name:             "right view only with multiple views",
@@ -339,6 +355,7 @@ func TestHandleMasterViewConfigurations(t *testing.T) {
 			secondViewURLs:   []string{"https://b.test/0"},
 			wantLeft:         false,
 			wantRight:        true,
+			wantStatus:       http.StatusOK,
 		},
 		{
 			name:             "HasMultipleViews false shows only left",
@@ -348,15 +365,17 @@ func TestHandleMasterViewConfigurations(t *testing.T) {
 			secondViewURLs:   []string{"https://b.test/0"},
 			wantLeft:         true,
 			wantRight:        false,
+			wantStatus:       http.StatusOK,
 		},
 		{
-			name:             "empty URLs falls back to left",
+			name:             "empty URLs returns not found instead of broken stream",
 			views:            "both",
 			hasMultipleViews: true,
 			firstViewURLs:    []string{},
 			secondViewURLs:   []string{},
-			wantLeft:         true, // fallback branch
+			wantLeft:         false,
 			wantRight:        false,
+			wantStatus:       http.StatusNotFound,
 		},
 	}
 
@@ -379,6 +398,9 @@ func TestHandleMasterViewConfigurations(t *testing.T) {
 			handler.ServeHTTP(rec, req)
 
 			body := rec.Body.String()
+			if rec.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d; body:\n%s", rec.Code, tt.wantStatus, body)
+			}
 
 			hasLeft := strings.Contains(body, "left.m3u8")
 			hasRight := strings.Contains(body, "right.m3u8")
@@ -390,10 +412,47 @@ func TestHandleMasterViewConfigurations(t *testing.T) {
 				t.Errorf("right.m3u8 present = %v, want %v; body:\n%s", hasRight, tt.wantRight, body)
 			}
 
-			// Verify content type
-			if ct := rec.Header().Get("Content-Type"); ct != "application/vnd.apple.mpegurl" {
+			if tt.wantStatus == http.StatusOK && !strings.Contains(body, "RESOLUTION=") {
+				t.Errorf("expected master playlist metadata to include resolution, body:\n%s", body)
+			}
+			if tt.wantStatus == http.StatusOK && !strings.Contains(body, "BANDWIDTH=") {
+				t.Errorf("expected master playlist metadata to include bandwidth, body:\n%s", body)
+			}
+			if ct := rec.Header().Get("Content-Type"); tt.wantStatus == http.StatusOK && ct != "application/vnd.apple.mpegurl" {
 				t.Errorf("Content-Type = %q, want %q", ct, "application/vnd.apple.mpegurl")
 			}
 		})
+	}
+}
+
+func TestStartPlayServerRejectsPlaylistWithNoPlayableViews(t *testing.T) {
+	d := New(&config.Config{Views: "both"}, client.New(nil, nil))
+	_, cleanup, err := d.StartPlayServer(context.Background(), client.ParsedPlaylist{SeqNo: 9})
+	if err == nil {
+		t.Fatal("expected no playable views error")
+	}
+	if cleanup != nil {
+		t.Fatal("cleanup should be nil when server does not start")
+	}
+	if !strings.Contains(err.Error(), "no playable views") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestReadSegmentBytesDetectsOverflow(t *testing.T) {
+	got, err := readSegmentBytes(strings.NewReader("12345"), 5)
+	if err != nil {
+		t.Fatalf("unexpected exact-limit error: %v", err)
+	}
+	if string(got) != "12345" {
+		t.Fatalf("got %q, want exact payload", string(got))
+	}
+
+	_, err = readSegmentBytes(strings.NewReader("123456"), 5)
+	if err == nil {
+		t.Fatal("expected overflow error")
+	}
+	if !strings.Contains(err.Error(), "exceeds maximum size") {
+		t.Fatalf("unexpected overflow error: %v", err)
 	}
 }
