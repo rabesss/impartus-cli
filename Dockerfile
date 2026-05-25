@@ -23,7 +23,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 	  -X github.com/rabesss/impartus-cli/internal/buildinfo.Date=${BUILD_DATE}" \
 	-o /out/impartus .
 
-# debian:bookworm-slim digest last updated: 2026-05-17
+# debian:bookworm-slim digest last updated: 2026-05-25
 # To update: docker pull debian:bookworm-slim && replace digest below
 FROM debian:bookworm-slim@sha256:0104b334637a5f19aa9c983a91b54c89887c0984081f2068983107a6f6c21eeb
 
