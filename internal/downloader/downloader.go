@@ -2,7 +2,6 @@
 package downloader
 
 import (
-	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -391,27 +390,12 @@ func (d *Downloader) decryptChunkBytes(filePath string, infile []byte, key []byt
 	if !strings.HasSuffix(filePath, ".temp") {
 		return "", fmt.Errorf("invalid file path extension: %s", filePath)
 	}
-	if len(key) != 16 && len(key) != 24 && len(key) != 32 {
-		return "", fmt.Errorf("invalid AES key length: %d", len(key))
-	}
-	if len(infile) == 0 || len(infile)%aes.BlockSize != 0 {
-		return "", fmt.Errorf("ciphertext length %d is not a multiple of block size %d", len(infile), aes.BlockSize)
-	}
 
 	outPath := strings.TrimSuffix(filePath, ".temp")
-	iv := bytes.Repeat([]byte{0}, 16)
-
-	block, err := aes.NewCipher(key)
+	plainText, err := DecryptAES(infile, key)
 	if err != nil {
-		return "", fmt.Errorf("failed to create AES cipher: %w", err)
+		return "", fmt.Errorf("failed to decrypt: %w", err)
 	}
-
-	mode := cipher.NewCBCDecrypter(block, iv)
-	plainText := make([]byte, len(infile))
-	mode.CryptBlocks(plainText, infile)
-
-	// Remove PKCS7 padding from plaintext
-	plainText = removePKCS7Padding(plainText)
 
 	// G703: path components are from validated config and sanitized input
 	// #nosec G703
@@ -419,6 +403,33 @@ func (d *Downloader) decryptChunkBytes(filePath string, infile []byte, key []byt
 		return "", fmt.Errorf("failed to write decrypted file %s: %w", outPath, err)
 	}
 	return outPath, nil
+}
+
+// DecryptAES performs AES-128-CBC decryption with a zero IV and removes PKCS7 padding.
+func DecryptAES(encrypted []byte, key []byte) ([]byte, error) {
+	ciphertext := append([]byte(nil), encrypted...)
+	return DecryptAESInPlace(ciphertext, key)
+}
+
+// DecryptAESInPlace performs AES-CBC decryption in the provided byte slice and removes PKCS7 padding.
+func DecryptAESInPlace(encrypted []byte, key []byte) ([]byte, error) {
+	if len(key) != 16 && len(key) != 24 && len(key) != 32 {
+		return nil, fmt.Errorf("invalid AES key length: %d", len(key))
+	}
+	if len(encrypted) == 0 || len(encrypted)%aes.BlockSize != 0 {
+		return nil, fmt.Errorf("ciphertext length %d is not a multiple of block size %d", len(encrypted), aes.BlockSize)
+	}
+
+	iv := make([]byte, 16)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+
+	mode := cipher.NewCBCDecrypter(block, iv)
+	mode.CryptBlocks(encrypted, encrypted)
+
+	return removePKCS7Padding(encrypted), nil
 }
 
 // removePKCS7Padding strips PKCS7 padding from decrypted data.

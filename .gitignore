@@ -40,6 +40,7 @@
 
 # Exclude test files (keep private)
 *_test.go
+!/internal/downloader/play_test.go
 integration_test.go
 parser_test.go
 coverage*.out
@@ -60,10 +61,7 @@ CLAUDE.md
 *.token
 config.json
 
-# Test files - keep private
-*_test.go
-coverage*.out
-*.test
+
 
 # Desloppify quality gate local state
 .desloppify/

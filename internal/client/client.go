@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/rabesss/impartus-cli/internal/config"
@@ -285,6 +286,9 @@ func ParsePlaylist(scanner *bufio.Scanner, id int, title string, seqNo int) (Par
 	isFirstView := true
 	firstViewURLs := make([]string, 0)
 	secondViewURLs := make([]string, 0)
+	firstDurations := make([]float64, 0)
+	secondDurations := make([]float64, 0)
+	pendingDuration := 0.0
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -293,14 +297,19 @@ func ParsePlaylist(scanner *bufio.Scanner, id int, title string, seqNo int) (Par
 			if len(match) == 2 {
 				parsedOutput.KeyURL = match[1]
 			}
+		} else if strings.HasPrefix(line, "#EXTINF:") {
+			pendingDuration = parseEXTINFDuration(line)
 		} else if strings.HasPrefix(line, "#EXT-X-DISCONTINUITY") {
 			isFirstView = false
 		} else if !strings.HasPrefix(line, "#EXT") {
 			if isFirstView {
 				firstViewURLs = append(firstViewURLs, line)
+				firstDurations = append(firstDurations, pendingDuration)
 			} else {
 				secondViewURLs = append(secondViewURLs, line)
+				secondDurations = append(secondDurations, pendingDuration)
 			}
+			pendingDuration = 0
 		}
 	}
 
@@ -309,12 +318,26 @@ func ParsePlaylist(scanner *bufio.Scanner, id int, title string, seqNo int) (Par
 	}
 
 	parsedOutput.FirstViewURLs = firstViewURLs
+	parsedOutput.FirstDurations = firstDurations
 	if !isFirstView {
 		parsedOutput.HasMultipleViews = true
 		parsedOutput.SecondViewURLs = secondViewURLs
+		parsedOutput.SecondDurations = secondDurations
 	}
 
 	return parsedOutput, nil
+}
+
+func parseEXTINFDuration(line string) float64 {
+	durationText := strings.TrimPrefix(line, "#EXTINF:")
+	if comma := strings.Index(durationText, ","); comma >= 0 {
+		durationText = durationText[:comma]
+	}
+	duration, err := strconv.ParseFloat(strings.TrimSpace(durationText), 64)
+	if err != nil || duration <= 0 {
+		return 0
+	}
+	return duration
 }
 
 func sanitizeFileName(name string) string {

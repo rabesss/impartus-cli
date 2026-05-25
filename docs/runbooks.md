@@ -31,7 +31,6 @@
 <!---toc end-->
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-
 # Runbooks - Incident Response Playbooks
 
 This document provides operational runbooks for common incidents and troubleshooting scenarios.

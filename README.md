@@ -13,11 +13,12 @@
     * [Interactive Mode](#interactive-mode)
     * [Deterministic JSON Mode](#deterministic-json-mode)
     * [Command Reference](#command-reference)
-    * [Download Flags](#download-flags)
+    * [Download / Play Flags](#download--play-flags)
     * [API Server](#api-server)
   * [API Usage](#api-usage)
     * [Authentication](#authentication)
     * [Endpoints](#endpoints)
+    * [Health Endpoint](#health-endpoint)
     * [Create Download Job](#create-download-job)
     * [WebSocket Connection](#websocket-connection)
     * [WebSocket Events](#websocket-events)
@@ -40,7 +41,6 @@
 
 <!---toc end-->
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
-
 
 # Impartus CLI
 
@@ -86,6 +86,7 @@ go build -o impartus .
 
 - **Go 1.25+** - Go toolchain for building
 - **FFmpeg** - Required for video processing (must be in `PATH`)
+- **mpv** - Required for the `play` command (must be in `PATH`)
 - **Impartus Account** - Valid credentials for your institution's Impartus platform
 
 ### Configuration
@@ -222,26 +223,29 @@ On failure, `success` is `false`, `data` is `null`, and `error.message` contains
 | `impartus courses` | List available courses |
 | `impartus lectures -s ID -S ID` | List lectures for subject/session |
 | `impartus download [flags]` | Download lectures |
+| `impartus play [flags]` | Play lectures in mpv |
 | `impartus serve [--port PORT]` | Start HTTP API server |
 
-### Download Flags
+### Download / Play Flags
 
 ```bash
 ./impartus download --subject 123 --session 456 [flags]
+./impartus play --subject 123 --session 456 [flags]
 ```
 
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--subject` | `-s` | Subject ID (required) |
-| `--session` | `-S` | Session ID (required) |
-| `--start` | | Start lecture index (1-based) |
-| `--end` | | End lecture index (1-based, inclusive) |
-| `--quality` | | Quality: `144`, `450`, `720` |
-| `--views` | | Views: `left`, `right`, `both`, `first`, `second` |
-| `--audio-only` | | Audio-only mode |
-| `--format` | | Audio format: `mp3`, `m4a`, `aac`, `opus` |
-| `--output` | `-o` | Output directory |
-| `--json` | | JSON output (non-blocking) |
+| Flag | Short | Description | Applicable To |
+|------|-------|-------------|---------------|
+| `--subject` | `-s` | Subject ID (required) | Both |
+| `--session` | `-S` | Session ID (required) | Both |
+| `--start` | | Start lecture index (1-based) | Both |
+| `--end` | | End lecture index (1-based, inclusive) | Both |
+| `--lecture` | `-l` | Specific lecture index (shortcut for start & end) | Play Only |
+| `--quality` | | Quality: `144`, `450`, `720` | Both |
+| `--views` | | Views: `left`, `right`, `both`, `first`, `second` | Both |
+| `--audio-only` | | Audio-only mode | Download Only |
+| `--format` | | Audio format: `mp3`, `m4a`, `aac`, `opus` | Download Only |
+| `--output` | `-o` | Output directory | Download Only |
+| `--json` | | JSON output (non-blocking) | Download Only |
 
 **Examples:**
 
@@ -257,6 +261,12 @@ On failure, `success` is `false`, `data` is `null`, and `error.message` contains
 
 # Download to custom directory
 ./impartus download -s 123 -S 456 -o /path/to/output
+
+# Play lectures 1-5 from course
+./impartus play -s 123 -S 456 --start 1 --end 5
+
+# Play a specific lecture
+./impartus play -s 123 -S 456 --lecture 3
 ```
 
 ### API Server

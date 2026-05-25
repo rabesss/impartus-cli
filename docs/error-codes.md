@@ -5,14 +5,15 @@
 
 * [Error Codes Reference](#error-codes-reference)
   * [Error Response Format](#error-response-format)
+    * [Retry Hints](#retry-hints)
   * [Authentication Errors](#authentication-errors)
   * [Request Validation Errors](#request-validation-errors)
   * [Job Errors](#job-errors)
+    * [409 Conflict (Not an Error)](#409-conflict-not-an-error)
   * [Upstream Errors](#upstream-errors)
 
 <!---toc end-->
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
-
 
 # Error Codes Reference
 

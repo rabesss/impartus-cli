@@ -40,6 +40,7 @@ func restoreCLIState(t *testing.T) {
 	oldLectures := runLecturesFn
 	oldDownload := runDownloadFn
 	oldServe := runServeFn
+	oldPlay := runPlayFn
 	t.Cleanup(func() {
 		os.Args = oldArgs
 		runInteractiveFn = oldInteractive
@@ -47,6 +48,7 @@ func restoreCLIState(t *testing.T) {
 		runLecturesFn = oldLectures
 		runDownloadFn = oldDownload
 		runServeFn = oldServe
+		runPlayFn = oldPlay
 	})
 }
 
@@ -818,5 +820,199 @@ func TestApplyAndValidateFlags_ValidFlags(t *testing.T) {
 	}
 	if !result.AudioOnly {
 		t.Error("AudioOnly should be true")
+	}
+}
+
+func TestExecutePlayDelegates(t *testing.T) {
+	restoreCLIState(t)
+	called := false
+	runPlayFn = func(args []string) error {
+		called = true
+		if len(args) != 2 || args[0] != "-s" || args[1] != "1" {
+			t.Errorf("unexpected args passed to play: %v", args)
+		}
+		return nil
+	}
+	os.Args = []string{"impartus", "play", "-s", "1"}
+
+	if err := Execute("dev", ""); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if !called {
+		t.Fatal("expected play subcommand to be executed")
+	}
+}
+
+func TestPlayRejectsPositionalArguments(t *testing.T) {
+	_, err := parsePlayFlags([]string{"extra_arg"})
+	if err == nil {
+		t.Fatal("expected positional argument error")
+	}
+	if !strings.Contains(err.Error(), "does not accept positional arguments") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+func TestValidatePlayFlagsRejectsPartialDirectSelection(t *testing.T) {
+	tests := []struct {
+		name string
+		in   playFlags
+		want string
+	}{
+		{
+			name: "subject without session",
+			in:   playFlags{subject: 1},
+			want: "requires both",
+		},
+		{
+			name: "session without subject",
+			in:   playFlags{session: 2},
+			want: "requires both",
+		},
+		{
+			name: "lecture range without direct course",
+			in:   playFlags{start: 1, end: 2},
+			want: "range flags require",
+		},
+		{
+			name: "negative subject",
+			in:   playFlags{subject: -1, session: 2},
+			want: "positive",
+		},
+		{
+			name: "negative lecture",
+			in:   playFlags{lecture: -1},
+			want: "selection values must be positive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validatePlayFlags(tt.in)
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error containing %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
+func TestExecuteJSONPlayRejects(t *testing.T) {
+	restoreCLIState(t)
+	os.Args = []string{"impartus", "play", "--json"}
+
+	_, err := captureStdout(t, func() error { return Execute("v1", "d1") })
+	if err == nil {
+		t.Fatal("expected json error for play command")
+	}
+	raw := err.Error()
+	if !strings.Contains(raw, "play command is not supported in JSON mode") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+	var envelope map[string]json.RawMessage
+	if unmarshalErr := json.Unmarshal([]byte(raw), &envelope); unmarshalErr != nil {
+		t.Fatalf("expected JSON envelope, got: %s", raw)
+	}
+}
+
+func TestParsePlayFlags(t *testing.T) {
+	tests := []struct {
+		name          string
+		args          []string
+		wantErr       bool
+		wantSubject   int
+		wantSession   int
+		wantStart     int
+		wantEnd       int
+		wantQuality   string
+		wantViews     string
+		wantSkipNA    bool
+		wantIncludeNA bool
+	}{
+		{
+			name:    "empty args gives all defaults",
+			args:    []string{},
+			wantErr: false,
+		},
+		{
+			name:        "-s 1 -S 2 sets subject and session",
+			args:        []string{"-s", "1", "-S", "2"},
+			wantSubject: 1,
+			wantSession: 2,
+		},
+		{
+			name:      "-l 3 sets start and end to same value",
+			args:      []string{"-l", "3"},
+			wantStart: 3,
+			wantEnd:   3,
+		},
+		{
+			name:      "--start 2 --end 5 sets range",
+			args:      []string{"--start", "2", "--end", "5"},
+			wantStart: 2,
+			wantEnd:   5,
+		},
+		{
+			name:        "--quality 720 --views left",
+			args:        []string{"--quality", "720", "--views", "left"},
+			wantQuality: "720",
+			wantViews:   "left",
+		},
+		{
+			name:       "--skip-no-audio sets flag",
+			args:       []string{"--skip-no-audio"},
+			wantSkipNA: true,
+		},
+		{
+			name:          "--include-noaudio sets flag",
+			args:          []string{"--include-noaudio"},
+			wantIncludeNA: true,
+		},
+		{
+			name:    "unknown flag returns error",
+			args:    []string{"--unknown"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := parsePlayFlags(tt.args)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error but got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if f.subject != tt.wantSubject {
+				t.Errorf("subject = %d, want %d", f.subject, tt.wantSubject)
+			}
+			if f.session != tt.wantSession {
+				t.Errorf("session = %d, want %d", f.session, tt.wantSession)
+			}
+			if f.start != tt.wantStart {
+				t.Errorf("start = %d, want %d", f.start, tt.wantStart)
+			}
+			if f.end != tt.wantEnd {
+				t.Errorf("end = %d, want %d", f.end, tt.wantEnd)
+			}
+			if f.quality != tt.wantQuality {
+				t.Errorf("quality = %q, want %q", f.quality, tt.wantQuality)
+			}
+			if f.views != tt.wantViews {
+				t.Errorf("views = %q, want %q", f.views, tt.wantViews)
+			}
+			if f.skipNoAudio != tt.wantSkipNA {
+				t.Errorf("skipNoAudio = %v, want %v", f.skipNoAudio, tt.wantSkipNA)
+			}
+			if f.includeNoAudio != tt.wantIncludeNA {
+				t.Errorf("includeNoAudio = %v, want %v", f.includeNoAudio, tt.wantIncludeNA)
+			}
+		})
 	}
 }
