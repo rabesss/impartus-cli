@@ -2,7 +2,7 @@
 
 # golang:1.25-bookworm digest last updated: 2026-05-17
 # To update: docker pull golang:1.25-bookworm && replace digest below
-FROM golang:1.26-bookworm@sha256:252599aeb51ad60b83e4d8821802068127c528c707cb7dd7afd93be057c6011c AS build
+FROM golang:1.26-bookworm@sha256:386d475a660466863d9f8c766fec64d7fdad3edac2c6a05020c09534d71edb4b AS build
 
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
