@@ -19,8 +19,7 @@ import (
 // StartPlayServer starts a temporary local HTTP server to stream and decrypt HLS segments on the fly.
 // It returns the URL to the master playlist, a cleanup function to shut down the server, and any error.
 func (d *Downloader) StartPlayServer(ctx context.Context, playlist client.ParsedPlaylist) (string, func(), error) {
-	hasFirst, hasSecond := d.playableViews(playlist)
-	if !hasFirst && !hasSecond {
+	if !d.hasPlayableViews(playlist) {
 		return "", nil, fmt.Errorf("no playable views available for lecture %d", playlist.SeqNo)
 	}
 
@@ -45,8 +44,8 @@ func (d *Downloader) StartPlayServer(ctx context.Context, playlist client.Parsed
 	sessionToken := uuid.New().String()
 	mux := http.NewServeMux()
 	mux.HandleFunc(fmt.Sprintf("/%s/master.m3u8", sessionToken), d.handleMaster(playlist, port, sessionToken))
-	mux.HandleFunc(fmt.Sprintf("/%s/left.m3u8", sessionToken), d.handleVariant(playlist, port, sessionToken, "left"))
-	mux.HandleFunc(fmt.Sprintf("/%s/right.m3u8", sessionToken), d.handleVariant(playlist, port, sessionToken, "right"))
+	mux.HandleFunc(fmt.Sprintf("/%s/left.m3u8", sessionToken), d.handleLeft(playlist, port, sessionToken))
+	mux.HandleFunc(fmt.Sprintf("/%s/right.m3u8", sessionToken), d.handleRight(playlist, port, sessionToken))
 	mux.HandleFunc(fmt.Sprintf("/%s/segment/", sessionToken), d.handleSegment(playlist, decryptionKey))
 
 	server := &http.Server{
@@ -102,21 +101,22 @@ func (d *Downloader) playableViews(playlist client.ParsedPlaylist) (bool, bool) 
 	return hasFirst, hasSecond
 }
 
-func (d *Downloader) handleVariant(playlist client.ParsedPlaylist, port int, token string, view string) http.HandlerFunc {
-	var urls []string
-	var durations []float64
-	switch view {
-	case "left":
-		urls = playlist.FirstViewURLs
-		durations = playlist.FirstDurations
-	case "right":
-		urls = playlist.SecondViewURLs
-		durations = playlist.SecondDurations
-	}
+func (d *Downloader) hasPlayableViews(playlist client.ParsedPlaylist) bool {
+	hasFirst, hasSecond := d.playableViews(playlist)
+	return hasFirst || hasSecond
+}
 
+func (d *Downloader) handleLeft(playlist client.ParsedPlaylist, port int, token string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-		_, _ = w.Write([]byte(buildLocalM3U8(view, urls, durations, port, token)))
+		_, _ = w.Write([]byte(buildLocalM3U8("left", playlist.FirstViewURLs, playlist.FirstDurations, port, token))) //nolint:errcheck
+	}
+}
+
+func (d *Downloader) handleRight(playlist client.ParsedPlaylist, port int, token string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+		_, _ = w.Write([]byte(buildLocalM3U8("right", playlist.SecondViewURLs, playlist.SecondDurations, port, token))) //nolint:errcheck
 	}
 }
 

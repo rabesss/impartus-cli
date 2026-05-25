@@ -459,7 +459,7 @@ func TestReadSegmentBytesDetectsOverflow(t *testing.T) {
 
 func TestHlsVariantMetadata(t *testing.T) {
 	tests := []struct {
-		quality      string
+		quality       string
 		wantBandwidth int
 		wantRes       string
 	}{
@@ -507,10 +507,10 @@ func TestSegmentDuration(t *testing.T) {
 
 func TestTargetDuration(t *testing.T) {
 	tests := []struct {
-		name          string
-		durations     []float64
-		segmentCount  int
-		wantCeiling   int
+		name         string
+		durations    []float64
+		segmentCount int
+		wantCeiling  int
 	}{
 		{"rounds up max duration", []float64{5.0, 7.1, 3.0}, 3, 8},
 		{"empty durations defaults to 11", nil, 3, 11},
