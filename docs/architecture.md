@@ -12,9 +12,6 @@
 <!---toc end-->
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-
-
-
 # Architecture
 
 This project is CLI-first and API-secondary: the CLI is the primary execution path, and the API is started from `impartus serve` when needed.

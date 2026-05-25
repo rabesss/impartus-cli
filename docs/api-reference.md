@@ -28,9 +28,6 @@
 <!---toc end-->
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-
-
-
 # Impartus API Reference
 
 Base path: `http://localhost:8080/api/v1`

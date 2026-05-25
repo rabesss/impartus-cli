@@ -43,9 +43,6 @@
     * [Linting](#linting)
     * [Pre-commit Hooks](#pre-commit-hooks)
     * [Testing](#testing)
-* [Run all tests](#run-all-tests)
-* [Run with coverage](#run-with-coverage)
-* [View coverage](#view-coverage)
     * [Security](#security)
     * [CI/CD](#cicd)
   * [Releases](#releases)
@@ -57,9 +54,6 @@
 
 <!---toc end-->
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
-
-
-
 
 # AGENTS.md - AI Agent Guide for Impartus CLI
 

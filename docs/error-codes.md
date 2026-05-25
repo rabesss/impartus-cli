@@ -15,9 +15,6 @@
 <!---toc end-->
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-
-
-
 # Error Codes Reference
 
 All API errors use structured JSON responses via `respondWithError` in [`auth.go`](../internal/server/auth.go) and [`server.go`](../internal/server/server.go).

@@ -53,6 +53,7 @@ func processFile(filepath string) error {
 
 	// Generate new TOC
 	toc := generateTOC(headers)
+	remaining := bytes.TrimLeft(content[endIdx+len(endMarker):], "\r\n")
 
 	// Build new content
 	var newContent bytes.Buffer
@@ -61,8 +62,8 @@ func processFile(filepath string) error {
 	newContent.WriteString("\n")
 	newContent.WriteString(toc)
 	newContent.WriteString(endMarker)
-	newContent.WriteString("\n")
-	newContent.Write(content[endIdx+len(endMarker):])
+	newContent.WriteString("\n\n")
+	newContent.Write(remaining)
 
 	// G304: script operates on known local paths
 	// #nosec
@@ -71,9 +72,22 @@ func processFile(filepath string) error {
 
 func extractHeaders(content string) []string {
 	var headers []string
+	var fence string
 	scanner := bufio.NewScanner(strings.NewReader(content))
 	for scanner.Scan() {
 		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+		if fence == "" {
+			if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+				fence = trimmed[:3]
+				continue
+			}
+		} else {
+			if strings.HasPrefix(trimmed, fence) {
+				fence = ""
+			}
+			continue
+		}
 		// Match H1, H2, H3 headers
 		if strings.HasPrefix(line, "# ") || strings.HasPrefix(line, "## ") || strings.HasPrefix(line, "### ") {
 			headers = append(headers, line)
