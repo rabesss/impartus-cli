@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.1.9](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.8...impartus-cli-v0.1.9) (2026-05-25)
+
+
+### Features
+
+* **cli:** add play command for direct streaming with mpv ([#44](https://github.com/rabesss/impartus-cli/issues/44)) ([cd416ca](https://github.com/rabesss/impartus-cli/commit/cd416ca4e4f73756eafe076757c1382355ab3cb8))
+
+
+### Build System
+
+* **deps:** bump debian base image digest ([#49](https://github.com/rabesss/impartus-cli/issues/49)) ([67ad4da](https://github.com/rabesss/impartus-cli/commit/67ad4dae84ce3f5045986868963c34a709c5519b))
+* **deps:** bump golang base image digest ([#50](https://github.com/rabesss/impartus-cli/issues/50)) ([b7bd74a](https://github.com/rabesss/impartus-cli/commit/b7bd74ac875e6a44967f5653ed372fb2cac32b5d))
+
+
+### CI/CD
+
+* **deps:** bump codecov/codecov-action from 6.0.0 to 6.0.1 ([#45](https://github.com/rabesss/impartus-cli/issues/45)) ([5ffed80](https://github.com/rabesss/impartus-cli/commit/5ffed80123c413a817555765f3373b19fe54d4a8))
+* **deps:** bump github/codeql-action from 4.35.5 to 4.36.0 ([#48](https://github.com/rabesss/impartus-cli/issues/48)) ([16041e5](https://github.com/rabesss/impartus-cli/commit/16041e5d8139f46501f648de9c0ba1a69e293b17))
+* **deps:** bump golangci/golangci-lint-action from 9.2.0 to 9.2.1 ([#46](https://github.com/rabesss/impartus-cli/issues/46)) ([2aecf2f](https://github.com/rabesss/impartus-cli/commit/2aecf2f5b690ddfd85c61d87af0ae2c0b96fb6cc))
+
 ## [0.1.8](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.7...impartus-cli-v0.1.8) (2026-05-17)
 
 
