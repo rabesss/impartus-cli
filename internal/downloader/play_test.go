@@ -456,3 +456,74 @@ func TestReadSegmentBytesDetectsOverflow(t *testing.T) {
 		t.Fatalf("unexpected overflow error: %v", err)
 	}
 }
+
+func TestHlsVariantMetadata(t *testing.T) {
+	tests := []struct {
+		quality      string
+		wantBandwidth int
+		wantRes       string
+	}{
+		{"144", 256000, "256x144"},
+		{"450", 800000, "800x450"},
+		{"720", 1500000, "1280x720"},
+		{"", 1500000, "1280x720"},
+		{"  450  ", 800000, "800x450"},
+		{"unknown", 1500000, "1280x720"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.quality, func(t *testing.T) {
+			bw, res := hlsVariantMetadata(tt.quality)
+			if bw != tt.wantBandwidth {
+				t.Errorf("bandwidth = %d, want %d", bw, tt.wantBandwidth)
+			}
+			if res != tt.wantRes {
+				t.Errorf("resolution = %q, want %q", res, tt.wantRes)
+			}
+		})
+	}
+}
+
+func TestSegmentDuration(t *testing.T) {
+	durations := []float64{5.0, 0, 8.5}
+	tests := []struct {
+		name  string
+		index int
+		want  float64
+	}{
+		{"valid index 0", 0, 5.0},
+		{"zero duration falls back to 11", 1, 11.0},
+		{"valid index 2", 2, 8.5},
+		{"out of range falls back to 11", 3, 11.0},
+		{"negative index falls back to 11", -1, 11.0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := segmentDuration(durations, tt.index); got != tt.want {
+				t.Errorf("segmentDuration() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTargetDuration(t *testing.T) {
+	tests := []struct {
+		name          string
+		durations     []float64
+		segmentCount  int
+		wantCeiling   int
+	}{
+		{"rounds up max duration", []float64{5.0, 7.1, 3.0}, 3, 8},
+		{"empty durations defaults to 11", nil, 3, 11},
+		{"all zeros defaults to 11", []float64{0, 0}, 2, 11},
+		{"single segment", []float64{10.0}, 1, 10},
+		{"exact integer needs no rounding", []float64{11.0}, 1, 11},
+		{"fractional rounds up", []float64{10.1}, 1, 11},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := targetDuration(tt.durations, tt.segmentCount); got != tt.wantCeiling {
+				t.Errorf("targetDuration() = %d, want %d", got, tt.wantCeiling)
+			}
+		})
+	}
+}
