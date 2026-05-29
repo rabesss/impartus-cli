@@ -21,7 +21,7 @@ func writeM3U8File(path string, chunks []string) error {
 #EXT-X-ALLOW-CACHE:YES
 #EXT-X-TARGETDURATION:11
 #EXT-X-KEY:METHOD=NONE
-	`)
+`)
 	if err != nil {
 		return err
 	}

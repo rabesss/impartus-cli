@@ -167,7 +167,9 @@ func (p *LecturePipeline) Start() {
 
 func (p *LecturePipeline) acquireMemory(size int64) bool {
 	p.inFlightMu.Lock()
-	for p.inFlightBytes+size > p.config.MaxInFlightBytes && p.ctx.Err() == nil {
+	// Allow a single oversized chunk to proceed when the pipeline is empty,
+	// otherwise it would wait forever (size alone exceeds the budget).
+	for p.inFlightBytes > 0 && p.inFlightBytes+size > p.config.MaxInFlightBytes && p.ctx.Err() == nil {
 		p.inFlightCond.Wait()
 	}
 	if p.ctx.Err() != nil {
