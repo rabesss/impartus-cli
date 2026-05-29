@@ -166,14 +166,13 @@ func TestProbeUpstreamTCP_UnreachableHost(t *testing.T) {
 	s := newAPIServer(&config.Config{
 		Username:         "user",
 		Password:         "pass",
-		BaseURL:          "https://192.0.2.1:1", // RFC 5737 TEST-NET, should be unreachable
+		BaseURL:          "https://127.0.0.1:1", // closed port -> connection refused
 		DownloadLocation: "./downloads",
 	})
 
-	// This will timeout or fail quickly
-	result := s.probeUpstreamTCP()
-	// Can't assert false definitively (network-dependent), just ensure no panic
-	_ = result
+	if s.probeUpstreamTCP() {
+		t.Error("expected probeUpstreamTCP to return false for a refused connection")
+	}
 }
 
 func TestProbeUpstreamTCP_ReachableServer(t *testing.T) {

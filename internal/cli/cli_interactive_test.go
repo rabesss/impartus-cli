@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bufio"
-	"errors"
 	"strings"
 	"testing"
 )
@@ -127,12 +126,5 @@ func TestBuildNoLecturesError(t *testing.T) {
 	}
 	if strings.Contains(err2.Error(), "noaudio") {
 		t.Errorf("expected no 'noaudio' in message when 0, got %q", err2.Error())
-	}
-}
-
-func TestBuildNoLecturesError_IsError(t *testing.T) {
-	err := buildNoLecturesError(1, 1)
-	if !errors.Is(err, err) {
-		t.Error("error should match itself")
 	}
 }

@@ -441,14 +441,14 @@ func TestTotalChunksForPlaylist(t *testing.T) {
 			expectedTotal: 5,
 		},
 		{
-			name:          "first view returns both (due to bug in condition)",
+			name:          "first normalizes to left (first view only)",
 			views:         "first",
-			expectedTotal: 5,
+			expectedTotal: 3,
 		},
 		{
-			name:          "second view returns both (due to bug in condition)",
+			name:          "second normalizes to right (second view only)",
 			views:         "second",
-			expectedTotal: 5,
+			expectedTotal: 2,
 		},
 		{
 			name:          "left view shows first",
@@ -464,7 +464,7 @@ func TestTotalChunksForPlaylist(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d.config.Views = tt.views
+			d.config.Views = config.NormalizeViews(tt.views)
 			got := d.totalChunksForPlaylist(playlist)
 			if got != tt.expectedTotal {
 				t.Errorf("totalChunksForPlaylist() = %v, want %v", got, tt.expectedTotal)

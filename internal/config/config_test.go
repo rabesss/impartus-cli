@@ -311,3 +311,27 @@ func TestPipelineWarningForInefficientWorkers(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 }
+
+func TestNormalizeViews(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"first maps to left", "first", "left"},
+		{"second maps to right", "second", "right"},
+		{"both passthrough", "both", "both"},
+		{"left passthrough", "left", "left"},
+		{"right passthrough", "right", "right"},
+		{"case insensitive", "First", "left"},
+		{"trims whitespace", "  second  ", "right"},
+		{"empty passthrough", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NormalizeViews(tt.in); got != tt.want {
+				t.Errorf("NormalizeViews(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}

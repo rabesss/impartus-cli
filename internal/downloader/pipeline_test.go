@@ -3,8 +3,11 @@ package downloader
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 	"time"
+
+	"github.com/vbauerster/mpb/v8"
 
 	"github.com/rabesss/impartus-cli/internal/client"
 )
@@ -506,59 +509,30 @@ func TestSubmitPipelineViewTasks(t *testing.T) {
 	}
 }
 
-func TestUpdatePipelineBar(t *testing.T) {
-	// updatePipelineBar uses pipeline.GetStats() which is testable
-	p := NewLecturePipeline(PipelineConfig{
-		DownloadWorkers: 1,
-		DecryptWorkers:  1,
-	}, nil)
-	defer p.cancelPipeline()
+func TestPipelineMonitorBarLifecycle(t *testing.T) {
+	d := &Downloader{}
 
-	// updatePipelineBar is a method on Downloader, not Pipeline
-	// We test it indirectly by checking that GetStats works
-	stats := p.GetStats()
-	processed := sumPipelineStats(stats)
-	if processed != 0 {
-		t.Errorf("initial processed = %d, want 0", processed)
+	// Nil bar: no monitor channel, and stop must handle nil without panicking.
+	if ch := d.monitorPipelineProgress(nil, nil, 5); ch != nil {
+		t.Fatal("expected nil monitor channel for nil bar")
 	}
-}
+	d.stopPipelineMonitor(nil, nil, 5)
 
-func TestStopPipelineMonitorNilChan(t *testing.T) {
-	// Test that stopPipelineMonitor handles nil monitorDone channel
-	// This is a function on Downloader, not Pipeline
-	// We verify the logic by checking pipeline behavior
-
-	// For now, just verify the function exists by checking pipeline logic
-	p := NewLecturePipeline(PipelineConfig{
-		DownloadWorkers: 1,
-		DecryptWorkers:  1,
-	}, nil)
+	// Non-nil bar: monitor returns a channel and stop fills the bar to total.
+	prog := mpb.New(mpb.WithOutput(io.Discard))
+	bar := prog.AddBar(10)
+	p := NewLecturePipeline(PipelineConfig{DownloadWorkers: 1, DecryptWorkers: 1}, d)
 	defer p.cancelPipeline()
 
-	// The monitorDone is nil when downloadBar is nil
-	// stopPipelineMonitor just does: if monitorDone == nil { return }
-	// So it should handle nil gracefully
-}
+	monitorDone := d.monitorPipelineProgress(bar, p, 10)
+	if monitorDone == nil {
+		t.Fatal("expected non-nil monitor channel for non-nil bar")
+	}
+	d.stopPipelineMonitor(monitorDone, bar, 10)
+	prog.Wait()
 
-func TestMonitorPipelineProgress(t *testing.T) {
-	// monitorPipelineProgress starts a goroutine that updates the bar
-	// We test it by starting a pipeline and verifying it doesn't panic
-	p := NewLecturePipeline(PipelineConfig{
-		DownloadWorkers: 1,
-		DecryptWorkers:  1,
-	}, nil)
-	defer p.cancelPipeline()
-
-	// Start the pipeline
-	p.Start()
-
-	// Finish submission immediately since we won't actually download anything
-	p.FinishSubmission(0)
-
-	// Collect should complete without hanging since no downloads were submitted
-	result := p.Collect()
-	if result.TotalTime < 0 {
-		t.Error("TotalTime should be non-negative")
+	if got := bar.Current(); got != 10 {
+		t.Errorf("bar.Current() = %d, want 10", got)
 	}
 }
 
