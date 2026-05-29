@@ -162,7 +162,7 @@ func (d *Downloader) handleSegment(playlist client.ParsedPlaylist, decryptionKey
 
 		resp, err := d.client.GetAuthorizedWithToken(r.Context(), realURL, d.config.Token)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to fetch segment: %v", err), http.StatusBadGateway)
+			http.Error(w, "failed to fetch upstream segment", http.StatusBadGateway)
 			return
 		}
 		defer resp.Body.Close() //nolint:errcheck
@@ -180,7 +180,7 @@ func (d *Downloader) handleSegment(playlist client.ParsedPlaylist, decryptionKey
 
 		encryptedBytes, err := readSegmentBytes(resp.Body, maxSegmentSize)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to read segment bytes: %v", err), http.StatusBadGateway)
+			http.Error(w, "failed to read upstream segment", http.StatusBadGateway)
 			return
 		}
 
