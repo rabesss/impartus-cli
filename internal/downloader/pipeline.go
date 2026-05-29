@@ -165,13 +165,18 @@ func (p *LecturePipeline) Start() {
 	}()
 }
 
-func (p *LecturePipeline) acquireMemory(size int64) {
+func (p *LecturePipeline) acquireMemory(size int64) bool {
 	p.inFlightMu.Lock()
 	for p.inFlightBytes+size > p.config.MaxInFlightBytes && p.ctx.Err() == nil {
 		p.inFlightCond.Wait()
 	}
+	if p.ctx.Err() != nil {
+		p.inFlightMu.Unlock()
+		return false
+	}
 	p.inFlightBytes += size
 	p.inFlightMu.Unlock()
+	return true
 }
 
 func (p *LecturePipeline) releaseMemory(size int64) {
@@ -203,7 +208,9 @@ func (p *LecturePipeline) downloadWorker() {
 			}
 
 			if err == nil && len(encryptedBytes) > 0 {
-				p.acquireMemory(int64(len(encryptedBytes)))
+				if !p.acquireMemory(int64(len(encryptedBytes))) {
+					return // context cancelled, stop worker
+				}
 			}
 
 			select {
