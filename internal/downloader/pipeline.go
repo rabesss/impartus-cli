@@ -53,13 +53,14 @@ type DecryptedChunk struct {
 
 // PipelineConfig configures the concurrency and context for a lecture download pipeline.
 type PipelineConfig struct {
-	Context         context.Context
-	DownloadWorkers int
-	DecryptWorkers  int
-	DecryptionKey   []byte
-	LectureID       int
-	LectureSeqNo    int
-	ProgressTracker *ProgressTracker
+	Context          context.Context
+	DownloadWorkers  int
+	DecryptWorkers   int
+	DecryptionKey    []byte
+	LectureID        int
+	LectureSeqNo     int
+	ProgressTracker  *ProgressTracker
+	MaxInFlightBytes int64 // 0 means use default (256MB)
 }
 
 // PipelineResult contains the ordered chunk paths and any failures from a completed pipeline.
@@ -97,6 +98,10 @@ type LecturePipeline struct {
 	decryptWg  sync.WaitGroup
 
 	submissionsClosed atomic.Bool
+
+	inFlightBytes int64
+	inFlightMu    sync.Mutex
+	inFlightCond  *sync.Cond
 }
 
 // NewLecturePipeline creates a new pipeline with the given config and downloader.
@@ -104,6 +109,9 @@ func NewLecturePipeline(config PipelineConfig, downloader *Downloader) *LectureP
 	baseCtx := config.Context
 	if baseCtx == nil {
 		baseCtx = context.Background()
+	}
+	if config.MaxInFlightBytes <= 0 {
+		config.MaxInFlightBytes = 256 * 1024 * 1024 // 256 MB default
 	}
 	ctx, cancel := context.WithCancel(baseCtx)
 	downloadBufSize := config.DownloadWorkers * 2
@@ -128,9 +136,11 @@ func NewLecturePipeline(config PipelineConfig, downloader *Downloader) *LectureP
 		failedChunks:     make([]int, 0),
 		startTime:        time.Now(),
 	}
+	pipeline.inFlightCond = sync.NewCond(&pipeline.inFlightMu)
 	go func() {
 		<-ctx.Done()
 		pipeline.submissionsClosed.Store(true)
+		pipeline.inFlightCond.Broadcast()
 	}()
 	return pipeline
 }
@@ -155,6 +165,29 @@ func (p *LecturePipeline) Start() {
 	}()
 }
 
+func (p *LecturePipeline) acquireMemory(size int64) bool {
+	p.inFlightMu.Lock()
+	// Allow a single oversized chunk to proceed when the pipeline is empty,
+	// otherwise it would wait forever (size alone exceeds the budget).
+	for p.inFlightBytes > 0 && p.inFlightBytes+size > p.config.MaxInFlightBytes && p.ctx.Err() == nil {
+		p.inFlightCond.Wait()
+	}
+	if p.ctx.Err() != nil {
+		p.inFlightMu.Unlock()
+		return false
+	}
+	p.inFlightBytes += size
+	p.inFlightMu.Unlock()
+	return true
+}
+
+func (p *LecturePipeline) releaseMemory(size int64) {
+	p.inFlightMu.Lock()
+	p.inFlightBytes -= size
+	p.inFlightMu.Unlock()
+	p.inFlightCond.Signal()
+}
+
 func (p *LecturePipeline) downloadWorker() {
 	defer p.downloadWg.Done()
 	for {
@@ -176,8 +209,17 @@ func (p *LecturePipeline) downloadWorker() {
 				Err:            err,
 			}
 
+			if err == nil && len(encryptedBytes) > 0 {
+				if !p.acquireMemory(int64(len(encryptedBytes))) {
+					return // context canceled, stop worker
+				}
+			}
+
 			select {
 			case <-p.ctx.Done():
+				if err == nil && len(encryptedBytes) > 0 {
+					p.releaseMemory(int64(len(encryptedBytes)))
+				}
 				return
 			case p.downloadedChunks <- result:
 			}
@@ -206,6 +248,11 @@ func (p *LecturePipeline) decryptWorker() {
 			}
 
 			decryptedPath, err := p.downloader.decryptChunkBytes(downloaded.EncryptedPath, downloaded.EncryptedBytes, p.config.DecryptionKey)
+
+			if len(downloaded.EncryptedBytes) > 0 {
+				p.releaseMemory(int64(len(downloaded.EncryptedBytes)))
+			}
+
 			result := DecryptedChunk{
 				ChunkID:       downloaded.ChunkID,
 				View:          downloaded.View,

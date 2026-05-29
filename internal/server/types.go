@@ -104,55 +104,6 @@ type JobConfigOptions struct {
 	SkipNoAudio               *bool   `json:"skipNoAudio,omitempty"`
 }
 
-type legacyJobConfigOptions struct {
-	Quality                   *string `json:"quality,omitempty"`
-	Views                     *string `json:"views,omitempty"`
-	AudioOnly                 *bool   `json:"audioOnly,omitempty"`
-	AudioFormat               *string `json:"audioFormat,omitempty"`
-	OutputPath                *string `json:"outputPath,omitempty"`
-	EnablePipeline            *bool   `json:"enablePipeline,omitempty"`
-	NumWorkers                *int    `json:"numWorkers,omitempty"`
-	DownloadWorkersPerLecture *int    `json:"downloadWorkersPerLecture,omitempty"`
-	DecryptWorkersPerLecture  *int    `json:"decryptWorkersPerLecture,omitempty"`
-	SkipNoAudio               *bool   `json:"skipNoAudio,omitempty"`
-}
-
-func (o legacyJobConfigOptions) hasValues() bool {
-	return o.Quality != nil ||
-		o.Views != nil ||
-		o.AudioOnly != nil ||
-		o.AudioFormat != nil ||
-		o.OutputPath != nil ||
-		o.EnablePipeline != nil ||
-		o.NumWorkers != nil ||
-		o.DownloadWorkersPerLecture != nil ||
-		o.DecryptWorkersPerLecture != nil ||
-		o.SkipNoAudio != nil
-}
-
-func (o legacyJobConfigOptions) toJobConfigOptions() *JobConfigOptions {
-	if !o.hasValues() {
-		return nil
-	}
-	var views *string
-	if o.Views != nil {
-		normalized := config.NormalizeViews(*o.Views)
-		views = &normalized
-	}
-	return &JobConfigOptions{
-		Quality:                   o.Quality,
-		Views:                     views,
-		AudioOnly:                 o.AudioOnly,
-		AudioFormat:               o.AudioFormat,
-		OutputPath:                o.OutputPath,
-		EnablePipeline:            o.EnablePipeline,
-		NumWorkers:                o.NumWorkers,
-		DownloadWorkersPerLecture: o.DownloadWorkersPerLecture,
-		DecryptWorkersPerLecture:  o.DecryptWorkersPerLecture,
-		SkipNoAudio:               o.SkipNoAudio,
-	}
-}
-
 // createJobRequest keeps the canonical request shape in the runtime model.
 // Legacy flat config keys are accepted only during JSON decoding and normalized
 // into JobConfig at the boundary.
@@ -182,7 +133,17 @@ func (r *createJobRequest) UnmarshalJSON(data []byte) error {
 		EndIndex       int               `json:"endIndex"`
 		IdempotencyKey string            `json:"idempotencyKey,omitempty"`
 		JobConfig      *JobConfigOptions `json:"jobConfig,omitempty"`
-		legacyJobConfigOptions
+		// Legacy flat fields (accepted for backward compatibility)
+		Quality                   *string `json:"quality,omitempty"`
+		Views                     *string `json:"views,omitempty"`
+		AudioOnly                 *bool   `json:"audioOnly,omitempty"`
+		AudioFormat               *string `json:"audioFormat,omitempty"`
+		OutputPath                *string `json:"outputPath,omitempty"`
+		EnablePipeline            *bool   `json:"enablePipeline,omitempty"`
+		NumWorkers                *int    `json:"numWorkers,omitempty"`
+		DownloadWorkersPerLecture *int    `json:"downloadWorkersPerLecture,omitempty"`
+		DecryptWorkersPerLecture  *int    `json:"decryptWorkersPerLecture,omitempty"`
+		SkipNoAudio               *bool   `json:"skipNoAudio,omitempty"`
 	}
 
 	var raw rawCreateJobRequest
@@ -206,11 +167,41 @@ func (r *createJobRequest) UnmarshalJSON(data []byte) error {
 			cp.Views = &normalized
 		}
 		r.JobConfig = &cp
-	case raw.hasValues():
-		r.JobConfig = raw.toJobConfigOptions()
+	default:
+		r.JobConfig = mergeLegacyFields(raw.Quality, raw.Views, raw.AudioOnly, raw.AudioFormat,
+			raw.OutputPath, raw.EnablePipeline, raw.NumWorkers,
+			raw.DownloadWorkersPerLecture, raw.DecryptWorkersPerLecture, raw.SkipNoAudio)
 	}
 
 	return nil
+}
+
+// mergeLegacyFields constructs a JobConfigOptions from individual flat fields.
+// Returns nil if all fields are nil (no legacy data present).
+func mergeLegacyFields(quality, views *string, audioOnly *bool, audioFormat, outputPath *string,
+	enablePipeline *bool, numWorkers, downloadWorkers, decryptWorkers *int, skipNoAudio *bool) *JobConfigOptions {
+	if quality == nil && views == nil && audioOnly == nil && audioFormat == nil &&
+		outputPath == nil && enablePipeline == nil && numWorkers == nil &&
+		downloadWorkers == nil && decryptWorkers == nil && skipNoAudio == nil {
+		return nil
+	}
+	var normalizedViews *string
+	if views != nil {
+		v := config.NormalizeViews(*views)
+		normalizedViews = &v
+	}
+	return &JobConfigOptions{
+		Quality:                   quality,
+		Views:                     normalizedViews,
+		AudioOnly:                 audioOnly,
+		AudioFormat:               audioFormat,
+		OutputPath:                outputPath,
+		EnablePipeline:            enablePipeline,
+		NumWorkers:                numWorkers,
+		DownloadWorkersPerLecture: downloadWorkers,
+		DecryptWorkersPerLecture:  decryptWorkers,
+		SkipNoAudio:               skipNoAudio,
+	}
 }
 
 // JobRuntimeConfig holds the resolved configuration used during job execution.

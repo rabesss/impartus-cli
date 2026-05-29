@@ -869,7 +869,7 @@ func TestHealthUpstreamStatusWithUnreachableBaseUrl(t *testing.T) {
 	s := newAPIServer(&config.Config{
 		Username:         "user",
 		Password:         "pass",
-		BaseURL:          "https://this-domain-does-not-exist-12345.com",
+		BaseURL:          "https://127.0.0.1:1", // closed port -> connection refused
 		DownloadLocation: "./downloads",
 	})
 
@@ -885,9 +885,8 @@ func TestHealthUpstreamStatusWithUnreachableBaseUrl(t *testing.T) {
 	data := assertMapField(t, resp, "data")
 	upstream := assertMapField(t, data, "upstream")
 
-	// For unreachable domain, status should be "unreachable"
 	if upstream["status"] != "unreachable" {
-		t.Logf("upstream status was %v (may be reachable if network allows)", upstream["status"])
+		t.Errorf("expected upstream.status 'unreachable', got %v", upstream["status"])
 	}
 }
 
