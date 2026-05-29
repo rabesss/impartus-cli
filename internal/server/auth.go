@@ -31,7 +31,7 @@ const maxRateLimiterEntries = 10000
 type loginRateLimiter struct {
 	mu       sync.Mutex
 	entries  map[string]*rateLimiterEntry
-	order    *list.List             // LRU order: front = most recent, back = oldest
+	order    *list.List               // LRU order: front = most recent, back = oldest
 	elements map[string]*list.Element // ip -> list element for O(1) access
 	limit    int
 	window   time.Duration
@@ -95,7 +95,11 @@ func (l *loginRateLimiter) evictOldestUnsafe() {
 	if back == nil {
 		return
 	}
-	ip := back.Value.(string)
+	ip, ok := back.Value.(string)
+	if !ok {
+		l.order.Remove(back)
+		return
+	}
 	l.order.Remove(back)
 	delete(l.elements, ip)
 	delete(l.entries, ip)

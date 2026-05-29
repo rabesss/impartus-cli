@@ -209,7 +209,7 @@ func (p *LecturePipeline) downloadWorker() {
 
 			if err == nil && len(encryptedBytes) > 0 {
 				if !p.acquireMemory(int64(len(encryptedBytes))) {
-					return // context cancelled, stop worker
+					return // context canceled, stop worker
 				}
 			}
 

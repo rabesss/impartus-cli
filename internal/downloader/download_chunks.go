@@ -69,10 +69,6 @@ func (d *Downloader) downloadURL(ctx context.Context, url string, id int, chunk 
 	return filePath, bytesWritten, err
 }
 
-func (d *Downloader) downloadURLBytes(ctx context.Context, url string, id int, chunk int, view string) (string, []byte, int64, error) {
-	return d.doDownloadChunk(ctx, url, id, chunk, view, true)
-}
-
 // downloadChunkWithRetry performs a download with exponential backoff retry logic.
 // When toMemory is true, it returns data in the byte slice; otherwise it writes to a file.
 func (d *Downloader) downloadChunkWithRetry(ctx context.Context, url string, id int, chunk int, view string, maxRetries int, tracker *ProgressTracker, toMemory bool) (string, []byte, error) {
