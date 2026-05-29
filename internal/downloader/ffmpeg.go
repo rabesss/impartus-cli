@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -140,4 +141,16 @@ func getAudioCodec(format string) string {
 	default:
 		return "libmp3lame"
 	}
+}
+
+func validateFFmpegArgs(args ...string) error {
+	for _, arg := range args {
+		if strings.TrimSpace(arg) == "" {
+			return errors.New("ffmpeg arguments must not be empty")
+		}
+		if strings.ContainsRune(arg, '\x00') {
+			return errors.New("ffmpeg arguments must not contain null bytes")
+		}
+	}
+	return nil
 }

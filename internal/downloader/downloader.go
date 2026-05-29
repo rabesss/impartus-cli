@@ -3,17 +3,12 @@ package downloader
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"errors"
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -24,41 +19,39 @@ import (
 	"github.com/rabesss/impartus-cli/internal/config"
 )
 
-// DownloadedPlaylist holds the result of downloading a complete playlist including chunk paths for both views.
+// DownloadedPlaylist holds the result of downloading a complete playlist.
 type DownloadedPlaylist struct {
 	FirstViewChunks  []string
 	SecondViewChunks []string
 	Playlist         client.ParsedPlaylist
 }
 
-// M3U8File represents temporary M3U8 manifest files created for FFmpeg input.
+// M3U8File represents temporary M3U8 manifest files for FFmpeg input.
 type M3U8File struct {
 	FirstViewFile  string
 	SecondViewFile string
 	Playlist       client.ParsedPlaylist
 }
 
-// JoinResult contains the output file paths produced by joining downloaded chunks.
+// JoinResult contains the output file paths from joining downloaded chunks.
 type JoinResult struct {
 	LeftOutput  string
 	RightOutput string
 	BothOutput  string
 }
 
-// viewConfig holds the view-specific parameters for downloading chunks.
-// SkipView is the Views config value that means "skip this view entirely".
-// Label is the human-readable name used in progress bars and file paths.
-type viewConfig struct {
-	SkipView string
-	Label    string
-}
+type viewConfig struct{ SkipView, Label string }
 
 var (
 	firstViewConfig  = viewConfig{SkipView: "right", Label: "left"}
 	secondViewConfig = viewConfig{SkipView: "left", Label: "right"}
 )
 
-// redactURL strips sensitive query parameters (tokens, secrets, keys) from a URL.
+var sensitiveParams = map[string]bool{
+	"access_token": true, "token": true, "sig": true, "signature": true,
+	"secret": true, "key": true, "api_key": true, "auth": true,
+}
+
 func redactURL(rawURL string) string {
 	if rawURL == "" {
 		return rawURL
@@ -66,16 +59,6 @@ func redactURL(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return rawURL
-	}
-	sensitiveParams := map[string]bool{
-		"access_token": true,
-		"token":        true,
-		"sig":          true,
-		"signature":    true,
-		"secret":       true,
-		"key":          true,
-		"api_key":      true,
-		"auth":         true,
 	}
 	params := u.Query()
 	for key := range params {
@@ -90,7 +73,7 @@ func redactURL(rawURL string) string {
 	return u.String()
 }
 
-// Downloader orchestrates chunk downloading, AES decryption, and FFmpeg-based joining of video lectures.
+// Downloader orchestrates chunk downloading, decryption, and FFmpeg joining.
 type Downloader struct {
 	config        *config.Config
 	client        *client.Client
@@ -120,25 +103,6 @@ func New(cfg *config.Config, apiClient *client.Client) *Downloader {
 	}
 }
 
-// FetchLecturePlaylists delegates to client.GetPlaylists.
-// Kept as a method on Downloader so callers don't need direct client access,
-// enabling future caching/retry interception at this layer.
-func (d *Downloader) FetchLecturePlaylists(ctx context.Context, lectures []client.Lecture) ([]client.ParsedPlaylist, error) {
-	return d.client.GetPlaylists(ctx, d.config, lectures)
-}
-
-func (d *Downloader) downloadLecturePlaylists(ctx context.Context, playlists []client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) ([]DownloadedPlaylist, error) {
-	results := make([]DownloadedPlaylist, 0, len(playlists))
-	for _, playlist := range playlists {
-		downloadedPlaylist, err := d.DownloadPlaylist(ctx, playlist, p, tracker)
-		if err != nil {
-			return results, err
-		}
-		results = append(results, downloadedPlaylist)
-	}
-	return results, nil
-}
-
 func safeConcurrentPlaylists(cfg *config.Config) int {
 	const browserObservedMediaBurst = 24
 	if cfg.DownloadWorkersPerLecture <= 0 {
@@ -166,7 +130,24 @@ func (d *Downloader) acquirePlaylistSlot(ctx context.Context) (func(), error) {
 	}
 }
 
-// DownloadPlaylist downloads all chunks for both views of a playlist and returns the result.
+// FetchLecturePlaylists delegates to client.GetPlaylists.
+func (d *Downloader) FetchLecturePlaylists(ctx context.Context, lectures []client.Lecture) ([]client.ParsedPlaylist, error) {
+	return d.client.GetPlaylists(ctx, d.config, lectures)
+}
+
+func (d *Downloader) downloadLecturePlaylists(ctx context.Context, playlists []client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) ([]DownloadedPlaylist, error) {
+	results := make([]DownloadedPlaylist, 0, len(playlists))
+	for _, playlist := range playlists {
+		downloadedPlaylist, err := d.DownloadPlaylist(ctx, playlist, p, tracker)
+		if err != nil {
+			return results, err
+		}
+		results = append(results, downloadedPlaylist)
+	}
+	return results, nil
+}
+
+// DownloadPlaylist downloads all chunks for both views of a playlist.
 func (d *Downloader) DownloadPlaylist(ctx context.Context, playlist client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) (DownloadedPlaylist, error) {
 	releasePlaylistSlot, err := d.acquirePlaylistSlot(ctx)
 	if err != nil {
@@ -178,9 +159,7 @@ func (d *Downloader) DownloadPlaylist(ctx context.Context, playlist client.Parse
 	if err != nil {
 		return DownloadedPlaylist{}, err
 	}
-	// G301: 0755 is standard for user download directories
-	// #nosec G301
-	if err := os.MkdirAll(d.config.TempDirLocation, 0o755); err != nil {
+	if err := os.MkdirAll(d.config.TempDirLocation, 0o755); err != nil { // #nosec G301
 		return DownloadedPlaylist{}, err
 	}
 
@@ -195,13 +174,11 @@ func (d *Downloader) DownloadPlaylist(ctx context.Context, playlist client.Parse
 	if firstFailed > 0 || secondFailed > 0 {
 		return downloadedPlaylist, fmt.Errorf("download incomplete: %d first-view and %d second-view chunks failed", firstFailed, secondFailed)
 	}
-
 	return downloadedPlaylist, nil
 }
 
 func (d *Downloader) downloadPlaylistPipelined(ctx context.Context, playlist client.ParsedPlaylist, decryptionKey []byte, p *mpb.Progress, tracker *ProgressTracker) (DownloadedPlaylist, error) {
 	totalChunks := d.totalChunksForPlaylist(playlist)
-
 	downloadedPlaylist := DownloadedPlaylist{Playlist: playlist}
 	if totalChunks == 0 {
 		return downloadedPlaylist, nil
@@ -229,33 +206,28 @@ func (d *Downloader) downloadPlaylistPipelined(ctx context.Context, playlist cli
 	if submitErr != nil {
 		return downloadedPlaylist, submitErr
 	}
-
 	if len(result.FailedChunks) > 0 {
 		return downloadedPlaylist, fmt.Errorf("%d chunks failed to download: %v", len(result.FailedChunks), result.FailedChunks)
 	}
-
 	downloadedPlaylist.FirstViewChunks = result.FirstViewChunks
 	downloadedPlaylist.SecondViewChunks = result.SecondViewChunks
-
 	return downloadedPlaylist, nil
 }
 
-// DownloadAndJoinPlaylist downloads a playlist and then joins the chunks into the final output file(s).
+// DownloadAndJoinPlaylist downloads a playlist and joins the chunks into final output file(s).
 func (d *Downloader) DownloadAndJoinPlaylist(ctx context.Context, playlist client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) (JoinResult, error) {
 	downloadedPlaylist, err := d.DownloadPlaylist(ctx, playlist, p, tracker)
 	if err != nil {
 		return JoinResult{}, err
 	}
-
 	metadataFile, err := d.CreateTempM3U8File(downloadedPlaylist)
 	if err != nil {
 		return JoinResult{}, err
 	}
-
 	return d.JoinLectureOutput(ctx, metadataFile)
 }
 
-// JoinLectureOutput joins the chunks described by the M3U8 file into final output, choosing audio or video mode based on config.
+// JoinLectureOutput joins the chunks described by the M3U8 file into final output.
 func (d *Downloader) JoinLectureOutput(ctx context.Context, file M3U8File) (JoinResult, error) {
 	if d.config.AudioOnly {
 		return d.joinAudioOutput(ctx, file)
@@ -263,319 +235,34 @@ func (d *Downloader) JoinLectureOutput(ctx context.Context, file M3U8File) (Join
 	return d.joinVideoOutput(ctx, file)
 }
 
-// CreateTempM3U8File writes temporary M3U8 manifest files for each view and returns the file references.
-func (d *Downloader) CreateTempM3U8File(downloadedPlaylist DownloadedPlaylist) (M3U8File, error) {
-	m3u8File := M3U8File{Playlist: downloadedPlaylist.Playlist}
-	// G301: 0755 is standard for user download directories
-	// #nosec G301
-	if err := os.MkdirAll(d.config.TempDirLocation, 0o755); err != nil {
-		return m3u8File, err
-	}
-
-	if len(downloadedPlaylist.FirstViewChunks) > 0 {
-		firstPath := fmt.Sprintf("%s/%d_first.m3u8", d.config.TempDirLocation, downloadedPlaylist.Playlist.ID)
-		if err := writeM3U8File(firstPath, downloadedPlaylist.FirstViewChunks); err != nil {
-			return m3u8File, err
-		}
-		m3u8File.FirstViewFile = firstPath
-	}
-
-	if len(downloadedPlaylist.SecondViewChunks) > 0 {
-		secondPath := fmt.Sprintf("%s/%d_second.m3u8", d.config.TempDirLocation, downloadedPlaylist.Playlist.ID)
-		if err := writeM3U8File(secondPath, downloadedPlaylist.SecondViewChunks); err != nil {
-			return m3u8File, err
-		}
-		m3u8File.SecondViewFile = secondPath
-	}
-
-	return m3u8File, nil
-}
-
-func writeM3U8File(path string, chunks []string) error {
-	// G304: file paths are constructed from validated config and internal data
-	// #nosec G304
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer func() { closeErr := f.Close(); _ = closeErr }()
-
-	_, err = f.WriteString(`#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-MEDIA-SEQUENCE:0
-#EXT-X-ALLOW-CACHE:YES
-#EXT-X-TARGETDURATION:11
-#EXT-X-KEY:METHOD=NONE
-	`)
-	if err != nil {
-		return err
-	}
-
-	manifestDir := filepath.Dir(path)
-	for _, chunk := range chunks {
-		_, err = f.WriteString("#EXTINF:1\n")
-		if err != nil {
-			return err
-		}
-		// If the chunk path is absolute or on a different volume, use it as-is;
-		// otherwise compute a relative path from the manifest directory.
-		chunkPath := chunk
-		if !filepath.IsAbs(chunk) {
-			if rel, relErr := filepath.Rel(manifestDir, chunk); relErr == nil {
-				chunkPath = rel
-			}
-		}
-		_, err = f.WriteString(chunkPath + "\n")
-		if err != nil {
-			return err
-		}
-	}
-
-	_, err = f.WriteString("#EXT-X-ENDLIST")
-	return err
-}
-
 func (d *Downloader) fetchDecryptionKey(ctx context.Context, keyURL string) ([]byte, error) {
 	if err := d.rateLimiter.WaitForAPI(ctx); err != nil {
 		return nil, err
 	}
-
 	resp, err := d.client.GetAuthorizedWithToken(ctx, keyURL, d.config.Token)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { closeErr := resp.Body.Close(); _ = closeErr }()
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("decryption key request failed with status %d", resp.StatusCode)
 	}
-
 	keyURLContent, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
-
 	return getDecryptionKey(keyURLContent), nil
-}
-
-// getDecryptionKey transforms the raw key from the upstream API into the
-// actual AES decryption key. The upstream response includes a 2-byte header
-// prefix followed by the key bytes in reversed order. This function strips
-// the header and reverses the remaining bytes to recover the usable key.
-func getDecryptionKey(encryptionKey []byte) []byte {
-	if len(encryptionKey) < 2 {
-		return encryptionKey
-	}
-	encryptionKey = encryptionKey[2:]
-	for i, j := 0, len(encryptionKey)-1; i < j; i, j = i+1, j-1 {
-		encryptionKey[i], encryptionKey[j] = encryptionKey[j], encryptionKey[i]
-	}
-	return encryptionKey
-}
-
-func (d *Downloader) decryptChunk(filePath string, key []byte) (string, error) {
-	// G304: file paths are constructed from validated config and internal data
-	// #nosec G304
-	infile, err := os.ReadFile(filePath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read encrypted file %s: %w", filePath, err)
-	}
-	return d.decryptChunkBytes(filePath, infile, key)
-}
-
-func (d *Downloader) decryptChunkBytes(filePath string, infile []byte, key []byte) (string, error) {
-	if len(filePath) < 6 {
-		return "", fmt.Errorf("invalid file path: %s", filePath)
-	}
-	if !strings.HasSuffix(filePath, ".temp") {
-		return "", fmt.Errorf("invalid file path extension: %s", filePath)
-	}
-
-	outPath := strings.TrimSuffix(filePath, ".temp")
-	plainText, err := DecryptAES(infile, key)
-	if err != nil {
-		return "", fmt.Errorf("failed to decrypt: %w", err)
-	}
-
-	// G703: path components are from validated config and sanitized input
-	// #nosec G703
-	if err := os.WriteFile(outPath, plainText, 0o600); err != nil {
-		return "", fmt.Errorf("failed to write decrypted file %s: %w", outPath, err)
-	}
-	return outPath, nil
-}
-
-// DecryptAES performs AES-128-CBC decryption with a zero IV and removes PKCS7 padding.
-func DecryptAES(encrypted []byte, key []byte) ([]byte, error) {
-	ciphertext := append([]byte(nil), encrypted...)
-	return DecryptAESInPlace(ciphertext, key)
-}
-
-// DecryptAESInPlace performs AES-CBC decryption in the provided byte slice and removes PKCS7 padding.
-func DecryptAESInPlace(encrypted []byte, key []byte) ([]byte, error) {
-	if len(key) != 16 && len(key) != 24 && len(key) != 32 {
-		return nil, fmt.Errorf("invalid AES key length: %d", len(key))
-	}
-	if len(encrypted) == 0 || len(encrypted)%aes.BlockSize != 0 {
-		return nil, fmt.Errorf("ciphertext length %d is not a multiple of block size %d", len(encrypted), aes.BlockSize)
-	}
-
-	iv := make([]byte, 16)
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-
-	mode := cipher.NewCBCDecrypter(block, iv)
-	mode.CryptBlocks(encrypted, encrypted)
-
-	return removePKCS7Padding(encrypted), nil
-}
-
-// removePKCS7Padding strips PKCS7 padding from decrypted data.
-// Returns the original slice if padding is invalid or absent.
-func removePKCS7Padding(data []byte) []byte {
-	if len(data) == 0 {
-		return data
-	}
-	paddingLen := int(data[len(data)-1])
-	if paddingLen <= 0 || paddingLen > aes.BlockSize || paddingLen > len(data) {
-		return data
-	}
-	// Verify all padding bytes match the expected value
-	for i := len(data) - paddingLen; i < len(data); i++ {
-		if data[i] != byte(paddingLen) {
-			return data
-		}
-	}
-	return data[:len(data)-paddingLen]
-}
-
-func (d *Downloader) downloadURL(ctx context.Context, url string, id int, chunk int, view string) (string, int64, error) {
-	if err := d.rateLimiter.WaitForDownload(ctx); err != nil {
-		return "", 0, err
-	}
-
-	resp, err := d.client.GetAuthorizedWithToken(ctx, url, d.config.Token)
-	if err != nil {
-		return "", 0, fmt.Errorf("chunk request failed for URL %s: %w", redactURL(url), err)
-	}
-	defer func() { closeErr := resp.Body.Close(); _ = closeErr }()
-	if resp.StatusCode != http.StatusOK {
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
-		if readErr != nil {
-			return "", 0, fmt.Errorf("chunk request failed with status %d and unreadable error body: %w", resp.StatusCode, readErr)
-		}
-		message := strings.TrimSpace(string(body))
-		if message == "" {
-			return "", 0, fmt.Errorf("chunk request failed with status %d for URL %s", resp.StatusCode, redactURL(url))
-		}
-		return "", 0, fmt.Errorf("chunk request failed with status %d for URL %s: %s", resp.StatusCode, redactURL(url), message)
-	}
-
-	outFilepath := filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_%s_%04d.ts.temp", id, view, chunk))
-	// G304: file paths are constructed from validated config and internal data
-	// #nosec G304
-	outFile, err := os.Create(outFilepath)
-	if err != nil {
-		return "", 0, fmt.Errorf("could not create file for chunk %d: %w", chunk, err)
-	}
-	defer func() { closeErr := outFile.Close(); _ = closeErr }()
-
-	bytesWritten, err := io.Copy(outFile, resp.Body)
-	if err != nil {
-		return "", 0, fmt.Errorf("could not write chunk %d: %w", chunk, err)
-	}
-
-	return outFilepath, bytesWritten, nil
-}
-
-func (d *Downloader) downloadURLBytes(ctx context.Context, url string, id int, chunk int, view string) (string, []byte, int64, error) {
-	if err := d.rateLimiter.WaitForDownload(ctx); err != nil {
-		return "", nil, 0, err
-	}
-
-	resp, err := d.client.GetAuthorizedWithToken(ctx, url, d.config.Token)
-	if err != nil {
-		return "", nil, 0, fmt.Errorf("chunk request failed for URL %s: %w", redactURL(url), err)
-	}
-	defer func() { closeErr := resp.Body.Close(); _ = closeErr }()
-	if resp.StatusCode != http.StatusOK {
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
-		if readErr != nil {
-			return "", nil, 0, fmt.Errorf("chunk request failed with status %d and unreadable error body: %w", resp.StatusCode, readErr)
-		}
-		message := strings.TrimSpace(string(body))
-		if message == "" {
-			return "", nil, 0, fmt.Errorf("chunk request failed with status %d for URL %s", resp.StatusCode, redactURL(url))
-		}
-		return "", nil, 0, fmt.Errorf("chunk request failed with status %d for URL %s: %s", resp.StatusCode, redactURL(url), message)
-	}
-
-	outFilepath := filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_%s_%04d.ts.temp", id, view, chunk))
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", nil, 0, fmt.Errorf("could not read chunk %d: %w", chunk, err)
-	}
-	return outFilepath, data, int64(len(data)), nil
-}
-
-func (d *Downloader) downloadBytesWithRetry(ctx context.Context, url string, id int, chunk int, view string, maxRetries int, tracker *ProgressTracker) (string, []byte, error) {
-	var lastErr error
-	baseDelay := 1 * time.Second
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		filePath, data, bytesDownloaded, err := d.downloadURLBytes(ctx, url, id, chunk, view)
-		if err == nil {
-			if tracker != nil {
-				ChunkCompleted(tracker, bytesDownloaded)
-			}
-			return filePath, data, nil
-		}
-
-		lastErr = err
-		if attempt < maxRetries-1 {
-			delay := retryDelay(baseDelay, attempt)
-			if waitErr := waitForRetry(ctx, delay); waitErr != nil {
-				return "", nil, waitErr
-			}
-		}
-	}
-	return "", nil, fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
-}
-
-func (d *Downloader) downloadWithRetry(ctx context.Context, url string, id int, chunk int, view string, maxRetries int, tracker *ProgressTracker) (string, error) {
-	var lastErr error
-	baseDelay := 1 * time.Second
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		filePath, bytesDownloaded, err := d.downloadURL(ctx, url, id, chunk, view)
-		if err == nil {
-			if tracker != nil {
-				ChunkCompleted(tracker, bytesDownloaded)
-			}
-			return filePath, nil
-		}
-
-		lastErr = err
-		if attempt < maxRetries-1 {
-			delay := retryDelay(baseDelay, attempt)
-			if waitErr := waitForRetry(ctx, delay); waitErr != nil {
-				return "", waitErr
-			}
-		}
-	}
-	return "", fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
 }
 
 func (d *Downloader) downloadViewChunks(ctx context.Context, p *mpb.Progress, tracker *ProgressTracker, playlist client.ParsedPlaylist, urls []string, vc viewConfig, decryptionKey []byte) ([]string, int) {
 	if len(urls) == 0 || d.config.Views == vc.SkipView {
 		return nil, 0
 	}
-
 	bar := d.newViewBar(p, len(urls), playlist.SeqNo, vc.Label)
 	chunks := make([]string, 0, len(urls))
 	failed := 0
-	for i, url := range urls {
-		chunkPath, err := d.downloadAndDecryptChunk(ctx, url, playlist.ID, i, vc.Label, decryptionKey, tracker)
+	for i, chunkURL := range urls {
+		chunkPath, err := d.downloadAndDecryptChunk(ctx, chunkURL, playlist.ID, i, vc.Label, decryptionKey, tracker)
 		if bar != nil {
 			bar.Increment()
 		}
@@ -586,7 +273,6 @@ func (d *Downloader) downloadViewChunks(ctx context.Context, p *mpb.Progress, tr
 		}
 		chunks = append(chunks, chunkPath)
 	}
-
 	return chunks, failed
 }
 
@@ -603,8 +289,8 @@ func (d *Downloader) newViewBar(p *mpb.Progress, total, seqNo int, label string)
 	)
 }
 
-func (d *Downloader) downloadAndDecryptChunk(ctx context.Context, url string, playlistID, chunkIndex int, view string, decryptionKey []byte, tracker *ProgressTracker) (string, error) {
-	filePath, err := d.downloadWithRetry(ctx, url, playlistID, chunkIndex, view, d.maxRetries, tracker)
+func (d *Downloader) downloadAndDecryptChunk(ctx context.Context, chunkURL string, playlistID, chunkIndex int, view string, decryptionKey []byte, tracker *ProgressTracker) (string, error) {
+	filePath, err := d.downloadWithRetry(ctx, chunkURL, playlistID, chunkIndex, view, d.maxRetries, tracker)
 	if err != nil {
 		return "", fmt.Errorf("download failed for chunk %d: %w", chunkIndex, err)
 	}
@@ -667,8 +353,8 @@ func submitPipelineViewTasks(pipeline *LecturePipeline, urls []string, enabled b
 	if !enabled {
 		return nil
 	}
-	for i, url := range urls {
-		if err := pipeline.SubmitDownload(ChunkTask{ChunkID: i, URL: url, View: view, LectureID: playlist.ID, LectureSeqNo: playlist.SeqNo}); err != nil {
+	for i, chunkURL := range urls {
+		if err := pipeline.SubmitDownload(ChunkTask{ChunkID: i, URL: chunkURL, View: view, LectureID: playlist.ID, LectureSeqNo: playlist.SeqNo}); err != nil {
 			return err
 		}
 	}
@@ -688,20 +374,16 @@ func (d *Downloader) monitorPipelineProgress(downloadBar *mpb.Bar, pipeline *Lec
 			case <-monitorDone:
 				return
 			case <-ticker.C:
-				d.updatePipelineBar(downloadBar, pipeline, totalChunks)
+				stats := pipeline.GetStats()
+				processed := int64(sumPipelineStats(stats))
+				if processed > int64(totalChunks) {
+					processed = int64(totalChunks)
+				}
+				downloadBar.SetCurrent(processed)
 			}
 		}
 	}()
 	return monitorDone
-}
-
-func (d *Downloader) updatePipelineBar(downloadBar *mpb.Bar, pipeline *LecturePipeline, totalChunks int) {
-	stats := pipeline.GetStats()
-	processed := int64(sumPipelineStats(stats))
-	if processed > int64(totalChunks) {
-		processed = int64(totalChunks)
-	}
-	downloadBar.SetCurrent(processed)
 }
 
 func (d *Downloader) stopPipelineMonitor(monitorDone chan struct{}, downloadBar *mpb.Bar, totalChunks int) {
@@ -759,45 +441,9 @@ func (d *Downloader) joinVideoOutput(ctx context.Context, file M3U8File) (JoinRe
 	}
 	return result, nil
 }
-
 func (d *Downloader) joinIfPresent(ctx context.Context, path string, enabled bool, title string, join func(context.Context, string, string) (string, error)) (string, error) {
 	if path == "" || !enabled {
 		return "", nil
 	}
 	return join(ctx, path, title)
-}
-
-func retryDelay(baseDelay time.Duration, attempt int) time.Duration {
-	if attempt <= 0 {
-		return baseDelay
-	}
-	if attempt >= 62 {
-		attempt = 62
-	}
-	multiplier := int64(math.Pow(2, float64(attempt)))
-	return time.Duration(int64(baseDelay) * multiplier)
-}
-
-func waitForRetry(ctx context.Context, delay time.Duration) error {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
-
-func validateFFmpegArgs(args ...string) error {
-	for _, arg := range args {
-		if strings.TrimSpace(arg) == "" {
-			return errors.New("ffmpeg arguments must not be empty")
-		}
-		if strings.ContainsRune(arg, '\x00') {
-			return errors.New("ffmpeg arguments must not contain null bytes")
-		}
-	}
-	return nil
 }
