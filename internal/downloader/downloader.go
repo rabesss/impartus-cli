@@ -40,6 +40,17 @@ type JoinResult struct {
 	BothOutput  string
 }
 
+// OutputPaths returns the non-empty output file paths in left, right, both order.
+func (r JoinResult) OutputPaths() []string {
+	paths := make([]string, 0, 3)
+	for _, p := range []string{r.LeftOutput, r.RightOutput, r.BothOutput} {
+		if strings.TrimSpace(p) != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths
+}
+
 type viewConfig struct{ SkipView, Label string }
 
 var (
@@ -251,7 +262,7 @@ func (d *Downloader) fetchDecryptionKey(ctx context.Context, keyURL string) ([]b
 	if err != nil {
 		return nil, err
 	}
-	return getDecryptionKey(keyURLContent), nil
+	return deriveDecryptionKey(keyURLContent), nil
 }
 
 func (d *Downloader) downloadViewChunks(ctx context.Context, p *mpb.Progress, tracker *ProgressTracker, playlist client.ParsedPlaylist, urls []string, vc viewConfig, decryptionKey []byte) ([]string, int) {

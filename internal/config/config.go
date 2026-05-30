@@ -201,11 +201,6 @@ func (c *Config) validatePipeline() error {
 		return fmt.Errorf("decryptWorkersPerLecture must be between 1 and 10, got %d", c.DecryptWorkersPerLecture)
 	}
 
-	// Only check efficiency warning when pipeline is actually enabled
-	if c.EnablePipeline && c.DecryptWorkersPerLecture > c.DownloadWorkersPerLecture {
-		fmt.Printf("[WARNING] decryptWorkersPerLecture (%d) > downloadWorkersPerLecture (%d) may be inefficient\n",
-			c.DecryptWorkersPerLecture, c.DownloadWorkersPerLecture)
-	}
 	return nil
 }
 
@@ -266,7 +261,9 @@ func LoadResolved(path string) (*Config, error) {
 		}
 	}
 
-	applyEnvOverrides(cfg)
+	if err := applyEnvOverrides(cfg); err != nil {
+		return nil, err
+	}
 	cfg.ApplyDefaults()
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -275,7 +272,7 @@ func LoadResolved(path string) (*Config, error) {
 	return cfg, nil
 }
 
-func applyEnvOverrides(cfg *Config) {
+func applyEnvOverrides(cfg *Config) error {
 	applyStringEnv("IMPARTUS_USERNAME", &cfg.Username)
 	applyStringEnv("IMPARTUS_PASSWORD", &cfg.Password)
 	applyStringEnv("IMPARTUS_BASE_URL", &cfg.BaseURL)
@@ -285,14 +282,22 @@ func applyEnvOverrides(cfg *Config) {
 	applyStringEnv("IMPARTUS_TEMP_DIR", &cfg.TempDirLocation)
 	applyStringEnv("IMPARTUS_AUDIO_FORMAT", &cfg.AudioFormat)
 	applyStringEnv("IMPARTUS_HTTP_TIMEOUT", &cfg.HTTPTimeout)
-	applyBoolEnv("IMPARTUS_AUDIO_ONLY", &cfg.AudioOnly)
-	applyBoolEnv("IMPARTUS_SKIP_NO_AUDIO", &cfg.SkipNoAudio)
-	applyIntEnv("IMPARTUS_NUM_WORKERS", &cfg.NumWorkers)
-	applyFloatEnv("IMPARTUS_RATE_LIMIT", &cfg.RateLimit)
-	applyFloatEnv("IMPARTUS_API_RATE_LIMIT", &cfg.APIRateLimit)
 	applyStringEnv("IMPARTUS_LISTEN_ADDR", &cfg.ListenAddr)
 
+	for _, apply := range []func() error{
+		func() error { return applyBoolEnv("IMPARTUS_AUDIO_ONLY", &cfg.AudioOnly) },
+		func() error { return applyBoolEnv("IMPARTUS_SKIP_NO_AUDIO", &cfg.SkipNoAudio) },
+		func() error { return applyIntEnv("IMPARTUS_NUM_WORKERS", &cfg.NumWorkers) },
+		func() error { return applyFloatEnv("IMPARTUS_RATE_LIMIT", &cfg.RateLimit) },
+		func() error { return applyFloatEnv("IMPARTUS_API_RATE_LIMIT", &cfg.APIRateLimit) },
+	} {
+		if err := apply(); err != nil {
+			return err
+		}
+	}
+
 	applyCanonicalFields(cfg)
+	return nil
 }
 
 func applyCanonicalFields(cfg *Config) {
@@ -307,37 +312,43 @@ func applyStringEnv(key string, target *string) {
 	}
 }
 
-func applyBoolEnv(key string, target *bool) {
+func applyBoolEnv(key string, target *bool) error {
 	value, ok := os.LookupEnv(key)
 	if !ok {
-		return
+		return nil
 	}
 	parsed, err := strconv.ParseBool(value)
-	if err == nil {
-		*target = parsed
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", key, err)
 	}
+	*target = parsed
+	return nil
 }
 
-func applyIntEnv(key string, target *int) {
+func applyIntEnv(key string, target *int) error {
 	value, ok := os.LookupEnv(key)
 	if !ok {
-		return
+		return nil
 	}
 	parsed, err := strconv.Atoi(value)
-	if err == nil {
-		*target = parsed
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", key, err)
 	}
+	*target = parsed
+	return nil
 }
 
-func applyFloatEnv(key string, target *float64) {
+func applyFloatEnv(key string, target *float64) error {
 	value, ok := os.LookupEnv(key)
 	if !ok {
-		return
+		return nil
 	}
 	parsed, err := strconv.ParseFloat(value, 64)
-	if err == nil {
-		*target = parsed
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", key, err)
 	}
+	*target = parsed
+	return nil
 }
 
 // OneOf checks if a value is in the allowed set.

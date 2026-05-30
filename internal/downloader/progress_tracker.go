@@ -221,14 +221,10 @@ func (pt *ProgressTracker) getStatusString() string {
 
 	etaStr := "ETA --"
 	if eta > 0 {
-		etaStr = fmt.Sprintf("ETA %s", pt.formatDuration(eta))
+		etaStr = fmt.Sprintf("ETA %s", formatDurationValue(eta))
 	}
 
 	return fmt.Sprintf("%.1f%% | %s | %s | Lectures: %d/%d", progress, speedStr, etaStr, completedLectures, pt.totalLectures)
-}
-
-func (pt *ProgressTracker) formatDuration(d time.Duration) string {
-	return formatDurationValue(d)
 }
 
 func formatDurationValue(d time.Duration) string {

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/vbauerster/mpb/v8"
 
@@ -208,7 +207,7 @@ func downloadLectures(ctx context.Context, cfg *config.Config, apiClient *client
 		if err != nil {
 			return downloadResult{}, err
 		}
-		outputPaths = appendOutputPaths(outputPaths, joinResult)
+		outputPaths = append(outputPaths, joinResult.OutputPaths()...)
 
 		if tracker != nil {
 			downloader.LectureCompleted(tracker)
@@ -221,14 +220,4 @@ func downloadLectures(ctx context.Context, cfg *config.Config, apiClient *client
 
 	p.Wait()
 	return downloadResult{Status: "completed", OutputPaths: outputPaths, LectureCount: len(outputPaths)}, nil
-}
-
-func appendOutputPaths(outputPaths []string, result downloader.JoinResult) []string {
-	for _, path := range []string{result.LeftOutput, result.RightOutput, result.BothOutput} {
-		if strings.TrimSpace(path) == "" {
-			continue
-		}
-		outputPaths = append(outputPaths, path)
-	}
-	return outputPaths
 }

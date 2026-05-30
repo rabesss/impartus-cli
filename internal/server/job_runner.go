@@ -45,7 +45,7 @@ func (r playlistDownloadRunner) run(ctx context.Context, cancel context.CancelFu
 				cancel()
 				return
 			}
-			appendOutputs(&outputsMu, &outputs, extractJoinOutputs(result))
+			appendOutputs(&outputsMu, &outputs, result.OutputPaths())
 			done := int(atomic.AddInt32(&completed, 1))
 			if !onProgress(done) {
 				return

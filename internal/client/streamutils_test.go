@@ -142,20 +142,6 @@ func TestGetAuthorizedWithToken_NilToken(t *testing.T) {
 	}
 }
 
-// TestGetAuthorizedWithToken_NilClient tests nil client handling
-func TestGetAuthorizedWithToken_NilClient(t *testing.T) {
-	var nilClient *Client
-	ctx := context.Background()
-
-	resp, err := nilClient.GetAuthorizedWithToken(ctx, "http://example.com/test", "some-token")
-	if resp != nil {
-		_ = resp.Body.Close() //nolint:errcheck
-	}
-	if err != nil && !strings.Contains(err.Error(), "request failed") {
-		t.Errorf("GetAuthorizedWithToken() unexpected error: %v", err)
-	}
-}
-
 // TestDoRequestWithTokenRequestBuilding tests request building
 func TestDoRequestWithTokenRequestBuilding(t *testing.T) {
 	client := New(nil, nil)

@@ -536,7 +536,7 @@ func TestExtractJoinOutputs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := extractJoinOutputs(tt.result)
+			result := tt.result.OutputPaths()
 			if len(result) != tt.wantLen {
 				t.Errorf("got %d outputs, want %d", len(result), tt.wantLen)
 			}

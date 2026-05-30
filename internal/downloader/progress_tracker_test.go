@@ -498,17 +498,17 @@ func TestProgressTrackerFormatDuration(t *testing.T) {
 	defer pt.Stop()
 
 	// formatDuration delegates to the package-local duration formatter
-	result := pt.formatDuration(30 * time.Second)
+	result := formatDurationValue(30 * time.Second)
 	if result != "30s" {
 		t.Errorf("formatDuration(30s) = %q, want %q", result, "30s")
 	}
 
-	result = pt.formatDuration(2*time.Minute + 30*time.Second)
+	result = formatDurationValue(2*time.Minute + 30*time.Second)
 	if result != "2m 30s" {
 		t.Errorf("formatDuration(2m30s) = %q, want %q", result, "2m 30s")
 	}
 
-	result = pt.formatDuration(1*time.Hour + 15*time.Minute)
+	result = formatDurationValue(1*time.Hour + 15*time.Minute)
 	if result != "1h 15m" {
 		t.Errorf("formatDuration(1h15m) = %q, want %q", result, "1h 15m")
 	}

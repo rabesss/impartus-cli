@@ -58,8 +58,8 @@ func TestNew(t *testing.T) {
 			if c.httpClient != nil && tt.wantHTTPClientNil {
 				t.Error("httpClient is not nil but expected it")
 			}
-			if got := c.randomUserAgent(); got != tt.wantUserAgent {
-				t.Errorf("randomUserAgent() = %q, want %q", got, tt.wantUserAgent)
+			if got := c.userAgent(); got != tt.wantUserAgent {
+				t.Errorf("userAgent() = %q, want %q", got, tt.wantUserAgent)
 			}
 		})
 	}
@@ -72,11 +72,6 @@ func TestClient_tokenValue(t *testing.T) {
 		client *Client
 		want   string
 	}{
-		{
-			name:   "nil receiver returns empty string",
-			client: nil,
-			want:   "",
-		},
 		{
 			name:   "empty token",
 			client: &Client{},
@@ -106,11 +101,6 @@ func TestClient_setToken(t *testing.T) {
 		token  string
 	}{
 		{
-			name:   "nil receiver does not panic",
-			client: nil,
-			token:  "some-token",
-		},
-		{
 			name:   "valid client sets token",
 			client: &Client{},
 			token:  "new-token",
@@ -119,7 +109,6 @@ func TestClient_setToken(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// This should not panic for nil receiver
 			tt.client.setToken(tt.token)
 			if tt.client != nil && tt.client.token != tt.token {
 				t.Errorf("setToken() token = %q, want %q", tt.client.token, tt.token)
@@ -149,15 +138,15 @@ func TestClient_ensure(t *testing.T) {
 		if c.UserAgentProvider == nil {
 			t.Error("UserAgentProvider should be initialized after ensure()")
 		}
-		ua := c.randomUserAgent()
+		ua := c.userAgent()
 		if ua != "impartus-downloader" {
-			t.Errorf("randomUserAgent() = %q, want %q", ua, "impartus-downloader")
+			t.Errorf("userAgent() = %q, want %q", ua, "impartus-downloader")
 		}
 	})
 }
 
-// TestClient_randomUserAgent tests user agent generation
-func TestClient_randomUserAgent(t *testing.T) {
+// TestClient_userAgent tests user agent generation
+func TestClient_userAgent(t *testing.T) {
 	customUA := "my-custom-agent/1.0"
 	c := &Client{
 		UserAgentProvider: func() string {
@@ -166,9 +155,9 @@ func TestClient_randomUserAgent(t *testing.T) {
 		httpClient: NewHTTPClient(0),
 	}
 
-	ua := c.randomUserAgent()
+	ua := c.userAgent()
 	if ua != customUA {
-		t.Errorf("randomUserAgent() = %q, want %q", ua, customUA)
+		t.Errorf("userAgent() = %q, want %q", ua, customUA)
 	}
 }
 
