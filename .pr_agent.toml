@@ -2,8 +2,8 @@
 # Repo-specific coding standards live in best_practices.md (this bot does NOT read AGENTS.md).
 [github_app]
 pr_commands = [
-    "/describe",
-    "/review",
+    "/agentic_describe",
+    "/agentic_review",
 ]
 
 [pr_reviewer]

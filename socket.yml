@@ -19,3 +19,4 @@ triggerPaths:
   - "go.mod"
   - "go.sum"
   - "Dockerfile"
+  - ".github/workflows/**"
