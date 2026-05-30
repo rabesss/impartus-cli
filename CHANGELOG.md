@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.11](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.10...impartus-cli-v0.1.11) (2026-05-30)
+
+
+### Bug Fixes
+
+* **ci:** correct Qodo pr_commands and Socket trigger paths from PR [#55](https://github.com/rabesss/impartus-cli/issues/55) review ([a14a136](https://github.com/rabesss/impartus-cli/commit/a14a1366709855b0cb5dc2219894ba6983f34990))
+
+
+### Refactoring
+
+* address code-quality findings and expand test coverage ([#54](https://github.com/rabesss/impartus-cli/issues/54)) ([47edc39](https://github.com/rabesss/impartus-cli/commit/47edc3937c8db53006aff3880a92d19665a7a5cf))
+
 ## [0.1.10](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.9...impartus-cli-v0.1.10) (2026-05-29)
 
 
