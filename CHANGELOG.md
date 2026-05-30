@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.10](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.9...impartus-cli-v0.1.10) (2026-05-29)
+
+
+### Refactoring
+
+* fix 7 structural code quality issues from audit ([#52](https://github.com/rabesss/impartus-cli/issues/52)) ([e83f59c](https://github.com/rabesss/impartus-cli/commit/e83f59c65121ce60e0bef07de4fd229d6b215c4d))
+
 ## [0.1.9](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.8...impartus-cli-v0.1.9) (2026-05-25)
 
 
