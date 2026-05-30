@@ -144,7 +144,7 @@ func (s *APIServer) fetchSelectedLectures(ctx context.Context, jobCtx context.Co
 		if s.handleCancelIfNeeded(jobID, jobCtx.Err()) {
 			return nil, false
 		}
-		s.failJob(jobID, err.Error())
+		s.failJob(jobID, sanitizeUpstreamErr(err))
 		return nil, false
 	}
 	selected, filteredLectures, selectErr := selectJobLectures(job, lectures)
@@ -201,7 +201,7 @@ func (s *APIServer) prepareDownload(ctx context.Context, jobCtx context.Context,
 		if s.handleCancelIfNeeded(jobID, jobCtx.Err()) {
 			return nil, nil, false
 		}
-		s.failJob(jobID, err.Error())
+		s.failJob(jobID, sanitizeUpstreamErr(err))
 		return nil, nil, false
 	}
 	playlists := clientPlaylists
@@ -234,7 +234,7 @@ func (s *APIServer) runPlaylistDownloads(ctx context.Context, jobCtx context.Con
 		if s.handleCancelIfNeeded(jobID, jobCtx.Err()) {
 			return nil, false
 		}
-		s.failJob(jobID, err.Error())
+		s.failJob(jobID, sanitizeUpstreamErr(err))
 		return nil, false
 	}
 	if s.handleCancelIfNeeded(jobID, jobCtx.Err()) {
@@ -348,20 +348,6 @@ func cloneConfig(cfg *config.Config) *config.Config {
 	}
 	clone := *cfg
 	return &clone
-}
-
-func extractJoinOutputs(result downloader.JoinResult) []string {
-	outputs := make([]string, 0, 3)
-	if result.LeftOutput != "" {
-		outputs = append(outputs, result.LeftOutput)
-	}
-	if result.RightOutput != "" {
-		outputs = append(outputs, result.RightOutput)
-	}
-	if result.BothOutput != "" {
-		outputs = append(outputs, result.BothOutput)
-	}
-	return outputs
 }
 
 func downloadLectureSlide(ctx context.Context, c *client.Client, cfg *config.Config, lecture client.Lecture) error {

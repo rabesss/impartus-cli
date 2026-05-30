@@ -39,30 +39,9 @@ func NewJobStoreWithPersistence(path string) *JobStore {
 }
 
 // CreateJob creates a new download job and stores it. Returns the created job.
+// It is a convenience wrapper around CreateJobWithKey with no idempotency key.
 func (js *JobStore) CreateJob(subjectID, sessionID, startIndex, endIndex int, cfg *config.Config) *Job {
-	js.mu.Lock()
-	defer js.mu.Unlock()
-
-	jobID := fmt.Sprintf("job-%d", time.Now().UnixNano())
-	ctx, cancel := context.WithCancel(context.Background())
-	job := &Job{
-		ID:         jobID,
-		SubjectID:  subjectID,
-		SessionID:  sessionID,
-		StartIndex: startIndex,
-		EndIndex:   endIndex,
-		Status:     StatusPending,
-		Progress:   0,
-		Config:     runtimeConfigFrom(cfg),
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
-		ctx:        ctx,
-		cancel:     cancel,
-		cfg:        cloneConfig(cfg),
-	}
-
-	js.jobs[jobID] = job
-	js.saveToDisk()
+	job, _ := js.CreateJobWithKey(subjectID, sessionID, startIndex, endIndex, cfg, "")
 	return job
 }
 

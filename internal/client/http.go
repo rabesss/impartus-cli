@@ -40,7 +40,7 @@ func (c *Client) doRequestWithToken(ctx context.Context, method, url string, bod
 	if token != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 	}
-	req.Header.Set("User-Agent", c.randomUserAgent())
+	req.Header.Set("User-Agent", c.userAgent())
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json;charset=UTF-8")

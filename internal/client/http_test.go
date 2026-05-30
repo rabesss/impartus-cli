@@ -61,10 +61,6 @@ func TestClientTokenMethods(t *testing.T) {
 	if token := client.tokenValue(); token != "test-token" {
 		t.Errorf("expected 'test-token', got %q", token)
 	}
-
-	// Test setToken on nil client
-	var nilClient *Client
-	nilClient.setToken("should-not-panic")
 }
 
 func TestClientEnsure(t *testing.T) {
@@ -81,14 +77,14 @@ func TestClientEnsure(t *testing.T) {
 
 func TestClientRandomUserAgent(t *testing.T) {
 	client := New(nil, nil)
-	ua := client.randomUserAgent()
+	ua := client.userAgent()
 
 	if ua == "" {
 		t.Error("expected non-empty user agent")
 	}
 
 	// Should be consistent when called multiple times with same provider
-	ua2 := client.randomUserAgent()
+	ua2 := client.userAgent()
 	if ua != ua2 {
 		t.Errorf("expected consistent UA, got %q and %q", ua, ua2)
 	}
@@ -98,7 +94,7 @@ func TestClientRandomUserAgentWithCustomProvider(t *testing.T) {
 	customUA := "custom-test-agent/1.0"
 	client := New(nil, func() string { return customUA })
 
-	ua := client.randomUserAgent()
+	ua := client.userAgent()
 	if ua != customUA {
 		t.Errorf("expected %q, got %q", customUA, ua)
 	}

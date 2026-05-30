@@ -310,7 +310,12 @@ func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) listJobsHandler(w http.ResponseWriter, _ *http.Request) {
-	respondWithEnvelope(w, http.StatusOK, "listJobs", s.jobStore.ListJobs())
+	jobs := s.jobStore.ListJobs()
+	snapshot := make([]*Job, len(jobs))
+	for i, job := range jobs {
+		snapshot[i] = job.copy()
+	}
+	respondWithEnvelope(w, http.StatusOK, "listJobs", snapshot)
 }
 
 func (s *APIServer) getJobHandler(w http.ResponseWriter, r *http.Request) {
@@ -326,7 +331,7 @@ func (s *APIServer) getJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondWithEnvelope(w, http.StatusOK, "getJob", job)
+	respondWithEnvelope(w, http.StatusOK, "getJob", job.copy())
 }
 
 func (s *APIServer) deleteJobHandler(w http.ResponseWriter, r *http.Request) {

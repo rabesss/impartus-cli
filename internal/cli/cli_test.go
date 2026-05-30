@@ -765,7 +765,7 @@ func TestAppendOutputPaths(t *testing.T) {
 		BothOutput:  "both.mp4",
 	}
 
-	paths := appendOutputPaths(nil, result)
+	paths := result.OutputPaths()
 	if len(paths) != 2 {
 		t.Fatalf("expected 2 paths, got %d", len(paths))
 	}
@@ -779,7 +779,7 @@ func TestAppendOutputPaths(t *testing.T) {
 
 func TestAppendOutputPaths_AllEmpty(t *testing.T) {
 	result := downloader.JoinResult{}
-	paths := appendOutputPaths(nil, result)
+	paths := result.OutputPaths()
 	if len(paths) != 0 {
 		t.Errorf("expected 0 paths, got %d", len(paths))
 	}

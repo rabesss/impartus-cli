@@ -1215,38 +1215,5 @@ func TestNewAPIServerWithPartialConfig(t *testing.T) {
 }
 
 // ============================================================================
-// WSHub Tests
+// WSHub Tests (see hub_test.go)
 // ============================================================================
-
-func TestNewWSHub(t *testing.T) {
-	hub := NewWSHub()
-	if hub == nil {
-		t.Fatal("expected non-nil hub")
-	}
-	if len(hub.clients) != 0 {
-		t.Errorf("expected 0 clients, got %d", len(hub.clients))
-	}
-}
-
-func TestWSHubBroadcastNoClients(t *testing.T) {
-	hub := NewWSHub()
-	err := hub.Broadcast(map[string]string{"type": "test"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestBroadcastEventNoHub(t *testing.T) {
-	hub := NewWSHub()
-	// Should not panic
-	broadcastEvent(hub, map[string]string{"type": "test"})
-}
-
-func TestWSHubBroadcastMarshalError(t *testing.T) {
-	hub := NewWSHub()
-	// Channels can't be marshaled to JSON
-	err := hub.Broadcast(make(chan int))
-	if err == nil {
-		t.Error("expected error for unmarshallable type")
-	}
-}

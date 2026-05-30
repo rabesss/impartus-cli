@@ -224,9 +224,9 @@ func TestGetDecryptionKey(t *testing.T) {
 			// Make a copy since the function modifies in place
 			inputCopy := make([]byte, len(tt.input))
 			copy(inputCopy, tt.input)
-			got := getDecryptionKey(inputCopy)
+			got := deriveDecryptionKey(inputCopy)
 			if string(got) != string(tt.expected) {
-				t.Errorf("getDecryptionKey() = %v, want %v", got, tt.expected)
+				t.Errorf("deriveDecryptionKey() = %v, want %v", got, tt.expected)
 			}
 		})
 	}

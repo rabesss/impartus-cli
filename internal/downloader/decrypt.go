@@ -54,11 +54,11 @@ func removePKCS7Padding(data []byte) []byte {
 	return data[:len(data)-paddingLen]
 }
 
-// getDecryptionKey transforms the raw key from the upstream API into the
+// deriveDecryptionKey transforms the raw key from the upstream API into the
 // actual AES decryption key. The upstream response includes a 2-byte header
 // prefix followed by the key bytes in reversed order. This function strips
 // the header and reverses the remaining bytes to recover the usable key.
-func getDecryptionKey(encryptionKey []byte) []byte {
+func deriveDecryptionKey(encryptionKey []byte) []byte {
 	if len(encryptionKey) < 2 {
 		return encryptionKey
 	}

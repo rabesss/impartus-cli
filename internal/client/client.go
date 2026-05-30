@@ -28,61 +28,44 @@ type Client struct {
 	token             string
 }
 
-// New creates a new Impartus API client with the given HTTP client and user agent provider.
-func New(httpClient *http.Client, userAgentProvider func() string) *Client {
-	if httpClient == nil {
-		httpClient = NewHTTPClient(0)
-	}
-	if userAgentProvider == nil {
-		userAgentProvider = func() string { return "impartus-downloader" }
-	}
+const defaultUserAgent = "impartus-downloader"
 
-	return &Client{
-		httpClient:        httpClient,
-		UserAgentProvider: userAgentProvider,
-	}
+// New creates a new Impartus API client with the given HTTP client and user agent
+// provider. Nil arguments fall back to sensible defaults.
+func New(httpClient *http.Client, userAgentProvider func() string) *Client {
+	c := &Client{httpClient: httpClient, UserAgentProvider: userAgentProvider}
+	c.initialize()
+	return c
 }
 
-// initialize is a defensive fallback ensuring httpClient and UserAgentProvider
-// are set even if Client was constructed without New(). Called from randomUseragent
-// and prepareLogin to guarantee safe access.
+// initialize fills in default dependencies for any nil fields so that a
+// zero-value Client (e.g. &Client{}) is still safe to use.
 func (c *Client) initialize() {
 	if c.httpClient == nil {
 		c.httpClient = NewHTTPClient(0)
 	}
 	if c.UserAgentProvider == nil {
-		c.UserAgentProvider = func() string { return "impartus-downloader" }
+		c.UserAgentProvider = func() string { return defaultUserAgent }
 	}
 }
 
-func (c *Client) randomUserAgent() string {
+func (c *Client) userAgent() string {
 	c.initialize()
 	return c.UserAgentProvider()
 }
 
 func (c *Client) tokenValue() string {
-	if c == nil {
-		return ""
-	}
 	return c.token
 }
 
 func (c *Client) setToken(token string) {
-	if c == nil {
-		return
-	}
 	c.token = token
 }
 
 // GetAuthorizedWithToken performs an authenticated GET request with the given token.
-func (c *Client) GetAuthorizedWithToken(ctx context.Context, url string, token string) (*http.Response, error) {
-	cli := c
-	if cli == nil {
-		cli = New(nil, nil)
-	}
-	cli.initialize()
-
-	return cli.doRequestWithToken(ctx, http.MethodGet, url, nil, token)
+func (c *Client) GetAuthorizedWithToken(ctx context.Context, url, token string) (*http.Response, error) {
+	c.initialize()
+	return c.doRequestWithToken(ctx, http.MethodGet, url, nil, token)
 }
 
 // LoginAndSetToken authenticates with the Impartus API and stores the resulting token.
@@ -215,7 +198,7 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 
 	parsedPlaylists := make([]ParsedPlaylist, 0, len(lectures))
 	for _, lecture := range lectures {
-		streamInfos, err := c.GetStreamInfos(ctx, cfg.BaseURL, token, lecture)
+		streamInfos, err := c.getStreamInfos(ctx, cfg.BaseURL, token, lecture)
 		if err != nil {
 			return parsedPlaylists, err
 		}
@@ -250,8 +233,8 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 	return parsedPlaylists, nil
 }
 
-// GetStreamInfos fetches stream information for a given lecture.
-func (c *Client) GetStreamInfos(ctx context.Context, baseURL, token string, lecture Lecture) ([]StreamInfo, error) {
+// getStreamInfos fetches stream information for a given lecture.
+func (c *Client) getStreamInfos(ctx context.Context, baseURL, token string, lecture Lecture) ([]StreamInfo, error) {
 	uri := fmt.Sprintf("%s/fetchvideo?ttid=%d&token=%s&type=index.m3u8", baseURL, lecture.TTID, token)
 	resp, err := c.GetAuthorizedWithToken(ctx, uri, token)
 	if err != nil {
@@ -367,7 +350,7 @@ func (c *Client) validateStoredToken(ctx context.Context, baseURL, token string)
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 	req.Header.Set("Content-Type", "application/json;charset=UTF-8")
 	req.Header.Set("Accept", "application/json, text/plain, */*")
-	req.Header.Set("User-Agent", c.randomUserAgent())
+	req.Header.Set("User-Agent", c.userAgent())
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -443,7 +426,7 @@ func (c *Client) newLoginRequest(ctx context.Context, cfg *config.Config, baseUR
 	req.Header.Set("Content-Type", "application/json;charset=UTF-8")
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("Referer", "https://bitshyd.impartus.com/login/")
-	req.Header.Set("User-Agent", c.randomUserAgent())
+	req.Header.Set("User-Agent", c.userAgent())
 	return req, nil
 }
 
