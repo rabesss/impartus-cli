@@ -34,6 +34,7 @@
     * [Pull Request Process](#pull-request-process)
     * [Code Style](#code-style)
     * [Testing Requirements](#testing-requirements)
+    * [AI Code Review](#ai-code-review)
   * [License](#license)
   * [Acknowledgments](#acknowledgments)
     * [Dependencies](#dependencies)
@@ -561,6 +562,22 @@ For detailed flow diagrams, see [`docs/architecture.md`](docs/architecture.md).
 - Minimum coverage threshold: 40%
 - Run `go test ./... -cover` to verify coverage
 
+### AI Code Review
+
+Pull requests are reviewed by several AI bots, each configured from a file in this repo (all derived
+from [`REVIEW.md`](REVIEW.md) and the "Review Guidelines" in [`AGENTS.md`](AGENTS.md) — keep them in sync):
+
+| Reviewer | Config file(s) |
+|----------|----------------|
+| Kilo Code | [`REVIEW.md`](REVIEW.md) + `AGENTS.md` |
+| OpenAI Codex | `AGENTS.md` |
+| CodeRabbit | `.coderabbit.yaml` |
+| Qodo Merge | `.pr_agent.toml` + `best_practices.md` |
+| GitHub Copilot | `.github/copilot-instructions.md` + `.github/instructions/go.instructions.md` |
+| Gemini Code Assist | `.gemini/config.yaml` + `.gemini/styleguide.md` |
+| Socket Security | `socket.yml` |
+| Factory Droid | `AGENTS.md` |
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
@@ -583,3 +600,5 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [`docs/error-codes.md`](docs/error-codes.md) - Error code reference
 - [`docs/runbooks.md`](docs/runbooks.md) - Incident response and troubleshooting
 - [`docs/openclaw-manifest.json`](docs/openclaw-manifest.json) - OpenClaw agent integration
+- [`AGENTS.md`](AGENTS.md) - AI agent guide and review guidelines
+- [`REVIEW.md`](REVIEW.md) - Canonical PR code-review guide for AI reviewers

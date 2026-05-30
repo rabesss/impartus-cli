@@ -45,6 +45,8 @@
     * [Testing](#testing)
     * [Security](#security)
     * [CI/CD](#cicd)
+  * [Review Guidelines](#review-guidelines)
+  * [AI Code Review](#ai-code-review)
   * [Releases](#releases)
   * [Issue & PR Labels](#issue--pr-labels)
   * [OpenClaw Integration](#openclaw-integration)
@@ -126,11 +128,11 @@ main.go → cli.Execute(version, date) → Command Handlers
 | Package | Responsibility | Key Files |
 |---------|---------------|-----------|
 | `buildinfo` | Build-time version/date metadata used by entrypoints and release tooling | `buildinfo.go` |
-| `cli` | CLI commands, JSON envelope, interactive mode | `cli.go`, `cli_test.go` |
-| `client` | HTTP client, API calls, playlist parsing | `client.go`, `http.go`, `types.go` |
+| `cli` | CLI command routing, JSON envelope, interactive mode, per-command handlers | `cli.go`, `cli_json.go`, `cli_helpers.go`, `cli_download.go`, `cli_play.go`, `cli_serve.go`, `cli_interactive.go` |
+| `client` | HTTP client, API calls, playlist parsing, stream/view helpers | `client.go`, `http.go`, `types.go`, `streamutils.go` |
 | `config` | Configuration loading, validation, defaults | `config.go`, `config_test.go` |
-| `downloader` | Chunk download, AES decryption, FFmpeg operations | `downloader.go`, `pipeline.go`, `ffmpeg.go`, `rate_limiter.go`, `progress_tracker.go` |
-| `server` | REST API, WebSocket, job management, persistence, upstream token cache (23h TTL) | `server.go`, `handlers.go`, `auth.go`, `middleware.go`, `store.go`, `job_runner.go`, `job_executor.go`, `job_persistence.go`, `hub.go`, `types.go` |
+| `downloader` | Chunk download, AES-128 decryption, m3u8 parsing, FFmpeg/mpv operations | `downloader.go`, `pipeline.go`, `download_chunks.go`, `decrypt.go`, `m3u8.go`, `ffmpeg.go`, `play.go`, `rate_limiter.go`, `progress_tracker.go` |
+| `server` | REST API, WebSocket, job management, persistence, rate limiting, upstream token cache (23h TTL) | `server.go`, `handlers.go`, `responses.go`, `auth.go`, `middleware.go`, `ratelimiter.go`, `store.go`, `job_runner.go`, `job_executor.go`, `job_persistence.go`, `hub.go`, `types.go` |
 
 ### Data Flow
 
@@ -625,6 +627,50 @@ GitHub Actions workflows in `.github/workflows/`:
 | `sentry-issues.yml` | Daily cron, manual | Sync Sentry issues to GitHub and generate error metrics reports |
 
 All workflows use `actions/setup-go@v6` with the Go version from `go.mod`.
+
+---
+
+## Review Guidelines
+
+> Read by AI PR reviewers that ingest `AGENTS.md` natively (OpenAI Codex, Kilo Code, Factory Droid,
+> CodeRabbit, Jules). The full tool-agnostic version is in [`REVIEW.md`](REVIEW.md). On GitHub, Codex
+> surfaces only P0/P1 findings — treat the security items below as P0/P1.
+
+**Security (P0/P1):**
+- Never log usernames, passwords, bearer tokens, cookies, or full config payloads. Use request/job/lecture IDs and status summaries; redact PII before writing to `api.log`.
+- Persisted tokens stay in `.token` (mode `0600`); never commit `config.json` or `.token`.
+- Every protected `/api/v1` route must pass through the auth middleware — flag any new network-exposed endpoint without authentication.
+- Validate AES key length (16/24/32 bytes) and FFmpeg args (`validateFFmpegArgs`); watch for path traversal in output/temp paths.
+
+**Correctness & style:**
+- Wrap errors with `fmt.Errorf("...: %w", err)`; never discard errors silently.
+- Honor `context.Context` cancellation (`ctx.Done()`) in download, decrypt, pipeline, and job-execution loops.
+- Keep initialisms uppercase (`ID`, `URL`, `HTTP`, `JSON`, `API`); stay within lint budgets (cyclomatic ≤ 15, cognitive ≤ 30, funlen ≤ 100 lines / 60 statements).
+- New behavior requires table-driven tests; coverage gate is 40%.
+- A new config field must be updated in the struct, `ApplyDefaults()`, `Validate()`, `applyEnvOverrides()`, and `sample.config.json`.
+
+**Gotchas:** CLI `--start`/`--end` are 1-based inclusive (verify API job index translation for consistency); normalize view aliases (`first`/`second` ↔ `left`/`right`) at module boundaries; running/pending jobs at shutdown are restored as failed (non-resumable). Comment only on what the PR introduces or touches.
+
+## AI Code Review
+
+PRs are reviewed by several AI bots. Each reads a different repo-side config; all are derived from
+[`REVIEW.md`](REVIEW.md) and these guidelines, so keep them in sync when review standards change.
+
+| Reviewer (bot login) | Config file(s) it reads | Format |
+|----------------------|-------------------------|--------|
+| Kilo Code (`kilo-code-bot`) | [`REVIEW.md`](REVIEW.md) + `AGENTS.md` | Markdown |
+| OpenAI Codex (`chatgpt-codex-connector`) | `AGENTS.md` → this "Review Guidelines" section | Markdown |
+| CodeRabbit (`coderabbitai`) | `.coderabbit.yaml` (also auto-reads `AGENTS.md`) | YAML |
+| Qodo Merge (`qodo-code-review`) | `.pr_agent.toml` + `best_practices.md` | TOML + Markdown |
+| GitHub Copilot (`copilot-pull-request-reviewer`) | `.github/copilot-instructions.md` + `.github/instructions/go.instructions.md` | Markdown |
+| Gemini Code Assist (`gemini-code-assist`) | `.gemini/config.yaml` + `.gemini/styleguide.md` | YAML + Markdown |
+| Socket (`socket-security`) | `socket.yml` (supply-chain scan of `go.mod`/`go.sum`) | YAML |
+| Factory Droid (`factory-droid`) | `AGENTS.md` (native discovery) | Markdown |
+
+Notes:
+- **Branch semantics:** Kilo reads `REVIEW.md` from the PR **base** branch (and requires the "Use REVIEW.md" toggle in the Kilo dashboard), so policy changes apply only after they merge to `main`. CodeRabbit reads its config from the PR **source** branch (effective within the same PR). Copilot / Gemini / Qodo read from the repo per their app settings.
+- **AGENTS.md-only reviewers:** **Jules** (`google-labs-jules[bot]`), **Pullfrog** (`pullfrog[bot]`), and **Devin** (`devin-ai-integration[bot]`) have no dedicated committed review-config file — they honor this `AGENTS.md` and are otherwise dashboard-configured. None has reviewed a PR in this repo yet.
+- All committed review configs are tracked via explicit allowlist entries in `.gitignore` (this repo ignores everything by default).
 
 ## Releases
 
