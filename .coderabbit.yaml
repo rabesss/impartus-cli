@@ -1,0 +1,61 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit (bot: coderabbitai) configuration.
+# CodeRabbit also auto-detects and applies the root AGENTS.md as review criteria.
+language: "en-US"
+tone_instructions: "Be concise and high-signal. Only flag issues introduced or touched by this PR; do not comment on pre-existing code. This is a CLI-first Go project."
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - "main"
+  path_filters:
+    - "!coverage*.out"
+    - "!**/*.test"
+    - "!downloads/**"
+    - "!temp/**"
+    - "!droid-wiki/**"
+    - "!.beads/**"
+    - "!.desloppify/**"
+    - "!.factory/**"
+    - "!.omx/**"
+  path_instructions:
+    - path: "internal/server/**"
+      instructions: |
+        - Flag any new network-exposed endpoint added without going through the auth middleware (protected /api/v1 routes must require a valid bearer token).
+        - Never log bearer tokens, cookies, passwords, or full config; redact user-identifying fields before writing to api.log.
+        - Ensure handlers use the {success, data, error, meta} JSON envelope and respondWithError for failures.
+        - Verify job lifecycle correctness: running/pending jobs at shutdown are restored as failed (non-resumable).
+    - path: "internal/downloader/**"
+      instructions: |
+        - Require context cancellation checks (ctx.Done()) in download, decrypt, and pipeline workers; missing checks cause goroutine leaks or unstoppable jobs.
+        - Validate AES key length (16/24/32 bytes) and FFmpeg arguments via validateFFmpegArgs; watch for path traversal in temp/output naming.
+        - Handle FFmpeg/mpv being absent from PATH gracefully.
+    - path: "internal/cli/**"
+      instructions: |
+        - CLI --start/--end are 1-based inclusive; confirm any API index translation is consistent rather than assumed.
+        - Normalize view aliases (first/second vs left/right) at boundaries, not deep in call paths.
+        - When adding a command, ensure JSON-mode support and updated help text.
+    - path: "internal/config/**"
+      instructions: |
+        - A new config field must be updated in all five places: struct, ApplyDefaults(), Validate(), applyEnvOverrides(), and sample.config.json.
+    - path: "**/*.go"
+      instructions: |
+        - Wrap errors with fmt.Errorf and %w; never discard errors silently.
+        - Keep initialisms uppercase (ID, URL, HTTP, JSON, API).
+        - Respect complexity budgets: cyclomatic <= 15, cognitive <= 30, function length <= 100 lines / 60 statements.
+    - path: "**/*_test.go"
+      instructions: |
+        - Expect table-driven tests with descriptive subtest names; new behavior must be covered (coverage gate is 40%).
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "REVIEW.md"
+      - "AGENTS.md"
+      - "internal/CLAUDE.md"

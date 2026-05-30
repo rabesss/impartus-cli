@@ -1,0 +1,22 @@
+# Gemini Code Assist for GitHub (bot: gemini-code-assist) configuration.
+# Review style/criteria live in .gemini/styleguide.md.
+have_fun: false
+code_review:
+  disable: false
+  comment_severity_threshold: MEDIUM
+  max_review_comments: -1
+  pull_request_opened:
+    help: false
+    summary: true
+    code_review: true
+    include_drafts: false
+ignore_patterns:
+  - "coverage*.out"
+  - "**/*.test"
+  - "downloads/**"
+  - "temp/**"
+  - "droid-wiki/**"
+  - ".beads/**"
+  - ".desloppify/**"
+  - ".factory/**"
+  - ".omx/**"

@@ -35,6 +35,15 @@
 !assets/**
 !Makefile
 
+# AI code-review bot configs (must be committed so the bots can read them)
+!/REVIEW.md
+!/.coderabbit.yaml
+!/.pr_agent.toml
+!/best_practices.md
+!/socket.yml
+!/.gemini/config.yaml
+!/.gemini/styleguide.md
+
 # ...even if they are in subdirectories
 !*/
 

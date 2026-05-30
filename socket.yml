@@ -1,0 +1,21 @@
+# Socket Security (bot: socket-security) configuration.
+# Socket is a supply-chain scanner: it inspects dependency manifests (go.mod/go.sum), not source code.
+version: 2
+githubApp:
+  enabled: true
+  # Post a dependency overview comment summarizing added/changed packages on dependency PRs.
+  dependencyOverviewEnabled: true
+  pullRequestAlertsEnabled: true
+  # Dependabot opens the dependency PRs in this repo; keep its PRs scanned (do not ignore).
+projectIgnorePaths:
+  - "downloads/**"
+  - "temp/**"
+  - "test_output/**"
+  - "tests/**"
+  - "droid-wiki/**"
+  - ".deepsec/**"
+  - "**/*_test.go"
+triggerPaths:
+  - "go.mod"
+  - "go.sum"
+  - "Dockerfile"
