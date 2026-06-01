@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.12](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.11...impartus-cli-v0.1.12) (2026-06-01)
+
+
+### Documentation
+
+* add contributing guide ([df82944](https://github.com/rabesss/impartus-cli/commit/df829444d069df175c9ad9b91bc892f3f54e435a))
+* add MIT license ([cbec725](https://github.com/rabesss/impartus-cli/commit/cbec725b4211741e8981d2a37fd01804293a696c))
+* add security policy ([0d3b0de](https://github.com/rabesss/impartus-cli/commit/0d3b0dea6837eb4fc939cb6456a029e3449060a7))
+
 ## [0.1.11](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.10...impartus-cli-v0.1.11) (2026-05-30)
 
 
