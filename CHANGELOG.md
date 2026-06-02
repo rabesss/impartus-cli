@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.13](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.12...impartus-cli-v0.1.13) (2026-06-02)
+
+
+### CI/CD
+
+* **deps:** bump gitleaks/gitleaks-action from 2.3.9 to 3.0.0 ([#58](https://github.com/rabesss/impartus-cli/issues/58)) ([a6304c4](https://github.com/rabesss/impartus-cli/commit/a6304c46b336dbea9d304fdc532f350a79c7bd9e))
+
 ## [0.1.12](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.11...impartus-cli-v0.1.12) (2026-06-01)
 
 
