@@ -113,3 +113,4 @@ This repo is reviewed by multiple AI bots; each reads a different config (all de
 | Gemini Code Assist (`gemini-code-assist`) | `.gemini/config.yaml` + `.gemini/styleguide.md` |
 | Socket (`socket-security`) | `socket.yml` (supply-chain only) |
 | Factory Droid (`factory-droid`) | `AGENTS.md` (native) |
+| Pullfrog (`pullfrog[bot]`) | `AGENTS.md` + Pullfrog dashboard; `opencode.json` + `.github/workflows/pullfrog.yml` |

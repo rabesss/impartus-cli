@@ -37,6 +37,7 @@
 
 # AI code-review bot configs (must be committed so the bots can read them)
 !/REVIEW.md
+!/opencode.json
 !/.coderabbit.yaml
 !/.pr_agent.toml
 !/best_practices.md
