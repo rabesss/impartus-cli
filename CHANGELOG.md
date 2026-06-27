@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.15](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.14...impartus-cli-v0.1.15) (2026-06-27)
+
+
+### Bug Fixes
+
+* **pullfrog:** pin model to zai/glm-5.2 for Z.AI Coding Plan BYOK ([#70](https://github.com/rabesss/impartus-cli/issues/70)) ([080d113](https://github.com/rabesss/impartus-cli/commit/080d113e12285d76f4e28dd589ae31c6158118a4))
+* **pullfrog:** use zai-coding-plan/glm-5.2 model slug ([#71](https://github.com/rabesss/impartus-cli/issues/71)) ([918c153](https://github.com/rabesss/impartus-cli/commit/918c153e80be06133fae2d9aad7273304bcee50d))
+
+
+### CI/CD
+
+* fix Codecov v7 input, add GHCR Trivy scan, refresh Dockerfile dates ([#68](https://github.com/rabesss/impartus-cli/issues/68)) ([a438d17](https://github.com/rabesss/impartus-cli/commit/a438d17e20476bc1cf6ad20fbaaddd77a0780221))
+
 ## [0.1.14](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.13...impartus-cli-v0.1.14) (2026-06-27)
 
 
