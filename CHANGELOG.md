@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.14](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.13...impartus-cli-v0.1.14) (2026-06-27)
+
+
+### Build System
+
+* **deps:** bump debian from `0104b33` to `96e378d` ([#66](https://github.com/rabesss/impartus-cli/issues/66)) ([a40b71f](https://github.com/rabesss/impartus-cli/commit/a40b71fed5a4fb75e099c6b4bb299bb8c18a09a0))
+* **deps:** bump golang from `386d475` to `5d2b868` ([#63](https://github.com/rabesss/impartus-cli/issues/63)) ([9bafa23](https://github.com/rabesss/impartus-cli/commit/9bafa23bd5ccf7b890efd309f15e53e8864df073))
+
+
+### CI/CD
+
+* **deps:** bump actions/checkout from 6.0.2 to 6.0.3 ([#61](https://github.com/rabesss/impartus-cli/issues/61)) ([24ff5fd](https://github.com/rabesss/impartus-cli/commit/24ff5fdd518a34add488e999bf46fdd66921545d))
+* **deps:** bump codecov/codecov-action from 6.0.1 to 7.0.0 ([#60](https://github.com/rabesss/impartus-cli/issues/60)) ([b029c65](https://github.com/rabesss/impartus-cli/commit/b029c654dfd826166833490e05f1640e930e4d58))
+* **deps:** bump github/codeql-action from 4.36.0 to 4.36.2 ([#62](https://github.com/rabesss/impartus-cli/issues/62)) ([0a3d183](https://github.com/rabesss/impartus-cli/commit/0a3d1839f92218f6ba8c081e22f810c7a7a2b15b))
+
 ## [0.1.13](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.12...impartus-cli-v0.1.13) (2026-06-02)
 
 
