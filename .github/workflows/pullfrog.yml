@@ -32,4 +32,4 @@ jobs:
         uses: pullfrog/pullfrog@v0
         with:
           prompt: ${{ inputs.prompt }}
-          model: zai/glm-5.2
+          model: zai-coding-plan/glm-5.2
