@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-# golang:1.26-bookworm digest last updated: 2026-05-25
+# golang:1.26-bookworm digest last updated: 2026-06-27
 # To update: docker pull golang:1.26-bookworm && replace digest below
 FROM golang:1.26-bookworm@sha256:5d2b868674b57c9e48cdd39e891acce4196b6926ca6d11e9c270a8f85106203d AS build
 
@@ -23,7 +23,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 	  -X github.com/rabesss/impartus-cli/internal/buildinfo.Date=${BUILD_DATE}" \
 	-o /out/impartus .
 
-# debian:bookworm-slim digest last updated: 2026-05-25
+# debian:bookworm-slim digest last updated: 2026-06-27
 # To update: docker pull debian:bookworm-slim && replace digest below
 FROM debian:bookworm-slim@sha256:96e378d7e6531ac9a15ad505478fcc2e69f371b10f5cdf87857c4b8188404716
 
