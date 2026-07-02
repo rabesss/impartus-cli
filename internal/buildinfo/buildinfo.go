@@ -3,7 +3,7 @@ package buildinfo
 
 var (
 	// Version is the application version, set at build time.
-	Version = "0.1.17" // x-release-please-version
+	Version = "0.1.18" // x-release-please-version
 	// Date is the build date, set at build time.
 	Date = ""
 )

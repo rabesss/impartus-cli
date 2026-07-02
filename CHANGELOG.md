@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.18](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.17...impartus-cli-v0.1.18) (2026-07-02)
+
+
+### Bug Fixes
+
+* remediate security and quality review findings (P0 token leak, path traversal, network exposure) ([#83](https://github.com/rabesss/impartus-cli/issues/83)) ([b4ebcde](https://github.com/rabesss/impartus-cli/commit/b4ebcde24ccff870adbcae2dcef0070a8dddb2a1))
+
+
+### CI/CD
+
+* add ZAI Coding Plan OpenCode config ([#81](https://github.com/rabesss/impartus-cli/issues/81)) ([0c9f408](https://github.com/rabesss/impartus-cli/commit/0c9f4082a61155dd34bed4964d130a6247709b1d))
+
 ## [0.1.17](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.16...impartus-cli-v0.1.17) (2026-07-02)
 
 
