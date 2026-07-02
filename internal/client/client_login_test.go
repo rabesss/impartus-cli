@@ -36,8 +36,9 @@ func TestNewLoggedIn(t *testing.T) {
 				t.Fatalf("chdir: %v", chErr)
 			}
 			t.Cleanup(func() {
-				chErr := os.Chdir(prev)
-				_ = chErr
+				if chErr := os.Chdir(prev); chErr != nil {
+					t.Errorf("failed to restore cwd: %v", chErr)
+				}
 			})
 
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

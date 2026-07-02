@@ -198,3 +198,33 @@ func TestNonLoopbackBindError(t *testing.T) {
 		t.Errorf("refusal should mention the opt-in env var, got: %v", err)
 	}
 }
+
+func TestIsLoopbackAddr(t *testing.T) {
+	cases := []struct {
+		name string
+		addr string
+		want bool
+	}{
+		{"empty is loopback", "", true},
+		{"localhost", "localhost", true},
+		{"localhost case-insensitive", "LOCALHOST", true},
+		{"ipv4 loopback", "127.0.0.1", true},
+		{"ipv4 loopback range", "127.0.0.2", true},
+		{"ipv4 loopback top of range", "127.255.255.255", true},
+		{"ipv6 loopback", "::1", true},
+		{"bracketed ipv6 loopback", "[::1]", true},
+		{"canonical ipv6 loopback", "0:0:0:0:0:0:0:1", true},
+		{"wildcard is not loopback", "0.0.0.0", false},
+		{"public ipv4 is not loopback", "8.8.8.8", false},
+		{"private ipv4 is not loopback", "192.168.1.1", false},
+		{"hostname is not loopback", "example.com", false},
+		{"garbage is not loopback", "not-an-ip", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isLoopbackAddr(tc.addr); got != tc.want {
+				t.Errorf("isLoopbackAddr(%q) = %v, want %v", tc.addr, got, tc.want)
+			}
+		})
+	}
+}

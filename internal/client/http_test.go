@@ -55,14 +55,20 @@ func TestDoRequestWithToken_MalformedURLNoLeak(t *testing.T) {
 // TestNewHTTPClient covers the timeout-defaulting branch: a non-positive
 // timeout falls back to defaultHTTPTimeout, and a positive one is honored.
 func TestNewHTTPClient(t *testing.T) {
-	if c := NewHTTPClient(0); c.Timeout != defaultHTTPTimeout {
-		t.Errorf("NewHTTPClient(0) timeout = %v, want %v", c.Timeout, defaultHTTPTimeout)
+	cases := []struct {
+		name    string
+		timeout time.Duration
+		want    time.Duration
+	}{
+		{"zero uses default", 0, defaultHTTPTimeout},
+		{"negative uses default", -time.Second, defaultHTTPTimeout},
+		{"positive honored", 42 * time.Second, 42 * time.Second},
 	}
-	if c := NewHTTPClient(-time.Second); c.Timeout != defaultHTTPTimeout {
-		t.Errorf("NewHTTPClient(-1s) timeout = %v, want %v", c.Timeout, defaultHTTPTimeout)
-	}
-	custom := 42 * time.Second
-	if c := NewHTTPClient(custom); c.Timeout != custom {
-		t.Errorf("NewHTTPClient(%v) timeout = %v, want %v", custom, c.Timeout, custom)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if c := NewHTTPClient(tc.timeout); c.Timeout != tc.want {
+				t.Errorf("NewHTTPClient(%v) timeout = %v, want %v", tc.timeout, c.Timeout, tc.want)
+			}
+		})
 	}
 }
