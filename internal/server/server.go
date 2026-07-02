@@ -4,6 +4,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -19,7 +20,7 @@ import (
 func defaultUpstreamLogin(ctx context.Context, cfg *config.Config) (*client.Client, *config.Config, error) {
 	apiClient, err := client.NewLoggedIn(ctx, cfg)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("log in to upstream: %w", err)
 	}
 	return apiClient, cfg, nil
 }

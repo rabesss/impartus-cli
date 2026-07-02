@@ -89,21 +89,31 @@ func (s *APIServer) checkUpstreamStatus() statusCheckResult {
 		return statusCheckResult{Status: "not_configured"}
 	}
 
+	reachable, probed := s.probeUpstreamHTTP()
+	if !probed {
+		// No cached token to authenticate the HTTP probe; fall back to TCP.
+		reachable = s.probeUpstreamTCP()
+	}
 	status := "unreachable"
-	if s.probeUpstreamHTTP() || s.probeUpstreamTCP() {
+	if reachable {
 		status = "reachable"
 	}
-
 	return statusCheckResult{Status: status}
 }
 
-func (s *APIServer) probeUpstreamHTTP() bool {
+// probeUpstreamHTTP attempts an authenticated probe against the upstream. It
+// returns (reachable, probed): probed is false only when there is no cached
+// token to authenticate with (the caller may then fall back to a TCP probe).
+// When probed is true, reachable reflects whether the upstream returned 2xx —
+// an explicit non-2xx (e.g. 401/500) is honored as unreachable and must NOT be
+// overridden by a TCP probe.
+func (s *APIServer) probeUpstreamHTTP() (reachable, probed bool) {
 	s.upstreamCacheMu.RLock()
 	cached := s.upstreamCache
 	s.upstreamCacheMu.RUnlock()
 
 	if cached == nil || cached.token == "" {
-		return false
+		return false, false
 	}
 
 	baseURL := s.ensureScheme(s.cfg.BaseURL)
@@ -114,21 +124,21 @@ func (s *APIServer) probeUpstreamHTTP() bool {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, profileURL, nil)
 	if err != nil {
-		return false
+		return false, true
 	}
 	req.Header.Set("Authorization", "Bearer "+cached.token)
 
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return false
+		return false, true
 	}
 	//nolint:errcheck
 	_ = resp.Body.Close()
 	// A non-2xx response means the upstream is misbehaving or rejecting the
-	// cached token; treat it as not reachable for monitoring accuracy rather
-	// than reporting "reachable" for 401/500 responses.
-	return resp.StatusCode >= 200 && resp.StatusCode < 300
+	// cached token; treat it as not reachable. This was probed, so the caller
+	// must NOT fall back to TCP and flip it back to reachable.
+	return resp.StatusCode >= 200 && resp.StatusCode < 300, true
 }
 
 func (s *APIServer) probeUpstreamTCP() bool {

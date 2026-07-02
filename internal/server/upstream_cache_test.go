@@ -225,8 +225,8 @@ func TestUpstreamCacheLoginFailureDoesNotPoisonCache(t *testing.T) {
 	cached := s.upstreamCache
 	s.upstreamCacheMu.RUnlock()
 
-	if cached != nil && cached.token != "" {
-		t.Error("cache should not have a valid token after failed login")
+	if cached != nil {
+		t.Error("cache should be nil after failed login (no poisoned entry), got a non-nil cache entry")
 	}
 }
 

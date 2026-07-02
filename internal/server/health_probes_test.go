@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rabesss/impartus-cli/internal/config"
 )
@@ -193,6 +194,20 @@ func TestHealthUpstreamStatusWithValidBaseUrl(t *testing.T) {
 		BaseURL:          "https://example.com",
 		DownloadLocation: "./downloads",
 	})
+	// Seed the upstream cache so the HTTP probe authenticates against a stub
+	// instead of hitting the real network. Deterministic: stub returns 200.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/user/profile" || r.Header.Get("Authorization") != "Bearer test-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	s.cfg.BaseURL = srv.URL
+	s.upstreamCacheMu.Lock()
+	s.upstreamCache = &upstreamCacheEntry{token: "test-token", expiresAt: time.Now().Add(time.Hour)}
+	s.upstreamCacheMu.Unlock()
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/health", nil)
 	rec := httptest.NewRecorder()
@@ -205,10 +220,34 @@ func TestHealthUpstreamStatusWithValidBaseUrl(t *testing.T) {
 
 	data := assertMapField(t, resp, "data")
 	upstream := assertMapField(t, data, "upstream")
+	if upstream["status"] != "reachable" {
+		t.Errorf("expected upstream.status=reachable (stub returned 200), got %v", upstream["status"])
+	}
+}
 
-	// Status should be either "reachable" or "unreachable" - we just check the field exists
-	if upstream["status"] != "reachable" && upstream["status"] != "unreachable" {
-		t.Errorf("expected upstream.status to be 'reachable' or 'unreachable', got %v", upstream["status"])
+// TestCheckUpstreamStatus_HTTPRejectionBeatsTCPReachable is the regression guard
+// for the TCP-fallback bug: when a cached-token HTTP probe gets an explicit
+// non-2xx from an upstream whose TCP port is open, the status must be
+// "unreachable" — the TCP probe must NOT flip it back to "reachable".
+func TestCheckUpstreamStatus_HTTPRejectionBeatsTCPReachable(t *testing.T) {
+	// TCP port is open (server is listening) but it returns 401 for the probe.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	s := newAPIServer(&config.Config{
+		Username:         "user",
+		Password:         "pass",
+		BaseURL:          srv.URL,
+		DownloadLocation: "./downloads",
+	})
+	s.upstreamCacheMu.Lock()
+	s.upstreamCache = &upstreamCacheEntry{token: "test-token", expiresAt: time.Now().Add(time.Hour)}
+	s.upstreamCacheMu.Unlock()
+
+	if got := s.checkUpstreamStatus().Status; got != "unreachable" {
+		t.Errorf("expected unreachable (HTTP 401 must beat an open TCP port), got %q", got)
 	}
 }
 
