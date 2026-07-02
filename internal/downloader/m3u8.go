@@ -60,7 +60,7 @@ func (d *Downloader) CreateTempM3U8File(downloadedPlaylist DownloadedPlaylist) (
 	}
 
 	if len(downloadedPlaylist.FirstViewChunks) > 0 {
-		firstPath := fmt.Sprintf("%s/%d_first.m3u8", d.config.TempDirLocation, downloadedPlaylist.Playlist.ID)
+		firstPath := filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_first.m3u8", downloadedPlaylist.Playlist.ID))
 		if err := writeM3U8File(firstPath, downloadedPlaylist.FirstViewChunks); err != nil {
 			return m3u8File, err
 		}
@@ -68,7 +68,7 @@ func (d *Downloader) CreateTempM3U8File(downloadedPlaylist DownloadedPlaylist) (
 	}
 
 	if len(downloadedPlaylist.SecondViewChunks) > 0 {
-		secondPath := fmt.Sprintf("%s/%d_second.m3u8", d.config.TempDirLocation, downloadedPlaylist.Playlist.ID)
+		secondPath := filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_second.m3u8", downloadedPlaylist.Playlist.ID))
 		if err := writeM3U8File(secondPath, downloadedPlaylist.SecondViewChunks); err != nil {
 			return m3u8File, err
 		}

@@ -17,8 +17,8 @@ import (
 )
 
 func defaultUpstreamLogin(ctx context.Context, cfg *config.Config) (*client.Client, *config.Config, error) {
-	apiClient := client.New(nil, nil)
-	if err := apiClient.LoginAndSetToken(ctx, cfg); err != nil {
+	apiClient, err := client.NewLoggedIn(ctx, cfg)
+	if err != nil {
 		return nil, nil, err
 	}
 	return apiClient, cfg, nil
@@ -55,17 +55,20 @@ func newAPIServerFull(port string, cfg *config.Config, loginFn UpstreamLoginFunc
 	limiter := newLoginRateLimiter(5, 1*time.Minute)
 
 	s := &APIServer{
-		cfg:        baseCfg,
-		wsHub:      NewWSHub(),
-		tokenStore: NewTokenStore(),
-		upgrader: websocket.Upgrader{CheckOrigin: func(r *http.Request) bool {
-			return true
-		}},
+		cfg:           baseCfg,
+		wsHub:         NewWSHub(),
+		tokenStore:    NewTokenStore(),
 		router:        mux.NewRouter(),
 		port:          port,
 		upstreamLogin: loginFn,
 		loginLimiter:  limiter,
 	}
+	// loopback determines whether permissive CORS/WS origin checks are safe.
+	// Binding a non-loopback address (e.g. 0.0.0.0) tightens them below.
+	s.loopback = isLoopbackAddr(baseCfg.ListenAddr)
+	s.upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool {
+		return s.originAllowed(r)
+	}}
 
 	// Start rate limiter cleanup
 	s.stopLoginLimiter = limiter.startCleanup()
@@ -92,9 +95,10 @@ func (s *APIServer) Start(ctxs ...context.Context) error {
 		defer s.stopLoginLimiter()
 	}
 
-	// G302: 0666 is standard for log files, umask applies
-	// #nosec G302
-	logFile, err := os.OpenFile("api.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o666)
+	// 0600: the log may capture redacted-but-sensitive upstream error context;
+	// restrict to owner read/write only (no group/world access).
+	// #nosec G302 -- intentionally restrictive mode for a credentials-adjacent log
+	logFile, err := os.OpenFile("api.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o600)
 	if err == nil {
 		defer func() {
 			_ = logFile.Close() //nolint:errcheck
@@ -106,6 +110,17 @@ func (s *APIServer) Start(ctxs ...context.Context) error {
 	// Allow override via config field or env var (IMPARTUS_LISTEN_ADDR)
 	if s.cfg != nil && s.cfg.ListenAddr != "" {
 		addr = s.cfg.ListenAddr + ":" + s.port
+	}
+	// Refuse to bind a non-loopback address unless the operator explicitly
+	// opts in via allowRemoteAccess / IMPARTUS_ALLOW_REMOTE_ACCESS. Binding
+	// 0.0.0.0 exposes the API (same creds as Impartus config) to the network.
+	// s.loopback is derived from ListenAddr in the constructor (IPv6-safe).
+	if !s.loopback {
+		if s.cfg == nil || !s.cfg.AllowRemoteAccess {
+			return errors.New("refusing to bind non-loopback address " + addr +
+				": set allowRemoteAccess=true (IMPARTUS_ALLOW_REMOTE_ACCESS=1) to opt in")
+		}
+		log.Printf("WARNING: API server binding non-loopback address %s (allowRemoteAccess enabled)", addr)
 	}
 	server := &http.Server{
 		Addr:         addr,

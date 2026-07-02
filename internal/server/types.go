@@ -80,10 +80,7 @@ type healthResponse struct {
 }
 
 type configCheckResult struct {
-	Status   string `json:"status"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	BaseURL  string `json:"baseUrl"`
+	Status string `json:"status"`
 }
 
 type statusCheckResult struct {
@@ -313,4 +310,7 @@ type APIServer struct {
 	upstreamCacheMu  sync.RWMutex
 	upstreamLogin    UpstreamLoginFunc
 	loginLimiter     *loginRateLimiter
+	// loopback reports whether the server binds a loopback address. When false
+	// (e.g. ListenAddr=0.0.0.0), CORS and WebSocket origin checks are tightened.
+	loopback bool
 }

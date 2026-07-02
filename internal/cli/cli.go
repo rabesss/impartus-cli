@@ -188,8 +188,8 @@ func initClient(ctx context.Context) (*config.Config, *client.Client, error) {
 		return nil, nil, err
 	}
 
-	apiClient := client.New(nil, nil)
-	if err := apiClient.LoginAndSetToken(ctx, cfg); err != nil {
+	apiClient, err := client.NewLoggedIn(ctx, cfg)
+	if err != nil {
 		return nil, nil, err
 	}
 

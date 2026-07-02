@@ -136,11 +136,11 @@ func TestProbeUpstreamHTTP_ServerReturnsError(t *testing.T) {
 	s.upstreamCache = &upstreamCacheEntry{token: "valid-token"}
 	s.upstreamCacheMu.Unlock()
 
-	// Server returns 500 but connection succeeds, so probe should return true
-	// (it only checks connectivity, not status code)
+	// A 5xx response indicates an unhealthy upstream; the probe must report it
+	// as not reachable rather than masking it as "connected".
 	result := s.probeUpstreamHTTP()
-	if !result {
-		t.Error("expected true for reachable upstream (HTTP 500 still means connected)")
+	if result {
+		t.Error("expected false for upstream returning HTTP 500")
 	}
 }
 

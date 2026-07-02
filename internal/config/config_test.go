@@ -125,6 +125,59 @@ func TestLoadResolvedUsesEnvOverConfigFileWithDeterministicPrecedence(t *testing
 	}
 }
 
+func writeTempConfig(t *testing.T, body string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	return path
+}
+
+func TestLoadResolvedEnableJitterDefaultsTrueWhenOmitted(t *testing.T) {
+	path := writeTempConfig(t, `{
+		"username": "u", "password": "p", "baseUrl": "https://example.com",
+		"quality": "450", "views": "both"
+	}`)
+	cfg, err := LoadResolved(path)
+	if err != nil {
+		t.Fatalf("LoadResolved: %v", err)
+	}
+	if !cfg.EnableJitter {
+		t.Error("expected EnableJitter to default true when omitted from config")
+	}
+}
+
+func TestLoadResolvedEnableJitterHonorsExplicitFalse(t *testing.T) {
+	path := writeTempConfig(t, `{
+		"username": "u", "password": "p", "baseUrl": "https://example.com",
+		"quality": "450", "views": "both", "enableJitter": false
+	}`)
+	cfg, err := LoadResolved(path)
+	if err != nil {
+		t.Fatalf("LoadResolved: %v", err)
+	}
+	if cfg.EnableJitter {
+		t.Error("expected EnableJitter to stay false when explicitly disabled in config")
+	}
+}
+
+func TestLoadResolvedEnableJitterEnvOverridesDefault(t *testing.T) {
+	t.Setenv("IMPARTUS_ENABLE_JITTER", "false")
+	path := writeTempConfig(t, `{
+		"username": "u", "password": "p", "baseUrl": "https://example.com",
+		"quality": "450", "views": "both"
+	}`)
+	cfg, err := LoadResolved(path)
+	if err != nil {
+		t.Fatalf("LoadResolved: %v", err)
+	}
+	if cfg.EnableJitter {
+		t.Error("expected IMPARTUS_ENABLE_JITTER=false to disable jitter despite omitted config key")
+	}
+}
+
 func TestLoadResolvedReturnsValidationErrorsBeforeRemoteWork(t *testing.T) {
 	t.Setenv("IMPARTUS_USERNAME", "env-user")
 	t.Setenv("IMPARTUS_PASSWORD", "env-pass")

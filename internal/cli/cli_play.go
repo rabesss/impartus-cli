@@ -66,20 +66,12 @@ func runPlay(args []string) error {
 		return err
 	}
 
-	selected, err := lectures.SelectRange(f.start, f.end)
+	selected, _, err := lectures.SelectForDownload(f.start, f.end, cfg.SkipNoAudio)
 	if err != nil {
 		return err
 	}
 
 	warnNoAudioLectures(selected, cfg.SkipNoAudio)
-
-	if cfg.SkipNoAudio {
-		selected = selected.FilterNoAudio()
-	}
-
-	if len(selected) == 0 {
-		return fmt.Errorf("no lectures available after filtering")
-	}
 
 	return playLectures(ctx, cfg, apiClient, selected)
 }

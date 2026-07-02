@@ -140,3 +140,25 @@ func (l Lectures) SelectRange(start, end int) (Lectures, error) {
 	}
 	return append(Lectures(nil), reversed[start-1:end]...), nil
 }
+
+// SelectForDownload applies the standard lecture-selection pipeline shared by
+// the CLI and the server: range selection, optional no-audio filtering, and an
+// empty-result guard. It returns the selected lectures and the count filtered
+// out by the no-audio filter. This consolidates logic previously duplicated
+// across cli_download, cli_play, and the server job executor.
+func (l Lectures) SelectForDownload(start, end int, skipNoAudio bool) (Lectures, int, error) {
+	selected, err := l.SelectRange(start, end)
+	if err != nil {
+		return nil, 0, err
+	}
+	filtered := 0
+	if skipNoAudio {
+		before := len(selected)
+		selected = selected.FilterNoAudio()
+		filtered = before - len(selected)
+	}
+	if len(selected) == 0 {
+		return nil, filtered, errors.New("no lectures available after filtering (all lectures have noaudio=1 in the selected range)")
+	}
+	return selected, filtered, nil
+}
