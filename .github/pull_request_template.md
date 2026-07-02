@@ -15,7 +15,7 @@
 - `feat(cli): add interactive download prompt`
 - `fix(api): resolve race condition in job store`
 - `chore(deps): bump gorilla/websocket to v1.5.3`
-- `docs: update AGENTS.md with new workflow`
+- `docs: update API reference for new endpoint`
 
 ## Description
 <!-- Provide a clear and concise description of your changes -->
@@ -68,8 +68,7 @@ go build ./...
 
 ## Documentation
 - [ ] README.md updated (if needed)
-- [ ] AGENTS.md updated (if workflow/tooling changed)
-- [ ] API documentation updated (if endpoints changed)
+- [ ] docs/ updated (if API, CLI, or config behavior changed)
 - [ ] Changelog entry added (if user-facing change)
 
 ## Screenshots (if applicable)

@@ -1,4 +1,4 @@
-.PHONY: build test run-cli run-api lint clean install pre-commit-install pre-commit quality-gate quality-gate-scan quality-gate-next docs docs-toc agents-md-validate security security-scan security-gitleaks security-gosec security-trivy security-govulncheck
+.PHONY: build test run-cli run-api lint clean install pre-commit-install pre-commit quality-gate quality-gate-scan quality-gate-next docs docs-toc security security-scan security-gitleaks security-gosec security-trivy security-govulncheck
 
 DESLOPPIFY_VERSION ?= 0.9.12
 GO_TOOLCHAIN ?= $(shell awk '/^toolchain / { print $$2 }' go.mod)
@@ -125,7 +125,7 @@ quality-gate: quality-gate-scan
 # Generate documentation table of contents using Go-based generator
 docs-toc:
 	@echo "Generating documentation table of contents..."
-	@for file in README.md AGENTS.md docs/*.md; do \
+	@for file in README.md CONTRIBUTING.md SECURITY.md docs/*.md; do \
 		if [ -f "$$file" ]; then \
 			echo "Processing: $$file"; \
 			go run scripts/generate-toc.go "$$file"; \
@@ -133,48 +133,9 @@ docs-toc:
 	done
 	@echo "Documentation TOC generation complete!"
 
-# Validate AGENTS.md commands reference valid targets and files
-agents-md-validate:
-	@echo "Validating AGENTS.md commands..."
-	@FAILED=0; \
-	echo "Checking Makefile targets..."; \
-	for target in $$(grep -oP 'make \w+' AGENTS.md | sort -u | awk '{print $$2}'); do \
-		if grep -q "^$$target:" Makefile; then \
-			echo "  ✓ make $$target exists"; \
-		else \
-			echo "  ✗ make $$target NOT FOUND"; \
-			FAILED=1; \
-		fi \
-	done; \
-	echo "Verifying Go commands..."; \
-	if go build ./... > /dev/null 2>&1; then \
-		echo "  ✓ go build ./... works"; \
-	else \
-		echo "  ✗ go build ./... failed"; \
-		FAILED=1; \
-	fi; \
-	if go test ./... -list '.*' > /dev/null 2>&1; then \
-		echo "  ✓ go test ./... command is valid"; \
-	else \
-		echo "  ✗ go test ./... command failed"; \
-		FAILED=1; \
-	fi; \
-	if [ -f ".golangci.yml" ]; then \
-		echo "  ✓ .golangci.yml exists"; \
-	else \
-		echo "  ✗ .golangci.yml NOT FOUND"; \
-		FAILED=1; \
-	fi; \
-	if [ $$FAILED -eq 0 ]; then \
-		echo "All AGENTS.md validations passed!"; \
-	else \
-		echo "Some validations failed!"; \
-		exit 1; \
-	fi
-
-# Generate docs and validate AGENTS.md
-docs: docs-toc agents-md-validate
-	@echo "Documentation validation complete!"
+# Generate docs table of contents
+docs: docs-toc
+	@echo "Documentation generation complete!"
 
 # Security scanning targets
 security-gitleaks:
@@ -242,8 +203,7 @@ help:
 	@echo "  quality-gate-next  - Show desloppify $(DESLOPPIFY_VERSION) prioritized items"
 	@echo "  quality-gate       - Full quality gate (scan + threshold check)"
 	@echo "  docs-toc           - Generate documentation table of contents"
-	@echo "  agents-md-validate - Validate AGENTS.md commands reference valid targets"
-	@echo "  docs               - Run docs-toc and agents-md-validate"
+	@echo "  docs               - Run docs-toc"
 	@echo "  security-gitleaks  - Run secret scanning with gitleaks"
 	@echo "  security-gosec     - Run Go security analysis with gosec"
 	@echo "  security-trivy     - Run vulnerability scanning with trivy"

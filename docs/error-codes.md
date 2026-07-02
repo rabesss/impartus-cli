@@ -17,7 +17,7 @@
 
 # Error Codes Reference
 
-All API errors use structured JSON responses via `respondWithError` in [`auth.go`](../internal/server/auth.go) and [`server.go`](../internal/server/server.go).
+All API errors use structured JSON responses via `respondWithError` in [`responses.go`](../internal/server/responses.go). Authentication handlers in [`auth.go`](../internal/server/auth.go) and route handlers in [`handlers.go`](../internal/server/handlers.go) call these helpers.
 
 See also: [`api-reference.md`](api-reference.md) for route details, [`websocket-events.md`](websocket-events.md) for event schemas.
 
@@ -72,6 +72,7 @@ Some errors include retry hints to guide client retry behavior:
 | `COURSES_FETCH_FAILED` | 502 | 30s | Upstream API may recover |
 | `LECTURES_FETCH_FAILED` | 502 | 30s | Upstream API may recover |
 | `CANCEL_FAILED` | 500 | 10s | Temporary server issue |
+| `RATE_LIMITED` | 429 | 60s | Login rate limit exceeded |
 
 **Errors WITHOUT retry hints (4xx client errors):**
 - `INVALID_REQUEST`, `MISSING_PARAMETER`, `INVALID_JOB_CONFIG` (400)
@@ -94,6 +95,7 @@ Returned by `authMiddleware` and `loginHandler` in `internal/server/auth.go`.
 | `INVALID_TOKEN_FORMAT` | 401 | Expected 'Bearer \<token\>' | Header present but not `Bearer <token>` format |
 | `INVALID_TOKEN` | 401 | Token is invalid or expired | Token not found in store or past 24h expiry |
 | `AUTH_FAILED` | 401 | Invalid username or password | Login credentials don't match `config.json` |
+| `RATE_LIMITED` | 429 | Too many login attempts. Please try again later. | Login rate limit exceeded (`retryAfter: 60`) |
 | `TOKEN_GENERATION_FAILED` | 500 | Failed to generate token | `crypto/rand` failure (extremely rare) |
 
 ---
@@ -107,7 +109,7 @@ Returned by route handlers in `internal/server/server.go`.
 | `INVALID_REQUEST` | 400 | Invalid request body | Malformed JSON on `POST /auth/login` or `POST /jobs` |
 | `INVALID_REQUEST` | 400 | subjectId must be a valid integer | Non-integer `subjectId`/`subject_id` query param on `GET /lectures` |
 | `INVALID_REQUEST` | 400 | sessionId must be a valid integer | Non-integer `sessionId`/`session_id` query param on `GET /lectures` |
-| `INVALID_REQUEST` | 400 | startIndex must be >= 1 | `startIndex < 1` on `POST /jobs` |
+| `INVALID_REQUEST` | 400 | startIndex must be 1 or greater (1-based, matching CLI --start) | `startIndex < 1` on `POST /jobs` |
 | `INVALID_REQUEST` | 400 | endIndex must be >= startIndex | `endIndex < startIndex` on `POST /jobs` |
 | `MISSING_PARAMETER` | 400 | subjectId and sessionId query parameters required | Missing query params on `GET /lectures` |
 | `MISSING_PARAMETER` | 400 | subjectId is required and must be > 0 | Missing or zero `subjectId` on `POST /jobs` |
