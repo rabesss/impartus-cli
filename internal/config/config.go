@@ -344,8 +344,13 @@ func jsonKeyPresent(data []byte, key string) bool {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return false
 	}
-	_, ok := m[key]
-	return ok
+	target := strings.ToLower(key)
+	for k := range m {
+		if strings.ToLower(k) == target {
+			return true
+		}
+	}
+	return false
 }
 
 func applyStringEnv(key string, target *string) {

@@ -100,6 +100,11 @@ func (s *APIServer) Start(ctxs ...context.Context) error {
 	// #nosec G302 -- intentionally restrictive mode for a credentials-adjacent log
 	logFile, err := os.OpenFile("api.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o600)
 	if err == nil {
+		// OpenFile applies the mode only on creation; enforce owner-only on an
+		// existing file too (e.g. one left world-readable by an older build).
+		if chmodErr := os.Chmod("api.log", 0o600); chmodErr != nil {
+			log.Printf("warning: failed to enforce api.log permissions: %v", chmodErr)
+		}
 		defer func() {
 			_ = logFile.Close() //nolint:errcheck
 		}()
@@ -116,9 +121,9 @@ func (s *APIServer) Start(ctxs ...context.Context) error {
 	// 0.0.0.0 exposes the API (same creds as Impartus config) to the network.
 	// s.loopback is derived from ListenAddr in the constructor (IPv6-safe).
 	if !s.loopback {
-		if s.cfg == nil || !s.cfg.AllowRemoteAccess {
-			return errors.New("refusing to bind non-loopback address " + addr +
-				": set allowRemoteAccess=true (IMPARTUS_ALLOW_REMOTE_ACCESS=1) to opt in")
+		allowRemote := s.cfg != nil && s.cfg.AllowRemoteAccess
+		if err := nonLoopbackBindError(addr, allowRemote); err != nil {
+			return err
 		}
 		log.Printf("WARNING: API server binding non-loopback address %s (allowRemoteAccess enabled)", addr)
 	}

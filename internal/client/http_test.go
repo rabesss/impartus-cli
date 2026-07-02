@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestDoRequestWithToken_NeverLeaksToken is the regression guard for the P0
@@ -48,5 +49,20 @@ func TestDoRequestWithToken_MalformedURLNoLeak(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), secret) {
 		t.Errorf("doRequestWithToken leaked token via malformed URL: %v", err)
+	}
+}
+
+// TestNewHTTPClient covers the timeout-defaulting branch: a non-positive
+// timeout falls back to defaultHTTPTimeout, and a positive one is honored.
+func TestNewHTTPClient(t *testing.T) {
+	if c := NewHTTPClient(0); c.Timeout != defaultHTTPTimeout {
+		t.Errorf("NewHTTPClient(0) timeout = %v, want %v", c.Timeout, defaultHTTPTimeout)
+	}
+	if c := NewHTTPClient(-time.Second); c.Timeout != defaultHTTPTimeout {
+		t.Errorf("NewHTTPClient(-1s) timeout = %v, want %v", c.Timeout, defaultHTTPTimeout)
+	}
+	custom := 42 * time.Second
+	if c := NewHTTPClient(custom); c.Timeout != custom {
+		t.Errorf("NewHTTPClient(%v) timeout = %v, want %v", custom, c.Timeout, custom)
 	}
 }

@@ -176,3 +176,50 @@ func TestSanitizeError_UnwrapDoesNotRecoverToken(t *testing.T) {
 		}
 	}
 }
+
+// TestRedactURL_StripsBasicAuthUserinfo closes the userinfo leak: HTTP
+// basic-auth credentials (user:pass@) must be stripped, not passed through.
+func TestRedactURL_StripsBasicAuthUserinfo(t *testing.T) {
+	const password = "basic-auth-password"
+	in := "https://alice:" + password + "@host/path?keep=1"
+	got := RedactURL(in)
+	if strings.Contains(got, password) {
+		t.Errorf("RedactURL leaked basic-auth password: %q", got)
+	}
+	if strings.Contains(got, "alice:") {
+		t.Errorf("RedactURL should strip userinfo, got %q", got)
+	}
+	if !strings.Contains(got, "keep=1") {
+		t.Errorf("RedactURL should preserve non-sensitive params, got %q", got)
+	}
+}
+
+// TestRedactURL_NestedTokenInParamValue covers tokens nested inside a
+// non-sensitive parameter value, both as a literal URL and percent-encoded.
+func TestRedactURL_NestedTokenInParamValue(t *testing.T) {
+	const secret = "nested-secret"
+	cases := []struct {
+		name string
+		in   string
+	}{
+		{
+			name: "literal nested url",
+			in:   "https://host/cb?next=https://host/cb?token=" + secret,
+		},
+		{
+			name: "percent-encoded nested url",
+			in:   "https://host/cb?next=" + url.QueryEscape("https://host/cb?token="+secret),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := RedactURL(tc.in)
+			if strings.Contains(got, secret) {
+				t.Errorf("RedactURL leaked nested token (%s): %q", tc.name, got)
+			}
+			if !strings.Contains(got, "REDACTED") {
+				t.Errorf("RedactURL should redact nested token (%s): %q", tc.name, got)
+			}
+		})
+	}
+}

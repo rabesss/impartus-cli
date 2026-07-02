@@ -163,6 +163,23 @@ func TestLoadResolvedEnableJitterHonorsExplicitFalse(t *testing.T) {
 	}
 }
 
+func TestLoadResolvedEnableJitterHonorsExplicitFalseLowercaseKey(t *testing.T) {
+	// json.Unmarshal matches field tags case-insensitively, so "enablejitter"
+	// (lowercase) parses as false. jsonKeyPresent must detect it the same way,
+	// otherwise an explicit false would be silently overwritten to true.
+	path := writeTempConfig(t, `{
+		"username": "u", "password": "p", "baseUrl": "https://example.com",
+		"quality": "450", "views": "both", "enablejitter": false
+	}`)
+	cfg, err := LoadResolved(path)
+	if err != nil {
+		t.Fatalf("LoadResolved: %v", err)
+	}
+	if cfg.EnableJitter {
+		t.Error("expected EnableJitter to stay false when set via a lowercase key")
+	}
+}
+
 func TestLoadResolvedEnableJitterEnvOverridesDefault(t *testing.T) {
 	t.Setenv("IMPARTUS_ENABLE_JITTER", "false")
 	path := writeTempConfig(t, `{

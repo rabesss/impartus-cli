@@ -109,11 +109,18 @@ func retryDelay(baseDelay time.Duration, attempt int) time.Duration {
 	if attempt <= 0 {
 		return baseDelay
 	}
-	if attempt >= 62 {
-		attempt = 62
+	// Double step-by-step, clamping at the maximum representable duration so the
+	// backoff can never overflow int64 (time.Duration). Small attempts keep
+	// their exact exponential value; large attempts plateau harmlessly.
+	const maxDur = time.Duration(math.MaxInt64)
+	d := baseDelay
+	for i := 0; i < attempt; i++ {
+		if d > maxDur/2 {
+			return maxDur
+		}
+		d <<= 1
 	}
-	multiplier := int64(math.Pow(2, float64(attempt)))
-	return time.Duration(int64(baseDelay) * multiplier)
+	return d
 }
 
 func waitForRetry(ctx context.Context, delay time.Duration) error {

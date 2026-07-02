@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -147,10 +148,16 @@ func TestRetryDelay(t *testing.T) {
 			maxExpected: baseDelay,
 		},
 		{
-			name:        "attempt 62 caps at 2^62",
+			name:        "attempt 62 plateaus at max duration",
 			attempt:     62,
-			minExpected: 1 << 62 * baseDelay / 1, // This will overflow int64 for actual calculation
-			maxExpected: 1 << 62 * baseDelay,
+			minExpected: time.Duration(math.MaxInt64),
+			maxExpected: time.Duration(math.MaxInt64),
+		},
+		{
+			name:        "attempt 100 plateaus equal to attempt 62",
+			attempt:     100,
+			minExpected: time.Duration(math.MaxInt64),
+			maxExpected: time.Duration(math.MaxInt64),
 		},
 	}
 
@@ -272,10 +279,19 @@ func TestSubmitPipelineTasksLeftViewOnly(t *testing.T) {
 		},
 	}
 
-	// When Views = "left", second view should be skipped
+	// When Views = "left", only first-view tasks are enqueued; the second-view
+	// chunk must be skipped entirely (the pipeline spawns no workers here, so
+	// the queue length is a deterministic record of what was submitted).
 	err := d.submitPipelineTasks(p, playlist)
 	if err != nil {
-		t.Errorf("submitPipelineTasks() error = %v", err)
+		t.Fatalf("submitPipelineTasks() error = %v", err)
+	}
+	if got := len(p.downloadQueue); got != 1 {
+		t.Fatalf("downloadQueue len = %d, want 1 (second view must be skipped)", got)
+	}
+	task := <-p.downloadQueue
+	if task.View != "first" {
+		t.Errorf("queued task View = %q, want \"first\"", task.View)
 	}
 }
 

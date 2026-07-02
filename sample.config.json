@@ -37,6 +37,10 @@
   "httpTimeout": "10m",                                // HTTP timeout for chunk downloads (30s-60m, default: 10m)
   "enableJitter": true,                                // Add small random delays to API requests (true/false)
 
+  // === API Server Settings ===
+  // The API server binds 127.0.0.1 (loopback) by default for safety.
+  "listenAddr": "127.0.0.1",                         // Bind address for the API server (default: 127.0.0.1). Use 0.0.0.0 to expose on all interfaces.
+  "allowRemoteAccess": false,                        // Must be true to bind a non-loopback listenAddr (or set IMPARTUS_ALLOW_REMOTE_ACCESS=1). Exposing the API shares your Impartus credentials over the network.
   // === Progress Tracking ===
   "progressTracking": {
     "enabled": true,                                   // Enable progress bars (true/false)
