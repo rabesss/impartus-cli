@@ -31,10 +31,6 @@
     * [Package Structure](#package-structure)
     * [Key Components](#key-components)
   * [Contributing](#contributing)
-    * [Pull Request Process](#pull-request-process)
-    * [Code Style](#code-style)
-    * [Testing Requirements](#testing-requirements)
-    * [AI Code Review](#ai-code-review)
   * [License](#license)
   * [Acknowledgments](#acknowledgments)
     * [Dependencies](#dependencies)
@@ -85,7 +81,7 @@ go build -o impartus .
 
 ### Requirements
 
-- **Go 1.25+** - Go toolchain for building
+- **Go 1.25+** - Go toolchain for building (pinned in `go.mod`; Docker images may use a newer patch release)
 - **FFmpeg** - Required for video processing (must be in `PATH`)
 - **mpv** - Required for the `play` command (must be in `PATH`)
 - **Impartus Account** - Valid credentials for your institution's Impartus platform
@@ -466,9 +462,8 @@ make quality-gate
 | `make run-cli` | Run CLI interactive mode |
 | `make run-api` | Start API server on port 8080 |
 | `make quality-gate` | Run quality gate scan |
-| `make docs` | Generate docs TOC and validate AGENTS.md |
+| `make docs` | Generate docs table of contents |
 | `make docs-toc` | Generate documentation table of contents |
-| `make agents-md-validate` | Validate AGENTS.md references |
 | `make security` | Run all security scans (gitleaks, gosec, trivy, govulncheck) |
 | `make security-gitleaks` | Run secret scanning |
 | `make security-gosec` | Run Go security analysis |
@@ -538,45 +533,9 @@ For detailed flow diagrams, see [`docs/architecture.md`](docs/architecture.md).
 
 ## Contributing
 
-### Pull Request Process
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for local setup, PR guidelines, and code style expectations.
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feat/amazing-feature`)
-3. Make changes and ensure tests pass (`make test`)
-4. Run linter (`make lint`)
-5. Commit with conventional commits
-6. Push and create a pull request
-
-### Code Style
-
-- Follow [Go naming conventions](https://go.dev/doc/effective_go#names)
-- Run `golangci-lint run --timeout 5m` before committing
-- Install pre-commit hooks: `pre-commit install`
-- Max cyclomatic complexity: 15 per function
-- Max cognitive complexity: 30 per function
-- Max function length: 100 lines
-
-### Testing Requirements
-
-- All new features require tests
-- Minimum coverage threshold: 40%
-- Run `go test ./... -cover` to verify coverage
-
-### AI Code Review
-
-Pull requests are reviewed by several AI bots, each configured from a file in this repo (all derived
-from [`REVIEW.md`](REVIEW.md) and the "Review Guidelines" in [`AGENTS.md`](AGENTS.md) — keep them in sync):
-
-| Reviewer | Config file(s) |
-|----------|----------------|
-| Kilo Code | [`REVIEW.md`](REVIEW.md) + `AGENTS.md` |
-| OpenAI Codex | `AGENTS.md` |
-| CodeRabbit | `.coderabbit.yaml` |
-| Qodo Merge | `.pr_agent.toml` + `best_practices.md` |
-| GitHub Copilot | `.github/copilot-instructions.md` + `.github/instructions/go.instructions.md` |
-| Gemini Code Assist | `.gemini/config.yaml` + `.gemini/styleguide.md` |
-| Socket Security | `socket.yml` |
-| Factory Droid | `AGENTS.md` |
+Security-sensitive changes are described in [`SECURITY.md`](SECURITY.md).
 
 ## License
 
@@ -594,11 +553,11 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Documentation
 
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) - Contributing guide
+- [`SECURITY.md`](SECURITY.md) - Security policy
 - [`docs/architecture.md`](docs/architecture.md) - Architecture and flow diagrams
 - [`docs/api-reference.md`](docs/api-reference.md) - REST API documentation
 - [`docs/websocket-events.md`](docs/websocket-events.md) - WebSocket event schemas
 - [`docs/error-codes.md`](docs/error-codes.md) - Error code reference
 - [`docs/runbooks.md`](docs/runbooks.md) - Incident response and troubleshooting
 - [`docs/openclaw-manifest.json`](docs/openclaw-manifest.json) - OpenClaw agent integration
-- [`AGENTS.md`](AGENTS.md) - AI agent guide and review guidelines
-- [`REVIEW.md`](REVIEW.md) - Canonical PR code-review guide for AI reviewers

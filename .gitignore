@@ -13,7 +13,6 @@
 !/.pre-commit-config.yaml
 !/.github/
 !/.github/**
-!/AGENTS.md
 !/.dockerignore
 !/.env.example
 !/.release-please-manifest.json
@@ -25,6 +24,8 @@
 !/CHANGELOG.md
 !/Dockerfile
 !README.md
+!CONTRIBUTING.md
+!SECURITY.md
 !/release-please-config.json
 !shell.nix
 !docs/**
@@ -35,16 +36,6 @@
 !assets/**
 !Makefile
 
-# AI code-review bot configs (must be committed so the bots can read them)
-!/REVIEW.md
-!/opencode.json
-!/.coderabbit.yaml
-!/.pr_agent.toml
-!/best_practices.md
-!/socket.yml
-!/.gemini/config.yaml
-!/.gemini/styleguide.md
-
 # ...even if they are in subdirectories
 !*/
 
@@ -52,11 +43,23 @@
 coverage*.out
 *.test
 
-# Local agent/tooling workspaces
+# Local agent/tooling workspaces and agent docs (never commit)
 .beads/
 .btca/
 .claude/
+AGENTS.md
+REVIEW.md
+best_practices.md
 CLAUDE.md
+**/CLAUDE.md
+opencode.json
+.coderabbit.yaml
+.pr_agent.toml
+socket.yml
+.gemini/
+.github/copilot-instructions.md
+.github/instructions/
+.deepsec/
 
 
 # Factory validation and mission state (ignored, never committed)

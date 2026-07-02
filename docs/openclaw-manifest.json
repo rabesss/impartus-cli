@@ -64,6 +64,20 @@
         }
       },
       {
+        "name": "play",
+        "usage": "impartus play --subject <id> --session <id> [--start N] [--end N] [--lecture N]",
+        "description": "Stream lectures in mpv (requires mpv on PATH)",
+        "flags": {
+          "--subject/-s": "Subject ID (required)",
+          "--session/-S": "Session ID (required)",
+          "--start": "Start lecture index (1-based)",
+          "--end": "End lecture index (1-based)",
+          "--lecture/-l": "Specific lecture index (1-based shortcut for start & end)",
+          "--quality": "Quality override (144|450|720)",
+          "--views": "Views override (first/second/both or left/right/both)"
+        }
+      },
+      {
         "name": "serve",
         "usage": "impartus serve [--port <port>]",
         "description": "Start HTTP API server (default port 8080)",
@@ -887,6 +901,11 @@
           "retryable": true,
           "retryAfter": 10,
           "status": 500
+        },
+        "RATE_LIMITED": {
+          "retryable": true,
+          "retryAfter": 60,
+          "status": 429
         }
       },
       "notes": [
@@ -922,6 +941,10 @@
       "AUTH_FAILED": {
         "status": 401,
         "description": "Invalid username or password"
+      },
+      "RATE_LIMITED": {
+        "status": 429,
+        "description": "Too many login attempts; wait retryAfter seconds"
       },
       "TOKEN_GENERATION_FAILED": {
         "status": 500,

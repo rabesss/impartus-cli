@@ -6,6 +6,7 @@
 * [Architecture](#architecture)
   * [CLI interactive mode flow](#cli-interactive-mode-flow)
   * [CLI deterministic JSON mode flow](#cli-deterministic-json-mode-flow)
+  * [CLI play command flow](#cli-play-command-flow)
   * [API authenticated job lifecycle flow](#api-authenticated-job-lifecycle-flow)
   * [Internal package/module boundaries](#internal-packagemodule-boundaries)
 
@@ -63,6 +64,22 @@ sequenceDiagram
   end
 ```
 
+## CLI play command flow
+
+The `play` command streams lectures directly in **mpv** without writing output files or invoking FFmpeg join.
+
+```mermaid
+flowchart TD
+  A[impartus play -s ID -S ID] --> B[cli.runPlay]
+  B --> C[loadConfig + apply defaults]
+  C --> D[client.LoginAndSetToken]
+  D --> E[Fetch lectures in range]
+  E --> F[downloader.PlayLectures via mpv]
+  F --> G[Stream HLS to mpv]
+```
+
+Requires **mpv** on `PATH`. Supports the same `--start`/`--end` range flags as download (1-based inclusive).
+
 ## API authenticated job lifecycle flow
 
 The API lifecycle is token-gated and executes downloads asynchronously in background jobs.
@@ -90,6 +107,8 @@ sequenceDiagram
   S->>JS: Read current job state
   S-->>U: Job JSON (status, progress, outputs/error)
 ```
+
+**Upstream token cache:** When handling `/courses`, `/lectures`, and job execution, `APIServer` caches the authenticated Impartus HTTP client and upstream token for approximately **23 hours** (tokens are typically valid for 24h). This avoids re-login on every API request while still refreshing expired entries.
 
 ## Internal package/module boundaries
 

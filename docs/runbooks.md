@@ -118,6 +118,9 @@ sudo pacman -S ffmpeg
 2. Check base URL is correct (e.g., `http://bitshyd.impartus.com/api`)
 3. Test credentials manually via browser login
 4. Regenerate token: `POST /api/v1/auth/login`
+5. If you see `RATE_LIMITED` (429), wait for `retryAfter` seconds (default 60) before retrying login
+
+**Note:** The API server caches upstream Impartus login tokens for ~23 hours. Stale-cache issues after credential rotation are rare; restarting `impartus serve` clears the cache.
 
 ### Issue: Download Timeout
 

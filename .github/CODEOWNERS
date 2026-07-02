@@ -19,7 +19,8 @@
 # Documentation
 /docs/ @rabesss
 /README.md @rabesss
-/AGENTS.md @rabesss
+/CONTRIBUTING.md @rabesss
+/SECURITY.md @rabesss
 
 # Build and Makefile
 /Makefile @rabesss

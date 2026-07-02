@@ -160,6 +160,7 @@ Some errors include retry hints when the operation may succeed on retry:
 Retry hints are included for:
 - `LOGIN_FAILED`, `COURSES_FETCH_FAILED`, `LECTURES_FETCH_FAILED` (502 errors): `retryAfter: 30`
 - `CANCEL_FAILED` (500 errors): `retryAfter: 10`
+- `RATE_LIMITED` (429 on login): `retryAfter: 60`
 
 4xx client errors do NOT include retry hints (absence means not retryable).
 
@@ -227,7 +228,7 @@ Returns lectures as a JSON array.
     "enablePipeline": true,
     "numWorkers": 4,
     "downloadWorkersPerLecture": 4,
-    "decryptWorkersPerLecture": 2,
+    "decryptWorkersPerLecture": 4,
     "slides": false,
     "skipNoAudio": false
   },
