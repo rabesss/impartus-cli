@@ -38,6 +38,18 @@ func New(httpClient *http.Client, userAgentProvider func() string) *Client {
 	return c
 }
 
+// NewLoggedIn creates a Client and authenticates it against the Impartus API
+// using the provided config. It is the shared bootstrap for the CLI's
+// initClient and the server's default upstream login, replacing duplicated
+// New + LoginAndSetToken sequences.
+func NewLoggedIn(ctx context.Context, cfg *config.Config) (*Client, error) {
+	c := New(nil, nil)
+	if err := c.LoginAndSetToken(ctx, cfg); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
 // initialize fills in default dependencies for any nil fields so that a
 // zero-value Client (e.g. &Client{}) is still safe to use.
 func (c *Client) initialize() {

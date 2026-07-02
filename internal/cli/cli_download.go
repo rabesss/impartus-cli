@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"fmt"
 	"io"
 	"os"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/downloader"
+	"github.com/rabesss/impartus-cli/internal/paths"
 )
 
 type downloadFlags struct {
@@ -107,29 +107,20 @@ func executeDownload(args []string) (downloadResult, error) {
 		return downloadResult{}, err
 	}
 
-	selected, err := lectures.SelectRange(f.start, f.end)
+	selected, filteredCount, err := lectures.SelectForDownload(f.start, f.end, cfg.SkipNoAudio)
 	if err != nil {
 		return downloadResult{}, err
 	}
 
-	// Count noaudio lectures for warning
+	// Warn about no-audio lectures in the selection (only when not filtering).
+	totalLectures := len(selected) + filteredCount
 	warnNoAudioLectures(selected, cfg.SkipNoAudio)
-
-	// Apply noaudio filter if flag is set
-	totalLectures := len(selected)
-	if cfg.SkipNoAudio {
-		selected = selected.FilterNoAudio()
-	}
-
-	if len(selected) == 0 {
-		return downloadResult{}, fmt.Errorf("no lectures available after filtering (all lectures have noaudio=1 in the selected range)")
-	}
 
 	result, err := downloadLectures(ctx, cfg, apiClient, selected)
 	if err != nil {
 		return downloadResult{}, err
 	}
-	result.FilteredCount = totalLectures - len(selected)
+	result.FilteredCount = filteredCount
 	result.TotalLectures = totalLectures
 	return result, nil
 }
@@ -151,7 +142,13 @@ func applyAndValidateFlags(cfg *config.Config, quality, views string, audioOnly 
 		cfg.AudioFormat = format
 	}
 	if output != "" {
-		cfg.DownloadLocation = output
+		// CLI --output is a local override: allow absolute paths (the user owns
+		// the filesystem) but reject traversal escapes. See docs PR for rationale.
+		location, err := paths.ValidateDownloadLocation(output, true)
+		if err != nil {
+			return nil, err
+		}
+		cfg.DownloadLocation = location
 	}
 	if skipNoAudio {
 		cfg.SkipNoAudio = true
@@ -193,17 +190,9 @@ func downloadLectures(ctx context.Context, cfg *config.Config, apiClient *client
 
 	outputPaths := make([]string, 0, len(playlists))
 	for _, playlist := range playlists {
-		downloaded, err := d.DownloadPlaylist(ctx, playlist, p, tracker)
-		if err != nil {
-			return downloadResult{}, err
-		}
-
-		metadataFile, err := d.CreateTempM3U8File(downloaded)
-		if err != nil {
-			return downloadResult{}, err
-		}
-
-		joinResult, err := d.JoinLectureOutput(ctx, metadataFile)
+		// Route through the shared DownloadAndJoinPlaylist (the same method the
+		// server job runner uses) so per-lecture download+join logic has one home.
+		joinResult, err := d.DownloadAndJoinPlaylist(ctx, playlist, p, tracker)
 		if err != nil {
 			return downloadResult{}, err
 		}

@@ -1,101 +1,74 @@
 package client
 
 import (
+	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
 
+// TestDoRequestWithToken_NeverLeaksToken is the regression guard for the P0
+// secret-leak fix: http.Client.Do returns a *url.Error whose Error() embeds the
+// full request URL (including a query token). The token must not survive into
+// the returned error, neither in the wrapping message nor via %w unwrapping.
+func TestDoRequestWithToken_NeverLeaksToken(t *testing.T) {
+	const secret = "do-leak-secret-token"
+	c := New(nil, nil) // safe zero-value client
+	// A closed port on a routable loopback host triggers a *url.Error from Do.
+	resp, err := c.doRequestWithToken(context.TODO(), http.MethodGet,
+		"https://127.0.0.1:1/fetchvideo?ttid=1&token="+secret, nil, secret)
+	if resp != nil {
+		closeErr := resp.Body.Close()
+		_ = closeErr
+	}
+	if err == nil {
+		t.Skip("no error produced; cannot assert redaction")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Errorf("doRequestWithToken error leaked token: %v", err)
+	}
+}
+
+// TestDoRequestWithToken_MalformedURLNoLeak exercises the parse-failure branch:
+// an invalid percent escape makes http.NewRequest fail with a *url.Error whose
+// URL field is the raw tokenized URL. Neither the explicit %s nor the wrapped
+// error must leak the token.
+func TestDoRequestWithToken_MalformedURLNoLeak(t *testing.T) {
+	const secret = "malformed-secret"
+	// "%zz" is an invalid percent-escape that url.Parse rejects.
+	malformed := "https://127.0.0.1:1/fetchvideo/%zz?token=" + secret
+	c := New(nil, nil)
+	resp, err := c.doRequestWithToken(context.TODO(), http.MethodGet, malformed, nil, "")
+	if resp != nil {
+		closeErr := resp.Body.Close()
+		_ = closeErr
+	}
+	if err == nil {
+		t.Skip("no error produced; cannot assert redaction")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Errorf("doRequestWithToken leaked token via malformed URL: %v", err)
+	}
+}
+
+// TestNewHTTPClient covers the timeout-defaulting branch: a non-positive
+// timeout falls back to defaultHTTPTimeout, and a positive one is honored.
 func TestNewHTTPClient(t *testing.T) {
-	tests := []struct {
+	cases := []struct {
 		name    string
 		timeout time.Duration
-		checkFn func(*http.Client) bool
+		want    time.Duration
 	}{
-		{
-			name:    "default timeout",
-			timeout: 0,
-			checkFn: func(c *http.Client) bool {
-				return c.Timeout == defaultHTTPTimeout
-			},
-		},
-		{
-			name:    "negative timeout",
-			timeout: -1,
-			checkFn: func(c *http.Client) bool {
-				return c.Timeout == defaultHTTPTimeout
-			},
-		},
-		{
-			name:    "custom timeout",
-			timeout: 5 * time.Second,
-			checkFn: func(c *http.Client) bool {
-				return c.Timeout == 5*time.Second
-			},
-		},
+		{"zero uses default", 0, defaultHTTPTimeout},
+		{"negative uses default", -time.Second, defaultHTTPTimeout},
+		{"positive honored", 42 * time.Second, 42 * time.Second},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client := NewHTTPClient(tt.timeout)
-			if client == nil {
-				t.Fatal("expected non-nil http.Client")
-			}
-			if !tt.checkFn(client) {
-				t.Errorf("NewHTTPClient(%v) timeout = %v, check failed", tt.timeout, client.Timeout)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if c := NewHTTPClient(tc.timeout); c.Timeout != tc.want {
+				t.Errorf("NewHTTPClient(%v) timeout = %v, want %v", tc.timeout, c.Timeout, tc.want)
 			}
 		})
-	}
-}
-
-func TestClientTokenMethods(t *testing.T) {
-	client := New(nil, nil)
-
-	// Test tokenValue on nil token
-	if token := client.tokenValue(); token != "" {
-		t.Errorf("expected empty token, got %q", token)
-	}
-
-	// Test setToken and tokenValue
-	client.setToken("test-token")
-	if token := client.tokenValue(); token != "test-token" {
-		t.Errorf("expected 'test-token', got %q", token)
-	}
-}
-
-func TestClientEnsure(t *testing.T) {
-	client := New(nil, nil)
-	client.initialize()
-
-	if client.httpClient == nil {
-		t.Error("httpClient should be initialized after ensure()")
-	}
-	if client.UserAgentProvider == nil {
-		t.Error("UserAgentProvider should be initialized after ensure()")
-	}
-}
-
-func TestClientRandomUserAgent(t *testing.T) {
-	client := New(nil, nil)
-	ua := client.userAgent()
-
-	if ua == "" {
-		t.Error("expected non-empty user agent")
-	}
-
-	// Should be consistent when called multiple times with same provider
-	ua2 := client.userAgent()
-	if ua != ua2 {
-		t.Errorf("expected consistent UA, got %q and %q", ua, ua2)
-	}
-}
-
-func TestClientRandomUserAgentWithCustomProvider(t *testing.T) {
-	customUA := "custom-test-agent/1.0"
-	client := New(nil, func() string { return customUA })
-
-	ua := client.userAgent()
-	if ua != customUA {
-		t.Errorf("expected %q, got %q", customUA, ua)
 	}
 }

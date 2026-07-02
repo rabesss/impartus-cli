@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/mux"
 
 	"github.com/rabesss/impartus-cli/internal/client"
+	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
 const (
@@ -33,7 +34,7 @@ const (
 
 func (s *APIServer) registerRoutes() {
 	s.router.Use(requestIDMiddleware)
-	s.router.Use(corsMiddleware)
+	s.router.Use(s.corsMiddleware)
 
 	api := s.router.PathPrefix("/api/v1").Subrouter()
 	api.HandleFunc("/health", s.healthHandler).Methods(http.MethodGet, http.MethodOptions)
@@ -70,33 +71,17 @@ func (s *APIServer) healthHandler(w http.ResponseWriter, _ *http.Request) {
 
 func (s *APIServer) checkConfigStatus() configCheckResult {
 	if s.cfg == nil {
-		return configCheckResult{
-			Status:   "misconfigured",
-			Username: "missing",
-			Password: "missing",
-			BaseURL:  "missing",
+		return configCheckResult{Status: "misconfigured"}
+	}
+	// Expose only an aggregate status: field-level "ok"/"missing" hints (and
+	// even configured/missing counts) let an unauthenticated caller probe which
+	// credentials are configured. Operators diagnose details via config/logs.
+	for _, value := range []string{s.cfg.Username, s.cfg.Password, s.cfg.BaseURL} {
+		if value == "" {
+			return configCheckResult{Status: "misconfigured"}
 		}
 	}
-
-	result := configCheckResult{Status: "ok"}
-	checks := []struct {
-		value string
-		field *string
-	}{
-		{s.cfg.Username, &result.Username},
-		{s.cfg.Password, &result.Password},
-		{s.cfg.BaseURL, &result.BaseURL},
-	}
-	for _, check := range checks {
-		if check.value == "" {
-			*check.field = "missing"
-			result.Status = "misconfigured"
-		} else {
-			*check.field = "ok"
-		}
-	}
-
-	return result
+	return configCheckResult{Status: "ok"}
 }
 
 func (s *APIServer) checkUpstreamStatus() statusCheckResult {
@@ -104,21 +89,31 @@ func (s *APIServer) checkUpstreamStatus() statusCheckResult {
 		return statusCheckResult{Status: "not_configured"}
 	}
 
+	reachable, probed := s.probeUpstreamHTTP()
+	if !probed {
+		// No cached token to authenticate the HTTP probe; fall back to TCP.
+		reachable = s.probeUpstreamTCP()
+	}
 	status := "unreachable"
-	if s.probeUpstreamHTTP() || s.probeUpstreamTCP() {
+	if reachable {
 		status = "reachable"
 	}
-
 	return statusCheckResult{Status: status}
 }
 
-func (s *APIServer) probeUpstreamHTTP() bool {
+// probeUpstreamHTTP attempts an authenticated probe against the upstream. It
+// returns (reachable, probed): probed is false only when there is no cached
+// token to authenticate with (the caller may then fall back to a TCP probe).
+// When probed is true, reachable reflects whether the upstream returned 2xx —
+// an explicit non-2xx (e.g. 401/500) is honored as unreachable and must NOT be
+// overridden by a TCP probe.
+func (s *APIServer) probeUpstreamHTTP() (reachable, probed bool) {
 	s.upstreamCacheMu.RLock()
 	cached := s.upstreamCache
 	s.upstreamCacheMu.RUnlock()
 
 	if cached == nil || cached.token == "" {
-		return false
+		return false, false
 	}
 
 	baseURL := s.ensureScheme(s.cfg.BaseURL)
@@ -129,18 +124,21 @@ func (s *APIServer) probeUpstreamHTTP() bool {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, profileURL, nil)
 	if err != nil {
-		return false
+		return false, true
 	}
 	req.Header.Set("Authorization", "Bearer "+cached.token)
 
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return false
+		return false, true
 	}
 	//nolint:errcheck
 	_ = resp.Body.Close()
-	return true
+	// A non-2xx response means the upstream is misbehaving or rejecting the
+	// cached token; treat it as not reachable. This was probed, so the caller
+	// must NOT fall back to TCP and flip it back to reachable.
+	return resp.StatusCode >= 200 && resp.StatusCode < 300, true
 }
 
 func (s *APIServer) probeUpstreamTCP() bool {
@@ -191,7 +189,9 @@ func firstQueryValue(values url.Values, keys ...string) string {
 
 func respondWithUpstreamFailure(w http.ResponseWriter, code, message, command string, err error) {
 	if err != nil {
-		log.Printf("%s failed for %s: %v", code, command, err)
+		// Scrub upstream errors before logging: they may carry tokens/URLs even
+		// after client-level redaction (defense in depth against log leakage).
+		log.Printf("%s failed for %s: %s", code, command, secrets.ScrubError(err))
 	}
 	respondWithError(w, http.StatusBadGateway, code, message, command, &retryHint{Retryable: true, RetryAfter: 30})
 }

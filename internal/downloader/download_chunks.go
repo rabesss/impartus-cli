@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
 // doDownloadChunk performs a single HTTP download, writing to a file or reading to memory
@@ -22,7 +24,7 @@ func (d *Downloader) doDownloadChunk(ctx context.Context, url string, id int, ch
 
 	resp, err := d.client.GetAuthorizedWithToken(ctx, url, d.config.Token)
 	if err != nil {
-		return "", nil, 0, fmt.Errorf("chunk request failed for URL %s: %w", redactURL(url), err)
+		return "", nil, 0, fmt.Errorf("chunk request failed for URL %s: %w", secrets.RedactURL(url), err)
 	}
 	defer func() { closeErr := resp.Body.Close(); _ = closeErr }()
 
@@ -33,9 +35,9 @@ func (d *Downloader) doDownloadChunk(ctx context.Context, url string, id int, ch
 		}
 		message := strings.TrimSpace(string(body))
 		if message == "" {
-			return "", nil, 0, fmt.Errorf("chunk request failed with status %d for URL %s", resp.StatusCode, redactURL(url))
+			return "", nil, 0, fmt.Errorf("chunk request failed with status %d for URL %s", resp.StatusCode, secrets.RedactURL(url))
 		}
-		return "", nil, 0, fmt.Errorf("chunk request failed with status %d for URL %s: %s", resp.StatusCode, redactURL(url), message)
+		return "", nil, 0, fmt.Errorf("chunk request failed with status %d for URL %s: %s", resp.StatusCode, secrets.RedactURL(url), message)
 	}
 
 	outFilepath := filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_%s_%04d.ts.temp", id, view, chunk))
@@ -107,11 +109,18 @@ func retryDelay(baseDelay time.Duration, attempt int) time.Duration {
 	if attempt <= 0 {
 		return baseDelay
 	}
-	if attempt >= 62 {
-		attempt = 62
+	// Double step-by-step, clamping at the maximum representable duration so the
+	// backoff can never overflow int64 (time.Duration). Small attempts keep
+	// their exact exponential value; large attempts plateau harmlessly.
+	const maxDur = time.Duration(math.MaxInt64)
+	d := baseDelay
+	for i := 0; i < attempt; i++ {
+		if d > maxDur/2 {
+			return maxDur
+		}
+		d <<= 1
 	}
-	multiplier := int64(math.Pow(2, float64(attempt)))
-	return time.Duration(int64(baseDelay) * multiplier)
+	return d
 }
 
 func waitForRetry(ctx context.Context, delay time.Duration) error {

@@ -51,10 +51,13 @@ func TestEnsureScheme(t *testing.T) {
 
 func TestProbeUpstreamHTTP_NoCache(t *testing.T) {
 	s := newAPIServer(validServerConfig())
-	// No upstream cache set
-	result := s.probeUpstreamHTTP()
-	if result {
-		t.Error("expected false when no upstream cache")
+	// No upstream cache set: nothing to authenticate with, so not probed.
+	reachable, probed := s.probeUpstreamHTTP()
+	if probed {
+		t.Error("expected not probed when no upstream cache")
+	}
+	if reachable {
+		t.Error("expected unreachable when no upstream cache")
 	}
 }
 
@@ -64,9 +67,12 @@ func TestProbeUpstreamHTTP_EmptyToken(t *testing.T) {
 	s.upstreamCache = &upstreamCacheEntry{token: ""}
 	s.upstreamCacheMu.Unlock()
 
-	result := s.probeUpstreamHTTP()
-	if result {
-		t.Error("expected false when token is empty")
+	reachable, probed := s.probeUpstreamHTTP()
+	if probed {
+		t.Error("expected not probed when token is empty")
+	}
+	if reachable {
+		t.Error("expected unreachable when token is empty")
 	}
 }
 
@@ -81,9 +87,14 @@ func TestProbeUpstreamHTTP_InvalidURL(t *testing.T) {
 	s.upstreamCache = &upstreamCacheEntry{token: "some-token"}
 	s.upstreamCacheMu.Unlock()
 
-	result := s.probeUpstreamHTTP()
-	if result {
-		t.Error("expected false for invalid URL")
+	// A token exists so the probe is attempted, but the invalid URL means it
+	// cannot reach: probed=true, reachable=false (no TCP fallback).
+	reachable, probed := s.probeUpstreamHTTP()
+	if !probed {
+		t.Error("expected probed despite invalid URL")
+	}
+	if reachable {
+		t.Error("expected unreachable for invalid URL")
 	}
 }
 
@@ -112,9 +123,12 @@ func TestProbeUpstreamHTTP_SuccessfulProbe(t *testing.T) {
 	s.upstreamCache = &upstreamCacheEntry{token: "valid-token"}
 	s.upstreamCacheMu.Unlock()
 
-	result := s.probeUpstreamHTTP()
-	if !result {
-		t.Error("expected true for reachable upstream")
+	reachable, probed := s.probeUpstreamHTTP()
+	if !probed {
+		t.Error("expected probe to be issued against reachable upstream")
+	}
+	if !reachable {
+		t.Error("expected reachable for 2xx upstream")
 	}
 }
 
@@ -136,11 +150,14 @@ func TestProbeUpstreamHTTP_ServerReturnsError(t *testing.T) {
 	s.upstreamCache = &upstreamCacheEntry{token: "valid-token"}
 	s.upstreamCacheMu.Unlock()
 
-	// Server returns 500 but connection succeeds, so probe should return true
-	// (it only checks connectivity, not status code)
-	result := s.probeUpstreamHTTP()
-	if !result {
-		t.Error("expected true for reachable upstream (HTTP 500 still means connected)")
+	// A 5xx response indicates an unhealthy upstream; the probe must report it
+	// as not reachable (probed=true) rather than letting a TCP probe flip it.
+	reachable, probed := s.probeUpstreamHTTP()
+	if !probed {
+		t.Error("expected probe to be issued against 500 upstream")
+	}
+	if reachable {
+		t.Error("expected unreachable for upstream returning HTTP 500")
 	}
 }
 

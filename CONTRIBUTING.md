@@ -35,4 +35,4 @@ make security
 
 ## Security-sensitive Changes
 
-Auth, local API authorization, path handling, media pipeline invocation, WebSocket payloads, and retry/rate-limit behavior need extra review.
+Auth, local API authorization, path handling, media pipeline invocation, WebSocket payloads, and retry/rate-limit behavior need extra review. See [`docs/review-checklist.md`](docs/review-checklist.md) for the enforced review rubric (security blockers, architecture rules, config checklist, complexity budgets).

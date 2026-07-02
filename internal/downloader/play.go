@@ -96,8 +96,8 @@ func (d *Downloader) handleMaster(playlist client.ParsedPlaylist, port int, toke
 }
 
 func (d *Downloader) playableViews(playlist client.ParsedPlaylist) (bool, bool) {
-	hasFirst := d.config.Views != "right" && len(playlist.FirstViewURLs) > 0
-	hasSecond := d.config.Views != "left" && len(playlist.SecondViewURLs) > 0 && playlist.HasMultipleViews
+	hasFirst := d.config.IncludesLeft() && len(playlist.FirstViewURLs) > 0
+	hasSecond := d.config.IncludesRight() && len(playlist.SecondViewURLs) > 0 && playlist.HasMultipleViews
 	return hasFirst, hasSecond
 }
 

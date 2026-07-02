@@ -47,6 +47,9 @@ type Config struct {
 	ProgressTracking          ProgressConfig `json:"progressTracking"`
 	HTTPTimeout               string         `json:"httpTimeout"`
 	ListenAddr                string         `json:"listenAddr,omitempty"`
+	// AllowRemoteAccess must be explicitly enabled to bind a non-loopback
+	// ListenAddr (e.g. 0.0.0.0). Defaults to false for safety.
+	AllowRemoteAccess bool `json:"allowRemoteAccess,omitempty"`
 }
 
 // ApplyDefaults fills in zero-valued fields with sensible defaults.
@@ -86,9 +89,9 @@ func (c *Config) applyRateLimitDefaults() {
 	if c.APIRateLimit == 0 {
 		c.APIRateLimit = 2
 	}
-	// Small API jitter is always enabled to avoid perfectly synchronized upstream
-	// API calls when multiple downloads start simultaneously.
-	c.EnableJitter = true
+	// EnableJitter is intentionally NOT forced here: it defaults ON at load time
+	// (Parse/LoadResolved) so an explicit false in config/env is honored instead
+	// of silently overridden on every ApplyDefaults() call.
 }
 
 func (c *Config) applyProgressDefaults() {
@@ -129,6 +132,17 @@ func NormalizeViews(views string) string {
 		return strings.ToLower(strings.TrimSpace(views))
 	}
 }
+
+// IncludesLeft reports whether the configured view set includes the left
+// (first) camera view. Assumes Views is normalized ("both" | "left" | "right").
+func (c *Config) IncludesLeft() bool { return c.Views != "right" }
+
+// IncludesRight reports whether the configured view set includes the right
+// (second) camera view. Assumes Views is normalized ("both" | "left" | "right").
+func (c *Config) IncludesRight() bool { return c.Views != "left" }
+
+// HasBothViews reports whether both camera views are configured.
+func (c *Config) HasBothViews() bool { return c.Views == "both" }
 
 // Validate checks the configuration for errors and returns the first one found.
 func (c *Config) Validate() error {
@@ -235,6 +249,11 @@ func Parse(path string) (*Config, error) {
 	if err := json.Unmarshal(contents, &cfg); err != nil {
 		return nil, fmt.Errorf("could not parse config json: %w", err)
 	}
+	// Default API jitter ON unless the config file explicitly disables it; an
+	// explicit "enableJitter": false must be honored rather than overridden.
+	if !jsonKeyPresent(contents, "enableJitter") {
+		cfg.EnableJitter = true
+	}
 
 	return &cfg, nil
 }
@@ -242,6 +261,7 @@ func Parse(path string) (*Config, error) {
 // LoadResolved loads config from the given path (or default), applies env overrides, defaults, and validation.
 func LoadResolved(path string) (*Config, error) {
 	var cfg *Config
+	var fileLoaded bool
 	var err error
 
 	if path != "" {
@@ -249,6 +269,7 @@ func LoadResolved(path string) (*Config, error) {
 		if err != nil {
 			return nil, err
 		}
+		fileLoaded = true
 	} else {
 		cfg = &Config{}
 		if _, statErr := os.Stat(ConfigLocation); statErr == nil {
@@ -256,6 +277,7 @@ func LoadResolved(path string) (*Config, error) {
 			if err != nil {
 				return nil, err
 			}
+			fileLoaded = true
 		} else if !os.IsNotExist(statErr) {
 			return nil, fmt.Errorf("could not open config file: %w", statErr)
 		}
@@ -263,6 +285,13 @@ func LoadResolved(path string) (*Config, error) {
 
 	if err := applyEnvOverrides(cfg); err != nil {
 		return nil, err
+	}
+	// For configs not loaded from a file, default API jitter ON unless the env
+	// explicitly disabled it. File-loaded configs already resolved this in Parse.
+	if !fileLoaded {
+		if _, envSet := os.LookupEnv("IMPARTUS_ENABLE_JITTER"); !envSet {
+			cfg.EnableJitter = true
+		}
 	}
 	cfg.ApplyDefaults()
 	if err := cfg.Validate(); err != nil {
@@ -283,10 +312,11 @@ func applyEnvOverrides(cfg *Config) error {
 	applyStringEnv("IMPARTUS_AUDIO_FORMAT", &cfg.AudioFormat)
 	applyStringEnv("IMPARTUS_HTTP_TIMEOUT", &cfg.HTTPTimeout)
 	applyStringEnv("IMPARTUS_LISTEN_ADDR", &cfg.ListenAddr)
-
 	for _, apply := range []func() error{
 		func() error { return applyBoolEnv("IMPARTUS_AUDIO_ONLY", &cfg.AudioOnly) },
 		func() error { return applyBoolEnv("IMPARTUS_SKIP_NO_AUDIO", &cfg.SkipNoAudio) },
+		func() error { return applyBoolEnv("IMPARTUS_ALLOW_REMOTE_ACCESS", &cfg.AllowRemoteAccess) },
+		func() error { return applyBoolEnv("IMPARTUS_ENABLE_JITTER", &cfg.EnableJitter) },
 		func() error { return applyIntEnv("IMPARTUS_NUM_WORKERS", &cfg.NumWorkers) },
 		func() error { return applyFloatEnv("IMPARTUS_RATE_LIMIT", &cfg.RateLimit) },
 		func() error { return applyFloatEnv("IMPARTUS_API_RATE_LIMIT", &cfg.APIRateLimit) },
@@ -304,6 +334,23 @@ func applyCanonicalFields(cfg *Config) {
 	if cfg.Views != "" {
 		cfg.Views = strings.ToLower(strings.TrimSpace(cfg.Views))
 	}
+}
+
+// jsonKeyPresent reports whether the given top-level key is present in the raw
+// JSON config bytes. It is used to distinguish an explicit value from an
+// omitted one for fields (like enableJitter) whose zero value is meaningful.
+func jsonKeyPresent(data []byte, key string) bool {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		return false
+	}
+	target := strings.ToLower(key)
+	for k := range m {
+		if strings.ToLower(k) == target {
+			return true
+		}
+	}
+	return false
 }
 
 func applyStringEnv(key string, target *string) {

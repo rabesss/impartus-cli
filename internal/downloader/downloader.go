@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
+	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
 // DownloadedPlaylist holds the result of downloading a complete playlist.
@@ -57,32 +57,6 @@ var (
 	firstViewConfig  = viewConfig{SkipView: "right", Label: "left"}
 	secondViewConfig = viewConfig{SkipView: "left", Label: "right"}
 )
-
-var sensitiveParams = map[string]bool{
-	"access_token": true, "token": true, "sig": true, "signature": true,
-	"secret": true, "key": true, "api_key": true, "auth": true,
-}
-
-func redactURL(rawURL string) string {
-	if rawURL == "" {
-		return rawURL
-	}
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return rawURL
-	}
-	params := u.Query()
-	for key := range params {
-		for s := range sensitiveParams {
-			if strings.EqualFold(key, s) {
-				params.Set(key, "REDACTED")
-				break
-			}
-		}
-	}
-	u.RawQuery = params.Encode()
-	return u.String()
-}
 
 // Downloader orchestrates chunk downloading, decryption, and FFmpeg joining.
 type Downloader struct {
@@ -278,7 +252,7 @@ func (d *Downloader) downloadViewChunks(ctx context.Context, p *mpb.Progress, tr
 			bar.Increment()
 		}
 		if err != nil || chunkPath == "" {
-			log.Printf("chunk %d failed for %s view: %v", i, vc.Label, err)
+			log.Printf("chunk %d failed for %s view: %s", i, vc.Label, secrets.ScrubError(err))
 			failed++
 			continue
 		}
@@ -318,10 +292,10 @@ func sumPipelineStats(stats PipelineStats) int {
 
 func (d *Downloader) totalChunksForPlaylist(playlist client.ParsedPlaylist) int {
 	totalChunks := 0
-	if d.config.Views != "right" {
+	if d.config.IncludesLeft() {
 		totalChunks += len(playlist.FirstViewURLs)
 	}
-	if d.config.Views != "left" {
+	if d.config.IncludesRight() {
 		totalChunks += len(playlist.SecondViewURLs)
 	}
 	return totalChunks
@@ -354,10 +328,10 @@ func (d *Downloader) newPipelineBar(p *mpb.Progress, seqNo, totalChunks int) *mp
 }
 
 func (d *Downloader) submitPipelineTasks(pipeline *LecturePipeline, playlist client.ParsedPlaylist) error {
-	if err := submitPipelineViewTasks(pipeline, playlist.FirstViewURLs, d.config.Views != "right", "first", playlist); err != nil {
+	if err := submitPipelineViewTasks(pipeline, playlist.FirstViewURLs, d.config.IncludesLeft(), "first", playlist); err != nil {
 		return err
 	}
-	return submitPipelineViewTasks(pipeline, playlist.SecondViewURLs, d.config.Views != "left", "second", playlist)
+	return submitPipelineViewTasks(pipeline, playlist.SecondViewURLs, d.config.IncludesRight(), "second", playlist)
 }
 
 func submitPipelineViewTasks(pipeline *LecturePipeline, urls []string, enabled bool, view string, playlist client.ParsedPlaylist) error {
@@ -407,13 +381,13 @@ func (d *Downloader) stopPipelineMonitor(monitorDone chan struct{}, downloadBar 
 
 func (d *Downloader) joinAudioOutput(ctx context.Context, file M3U8File) (JoinResult, error) {
 	result := JoinResult{}
-	left, err := d.joinIfPresent(ctx, file.FirstViewFile, d.config.Views != "right", fmt.Sprintf("LEC %03d %s LEFT VIEW.%s", file.Playlist.SeqNo, file.Playlist.Title, d.config.AudioFormat), func(ctx context.Context, path, name string) (string, error) {
+	left, err := d.joinIfPresent(ctx, file.FirstViewFile, d.config.IncludesLeft(), fmt.Sprintf("LEC %03d %s LEFT VIEW.%s", file.Playlist.SeqNo, file.Playlist.Title, d.config.AudioFormat), func(ctx context.Context, path, name string) (string, error) {
 		return d.JoinChunksFromM3U8AudioOnly(ctx, path, name, d.config.AudioFormat)
 	})
 	if err != nil {
 		return result, err
 	}
-	right, err := d.joinIfPresent(ctx, file.SecondViewFile, d.config.Views != "left", fmt.Sprintf("LEC %03d %s RIGHT VIEW.%s", file.Playlist.SeqNo, file.Playlist.Title, d.config.AudioFormat), func(ctx context.Context, path, name string) (string, error) {
+	right, err := d.joinIfPresent(ctx, file.SecondViewFile, d.config.IncludesRight(), fmt.Sprintf("LEC %03d %s RIGHT VIEW.%s", file.Playlist.SeqNo, file.Playlist.Title, d.config.AudioFormat), func(ctx context.Context, path, name string) (string, error) {
 		return d.JoinChunksFromM3U8AudioOnly(ctx, path, name, d.config.AudioFormat)
 	})
 	if err != nil {
@@ -421,7 +395,7 @@ func (d *Downloader) joinAudioOutput(ctx context.Context, file M3U8File) (JoinRe
 	}
 	result.LeftOutput = left
 	result.RightOutput = right
-	if left != "" && right != "" && d.config.Views == "both" {
+	if left != "" && right != "" && d.config.HasBothViews() {
 		both, joinErr := d.CreateBothViewsAudioOutput(ctx, left, fmt.Sprintf("LEC %03d %s", file.Playlist.SeqNo, file.Playlist.Title), d.config.AudioFormat)
 		if joinErr != nil {
 			return result, joinErr
@@ -433,17 +407,17 @@ func (d *Downloader) joinAudioOutput(ctx context.Context, file M3U8File) (JoinRe
 
 func (d *Downloader) joinVideoOutput(ctx context.Context, file M3U8File) (JoinResult, error) {
 	result := JoinResult{}
-	left, err := d.joinIfPresent(ctx, file.FirstViewFile, d.config.Views != "right", fmt.Sprintf("LEC %03d %s LEFT VIEW.mp4", file.Playlist.SeqNo, file.Playlist.Title), d.JoinChunksFromM3U8)
+	left, err := d.joinIfPresent(ctx, file.FirstViewFile, d.config.IncludesLeft(), fmt.Sprintf("LEC %03d %s LEFT VIEW.mp4", file.Playlist.SeqNo, file.Playlist.Title), d.JoinChunksFromM3U8)
 	if err != nil {
 		return result, err
 	}
-	right, err := d.joinIfPresent(ctx, file.SecondViewFile, d.config.Views != "left", fmt.Sprintf("LEC %03d %s RIGHT VIEW.mp4", file.Playlist.SeqNo, file.Playlist.Title), d.JoinChunksFromM3U8)
+	right, err := d.joinIfPresent(ctx, file.SecondViewFile, d.config.IncludesRight(), fmt.Sprintf("LEC %03d %s RIGHT VIEW.mp4", file.Playlist.SeqNo, file.Playlist.Title), d.JoinChunksFromM3U8)
 	if err != nil {
 		return result, err
 	}
 	result.LeftOutput = left
 	result.RightOutput = right
-	if left != "" && right != "" && d.config.Views == "both" {
+	if left != "" && right != "" && d.config.HasBothViews() {
 		both, joinErr := d.JoinViews(ctx, left, right, fmt.Sprintf("LEC %03d %s", file.Playlist.SeqNo, file.Playlist.Title))
 		if joinErr != nil {
 			return result, joinErr

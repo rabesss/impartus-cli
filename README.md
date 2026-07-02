@@ -130,6 +130,8 @@ cp sample.config.json config.json
 | `httpTimeout` | string | No | `"10m"` | HTTP timeout for chunks (30s-60m) |
 | `enableJitter` | bool | No | `true` | Add small random delays to API requests |
 | `skipNoAudio` | bool | No | `false` | Skip lectures with no audio track |
+| `listenAddr` | string | No | `"127.0.0.1"` | API server bind address (loopback only unless `allowRemoteAccess` is set) |
+| `allowRemoteAccess` | bool | No | `false` | Permit a non-loopback `listenAddr` (e.g. `0.0.0.0`); required to expose the API on the network |
 | `progressTracking` | object | No | see below | Progress bar tracking configuration |
 
 #### Progress Tracking Options
@@ -150,6 +152,9 @@ All configuration values can be overridden via environment variables:
 export IMPARTUS_USERNAME="your_email"
 export IMPARTUS_PASSWORD="your_password"
 export IMPARTUS_BASE_URL="https://a.impartus.com/api"
+# Optional: expose the API beyond loopback (requires allowRemoteAccess opt-in)
+# export IMPARTUS_LISTEN_ADDR="0.0.0.0"
+# export IMPARTUS_ALLOW_REMOTE_ACCESS=1
 ```
 
 #### Validation Rules

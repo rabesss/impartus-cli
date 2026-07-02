@@ -16,6 +16,7 @@ import (
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/downloader"
+	"github.com/rabesss/impartus-cli/internal/paths"
 )
 
 func (s *APIServer) executeJob(jobID string) {
@@ -157,23 +158,7 @@ func (s *APIServer) fetchSelectedLectures(ctx context.Context, jobCtx context.Co
 }
 
 func selectJobLectures(job *Job, lectures client.Lectures) (client.Lectures, int, error) {
-	selected, err := lectures.SelectRange(job.StartIndex, job.EndIndex)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	filteredLectures := 0
-	if job.Config.SkipNoAudio {
-		totalLectures := len(selected)
-		selected = selected.FilterNoAudio()
-		filteredLectures = totalLectures - len(selected)
-	}
-
-	if len(selected) == 0 {
-		return nil, filteredLectures, errors.New("no lectures available after filtering (all lectures have noaudio=1 in the selected range)")
-	}
-
-	return selected, filteredLectures, nil
+	return lectures.SelectForDownload(job.StartIndex, job.EndIndex, job.Config.SkipNoAudio)
 }
 
 func (s *APIServer) maybeDownloadSlides(ctx context.Context, jobCtx context.Context, jobID string, apiClient *client.Client, cfg *config.Config, lectures client.Lectures) {
@@ -311,7 +296,9 @@ func mergeConfigWithJobOptions(globalCfg *config.Config, opts *JobConfigOptions)
 	}
 	cfg.ApplyDefaults()
 
-	applyJobConfigOverrides(cfg, opts)
+	if err := applyJobConfigOverrides(cfg, opts); err != nil {
+		return nil, err
+	}
 
 	if cfg.DownloadLocation == "" {
 		return nil, errors.New("outputPath/downloadLocation cannot be empty")
@@ -393,27 +380,27 @@ func downloadLectureSlide(ctx context.Context, c *client.Client, cfg *config.Con
 	return err
 }
 
-func applyOutputPathOverride(cfg *config.Config, outputPath *string) {
+func applyOutputPathOverride(cfg *config.Config, outputPath *string) error {
 	if outputPath == nil {
-		return
+		return nil
 	}
 	trimmed := strings.TrimSpace(*outputPath)
 	if trimmed == "" {
-		return
+		return nil
 	}
-	sanitized := filepath.Clean(trimmed)
-	if filepath.IsAbs(sanitized) {
-		return
+	// API overrides are untrusted: reject absolute paths and traversal escapes
+	// instead of silently discarding them (the caller surfaces the error).
+	location, err := paths.ValidateDownloadLocation(trimmed, false)
+	if err != nil {
+		return err
 	}
-	if strings.HasPrefix(sanitized, "..") || strings.Contains(sanitized, string(filepath.Separator)+"..") {
-		return
-	}
-	cfg.DownloadLocation = sanitized
+	cfg.DownloadLocation = location
+	return nil
 }
 
-func applyJobConfigOverrides(cfg *config.Config, opts *JobConfigOptions) {
+func applyJobConfigOverrides(cfg *config.Config, opts *JobConfigOptions) error {
 	if opts == nil {
-		return
+		return nil
 	}
 	if opts.Quality != nil {
 		cfg.Quality = *opts.Quality
@@ -427,7 +414,9 @@ func applyJobConfigOverrides(cfg *config.Config, opts *JobConfigOptions) {
 	if opts.AudioFormat != nil {
 		cfg.AudioFormat = *opts.AudioFormat
 	}
-	applyOutputPathOverride(cfg, opts.OutputPath)
+	if err := applyOutputPathOverride(cfg, opts.OutputPath); err != nil {
+		return err
+	}
 	if opts.EnablePipeline != nil {
 		cfg.EnablePipeline = *opts.EnablePipeline
 	}
@@ -443,4 +432,5 @@ func applyJobConfigOverrides(cfg *config.Config, opts *JobConfigOptions) {
 	if opts.SkipNoAudio != nil {
 		cfg.SkipNoAudio = *opts.SkipNoAudio
 	}
+	return nil
 }
