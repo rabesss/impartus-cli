@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.17](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.16...impartus-cli-v0.1.17) (2026-07-02)
+
+
+### Documentation
+
+* remove agent configs from repo and sync user-facing docs ([bca8927](https://github.com/rabesss/impartus-cli/commit/bca89276b3974643381400abd4a25537dab2a265))
+
 ## [0.1.16](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.15...impartus-cli-v0.1.16) (2026-06-30)
 
 
