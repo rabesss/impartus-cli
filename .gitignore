@@ -53,6 +53,7 @@ best_practices.md
 CLAUDE.md
 **/CLAUDE.md
 opencode.json
+!/opencode.json
 .coderabbit.yaml
 .pr_agent.toml
 socket.yml
