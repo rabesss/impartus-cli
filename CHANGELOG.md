@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.1.18](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.17...impartus-cli-v0.1.18) (2026-07-12)
+
+
+### Features
+
+* Add droid-review.yml workflow ([ebbb6c3](https://github.com/rabesss/impartus-cli/commit/ebbb6c3db2e78d6f5534aa950d487070ef61f290))
+* Add droid.yml workflow ([6556f69](https://github.com/rabesss/impartus-cli/commit/6556f695ea831a9892761fe3fa80d8f4a5cee6e2))
+
+
+### Bug Fixes
+
+* remediate security and quality review findings (P0 token leak, path traversal, network exposure) ([#83](https://github.com/rabesss/impartus-cli/issues/83)) ([b4ebcde](https://github.com/rabesss/impartus-cli/commit/b4ebcde24ccff870adbcae2dcef0070a8dddb2a1))
+
+
+### CI/CD
+
+* add ZAI Coding Plan OpenCode config ([#81](https://github.com/rabesss/impartus-cli/issues/81)) ([0c9f408](https://github.com/rabesss/impartus-cli/commit/0c9f4082a61155dd34bed4964d130a6247709b1d))
+* **deps:** bump actions/checkout from 6 to 7 ([#87](https://github.com/rabesss/impartus-cli/issues/87)) ([dd754e5](https://github.com/rabesss/impartus-cli/commit/dd754e55c6ac6bdd44bda73c11b3c18aebbbf451))
+* **deps:** bump golangci/golangci-lint-action from 9.2.1 to 9.3.0 ([#86](https://github.com/rabesss/impartus-cli/issues/86)) ([8abf4c4](https://github.com/rabesss/impartus-cli/commit/8abf4c4171243f589a918e09052e5ece925a6698))
+* finalize AI review configuration ([83a9e71](https://github.com/rabesss/impartus-cli/commit/83a9e71cf50c21517a94b6fc12191470fa56dff2))
+* update AI review configuration ([c1c9f9e](https://github.com/rabesss/impartus-cli/commit/c1c9f9e0576c5af38e7e8fba401b1472eb365e73))
+
 ## [0.1.17](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.16...impartus-cli-v0.1.17) (2026-07-02)
 
 
