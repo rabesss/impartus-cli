@@ -61,7 +61,7 @@ func (js *JobStore) CreateJobWithKey(subjectID, sessionID, startIndex, endIndex 
 	if idempotencyKey != "" {
 		if existingID, ok := js.idempotencyKeys[idempotencyKey]; ok {
 			if job, ok := js.jobs[existingID]; ok {
-				return job, false
+				return job.copy(), false
 			}
 		}
 	}

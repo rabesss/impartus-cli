@@ -48,9 +48,12 @@ func (d *Downloader) doDownloadChunk(ctx context.Context, url string, id int, ch
 	outFilepath := filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_%s_%04d.ts.temp", id, view, chunk))
 
 	if toMemory {
-		data, readErr := io.ReadAll(io.LimitReader(resp.Body, maxChunkSize))
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, maxChunkSize+1))
 		if readErr != nil {
 			return "", nil, 0, fmt.Errorf("could not read chunk %d: %w", chunk, readErr)
+		}
+		if int64(len(data)) > maxChunkSize {
+			return "", nil, 0, fmt.Errorf("chunk %d exceeds max size %d bytes (possibly truncated)", chunk, maxChunkSize)
 		}
 		return outFilepath, data, int64(len(data)), nil
 	}

@@ -297,20 +297,31 @@ func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 
 	if !created {
 		respondWithEnvelope(w, http.StatusConflict, "createJob", createJobConflictResponse{
-			Job:       job.copy(),
+			Job:       job,
 			Duplicate: true,
 		})
 		return
 	}
 
-	// Respond before starting the background goroutine to avoid a data race:
-	// respondWithEnvelope marshals the job to JSON, which reads job fields
-	// concurrently with executeJob writing to the same job via UpdateJob.
-	respondWithEnvelope(w, http.StatusCreated, "createJob", job.copy())
+	// CreateJobWithKey returns a copy for the idempotency-conflict path (!created),
+	// and a live pointer for the created path. Use CopyJob to get a safe snapshot
+	// for the response before the goroutine starts mutating the job.
+	jobCopy, ok := s.jobStore.CopyJob(job.ID)
+	if !ok {
+		respondWithError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "job disappeared after creation", "createJob", nil)
+		return
+	}
+	respondWithEnvelope(w, http.StatusCreated, "createJob", jobCopy)
 
 	go func() {
 		s.jobSem <- struct{}{}
 		defer func() { <-s.jobSem }()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("panic in job executor for job %s: %v", job.ID, r)
+				s.jobStore.UpdateJob(job.ID, StatusFailed, 0, fmt.Sprintf("internal error: %v", r))
+			}
+		}()
 		s.executeJob(job.ID)
 	}()
 }
