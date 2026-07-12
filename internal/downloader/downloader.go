@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -144,6 +145,7 @@ func (d *Downloader) DownloadPlaylist(ctx context.Context, playlist client.Parse
 	if err != nil {
 		return DownloadedPlaylist{}, err
 	}
+	defer zeroKey(decryptionKey)                                         // zero key after all chunks are processed
 	if err := os.MkdirAll(d.config.TempDirLocation, 0o755); err != nil { // #nosec G301
 		return DownloadedPlaylist{}, err
 	}
@@ -209,6 +211,15 @@ func (d *Downloader) DownloadAndJoinPlaylist(ctx context.Context, playlist clien
 	if err != nil {
 		return JoinResult{}, err
 	}
+	// Ensure temp M3U8 manifest files are removed on both success and failure paths.
+	defer func() {
+		if metadataFile.FirstViewFile != "" {
+			_ = os.Remove(metadataFile.FirstViewFile) //nolint:errcheck // best-effort cleanup
+		}
+		if metadataFile.SecondViewFile != "" {
+			_ = os.Remove(metadataFile.SecondViewFile) //nolint:errcheck // best-effort cleanup
+		}
+	}()
 	return d.JoinLectureOutput(ctx, metadataFile)
 }
 
@@ -232,11 +243,13 @@ func (d *Downloader) fetchDecryptionKey(ctx context.Context, keyURL string) ([]b
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("decryption key request failed with status %d", resp.StatusCode)
 	}
-	keyURLContent, err := io.ReadAll(resp.Body)
+	keyURLContent, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if err != nil {
 		return nil, err
 	}
-	return deriveDecryptionKey(keyURLContent), nil
+	derivedKey := deriveDecryptionKey(keyURLContent)
+	zeroKey(keyURLContent) // zero raw key material after deriving
+	return derivedKey, nil
 }
 
 func (d *Downloader) downloadViewChunks(ctx context.Context, p *mpb.Progress, tracker *ProgressTracker, playlist client.ParsedPlaylist, urls []string, vc viewConfig, decryptionKey []byte) ([]string, int) {
@@ -381,13 +394,13 @@ func (d *Downloader) stopPipelineMonitor(monitorDone chan struct{}, downloadBar 
 
 func (d *Downloader) joinAudioOutput(ctx context.Context, file M3U8File) (JoinResult, error) {
 	result := JoinResult{}
-	left, err := d.joinIfPresent(ctx, file.FirstViewFile, d.config.IncludesLeft(), fmt.Sprintf("LEC %03d %s LEFT VIEW.%s", file.Playlist.SeqNo, file.Playlist.Title, d.config.AudioFormat), func(ctx context.Context, path, name string) (string, error) {
+	left, err := d.joinIfPresent(ctx, file.FirstViewFile, d.config.IncludesLeft(), fmt.Sprintf("LEC %03d %s LEFT VIEW.%s", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title), d.config.AudioFormat), func(ctx context.Context, path, name string) (string, error) {
 		return d.JoinChunksFromM3U8AudioOnly(ctx, path, name, d.config.AudioFormat)
 	})
 	if err != nil {
 		return result, err
 	}
-	right, err := d.joinIfPresent(ctx, file.SecondViewFile, d.config.IncludesRight(), fmt.Sprintf("LEC %03d %s RIGHT VIEW.%s", file.Playlist.SeqNo, file.Playlist.Title, d.config.AudioFormat), func(ctx context.Context, path, name string) (string, error) {
+	right, err := d.joinIfPresent(ctx, file.SecondViewFile, d.config.IncludesRight(), fmt.Sprintf("LEC %03d %s RIGHT VIEW.%s", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title), d.config.AudioFormat), func(ctx context.Context, path, name string) (string, error) {
 		return d.JoinChunksFromM3U8AudioOnly(ctx, path, name, d.config.AudioFormat)
 	})
 	if err != nil {
@@ -396,7 +409,7 @@ func (d *Downloader) joinAudioOutput(ctx context.Context, file M3U8File) (JoinRe
 	result.LeftOutput = left
 	result.RightOutput = right
 	if left != "" && right != "" && d.config.HasBothViews() {
-		both, joinErr := d.CreateBothViewsAudioOutput(ctx, left, fmt.Sprintf("LEC %03d %s", file.Playlist.SeqNo, file.Playlist.Title), d.config.AudioFormat)
+		both, joinErr := d.CreateBothViewsAudioOutput(ctx, left, fmt.Sprintf("LEC %03d %s", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title)), d.config.AudioFormat)
 		if joinErr != nil {
 			return result, joinErr
 		}
@@ -407,18 +420,18 @@ func (d *Downloader) joinAudioOutput(ctx context.Context, file M3U8File) (JoinRe
 
 func (d *Downloader) joinVideoOutput(ctx context.Context, file M3U8File) (JoinResult, error) {
 	result := JoinResult{}
-	left, err := d.joinIfPresent(ctx, file.FirstViewFile, d.config.IncludesLeft(), fmt.Sprintf("LEC %03d %s LEFT VIEW.mp4", file.Playlist.SeqNo, file.Playlist.Title), d.JoinChunksFromM3U8)
+	left, err := d.joinIfPresent(ctx, file.FirstViewFile, d.config.IncludesLeft(), fmt.Sprintf("LEC %03d %s LEFT VIEW.mp4", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title)), d.JoinChunksFromM3U8)
 	if err != nil {
 		return result, err
 	}
-	right, err := d.joinIfPresent(ctx, file.SecondViewFile, d.config.IncludesRight(), fmt.Sprintf("LEC %03d %s RIGHT VIEW.mp4", file.Playlist.SeqNo, file.Playlist.Title), d.JoinChunksFromM3U8)
+	right, err := d.joinIfPresent(ctx, file.SecondViewFile, d.config.IncludesRight(), fmt.Sprintf("LEC %03d %s RIGHT VIEW.mp4", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title)), d.JoinChunksFromM3U8)
 	if err != nil {
 		return result, err
 	}
 	result.LeftOutput = left
 	result.RightOutput = right
 	if left != "" && right != "" && d.config.HasBothViews() {
-		both, joinErr := d.JoinViews(ctx, left, right, fmt.Sprintf("LEC %03d %s", file.Playlist.SeqNo, file.Playlist.Title))
+		both, joinErr := d.JoinViews(ctx, left, right, fmt.Sprintf("LEC %03d %s", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title)))
 		if joinErr != nil {
 			return result, joinErr
 		}
@@ -431,4 +444,13 @@ func (d *Downloader) joinIfPresent(ctx context.Context, path string, enabled boo
 		return "", nil
 	}
 	return join(ctx, path, title)
+}
+
+// sanitizeFilename strips path separators and applies filepath.Base to prevent
+// path traversal when interpolating upstream-derived values (e.g. Playlist.Title)
+// into output filenames.
+func sanitizeFilename(s string) string {
+	s = strings.ReplaceAll(s, string(filepath.Separator), "_")
+	s = strings.ReplaceAll(s, "/", "_")
+	return filepath.Base(s)
 }

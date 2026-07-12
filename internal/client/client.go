@@ -462,5 +462,8 @@ func (c *Client) storeToken(cfg *config.Config, token string) error {
 	if err := os.WriteFile(".token", []byte(token), 0o600); err != nil {
 		return fmt.Errorf("failed to persist token: %w", err)
 	}
+	if err := os.Chmod(".token", 0o600); err != nil {
+		return fmt.Errorf("failed to enforce .token permissions: %w", err)
+	}
 	return nil
 }

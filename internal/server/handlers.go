@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/gorilla/websocket"
 
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/secrets"
@@ -255,6 +256,7 @@ func (s *APIServer) lecturesHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB limit
 	var req createJobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body", "createJob", nil)
@@ -306,15 +308,15 @@ func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 	// concurrently with executeJob writing to the same job via UpdateJob.
 	respondWithEnvelope(w, http.StatusCreated, "createJob", job.copy())
 
-	go s.executeJob(job.ID)
+	go func() {
+		s.jobSem <- struct{}{}
+		defer func() { <-s.jobSem }()
+		s.executeJob(job.ID)
+	}()
 }
 
 func (s *APIServer) listJobsHandler(w http.ResponseWriter, _ *http.Request) {
-	jobs := s.jobStore.ListJobs()
-	snapshot := make([]*Job, len(jobs))
-	for i, job := range jobs {
-		snapshot[i] = job.copy()
-	}
+	snapshot := s.jobStore.ListJobCopies()
 	respondWithEnvelope(w, http.StatusOK, "listJobs", snapshot)
 }
 
@@ -325,13 +327,13 @@ func (s *APIServer) getJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, ok := s.jobStore.GetJob(jobID)
+	job, ok := s.jobStore.CopyJob(jobID)
 	if !ok {
 		respondWithError(w, http.StatusNotFound, "JOB_NOT_FOUND", "Job not found", "getJob", nil)
 		return
 	}
 
-	respondWithEnvelope(w, http.StatusOK, "getJob", job.copy())
+	respondWithEnvelope(w, http.StatusOK, "getJob", job)
 }
 
 func (s *APIServer) deleteJobHandler(w http.ResponseWriter, r *http.Request) {
@@ -374,8 +376,35 @@ func (s *APIServer) websocketHandler(w http.ResponseWriter, r *http.Request) {
 		_ = conn.Close() //nolint:errcheck
 	}()
 
+	if err := conn.SetReadDeadline(time.Now().Add(60 * time.Second)); err != nil {
+		return
+	}
+	conn.SetPongHandler(func(string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second)) //nolint:errcheck // reset deadline on pong
+		return nil
+	})
+
 	s.wsHub.Register(conn)
 	defer s.wsHub.Unregister(conn)
+
+	// Start ping ticker to keep the connection alive and detect dead peers.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)); err != nil {
+					return
+				}
+			}
+		}
+	}()
 
 	for {
 		if _, _, err := conn.ReadMessage(); err != nil {

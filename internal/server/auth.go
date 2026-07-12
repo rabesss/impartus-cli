@@ -140,6 +140,7 @@ func (s *APIServer) loginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req loginRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB limit
 	if err = json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondWithError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body", "login", nil)
 		return

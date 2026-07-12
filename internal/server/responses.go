@@ -38,22 +38,21 @@ type errorBody struct {
 }
 
 func respondWithEnvelope(w http.ResponseWriter, status int, command string, data any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-
-	if err := json.NewEncoder(w).Encode(successEnvelope{
+	body, err := json.Marshal(successEnvelope{
 		Success: true,
 		Data:    data,
 		Meta:    responseMeta{Command: command, Mode: "api"},
-	}); err != nil {
+	})
+	if err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write(body) //nolint:errcheck // nothing to do if write fails after header sent
 }
 
 func respondWithError(w http.ResponseWriter, status int, code, message, command string, hint *retryHint, details ...any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-
 	body := &errorBody{Code: code, Message: message}
 	if hint != nil {
 		body.Details = hint
@@ -61,13 +60,18 @@ func respondWithError(w http.ResponseWriter, status int, code, message, command 
 		body.Details = details[0]
 	}
 
-	if err := json.NewEncoder(w).Encode(errorEnvelope{
+	data, err := json.Marshal(errorEnvelope{
 		Success: false,
 		Error:   body,
 		Meta:    responseMeta{Command: command, Mode: "api"},
-	}); err != nil {
+	})
+	if err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write(data) //nolint:errcheck // nothing to do if write fails after header sent
 }
 
 func respondWithSuccess(w http.ResponseWriter, command string, data any) {

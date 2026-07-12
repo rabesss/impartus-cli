@@ -14,6 +14,11 @@ import (
 	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
+// maxChunkSize caps the amount of data read into memory for a single chunk.
+// This mirrors the play server's maxSegmentSize limit (50 MB) to prevent
+// unbounded memory consumption from a malicious or malformed upstream response.
+const maxChunkSize = 50 * 1024 * 1024 // 50 MB
+
 // doDownloadChunk performs a single HTTP download, writing to a file or reading to memory
 // depending on the toMemory flag. It handles rate limiting, error status codes, and
 // returns the file path (when toMemory=false) or data bytes (when toMemory=true).
@@ -43,7 +48,7 @@ func (d *Downloader) doDownloadChunk(ctx context.Context, url string, id int, ch
 	outFilepath := filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_%s_%04d.ts.temp", id, view, chunk))
 
 	if toMemory {
-		data, readErr := io.ReadAll(resp.Body)
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, maxChunkSize))
 		if readErr != nil {
 			return "", nil, 0, fmt.Errorf("could not read chunk %d: %w", chunk, readErr)
 		}

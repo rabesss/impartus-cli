@@ -47,7 +47,7 @@ func TestParseStreamInfosFromBody(t *testing.T) {
 		},
 		{
 			name:      "144p audio only",
-			body:      "http://example.com/audio/144/playlist.m3u8\n",
+			body:      "http://example.com/256x144/playlist.m3u8\n",
 			wantCount: 1,
 			wantErr:   false,
 		},

@@ -4,6 +4,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -59,6 +60,9 @@ func (c *Config) ApplyDefaults() {
 	c.applyRateLimitDefaults()
 	c.applyProgressDefaults()
 	c.applyListenDefaults()
+	if c.Quality == "" {
+		c.Quality = "720"
+	}
 }
 
 func (c *Config) applyPathDefaults() {
@@ -162,12 +166,30 @@ func (c *Config) validateCore() error {
 	if c.Username == "" || c.Password == "" {
 		return fmt.Errorf("username and password are required")
 	}
-	if c.BaseURL == "" {
-		return fmt.Errorf("baseUrl is required")
+	if err := c.validateBaseURL(); err != nil {
+		return err
 	}
 	if c.NumWorkers < 1 || c.NumWorkers > 50 {
 		return fmt.Errorf("numWorkers must be between 1 and 50, got %d", c.NumWorkers)
 	}
+	if err := c.validateMediaSettings(); err != nil {
+		return err
+	}
+	return c.validateRateLimits()
+}
+
+func (c *Config) validateBaseURL() error {
+	if c.BaseURL == "" {
+		return fmt.Errorf("baseUrl is required")
+	}
+	u, err := url.Parse(c.BaseURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("baseUrl must be a valid HTTP(S) URL")
+	}
+	return nil
+}
+
+func (c *Config) validateMediaSettings() error {
 	if !OneOf(c.Quality, "144", "450", "720") {
 		return fmt.Errorf("quality must be one of: 144, 450, 720")
 	}
@@ -177,6 +199,10 @@ func (c *Config) validateCore() error {
 	if c.AudioOnly && !OneOf(c.AudioFormat, "mp3", "m4a", "aac", "opus") {
 		return fmt.Errorf("audioFormat must be one of: mp3, m4a, aac, opus")
 	}
+	return nil
+}
+
+func (c *Config) validateRateLimits() error {
 	if c.RateLimit < 0.1 || c.RateLimit > 100 {
 		return fmt.Errorf("rateLimit must be between 0.1 and 100 requests per second, got %.2f", c.RateLimit)
 	}
@@ -309,14 +335,17 @@ func applyEnvOverrides(cfg *Config) error {
 	applyStringEnv("IMPARTUS_VIEWS", &cfg.Views)
 	applyStringEnv("IMPARTUS_DOWNLOAD_LOCATION", &cfg.DownloadLocation)
 	applyStringEnv("IMPARTUS_TEMP_DIR", &cfg.TempDirLocation)
+	applyStringEnv("IMPARTUS_TEMP_DIR_LOCATION", &cfg.TempDirLocation)
 	applyStringEnv("IMPARTUS_AUDIO_FORMAT", &cfg.AudioFormat)
 	applyStringEnv("IMPARTUS_HTTP_TIMEOUT", &cfg.HTTPTimeout)
 	applyStringEnv("IMPARTUS_LISTEN_ADDR", &cfg.ListenAddr)
 	for _, apply := range []func() error{
 		func() error { return applyBoolEnv("IMPARTUS_AUDIO_ONLY", &cfg.AudioOnly) },
+		func() error { return applyBoolEnv("IMPARTUS_SLIDES", &cfg.Slides) },
 		func() error { return applyBoolEnv("IMPARTUS_SKIP_NO_AUDIO", &cfg.SkipNoAudio) },
 		func() error { return applyBoolEnv("IMPARTUS_ALLOW_REMOTE_ACCESS", &cfg.AllowRemoteAccess) },
 		func() error { return applyBoolEnv("IMPARTUS_ENABLE_JITTER", &cfg.EnableJitter) },
+		func() error { return applyBoolEnv("IMPARTUS_PROGRESS_TRACKING_ENABLED", &cfg.ProgressTracking.Enabled) },
 		func() error { return applyIntEnv("IMPARTUS_NUM_WORKERS", &cfg.NumWorkers) },
 		func() error { return applyFloatEnv("IMPARTUS_RATE_LIMIT", &cfg.RateLimit) },
 		func() error { return applyFloatEnv("IMPARTUS_API_RATE_LIMIT", &cfg.APIRateLimit) },
