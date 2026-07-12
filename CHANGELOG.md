@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.19](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.18...impartus-cli-v0.1.19) (2026-07-12)
+
+
+### Bug Fixes
+
+* remediate all v0.1.18 code review findings (25 fixes) ([#91](https://github.com/rabesss/impartus-cli/issues/91)) ([e465c3d](https://github.com/rabesss/impartus-cli/commit/e465c3d7d088fc58e3a439e78ce4b99a229bac71))
+
+
+### Documentation
+
+* add missing [#88](https://github.com/rabesss/impartus-cli/issues/88) codeql-action bump to 0.1.18 changelog ([bef5adf](https://github.com/rabesss/impartus-cli/commit/bef5adf0bc1b21ab3a2bf6f94306e7abb8e4ced4))
+
 ## [0.1.18](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.17...impartus-cli-v0.1.18) (2026-07-12)
 
 
