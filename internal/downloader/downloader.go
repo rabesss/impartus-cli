@@ -245,7 +245,7 @@ func (d *Downloader) fetchDecryptionKey(ctx context.Context, keyURL string) ([]b
 	}
 	keyURLContent, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read decryption key response: %w", err)
 	}
 	derivedKey := deriveDecryptionKey(keyURLContent)
 	zeroKey(keyURLContent) // zero raw key material after deriving
