@@ -18,6 +18,7 @@
 
 * add ZAI Coding Plan OpenCode config ([#81](https://github.com/rabesss/impartus-cli/issues/81)) ([0c9f408](https://github.com/rabesss/impartus-cli/commit/0c9f4082a61155dd34bed4964d130a6247709b1d))
 * **deps:** bump actions/checkout from 6 to 7 ([#87](https://github.com/rabesss/impartus-cli/issues/87)) ([dd754e5](https://github.com/rabesss/impartus-cli/commit/dd754e55c6ac6bdd44bda73c11b3c18aebbbf451))
+* **deps:** bump github/codeql-action/upload-sarif from 4.36.2 to 4.36.3 ([#88](https://github.com/rabesss/impartus-cli/issues/88)) ([d860e62](https://github.com/rabesss/impartus-cli/commit/d860e627302f040d77ef62f9549e3b314532faeb))
 * **deps:** bump golangci/golangci-lint-action from 9.2.1 to 9.3.0 ([#86](https://github.com/rabesss/impartus-cli/issues/86)) ([8abf4c4](https://github.com/rabesss/impartus-cli/commit/8abf4c4171243f589a918e09052e5ece925a6698))
 * finalize AI review configuration ([83a9e71](https://github.com/rabesss/impartus-cli/commit/83a9e71cf50c21517a94b6fc12191470fa56dff2))
 * update AI review configuration ([c1c9f9e](https://github.com/rabesss/impartus-cli/commit/c1c9f9e0576c5af38e7e8fba401b1472eb365e73))
