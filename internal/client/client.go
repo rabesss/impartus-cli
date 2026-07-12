@@ -131,7 +131,7 @@ func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, e
 	defer func() { _ = resp.Body.Close() }() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
-		body, readErr := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
 		if readErr != nil {
 			return nil, fmt.Errorf("subjects request failed with status %d and unreadable body: %w", resp.StatusCode, readErr)
 		}
@@ -173,7 +173,7 @@ func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Cou
 	defer func() { _ = resp.Body.Close() }() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
-		body, readErr := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
 		if readErr != nil {
 			return nil, fmt.Errorf("lectures request failed with status %d and unreadable body: %w", resp.StatusCode, readErr)
 		}
@@ -225,7 +225,7 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 			return parsedPlaylists, err
 		}
 		if resp.StatusCode != http.StatusOK {
-			body, readErr := io.ReadAll(resp.Body)
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
 			_ = resp.Body.Close() //nolint:errcheck
 			if readErr != nil {
 				return parsedPlaylists, fmt.Errorf("playlist request failed with status %d and unreadable body: %w", resp.StatusCode, readErr)
@@ -255,14 +255,14 @@ func (c *Client) getStreamInfos(ctx context.Context, baseURL, token string, lect
 	defer func() { _ = resp.Body.Close() }() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
-		body, readErr := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
 		if readErr != nil {
 			return nil, fmt.Errorf("stream info request failed with status %d and unreadable body: %w", resp.StatusCode, readErr)
 		}
 		return nil, fmt.Errorf("stream info request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, err
 	}
@@ -461,6 +461,9 @@ func (c *Client) storeToken(cfg *config.Config, token string) error {
 	c.setToken(token)
 	if err := os.WriteFile(".token", []byte(token), 0o600); err != nil {
 		return fmt.Errorf("failed to persist token: %w", err)
+	}
+	if err := os.Chmod(".token", 0o600); err != nil {
+		return fmt.Errorf("failed to enforce .token permissions: %w", err)
 	}
 	return nil
 }

@@ -5,7 +5,9 @@ import (
 	"strings"
 )
 
-var resolutionRe = regexp.MustCompile(`\d*x\d*`)
+// \d+x\d+ requires at least one digit on each side of "x" so that empty
+// resolution strings (e.g. a bare "x" in a URL path) are not accepted.
+var resolutionRe = regexp.MustCompile(`\d+x\d+`)
 
 // ParseStreamInfosFromBody extracts stream information from response body.
 // Each line is checked for URL pattern and resolution in format "WIDTHxHEIGHT".

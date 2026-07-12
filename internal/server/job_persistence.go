@@ -95,6 +95,10 @@ func (p *jobPersistence) load() map[string]persistedJob {
 		return nil
 	}
 
+	// Enforce owner-only permissions on an existing file (e.g. one left
+	// world-readable by an older build or manual creation).
+	_ = os.Chmod(p.path, 0o600) //nolint:errcheck // best-effort permission enforcement
+
 	var persisted map[string]persistedJob
 	if err := json.Unmarshal(data, &persisted); err != nil {
 		log.Printf("warning: corrupt job persistence file %s: %v", p.path, err)

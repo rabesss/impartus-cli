@@ -34,7 +34,10 @@ jobs:
 
       - name: Install Sentry CLI
         run: |
-          curl -sL -o /tmp/sentry-cli "https://github.com/getsentry/sentry-cli/releases/download/2.42.6/sentry-cli-Linux-x86_64"
+          SENTRY_CLI_VERSION="3.6.0"
+          SENTRY_CLI_SHA256="e2bff5d8b546f3fb72c616da656ecb347c7c144f36a5294b0749dcc2001f68d5"
+          curl -sL -o /tmp/sentry-cli "https://github.com/getsentry/sentry-cli/releases/download/${SENTRY_CLI_VERSION}/sentry-cli-Linux-x86_64"
+          echo "${SENTRY_CLI_SHA256}  /tmp/sentry-cli" | sha256sum -c -
           chmod +x /tmp/sentry-cli
           sudo mv /tmp/sentry-cli /usr/local/bin/sentry-cli
           echo "/usr/local/bin" >> $GITHUB_PATH

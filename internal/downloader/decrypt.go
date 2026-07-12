@@ -58,15 +58,26 @@ func removePKCS7Padding(data []byte) []byte {
 // actual AES decryption key. The upstream response includes a 2-byte header
 // prefix followed by the key bytes in reversed order. This function strips
 // the header and reverses the remaining bytes to recover the usable key.
-func deriveDecryptionKey(encryptionKey []byte) []byte {
-	if len(encryptionKey) < 2 {
-		return encryptionKey
+// It operates on a copy so the caller's input slice is not mutated.
+func deriveDecryptionKey(input []byte) []byte {
+	data := make([]byte, len(input))
+	copy(data, input)
+	if len(data) < 2 {
+		return data
 	}
-	encryptionKey = encryptionKey[2:]
-	for i, j := 0, len(encryptionKey)-1; i < j; i, j = i+1, j-1 {
-		encryptionKey[i], encryptionKey[j] = encryptionKey[j], encryptionKey[i]
+	data = data[2:]
+	for i, j := 0, len(data)-1; i < j; i, j = i+1, j-1 {
+		data[i], data[j] = data[j], data[i]
 	}
-	return encryptionKey
+	return data
+}
+
+// zeroKey overwrites the key slice with zeros to reduce the window during
+// which decryption key material remains in memory.
+func zeroKey(key []byte) {
+	for i := range key {
+		key[i] = 0
+	}
 }
 
 func (d *Downloader) decryptChunk(filePath string, key []byte) (string, error) {
@@ -87,8 +98,15 @@ func (d *Downloader) decryptChunkBytes(filePath string, infile []byte, key []byt
 		return "", fmt.Errorf("invalid file path extension: %s", filePath)
 	}
 
+	// Work on a copy of the key so the caller's shared key is not zeroed,
+	// allowing safe concurrent reuse across chunks and pipeline workers.
+	// The copy is zeroed after use to limit key material lifetime.
+	keyCopy := make([]byte, len(key))
+	copy(keyCopy, key)
+	defer zeroKey(keyCopy)
+
 	outPath := strings.TrimSuffix(filePath, ".temp")
-	plainText, err := DecryptAES(infile, key)
+	plainText, err := DecryptAES(infile, keyCopy)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt: %w", err)
 	}

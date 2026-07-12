@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -44,6 +45,11 @@ func (h *WSHub) Broadcast(msg any) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for conn := range h.clients {
+		if err := conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			_ = conn.Close() //nolint:errcheck
+			delete(h.clients, conn)
+			continue
+		}
 		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
 			//nolint:errcheck
 			_ = conn.Close()

@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/rabesss/impartus-cli/internal/config"
 )
 
@@ -59,12 +61,12 @@ func (js *JobStore) CreateJobWithKey(subjectID, sessionID, startIndex, endIndex 
 	if idempotencyKey != "" {
 		if existingID, ok := js.idempotencyKeys[idempotencyKey]; ok {
 			if job, ok := js.jobs[existingID]; ok {
-				return job, false
+				return job.copy(), false
 			}
 		}
 	}
 
-	jobID := fmt.Sprintf("job-%d", time.Now().UnixNano())
+	jobID := fmt.Sprintf("job-%s", uuid.NewString())
 	ctx, cancel := context.WithCancel(context.Background())
 	job := &Job{
 		ID:             jobID,
@@ -123,6 +125,49 @@ func (js *JobStore) ListJobs() []*Job {
 		jobs = append(jobs, job)
 	}
 	return jobs
+}
+
+// CopyJob retrieves a deep copy of a job by ID under the read lock.
+// Returns the copy and whether the job was found.
+func (js *JobStore) CopyJob(id string) (*Job, bool) {
+	js.mu.RLock()
+	defer js.mu.RUnlock()
+	job, ok := js.jobs[id]
+	if !ok {
+		return nil, false
+	}
+	return job.copy(), true
+}
+
+// ListJobCopies returns a slice of deep copies of all jobs, copied under the read lock.
+func (js *JobStore) ListJobCopies() []*Job {
+	js.mu.RLock()
+	defer js.mu.RUnlock()
+	out := make([]*Job, 0, len(js.jobs))
+	for _, j := range js.jobs {
+		out = append(out, j.copy())
+	}
+	return out
+}
+
+// GetJobStatus returns the status of a job by ID under the read lock.
+func (js *JobStore) GetJobStatus(id string) (JobStatus, bool) {
+	js.mu.RLock()
+	defer js.mu.RUnlock()
+	job, ok := js.jobs[id]
+	if !ok {
+		return "", false
+	}
+	return job.Status, true
+}
+
+// SetFilteredLectures sets the filtered lecture count for a job under the write lock.
+func (js *JobStore) SetFilteredLectures(id string, count int) {
+	js.mu.Lock()
+	defer js.mu.Unlock()
+	if job, ok := js.jobs[id]; ok {
+		job.FilteredLectures = count
+	}
 }
 
 // UpdateJob updates a job's status, progress, and error message.
@@ -190,7 +235,7 @@ func (js *JobStore) CancelJob(id string) (*Job, error) {
 	job.UpdatedAt = time.Now()
 	job.cancel()
 	js.saveToDisk()
-	return job, nil
+	return job.copy(), nil
 }
 
 // loadFromDisk loads previously persisted jobs from the persistence file.

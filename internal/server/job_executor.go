@@ -60,7 +60,8 @@ func (s *APIServer) updateRunningProgress(jobID string, progress float64, phase 
 	if !ok {
 		return false
 	}
-	if job.ctx.Err() != nil || job.Status == StatusCanceled {
+	status, _ := s.jobStore.GetJobStatus(jobID)
+	if job.ctx.Err() != nil || status == StatusCanceled {
 		s.jobStore.UpdateJob(jobID, StatusCanceled, progress, "")
 		return false
 	}
@@ -79,7 +80,7 @@ func (s *APIServer) handleCancelIfNeeded(jobID string, jobErr error) bool {
 	if jobErr == nil {
 		return false
 	}
-	job, ok := s.jobStore.GetJob(jobID)
+	job, ok := s.jobStore.CopyJob(jobID)
 	if ok {
 		s.jobStore.UpdateJob(jobID, StatusCanceled, job.Progress, "")
 	} else {
@@ -153,7 +154,7 @@ func (s *APIServer) fetchSelectedLectures(ctx context.Context, jobCtx context.Co
 		s.failJob(jobID, selectErr.Error())
 		return nil, false
 	}
-	job.FilteredLectures = filteredLectures
+	s.jobStore.SetFilteredLectures(jobID, filteredLectures)
 	return selected, true
 }
 
@@ -337,6 +338,14 @@ func cloneConfig(cfg *config.Config) *config.Config {
 	return &clone
 }
 
+// sanitizeFilename strips path separators and applies filepath.Base to prevent
+// path traversal when interpolating untrusted values (e.g. lecture.Topic) into filenames.
+func sanitizeFilename(s string) string {
+	s = strings.ReplaceAll(s, string(filepath.Separator), "_")
+	s = strings.ReplaceAll(s, "/", "_")
+	return filepath.Base(s)
+}
+
 func downloadLectureSlide(ctx context.Context, c *client.Client, cfg *config.Config, lecture client.Lecture) error {
 	if cfg.BaseURL == "" {
 		return errors.New("baseUrl is required")
@@ -358,14 +367,14 @@ func downloadLectureSlide(ctx context.Context, c *client.Client, cfg *config.Con
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		body, readErr := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
 		if readErr != nil {
 			return fmt.Errorf("slide download failed for lecture %d with status %d and unreadable body: %w", lecture.SeqNo, resp.StatusCode, readErr)
 		}
 		return fmt.Errorf("slide download failed for lecture %d with status %d: %s", lecture.SeqNo, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	filePath := filepath.Join(cfg.DownloadLocation, fmt.Sprintf("LEC %03d %s.pdf", lecture.SeqNo, lecture.Topic))
+	filePath := filepath.Join(cfg.DownloadLocation, fmt.Sprintf("LEC %03d %s.pdf", lecture.SeqNo, sanitizeFilename(lecture.Topic)))
 	// G304: file paths are constructed from validated config and internal data
 	// #nosec G304
 	f, err := os.Create(filePath)

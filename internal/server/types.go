@@ -313,4 +313,6 @@ type APIServer struct {
 	// loopback reports whether the server binds a loopback address. When false
 	// (e.g. ListenAddr=0.0.0.0), CORS and WebSocket origin checks are tightened.
 	loopback bool
+	// jobSem limits the number of concurrently running download jobs.
+	jobSem chan struct{}
 }

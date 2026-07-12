@@ -21,6 +21,9 @@ func runServe(args []string, _ string) error {
 	if fs.NArg() > 0 {
 		return fmt.Errorf("serve does not accept positional arguments")
 	}
+	if *port < 1 || *port > 65535 {
+		return fmt.Errorf("port must be between 1 and 65535, got %d", *port)
+	}
 
 	cfg, err := loadConfig()
 	if err != nil {
@@ -40,6 +43,9 @@ func parseServePort(args []string) (int, error) {
 	}
 	if fs.NArg() > 0 {
 		return 0, fmt.Errorf("serve does not accept positional arguments")
+	}
+	if *port < 1 || *port > 65535 {
+		return 0, fmt.Errorf("port must be between 1 and 65535, got %d", *port)
 	}
 	return *port, nil
 }
