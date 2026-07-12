@@ -235,7 +235,7 @@ func (js *JobStore) CancelJob(id string) (*Job, error) {
 	job.UpdatedAt = time.Now()
 	job.cancel()
 	js.saveToDisk()
-	return job, nil
+	return job.copy(), nil
 }
 
 // loadFromDisk loads previously persisted jobs from the persistence file.

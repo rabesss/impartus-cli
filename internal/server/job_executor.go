@@ -367,7 +367,7 @@ func downloadLectureSlide(ctx context.Context, c *client.Client, cfg *config.Con
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		body, readErr := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
 		if readErr != nil {
 			return fmt.Errorf("slide download failed for lecture %d with status %d and unreadable body: %w", lecture.SeqNo, resp.StatusCode, readErr)
 		}

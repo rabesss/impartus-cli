@@ -305,7 +305,7 @@ func (p *LecturePipeline) Collect() PipelineResult {
 	}
 
 	// All decrypt workers have finished; zero the shared decryption key.
-	zeroKey(p.config.DecryptionKey)
+	defer zeroKey(p.config.DecryptionKey)
 
 	return PipelineResult{
 		FirstViewChunks:  p.buildOrderedList(p.firstViewMap),
