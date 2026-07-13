@@ -247,6 +247,12 @@ ws.onmessage = (event) => {
 
 ## Reconnection
 
+WebSocket delivery is live and best-effort. To prevent one slow connection from
+delaying updates for every client, the server disconnects a client when its
+bounded outbound event queue fills. Events are not replayed after reconnecting.
+After reconnecting, use `GET /api/v1/jobs/{id}` as the source of truth for the
+job's current status before resuming live event handling.
+
 If the WebSocket connection drops, implement reconnection logic:
 
 ```javascript

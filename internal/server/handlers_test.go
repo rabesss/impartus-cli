@@ -430,9 +430,12 @@ func TestWSHubRegisterAndBroadcast(t *testing.T) {
 
 func TestWSHubRegisterUnregister(t *testing.T) {
 	hub := NewWSHub()
-	// Register nil conn is fine for testing — hub just stores it
-	hub.Register(nil)
-	hub.Unregister(nil) // Should not panic
+	// A nil connection is rejected without changing hub membership.
+	client := hub.Register(nil)
+	if client != nil {
+		t.Fatal("expected nil connection to be rejected")
+	}
+	hub.Unregister(client) // Should not panic
 }
 
 // ============================================================================
