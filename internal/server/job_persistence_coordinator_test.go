@@ -656,6 +656,52 @@ func TestPersistenceSaveSyncsFileAndDirectoryAndRollsBackSyncFailures(t *testing
 	}
 }
 
+func TestPersistenceSaveCopiesRollbackWhenHardLinksAreUnsupported(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jobs.json")
+	persistence := newJobPersistence(path)
+	stamp := time.Now().UTC().Format(persistedTimeFormat)
+	oldSnapshot := map[string]persistedJob{"job": {ID: "job", Status: StatusPending, CreatedAt: stamp, UpdatedAt: stamp}}
+	newSnapshot := map[string]persistedJob{"job": {ID: "job", Status: StatusCompleted, CreatedAt: stamp, UpdatedAt: stamp}}
+	if err := persistence.save(oldSnapshot); err != nil {
+		t.Fatalf("seed persistence: %v", err)
+	}
+
+	persistence.linkFile = func(string, string) error { return errors.ErrUnsupported }
+	realFileSync := persistence.syncFile
+	var fileSyncs atomic.Int64
+	persistence.syncFile = func(file *os.File) error {
+		fileSyncs.Add(1)
+		return realFileSync(file)
+	}
+	if err := persistence.save(newSnapshot); err != nil {
+		t.Fatalf("save with copied rollback: %v", err)
+	}
+	if got := fileSyncs.Load(); got != 2 {
+		t.Fatalf("file sync count = %d, want temp plus copied rollback", got)
+	}
+	if got := readPersistedJobs(t, path)["job"].Status; got != StatusCompleted {
+		t.Fatalf("copied rollback save status = %q, want completed", got)
+	}
+
+	var directorySyncs atomic.Int64
+	realDirSync := persistence.syncDir
+	persistence.syncDir = func(path string) error {
+		if directorySyncs.Add(1) == 1 {
+			return errors.New("injected directory sync failure")
+		}
+		return realDirSync(path)
+	}
+	if err := persistence.save(oldSnapshot); err == nil {
+		t.Fatal("directory sync failure was not propagated")
+	}
+	if got := readPersistedJobs(t, path)["job"].Status; got != StatusCompleted {
+		t.Fatalf("copied rollback did not restore previous status, got %q", got)
+	}
+	if _, err := os.Stat(path + ".bak"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("copied rollback remains after restore: %v", err)
+	}
+}
+
 func TestIdempotencyDuplicateDoesNotWriteOrIncrementRevision(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "jobs.json")
 	store := newTestPersistentStore(t, path)

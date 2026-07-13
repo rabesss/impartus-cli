@@ -45,6 +45,7 @@ type jobPersistence struct {
 	path     string
 	syncFile func(*os.File) error
 	syncDir  func(string) error
+	linkFile func(string, string) error
 }
 
 func newJobPersistence(path string) *jobPersistence {
@@ -55,6 +56,7 @@ func newJobPersistence(path string) *jobPersistence {
 		path:     path,
 		syncFile: func(file *os.File) error { return file.Sync() },
 		syncDir:  syncPersistenceDirectory,
+		linkFile: os.Link,
 	}
 }
 
@@ -69,7 +71,7 @@ func (p *jobPersistence) save(persisted map[string]persistedJob) error {
 	}
 
 	// Write and sync a restrictive temp file before atomically replacing the
-	// live snapshot. Keep a hard-link rollback point until the parent directory
+	// live snapshot. Keep a rollback point until the parent directory
 	// confirms the rename is durable.
 	tmpPath := p.path + ".tmp"
 	backupPath := p.path + ".bak"
@@ -105,14 +107,9 @@ func (p *jobPersistence) save(persisted map[string]persistedJob) error {
 	}
 
 	_ = os.Remove(backupPath) //nolint:errcheck // stale rollback link cleanup is best-effort
-	hadPrevious := false
-	if _, err := os.Stat(p.path); err == nil {
-		if linkErr := os.Link(p.path, backupPath); linkErr != nil {
-			return fmt.Errorf("create persistence rollback link: %w", linkErr)
-		}
-		hadPrevious = true
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect existing persistence file: %w", err)
+	hadPrevious, rollbackErr := p.createRollbackFile(backupPath)
+	if rollbackErr != nil {
+		return rollbackErr
 	}
 
 	if err := replacePersistenceFile(tmpPath, p.path); err != nil {
@@ -133,6 +130,56 @@ func (p *jobPersistence) save(persisted map[string]persistedJob) error {
 	}
 	_ = os.Remove(backupPath) //nolint:errcheck // a stale rollback link does not affect the durable primary
 
+	return nil
+}
+
+func (p *jobPersistence) createRollbackFile(backupPath string) (bool, error) {
+	if _, err := os.Stat(p.path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("inspect existing persistence file: %w", err)
+	}
+	if linkErr := p.linkFile(p.path, backupPath); linkErr != nil {
+		if copyErr := p.copyRollbackFile(backupPath); copyErr != nil {
+			return false, errors.Join(
+				fmt.Errorf("create persistence rollback link: %w", linkErr),
+				fmt.Errorf("copy persistence rollback file: %w", copyErr),
+			)
+		}
+	}
+	return true, nil
+}
+
+func (p *jobPersistence) copyRollbackFile(backupPath string) error {
+	source, err := os.Open(p.path) // #nosec G304 -- operator-configured persistence path
+	if err != nil {
+		return err
+	}
+	defer source.Close() //nolint:errcheck
+
+	backup, err := os.OpenFile(backupPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600) // #nosec G304 -- adjacent rollback path
+	if err != nil {
+		return err
+	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(backupPath) //nolint:errcheck // preserving the primary copy/sync error
+		}
+	}()
+	if _, err := io.Copy(backup, source); err != nil {
+		_ = backup.Close() //nolint:errcheck // preserving the primary copy error
+		return err
+	}
+	if err := p.syncFile(backup); err != nil {
+		_ = backup.Close() //nolint:errcheck // preserving the primary sync error
+		return err
+	}
+	if err := backup.Close(); err != nil {
+		return err
+	}
+	cleanup = false
 	return nil
 }
 
