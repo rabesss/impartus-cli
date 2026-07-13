@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/rabesss/impartus-cli/internal/config"
 )
@@ -43,11 +44,31 @@ func New(httpClient *http.Client, userAgentProvider func() string) *Client {
 // initClient and the server's default upstream login, replacing duplicated
 // New + LoginAndSetToken sequences.
 func NewLoggedIn(ctx context.Context, cfg *config.Config) (*Client, error) {
-	c := New(nil, nil)
+	c, err := newClientFromConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
 	if err := c.LoginAndSetToken(ctx, cfg); err != nil {
 		return nil, err
 	}
 	return c, nil
+}
+
+func newClientFromConfig(cfg *config.Config) (*Client, error) {
+	if cfg == nil {
+		return nil, errors.New("config is required")
+	}
+
+	var timeout time.Duration
+	if cfg.HTTPTimeout != "" {
+		parsedTimeout, err := time.ParseDuration(cfg.HTTPTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("invalid httpTimeout: %w", err)
+		}
+		timeout = parsedTimeout
+	}
+
+	return New(NewHTTPClient(timeout), nil), nil
 }
 
 // initialize fills in default dependencies for any nil fields so that a

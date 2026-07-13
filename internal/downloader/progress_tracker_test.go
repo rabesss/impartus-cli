@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -136,6 +137,86 @@ func TestNewProgressTracker(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestProgressTrackerOptionsControlStatusFields(t *testing.T) {
+	tests := []struct {
+		name      string
+		showSpeed bool
+		showETA   bool
+		wantSpeed bool
+		wantETA   bool
+	}{
+		{name: "both enabled", showSpeed: true, showETA: true, wantSpeed: true, wantETA: true},
+		{name: "speed only", showSpeed: true, wantSpeed: true},
+		{name: "eta only", showETA: true, wantETA: true},
+		{name: "both disabled"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pt := NewProgressTrackerWithOptions(2, 4, nil, ProgressTrackerOptions{
+				ShowSpeed:       tt.showSpeed,
+				ShowETA:         tt.showETA,
+				SampleInterval:  time.Hour,
+				SpeedWindowSize: 3,
+			})
+			defer pt.Stop()
+
+			status := pt.getStatusString()
+			if got := strings.Contains(status, "MB/s"); got != tt.wantSpeed {
+				t.Fatalf("status %q contains speed = %v, want %v", status, got, tt.wantSpeed)
+			}
+			if got := strings.Contains(status, "ETA"); got != tt.wantETA {
+				t.Fatalf("status %q contains ETA = %v, want %v", status, got, tt.wantETA)
+			}
+			if strings.Contains(status, "|  |") {
+				t.Fatalf("status contains an empty separator component: %q", status)
+			}
+		})
+	}
+}
+
+func TestProgressTrackerOptionsControlIntervalAndWindow(t *testing.T) {
+	const interval = 750 * time.Millisecond
+	pt := NewProgressTrackerWithOptions(1, 8, nil, ProgressTrackerOptions{
+		SampleInterval:  interval,
+		SpeedWindowSize: 3,
+	})
+	defer pt.Stop()
+
+	if pt.sampleInterval != interval {
+		t.Fatalf("sample interval = %v, want %v", pt.sampleInterval, interval)
+	}
+	if pt.maxSamples != 3 {
+		t.Fatalf("max samples = %d, want 3", pt.maxSamples)
+	}
+	if cap(pt.speedSamples) != 3 {
+		t.Fatalf("sample capacity = %d, want 3", cap(pt.speedSamples))
+	}
+
+	for i := 0; i < 8; i++ {
+		ChunkCompleted(pt, 1024)
+		pt.updateSpeedSample()
+	}
+	pt.speedMutex.RLock()
+	sampleCount := len(pt.speedSamples)
+	pt.speedMutex.RUnlock()
+	if sampleCount != 3 {
+		t.Fatalf("retained samples = %d, want 3", sampleCount)
+	}
+}
+
+func TestProgressTrackerOptionsNormalizeZeroSamplingValues(t *testing.T) {
+	pt := NewProgressTrackerWithOptions(1, 1, nil, ProgressTrackerOptions{})
+	defer pt.Stop()
+
+	if pt.sampleInterval != defaultProgressSampleInterval {
+		t.Fatalf("sample interval = %v, want %v", pt.sampleInterval, defaultProgressSampleInterval)
+	}
+	if pt.maxSamples != defaultProgressSpeedWindow {
+		t.Fatalf("max samples = %d, want %d", pt.maxSamples, defaultProgressSpeedWindow)
 	}
 }
 

@@ -3,6 +3,7 @@ package downloader
 import (
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -31,6 +32,21 @@ type ProgressStats struct {
 	Elapsed           time.Duration
 }
 
+const (
+	defaultProgressSampleInterval = 2 * time.Second
+	defaultProgressSpeedWindow    = 10
+)
+
+// ProgressTrackerOptions controls the presentation and sampling behavior of a
+// progress tracker. SampleInterval and SpeedWindowSize use established
+// defaults when left at zero.
+type ProgressTrackerOptions struct {
+	ShowSpeed       bool
+	ShowETA         bool
+	SampleInterval  time.Duration
+	SpeedWindowSize int
+}
+
 // ProgressTracker tracks download progress across lectures and chunks, estimating speed and ETA.
 type ProgressTracker struct {
 	totalLectures     int32
@@ -47,6 +63,8 @@ type ProgressTracker struct {
 	speedMutex     sync.RWMutex
 	sampleInterval time.Duration
 	maxSamples     int
+	showSpeed      bool
+	showETA        bool
 
 	statsBar     *mpb.Bar
 	updateTicker *time.Ticker
@@ -58,16 +76,35 @@ type ProgressTracker struct {
 
 // NewProgressTracker creates a new progress tracker with the given lecture and chunk totals.
 func NewProgressTracker(totalLectures, totalChunks int, p *mpb.Progress) *ProgressTracker {
+	return NewProgressTrackerWithOptions(totalLectures, totalChunks, p, ProgressTrackerOptions{
+		ShowSpeed:       true,
+		ShowETA:         true,
+		SampleInterval:  defaultProgressSampleInterval,
+		SpeedWindowSize: defaultProgressSpeedWindow,
+	})
+}
+
+// NewProgressTrackerWithOptions creates a progress tracker with explicit
+// presentation and sampling behavior.
+func NewProgressTrackerWithOptions(totalLectures, totalChunks int, p *mpb.Progress, options ProgressTrackerOptions) *ProgressTracker {
 	lectures := clampIntToInt32(totalLectures)
 	chunks := clampIntToInt32(totalChunks)
+	if options.SampleInterval == 0 {
+		options.SampleInterval = defaultProgressSampleInterval
+	}
+	if options.SpeedWindowSize == 0 {
+		options.SpeedWindowSize = defaultProgressSpeedWindow
+	}
 
 	pt := &ProgressTracker{
 		totalLectures:  lectures,
 		totalChunks:    chunks,
 		startTime:      time.Now(),
-		sampleInterval: 2 * time.Second,
-		maxSamples:     10,
-		speedSamples:   make([]SpeedSample, 0, 10),
+		sampleInterval: options.SampleInterval,
+		maxSamples:     options.SpeedWindowSize,
+		showSpeed:      options.ShowSpeed,
+		showETA:        options.ShowETA,
+		speedSamples:   make([]SpeedSample, 0, options.SpeedWindowSize),
 		stopChan:       make(chan struct{}),
 	}
 
@@ -210,21 +247,27 @@ func (pt *ProgressTracker) GetOverallProgress() float64 {
 
 func (pt *ProgressTracker) getStatusString() string {
 	progress := pt.GetOverallProgress()
-	speed := pt.GetCurrentSpeed()
-	eta := pt.GetETA()
 	completedLectures := atomic.LoadInt32(&pt.completedLectures)
+	components := []string{fmt.Sprintf("%.1f%%", progress)}
 
-	speedStr := "-- MB/s"
-	if speed > 0 {
-		speedStr = fmt.Sprintf("%.1f MB/s", speed)
+	if pt.showSpeed {
+		speedStr := "-- MB/s"
+		if speed := pt.GetCurrentSpeed(); speed > 0 {
+			speedStr = fmt.Sprintf("%.1f MB/s", speed)
+		}
+		components = append(components, speedStr)
 	}
 
-	etaStr := "ETA --"
-	if eta > 0 {
-		etaStr = fmt.Sprintf("ETA %s", formatDurationValue(eta))
+	if pt.showETA {
+		etaStr := "ETA --"
+		if eta := pt.GetETA(); eta > 0 {
+			etaStr = fmt.Sprintf("ETA %s", formatDurationValue(eta))
+		}
+		components = append(components, etaStr)
 	}
 
-	return fmt.Sprintf("%.1f%% | %s | %s | Lectures: %d/%d", progress, speedStr, etaStr, completedLectures, pt.totalLectures)
+	components = append(components, fmt.Sprintf("Lectures: %d/%d", completedLectures, pt.totalLectures))
+	return strings.Join(components, " | ")
 }
 
 func formatDurationValue(d time.Duration) string {

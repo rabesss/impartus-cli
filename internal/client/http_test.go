@@ -3,9 +3,13 @@ package client
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/rabesss/impartus-cli/internal/config"
 )
 
 // TestDoRequestWithToken_NeverLeaksToken is the regression guard for the P0
@@ -70,5 +74,76 @@ func TestNewHTTPClient(t *testing.T) {
 				t.Errorf("NewHTTPClient(%v) timeout = %v, want %v", tc.timeout, c.Timeout, tc.want)
 			}
 		})
+	}
+}
+
+func TestNewClientFromConfigTimeout(t *testing.T) {
+	tests := []struct {
+		name    string
+		timeout string
+		want    time.Duration
+	}{
+		{name: "minimum", timeout: "30s", want: 30 * time.Second},
+		{name: "custom", timeout: "42s", want: 42 * time.Second},
+		{name: "maximum", timeout: "60m", want: 60 * time.Minute},
+		{name: "empty uses default", want: defaultHTTPTimeout},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := newClientFromConfig(&config.Config{HTTPTimeout: tt.timeout})
+			if err != nil {
+				t.Fatalf("newClientFromConfig() error = %v", err)
+			}
+			if c.httpClient.Timeout != tt.want {
+				t.Fatalf("http timeout = %v, want %v", c.httpClient.Timeout, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewClientFromConfigRejectsInvalidTimeout(t *testing.T) {
+	if _, err := newClientFromConfig(&config.Config{HTTPTimeout: "not-a-duration"}); err == nil || !strings.Contains(err.Error(), "invalid httpTimeout") {
+		t.Fatalf("newClientFromConfig() error = %v, want contextual timeout error", err)
+	}
+}
+
+func TestNewLoggedInRejectsInvalidTimeoutBeforeLogin(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+	}))
+	defer server.Close()
+
+	_, err := NewLoggedIn(context.Background(), &config.Config{
+		Username:    "user",
+		Password:    "password",
+		BaseURL:     server.URL,
+		HTTPTimeout: "invalid",
+	})
+	if err == nil {
+		t.Fatal("NewLoggedIn() error = nil, want invalid timeout error")
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("login requests = %d, want 0", requests.Load())
+	}
+}
+
+func TestNewPreservesInjectedHTTPClientTimeout(t *testing.T) {
+	injected := &http.Client{Timeout: 17 * time.Second}
+	c := New(injected, nil)
+
+	if c.httpClient != injected {
+		t.Fatal("New() replaced the injected HTTP client")
+	}
+	if c.httpClient.Timeout != 17*time.Second {
+		t.Fatalf("injected timeout = %v, want 17s", c.httpClient.Timeout)
+	}
+}
+
+func TestNewClientFromConfigRequiresConfig(t *testing.T) {
+	_, err := newClientFromConfig(nil)
+	if err == nil || err.Error() != "config is required" {
+		t.Fatalf("newClientFromConfig(nil) error = %v, want config is required", err)
 	}
 }
