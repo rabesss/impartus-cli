@@ -314,8 +314,7 @@ type APIServer struct {
 	jobStore         *JobStore
 	wsHub            *WSHub
 	tokenStore       *TokenStore
-	stopTokenCleanup func()
-	stopLoginLimiter func()
+	cleanupLifecycle *cleanupLifecycle
 	upgrader         websocket.Upgrader
 	router           *mux.Router
 	port             string
