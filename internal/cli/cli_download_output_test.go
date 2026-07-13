@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vbauerster/mpb/v8"
 
@@ -119,6 +119,9 @@ func TestHumanDownloadPresentationKeepsWarningsAndProgress(t *testing.T) {
 	if len(runner.progress) != 1 || runner.progress[0] == nil {
 		t.Fatal("human download did not pass a progress container to the downloader")
 	}
+	if humanDownloadPresentation().diagnosticOutput != nil {
+		t.Fatal("human downloads should preserve the downloader's standard diagnostics")
+	}
 }
 
 func TestJSONDownloadStreamContract(t *testing.T) {
@@ -196,12 +199,7 @@ func TestJSONDownloadFailureStreamSuppressesDownloaderLogs(t *testing.T) {
 	}
 	os.Args = []string{"impartus", "download", "--json", "-s", "1", "-S", "2"}
 
-	originalLogOutput := log.Writer()
-	t.Cleanup(func() { log.SetOutput(originalLogOutput) })
 	stdout, stderr, runErr := captureOutputStreams(t, func() error {
-		// The standard logger keeps the writer it was configured with, so point it
-		// at the captured process stderr before entering the JSON scope.
-		log.SetOutput(os.Stderr)
 		executeErr := Execute("test", "test")
 		if executeErr != nil {
 			if _, writeErr := fmt.Fprintln(os.Stderr, executeErr); writeErr != nil {
@@ -210,7 +208,6 @@ func TestJSONDownloadFailureStreamSuppressesDownloaderLogs(t *testing.T) {
 		}
 		return executeErr
 	})
-	log.SetOutput(originalLogOutput)
 
 	if runErr == nil {
 		t.Fatal("expected real downloader failure to return an error")
@@ -233,17 +230,110 @@ func TestJSONDownloadFailureStreamSuppressesDownloaderLogs(t *testing.T) {
 		t.Fatalf("failure envelope did not contain the downloader error: %+v", envelope.Error)
 	}
 
-	// The logger must remain available outside the scoped JSON wrapper. Running
-	// the same real failure directly exercises the human/non-JSON logging path.
+	// A non-JSON downloader keeps diagnostics when given a human-visible writer.
 	var humanLogs bytes.Buffer
-	log.SetOutput(&humanLogs)
-	_, humanErr := executeDownloadWithDependencies([]string{"-s", "1", "-S", "2"}, quietDownloadPresentation(), deps)
-	log.SetOutput(originalLogOutput)
+	humanPresentation := downloadPresentationOptions{diagnosticOutput: &humanLogs}
+	_, humanErr := executeDownloadWithDependencies([]string{"-s", "1", "-S", "2"}, humanPresentation, deps)
 	if humanErr == nil {
 		t.Fatal("expected human/non-JSON execution to return the downloader error")
 	}
 	if !strings.Contains(humanLogs.String(), "chunk 0 failed") {
 		t.Fatalf("standard downloader logging was not restored outside JSON execution: %q", humanLogs.String())
+	}
+}
+
+func TestConcurrentJSONAndHumanDownloadDiagnosticsStayIsolated(t *testing.T) {
+	restoreCLIState(t)
+	reachedFailure := make(chan struct{}, 2)
+	releaseFailure := make(chan struct{})
+	failureHook := func() {
+		reachedFailure <- struct{}{}
+		<-releaseFailure
+	}
+	jsonCfg, jsonClient, jsonCleanup := newJSONDownloadIntegrationWithFailureHook(t, true, failureHook)
+	defer jsonCleanup()
+	humanCfg, humanClient, humanCleanup := newJSONDownloadIntegrationWithFailureHook(t, true, failureHook)
+	defer humanCleanup()
+
+	jsonDeps := downloadExecutionDependencies{
+		ensureFFmpeg: func() error { return nil },
+		initClient: func(context.Context) (*config.Config, *client.Client, error) {
+			return jsonCfg, jsonClient, nil
+		},
+		downloadLectures: downloadLectures,
+	}
+	humanDeps := downloadExecutionDependencies{
+		ensureFFmpeg: func() error { return nil },
+		initClient: func(context.Context) (*config.Config, *client.Client, error) {
+			return humanCfg, humanClient, nil
+		},
+		downloadLectures: downloadLectures,
+	}
+	runDownloadJSONFn = func(args []string) (downloadResult, error) {
+		return runDownloadJSONWithDependencies(args, jsonDeps)
+	}
+	os.Args = []string{"impartus", "download", "--json", "-s", "1", "-S", "2"}
+
+	var humanLogs bytes.Buffer
+	humanPresentation := downloadPresentationOptions{diagnosticOutput: &humanLogs}
+	var humanErr error
+	stdout, stderr, jsonErr := captureOutputStreams(t, func() error {
+		jsonDone := make(chan error, 1)
+		humanDone := make(chan error, 1)
+		go func() {
+			executeErr := Execute("test", "test")
+			if executeErr != nil {
+				if _, writeErr := fmt.Fprintln(os.Stderr, executeErr); writeErr != nil {
+					jsonDone <- fmt.Errorf("write JSON error envelope: %w", writeErr)
+					return
+				}
+			}
+			jsonDone <- executeErr
+		}()
+		go func() {
+			_, executeErr := executeDownloadWithDependencies([]string{"-s", "1", "-S", "2"}, humanPresentation, humanDeps)
+			humanDone <- executeErr
+		}()
+
+		var barrierErr error
+		for range 2 {
+			select {
+			case <-reachedFailure:
+			case <-time.After(5 * time.Second):
+				barrierErr = errors.New("concurrent downloads did not reach the failure barrier")
+			}
+			if barrierErr != nil {
+				break
+			}
+		}
+		close(releaseFailure)
+		jsonRunErr := <-jsonDone
+		humanErr = <-humanDone
+		if barrierErr != nil {
+			return barrierErr
+		}
+		return jsonRunErr
+	})
+
+	if jsonErr == nil || humanErr == nil {
+		t.Fatalf("expected both downloads to fail, json=%v human=%v", jsonErr, humanErr)
+	}
+	if stdout != "" {
+		t.Fatalf("concurrent failed JSON download wrote stdout: %q", stdout)
+	}
+	decoder := json.NewDecoder(strings.NewReader(stderr))
+	var envelope jsonEnvelope
+	if decodeErr := decoder.Decode(&envelope); decodeErr != nil {
+		t.Fatalf("decode concurrent stderr envelope: %v; stderr=%q", decodeErr, stderr)
+	}
+	if decodeErr := decoder.Decode(&struct{}{}); decodeErr != io.EOF {
+		t.Fatalf("concurrent JSON stderr contained cross-routed diagnostics: %v; stderr=%q", decodeErr, stderr)
+	}
+	if envelope.Success || envelope.Error == nil || envelope.Meta.Command != "download" {
+		t.Fatalf("unexpected concurrent failure envelope: %+v", envelope)
+	}
+	if !strings.Contains(humanLogs.String(), "chunk 0 failed") {
+		t.Fatalf("human diagnostics were discarded or cross-routed: %q", humanLogs.String())
 	}
 }
 
@@ -291,6 +381,10 @@ func TestJSONFailureProcessHelper(t *testing.T) {
 }
 
 func newJSONDownloadIntegration(t *testing.T, failChunk bool) (*config.Config, *client.Client, func()) {
+	return newJSONDownloadIntegrationWithFailureHook(t, failChunk, nil)
+}
+
+func newJSONDownloadIntegrationWithFailureHook(t *testing.T, failChunk bool, failureHook func()) (*config.Config, *client.Client, func()) {
 	t.Helper()
 	tempDir := t.TempDir()
 	binDir := t.TempDir()
@@ -324,6 +418,9 @@ func newJSONDownloadIntegration(t *testing.T, failChunk bool) (*config.Config, *
 			}
 		case "/chunk0.ts":
 			if failChunk {
+				if failureHook != nil {
+					failureHook()
+				}
 				// A successful but malformed encrypted chunk reaches the real
 				// decrypt-and-log failure path without retry backoff.
 				if _, err := w.Write([]byte{0}); err != nil {

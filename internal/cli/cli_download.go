@@ -5,9 +5,7 @@ import (
 	"errors"
 	"flag"
 	"io"
-	"log"
 	"os"
-	"sync"
 
 	"github.com/vbauerster/mpb/v8"
 
@@ -40,12 +38,13 @@ type downloadResult struct {
 }
 
 // downloadPresentationOptions keeps user-facing output policy at the CLI
-// boundary. Machine-readable commands leave both writers nil so download
-// orchestration cannot create progress bars or emit warning text.
+// boundary. Machine-readable commands leave progress and warning writers nil
+// and discard downloader diagnostics so stdout/stderr stay structured.
 type downloadPresentationOptions struct {
-	showProgress   bool
-	progressOutput io.Writer
-	warningOutput  io.Writer
+	showProgress     bool
+	progressOutput   io.Writer
+	warningOutput    io.Writer
+	diagnosticOutput io.Writer
 }
 
 func humanDownloadPresentation() downloadPresentationOptions {
@@ -57,10 +56,8 @@ func humanDownloadPresentation() downloadPresentationOptions {
 }
 
 func quietDownloadPresentation() downloadPresentationOptions {
-	return downloadPresentationOptions{}
+	return downloadPresentationOptions{diagnosticOutput: io.Discard}
 }
-
-var standardLoggerOutputMu sync.Mutex
 
 type downloadExecutionDependencies struct {
 	ensureFFmpeg     func() error
@@ -91,15 +88,6 @@ func runDownloadJSON(args []string) (downloadResult, error) {
 }
 
 func runDownloadJSONWithDependencies(args []string, deps downloadExecutionDependencies) (downloadResult, error) {
-	// The standard logger is used by the downloader for per-chunk diagnostics.
-	// Keep it out of the strict JSON stream only for the synchronous JSON
-	// download execution, then restore the caller's writer unconditionally.
-	standardLoggerOutputMu.Lock()
-	defer standardLoggerOutputMu.Unlock()
-	previousLogOutput := log.Writer()
-	log.SetOutput(io.Discard)
-	defer log.SetOutput(previousLogOutput)
-
 	return executeDownloadWithDependencies(args, quietDownloadPresentation(), deps)
 }
 
@@ -224,7 +212,13 @@ func applyAndValidateFlags(cfg *config.Config, quality, views string, audioOnly 
 }
 
 func downloadLectures(ctx context.Context, cfg *config.Config, apiClient *client.Client, lectures client.Lectures, presentation downloadPresentationOptions) (downloadResult, error) {
-	return downloadLecturesWithRunner(ctx, cfg, downloader.New(cfg, apiClient), lectures, presentation)
+	var d *downloader.Downloader
+	if presentation.diagnosticOutput != nil {
+		d = downloader.NewWithDiagnosticWriter(cfg, apiClient, presentation.diagnosticOutput)
+	} else {
+		d = downloader.New(cfg, apiClient)
+	}
+	return downloadLecturesWithRunner(ctx, cfg, d, lectures, presentation)
 }
 
 func downloadLecturesWithRunner(ctx context.Context, cfg *config.Config, d lectureDownloadRunner, lectures client.Lectures, presentation downloadPresentationOptions) (downloadResult, error) {

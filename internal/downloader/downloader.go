@@ -63,6 +63,7 @@ var (
 type Downloader struct {
 	config        *config.Config
 	client        *client.Client
+	diagnostics   *log.Logger
 	rateLimiter   *RateLimiter
 	maxRetries    int
 	ffmpegPath    string
@@ -74,6 +75,19 @@ type Downloader struct {
 
 // New creates a new Downloader with the given config and API client.
 func New(cfg *config.Config, apiClient *client.Client) *Downloader {
+	return newDownloader(cfg, apiClient, log.Default())
+}
+
+// NewWithDiagnosticWriter creates a downloader whose operational diagnostics
+// are isolated to output. A nil output disables diagnostics.
+func NewWithDiagnosticWriter(cfg *config.Config, apiClient *client.Client, output io.Writer) *Downloader {
+	if output == nil {
+		output = io.Discard
+	}
+	return newDownloader(cfg, apiClient, log.New(output, "", log.LstdFlags))
+}
+
+func newDownloader(cfg *config.Config, apiClient *client.Client, diagnostics *log.Logger) *Downloader {
 	if cfg == nil {
 		cfg = &config.Config{}
 	}
@@ -85,11 +99,20 @@ func New(cfg *config.Config, apiClient *client.Client) *Downloader {
 	return &Downloader{
 		config:        cfg,
 		client:        apiClient,
+		diagnostics:   diagnostics,
 		rateLimiter:   NewRateLimiterFromConfig(cfg),
 		maxRetries:    3,
 		playlistSlots: playlistSlots,
 		ffmpegPath:    "ffmpeg",
 	}
+}
+
+func (d *Downloader) logDiagnostic(format string, args ...any) {
+	diagnostics := d.diagnostics
+	if diagnostics == nil {
+		diagnostics = log.Default()
+	}
+	diagnostics.Printf(format, args...)
 }
 
 func safeConcurrentPlaylists(cfg *config.Config) int {
@@ -221,7 +244,7 @@ func (d *Downloader) DownloadAndJoinPlaylist(ctx context.Context, playlist clien
 	}
 	defer func() {
 		if cleanupErr := os.RemoveAll(workspace); cleanupErr != nil {
-			log.Printf("warning: failed to remove temporary workspace for lecture %d: %s", playlist.ID, secrets.ScrubError(cleanupErr))
+			d.logDiagnostic("warning: failed to remove temporary workspace for lecture %d: %s", playlist.ID, secrets.ScrubError(cleanupErr))
 		}
 	}()
 
@@ -283,7 +306,7 @@ func (d *Downloader) downloadViewChunks(ctx context.Context, p *mpb.Progress, tr
 			bar.Increment()
 		}
 		if err != nil || chunkPath == "" {
-			log.Printf("chunk %d failed for %s view: %s", i, vc.Label, secrets.ScrubError(err))
+			d.logDiagnostic("chunk %d failed for %s view: %s", i, vc.Label, secrets.ScrubError(err))
 			failed++
 			continue
 		}
