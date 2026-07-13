@@ -77,9 +77,11 @@ config.json
 
 
 
-# Desloppify quality gate local state
+# Desloppify quality-gate tooling is project-local. Track only project policy;
+# scan/review state remains local.
 .venv-desloppify/
-.desloppify/
+.desloppify/*
+!.desloppify/config.json
 scorecard.png
 query.json
 

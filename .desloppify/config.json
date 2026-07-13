@@ -1,0 +1,132 @@
+{
+  "ignore": [
+    "unused::internal/cli/cli_download.go::unused_import::12",
+    "unused::internal/cli/cli_download_output_test.go::unused_import::19",
+    "unused::internal/downloader/pipeline_test.go::unused_import::10",
+    "signature::internal/server/cleanup_lifecycle.go::signature_variance::Close",
+    "signature::internal/downloader/pipeline.go::signature_variance::Start",
+    "test_coverage::internal/cli/cli.go::untested_module",
+    "test_coverage::internal/cli/cli_serve.go::untested_module",
+    "test_coverage::internal/client/client_auth.go::untested_module",
+    "test_coverage::internal/client/client_playlist.go::untested_module",
+    "test_coverage::internal/client/types.go::untested_module",
+    "test_coverage::internal/downloader/download_chunks.go::untested_module",
+    "test_coverage::internal/downloader/downloader.go::untested_critical",
+    "test_coverage::internal/server/health_handlers.go::untested_module",
+    "test_coverage::internal/server/job_executor_config.go::untested_module",
+    "test_coverage::internal/server/job_executor_errors.go::untested_module",
+    "test_coverage::internal/server/job_executor_slides.go::untested_module",
+    "test_coverage::internal/server/persistence_coordinator.go::untested_module",
+    "test_coverage::internal/server/persistence_sync_unix.go::untested_module",
+    "test_coverage::internal/server/store_lifecycle.go::untested_module",
+    "test_coverage::internal/server/store_persistence.go::untested_module",
+    "test_coverage::internal/server/store_retention.go::untested_module",
+    "test_coverage::internal/server/types.go::untested_module",
+    "flat_dirs::internal/downloader",
+    "flat_dirs::internal/server"
+  ],
+  "ignore_metadata": {
+    "unused::internal/cli/cli_download.go::unused_import::12": {
+      "note": "Line-scoped detector ID for the /v8 import: Go semantic import version /v8 declares package mpb, which this file references throughout.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    },
+    "unused::internal/cli/cli_download_output_test.go::unused_import::19": {
+      "note": "Line-scoped detector ID for the /v8 import: Go semantic import version /v8 declares package mpb, and this test uses mpb.Progress.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    },
+    "unused::internal/downloader/pipeline_test.go::unused_import::10": {
+      "note": "Line-scoped detector ID for the /v8 import: Go semantic import version /v8 declares package mpb, and this test calls mpb.New.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    },
+    "signature::internal/server/cleanup_lifecycle.go::signature_variance::Close": {
+      "note": "Detector representative for an aggregate across four unrelated Close receiver methods with distinct contracts; Go receiver-scoped methods are not signature variants.",
+      "added_at": "2026-07-13T11:41:12+00:00",
+      "fingerprints": [
+        "be512b1373059dc1"
+      ]
+    },
+    "signature::internal/downloader/pipeline.go::signature_variance::Start": {
+      "note": "Detector representative for an aggregate across LecturePipeline, cleanupLifecycle, and APIServer Start methods; unrelated receiver methods need not share signatures.",
+      "added_at": "2026-07-13T11:41:12+00:00",
+      "fingerprints": [
+        "b61c0f6fad208e28"
+      ]
+    },
+    "test_coverage::internal/cli/cli.go::untested_module": {
+      "note": "Measured Go statement coverage is 50.0%; same-package behavior tests do not need a cli_test.go filename.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    },
+    "test_coverage::internal/cli/cli_serve.go::untested_module": {
+      "note": "Measured Go statement coverage is 76.0%; same-package tests live under behavior-focused filenames.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    },
+    "test_coverage::internal/client/client_auth.go::untested_module": {
+      "note": "Measured Go statement coverage is 74.6%; same-package client tests exercise this split implementation file.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    },
+    "test_coverage::internal/client/client_playlist.go::untested_module": {
+      "note": "Measured Go statement coverage is 88.4%; same-package client tests exercise this split implementation file.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    },
+    "test_coverage::internal/client/types.go::untested_module": {
+      "note": "Measured Go statement coverage is 100.0%; same-package contract tests exercise this file.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    },
+    "test_coverage::internal/downloader/download_chunks.go::untested_module": {
+      "note": "Measured Go statement coverage is 90.4%; tests are organized by behavior rather than source basename.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    },
+    "test_coverage::internal/downloader/downloader.go::untested_critical": {
+      "note": "Measured Go statement coverage is 79.7%; tests are organized by pipeline behavior rather than source basename.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    },
+    "test_coverage::internal/server/health_handlers.go::untested_module": {
+      "note": "Measured Go statement coverage is 94.8%; same-package health tests exercise this split handler file.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    },
+    "test_coverage::internal/server/job_executor_config.go::untested_module": {
+      "note": "Measured Go statement coverage is 88.2%; same-package executor tests exercise this split file.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    },
+    "test_coverage::internal/server/job_executor_errors.go::untested_module": {
+      "note": "Measured Go statement coverage is 100.0%; same-package executor tests exercise this split file.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    },
+    "test_coverage::internal/server/job_executor_slides.go::untested_module": {
+      "note": "Measured Go statement coverage is 75.9%; same-package executor tests exercise this split file.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    },
+    "test_coverage::internal/server/persistence_coordinator.go::untested_module": {
+      "note": "Measured Go statement coverage is 80.9%; same-package persistence tests exercise this file.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    },
+    "test_coverage::internal/server/persistence_sync_unix.go::untested_module": {
+      "note": "Measured Go statement coverage is 83.3%; same-package persistence tests exercise this platform file.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    },
+    "test_coverage::internal/server/store_lifecycle.go::untested_module": {
+      "note": "Measured Go statement coverage is 91.2%; same-package store tests exercise this split lifecycle file.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    },
+    "test_coverage::internal/server/store_persistence.go::untested_module": {
+      "note": "Measured Go statement coverage is 91.9%; same-package store tests exercise this split persistence file.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    },
+    "test_coverage::internal/server/store_retention.go::untested_module": {
+      "note": "Measured Go statement coverage is 87.8%; same-package store tests exercise this split retention file.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    },
+    "test_coverage::internal/server/types.go::untested_module": {
+      "note": "Measured Go statement coverage is 82.4%; same-package contract tests exercise these methods.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    },
+    "flat_dirs::internal/downloader": {
+      "note": "The detector reports 28 files by combining 9 production files with 19 colocated Go test files; production ownership is below its threshold.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    },
+    "flat_dirs::internal/server": {
+      "note": "The detector combines 23 production and 27 colocated test files; this Go package intentionally shares unexported server, store, job, and lifecycle state, so threshold-only subpackages would force exports or cycles without a domain boundary.",
+      "added_at": "2026-07-13T11:41:12+00:00"
+    }
+  }
+}
