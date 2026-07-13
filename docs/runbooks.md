@@ -206,7 +206,11 @@ sudo pacman -S ffmpeg
 1. Check system resources: `top`, `free -h`, `df -h`
 2. Review concurrent job count
 3. Adjust worker pool settings
-4. Clear temp directory: `rm -rf ./temp/*`
+4. Inspect the configured temp directory for abandoned workspaces. Each active
+   download owns and removes a unique child workspace automatically, so routine
+   cleanup is not required. Never delete the base temp directory or its children
+   while downloads are active. Manual removal should be reserved for emergency
+   recovery after confirming no download process is running.
 
 ---
 
