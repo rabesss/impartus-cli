@@ -224,6 +224,97 @@ func TestHealthCacheCanceledWaiterDoesNotCancelRefresh(t *testing.T) {
 	}
 }
 
+func TestHealthCacheCanceledOwnerDoesNotCancelSharedRefresh(t *testing.T) {
+	s := newAPIServer(validServerConfig())
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var probes atomic.Int32
+	s.readinessProbe = func(ctx context.Context) healthResponse {
+		probes.Add(1)
+		close(started)
+		select {
+		case <-release:
+			return testHealthResponse("ok")
+		case <-ctx.Done():
+			return testHealthResponse("degraded")
+		}
+	}
+
+	ownerCtx, cancelOwner := context.WithCancel(context.Background())
+	ownerDone := make(chan bool, 1)
+	go func() {
+		_, ok := s.cachedReadiness(ownerCtx)
+		ownerDone <- ok
+	}()
+	<-started
+
+	waiterDone := make(chan struct {
+		response healthResponse
+		ok       bool
+	}, 1)
+	go func() {
+		response, ok := s.cachedReadiness(context.Background())
+		waiterDone <- struct {
+			response healthResponse
+			ok       bool
+		}{response: response, ok: ok}
+	}()
+
+	cancelOwner()
+	select {
+	case ok := <-ownerDone:
+		if ok {
+			t.Fatal("expected canceled owner to stop waiting")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled owner did not stop waiting")
+	}
+	if got := probes.Load(); got != 1 {
+		t.Fatalf("owner cancellation started another probe; got %d", got)
+	}
+
+	close(release)
+	select {
+	case result := <-waiterDone:
+		if !result.ok || result.response.Status != "ok" {
+			t.Fatalf("active waiter did not receive successful shared refresh: %+v", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("active waiter did not receive shared refresh")
+	}
+	if got := probes.Load(); got != 1 {
+		t.Fatalf("expected one shared probe, got %d", got)
+	}
+}
+
+func TestHealthCacheProbePanicReleasesWaitersAndRetries(t *testing.T) {
+	s := newAPIServer(validServerConfig())
+	var probes atomic.Int32
+	s.readinessProbe = func(context.Context) healthResponse {
+		if probes.Add(1) == 1 {
+			panic("test panic")
+		}
+		return testHealthResponse("ok")
+	}
+
+	response, ok := s.cachedReadiness(context.Background())
+	if !ok || response.Status != "ok" {
+		t.Fatalf("expected successful retry after probe panic, got response=%+v ok=%v", response, ok)
+	}
+	if got := probes.Load(); got != 2 {
+		t.Fatalf("expected one panicked probe and one retry, got %d probes", got)
+	}
+
+	s.readinessCache.mu.Lock()
+	defer s.readinessCache.mu.Unlock()
+	if s.readinessCache.refreshing {
+		t.Fatal("probe panic left readiness cache refreshing")
+	}
+	if !s.readinessCache.valid {
+		t.Fatal("successful retry did not populate readiness cache")
+	}
+}
+
 func TestProbeUpstreamHTTP_Cancel(t *testing.T) {
 	started := make(chan struct{})
 	requestCanceled := make(chan struct{})

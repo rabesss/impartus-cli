@@ -78,34 +78,49 @@ func (s *APIServer) cachedReadiness(ctx context.Context) (healthResponse, bool) 
 			s.readinessCache.mu.Unlock()
 			return response, true
 		}
-		if s.readinessCache.refreshing {
-			done := s.readinessCache.refreshDone
-			s.readinessCache.mu.Unlock()
-			select {
-			case <-done:
-				continue
-			case <-ctx.Done():
-				return healthResponse{}, false
-			}
+		if !s.readinessCache.refreshing {
+			done := make(chan struct{})
+			s.readinessCache.refreshing = true
+			s.readinessCache.refreshDone = done
+			go s.refreshReadiness(context.WithoutCancel(ctx), done)
 		}
-
-		done := make(chan struct{})
-		s.readinessCache.refreshing = true
-		s.readinessCache.refreshDone = done
+		done := s.readinessCache.refreshDone
 		s.readinessCache.mu.Unlock()
 
-		response := s.collectReadiness(ctx)
+		select {
+		case <-done:
+			continue
+		case <-ctx.Done():
+			return healthResponse{}, false
+		}
+	}
+}
+
+func (s *APIServer) refreshReadiness(parent context.Context, done chan struct{}) {
+	var (
+		response  healthResponse
+		completed bool
+	)
+	defer func() {
+		if recover() != nil {
+			log.Print("panic in readiness probe; discarding result")
+		}
 
 		s.readinessCache.mu.Lock()
-		s.readinessCache.response = response
-		s.readinessCache.expiresAt = s.healthNow().Add(readinessCacheTTL)
-		s.readinessCache.valid = true
+		if completed {
+			s.readinessCache.response = response
+			s.readinessCache.expiresAt = s.healthNow().Add(readinessCacheTTL)
+			s.readinessCache.valid = true
+		}
 		s.readinessCache.refreshing = false
 		close(done)
 		s.readinessCache.mu.Unlock()
+	}()
 
-		return response, true
-	}
+	ctx, cancel := context.WithTimeout(parent, upstreamProbeTimeout)
+	defer cancel()
+	response = s.collectReadiness(ctx)
+	completed = true
 }
 
 func (s *APIServer) collectReadiness(ctx context.Context) healthResponse {
