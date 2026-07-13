@@ -7,8 +7,14 @@ import (
 	"io"
 	"strconv"
 
+	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/server"
 )
+
+var startAPIServerFn = func(ctx context.Context, port string, cfg *config.Config) error {
+	srv := server.NewAPIServerWithPersistence(port, cfg, "")
+	return srv.Start(ctx)
+}
 
 func runServe(args []string, _ string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
@@ -30,8 +36,7 @@ func runServe(args []string, _ string) error {
 		return err
 	}
 
-	srv := server.NewAPIServerWithPersistence(strconv.Itoa(*port), cfg, "")
-	return srv.Start(context.Background())
+	return startAPIServerFn(context.Background(), strconv.Itoa(*port), cfg)
 }
 
 func parseServePort(args []string) (int, error) {
