@@ -42,6 +42,10 @@ func (c *wsClient) stop() {
 type WSHub struct {
 	clients map[*wsClient]struct{}
 	mu      sync.RWMutex
+	closed  bool
+	// broadcastMu gives every connected client the same enqueue order when
+	// multiple goroutines broadcast concurrently. It never protects network I/O.
+	broadcastMu sync.Mutex
 
 	queueCapacity int
 	writeTimeout  time.Duration
@@ -66,11 +70,32 @@ func (h *WSHub) Register(conn *websocket.Conn) *wsClient {
 
 	client := newWSClient(conn, h.queueCapacity)
 	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		return nil
+	}
 	h.clients[client] = struct{}{}
 	h.mu.Unlock()
 
 	go h.writePump(client)
 	return client
+}
+
+// Close disconnects every registered client and prevents new registrations.
+// Writer pumps own the actual connection close, which unblocks their matching
+// handler read loops without introducing a second WebSocket writer.
+func (h *WSHub) Close() {
+	h.mu.Lock()
+	h.closed = true
+	clients := make([]*wsClient, 0, len(h.clients))
+	for client := range h.clients {
+		clients = append(clients, client)
+		delete(h.clients, client)
+	}
+	h.mu.Unlock()
+	for _, client := range clients {
+		client.stop()
+	}
 }
 
 // Unregister removes a WebSocket client from the hub and signals its writer to stop.
@@ -131,6 +156,7 @@ func (h *WSHub) Broadcast(msg any) error {
 	}
 
 	var overflowed []*wsClient
+	h.broadcastMu.Lock()
 	h.mu.RLock()
 	for client := range h.clients {
 		select {
@@ -140,6 +166,7 @@ func (h *WSHub) Broadcast(msg any) error {
 		}
 	}
 	h.mu.RUnlock()
+	h.broadcastMu.Unlock()
 
 	for _, client := range overflowed {
 		h.Unregister(client)

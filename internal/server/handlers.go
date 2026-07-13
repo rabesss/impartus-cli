@@ -464,7 +464,7 @@ func (s *APIServer) deleteJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := s.jobStore.CancelJob(jobID)
+	err := s.cancelJob(jobID)
 	if err != nil {
 		if errors.Is(err, ErrJobNotFound) {
 			respondWithError(w, http.StatusNotFound, "JOB_NOT_FOUND", "Job not found", "cancelJob", nil)
@@ -480,12 +480,21 @@ func (s *APIServer) deleteJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	respondWithSuccess(w, "cancelJob", cancelJobResponse{ID: jobID, Status: StatusCanceled})
+}
+
+func (s *APIServer) cancelJob(jobID string) error {
+	s.jobEventMu.Lock()
+	defer s.jobEventMu.Unlock()
+	job, err := s.jobStore.CancelJob(jobID)
+	if err != nil {
+		return err
+	}
 	evt := newWSEvent(jobCancelledEventType, jobID)
 	evt.Status = StatusCanceled
 	evt.Progress = job.Progress
 	broadcastEvent(s.wsHub, evt)
-
-	respondWithSuccess(w, "cancelJob", cancelJobResponse{ID: jobID, Status: StatusCanceled})
+	return nil
 }
 
 func (s *APIServer) websocketHandler(w http.ResponseWriter, r *http.Request) {

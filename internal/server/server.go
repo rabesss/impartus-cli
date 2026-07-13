@@ -104,6 +104,7 @@ func (s *APIServer) Start(ctxs ...context.Context) error {
 			log.Printf("job persistence shutdown failed: %v", err)
 		}
 	}()
+	defer s.wsHub.Close()
 
 	// 0600: the log may capture redacted-but-sensitive upstream error context;
 	// restrict to owner read/write only (no group/world access).

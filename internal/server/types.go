@@ -330,5 +330,6 @@ type APIServer struct {
 	// (e.g. ListenAddr=0.0.0.0), CORS and WebSocket origin checks are tightened.
 	loopback bool
 	// jobSem limits the number of concurrently running download jobs.
-	jobSem chan struct{}
+	jobSem     chan struct{}
+	jobEventMu sync.Mutex
 }

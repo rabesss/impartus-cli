@@ -2,10 +2,15 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -162,6 +167,82 @@ func TestWebSocketConcurrentBroadcastAndPing(t *testing.T) {
 	}
 }
 
+func TestWebSocketConcurrentBroadcastHasConsistentClientOrder(t *testing.T) {
+	s := newAPIServer(validServerConfig())
+	wsURL, header := startWebSocketTestServer(t, s)
+	first := dialWebSocket(t, wsURL, header)
+	second := dialWebSocket(t, wsURL, header)
+	waitForWebSocketClients(t, s.wsHub, 2)
+
+	const (
+		workers   = 4
+		perWorker = 10
+		total     = workers * perWorker
+	)
+	for _, conn := range []*websocket.Conn{first, second} {
+		if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+			t.Fatalf("SetReadDeadline() failed: %v", err)
+		}
+	}
+
+	type readResult struct {
+		ids []int
+		err error
+	}
+	readSequences := func(conn *websocket.Conn) <-chan readResult {
+		result := make(chan readResult, 1)
+		go func() {
+			ids := make([]int, 0, total)
+			for range total {
+				_, data, err := conn.ReadMessage()
+				if err != nil {
+					result <- readResult{err: err}
+					return
+				}
+				var event struct {
+					ID int `json:"id"`
+				}
+				if err := json.Unmarshal(data, &event); err != nil {
+					result <- readResult{err: err}
+					return
+				}
+				ids = append(ids, event.ID)
+			}
+			result <- readResult{ids: ids}
+		}()
+		return result
+	}
+	firstResult := readSequences(first)
+	secondResult := readSequences(second)
+
+	var wg sync.WaitGroup
+	for worker := range workers {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			for sequence := range perWorker {
+				if err := s.wsHub.Broadcast(map[string]int{"id": worker*perWorker + sequence}); err != nil {
+					t.Errorf("Broadcast() failed: %v", err)
+					return
+				}
+			}
+		}(worker)
+	}
+	wg.Wait()
+
+	gotFirst := <-firstResult
+	if gotFirst.err != nil {
+		t.Fatalf("first client read failed: %v", gotFirst.err)
+	}
+	gotSecond := <-secondResult
+	if gotSecond.err != nil {
+		t.Fatalf("second client read failed: %v", gotSecond.err)
+	}
+	if !slices.Equal(gotFirst.ids, gotSecond.ids) {
+		t.Fatalf("clients observed different event orders:\nfirst:  %v\nsecond: %v", gotFirst.ids, gotSecond.ids)
+	}
+}
+
 func TestWebSocketReadLimitClosesOnlyOversizedClient(t *testing.T) {
 	s := newAPIServer(validServerConfig())
 	wsURL, header := startWebSocketTestServer(t, s)
@@ -193,6 +274,25 @@ func TestWebSocketReadLimitClosesOnlyOversizedClient(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"state":"healthy"`) {
 		t.Fatalf("healthy client received unexpected event: %s", data)
+	}
+}
+
+func TestWebSocketHubCloseDisconnectsClients(t *testing.T) {
+	s := newAPIServer(validServerConfig())
+	wsURL, header := startWebSocketTestServer(t, s)
+	conn := dialWebSocket(t, wsURL, header)
+	waitForWebSocketClients(t, s.wsHub, 1)
+
+	s.wsHub.Close()
+	waitForWebSocketClients(t, s.wsHub, 0)
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline() failed: %v", err)
+	}
+	if _, _, err := conn.ReadMessage(); err == nil {
+		t.Fatal("hub shutdown left upgraded connection open")
+	}
+	if client := s.wsHub.Register(conn); client != nil {
+		t.Fatal("closed hub accepted a new client")
 	}
 }
 
@@ -248,5 +348,232 @@ func TestJobExecutorPanicUsesSanitizedTerminalFailure(t *testing.T) {
 	case <-secondRan:
 	case <-time.After(time.Second):
 		t.Fatal("job semaphore was not reusable after panic")
+	}
+}
+
+func TestJobExecutorPanicDoesNotPublishBeforeDurableFailureCommit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jobs.json")
+	store := newTestPersistentStore(t, path)
+	job := store.CreateJob(1, 1, 1, 1, validServerConfig())
+	if job == nil {
+		t.Fatal("CreateJob() failed")
+	}
+
+	realSync := store.persistence.syncFile
+	var attempts atomic.Int64
+	store.persistence.mu.Lock()
+	store.persistence.syncFile = func(file *os.File) error {
+		if attempts.Add(1) == 1 {
+			return errors.New("injected terminal sync failure")
+		}
+		return realSync(file)
+	}
+	store.persistence.mu.Unlock()
+
+	s := newAPIServer(validServerConfig())
+	s.jobStore = store
+	capture := newWSClient(nil, 1)
+	s.wsHub.clients[capture] = struct{}{}
+	t.Cleanup(func() { s.wsHub.Unregister(capture) })
+
+	s.runJob(job.ID, func() {
+		panic("private-durability-panic-value")
+	})
+
+	gotJob, ok := store.CopyJob(job.ID)
+	if !ok {
+		t.Fatal("panic job disappeared after persistence rollback")
+	}
+	if gotJob.Status != StatusPending || gotJob.Progress != 0 || gotJob.Error != "" {
+		t.Fatalf("failed persistence leaked terminal state: status=%q progress=%v error=%q", gotJob.Status, gotJob.Progress, gotJob.Error)
+	}
+	if len(capture.send) != 0 {
+		t.Fatalf("failed persistence emitted %d terminal events, want 0", len(capture.send))
+	}
+	persisted := readPersistedJobs(t, path)[job.ID]
+	if persisted.Status != StatusPending || persisted.Progress != 0 || persisted.Error != "" {
+		t.Fatalf("failed persistence reached disk: status=%q progress=%v error=%q", persisted.Status, persisted.Progress, persisted.Error)
+	}
+	if got := attempts.Load(); got != 2 {
+		t.Fatalf("sync attempts = %d, want rejected transition plus synchronous rollback", got)
+	}
+}
+
+func TestJobExecutorPanicDoesNotOverwriteCanceledTerminalState(t *testing.T) {
+	s := newAPIServer(validServerConfig())
+	job := s.jobStore.CreateJob(1, 1, 1, 1, validServerConfig())
+	capture := newWSClient(nil, 1)
+	s.wsHub.clients[capture] = struct{}{}
+	t.Cleanup(func() { s.wsHub.Unregister(capture) })
+
+	if _, err := s.jobStore.CancelJob(job.ID); err != nil {
+		t.Fatalf("CancelJob() failed: %v", err)
+	}
+	s.runJob(job.ID, func() {
+		panic("private-canceled-panic-value")
+	})
+
+	gotJob, ok := s.jobStore.CopyJob(job.ID)
+	if !ok {
+		t.Fatal("canceled panic job disappeared from store")
+	}
+	if gotJob.Status != StatusCanceled || gotJob.Error != "" {
+		t.Fatalf("panic overwrote canceled terminal state: status=%q error=%q", gotJob.Status, gotJob.Error)
+	}
+	if len(capture.send) != 0 {
+		t.Fatalf("panic after cancellation emitted %d failed events, want 0", len(capture.send))
+	}
+}
+
+func TestJobExecutorPanicDoesNotOverwriteCompletedTerminalState(t *testing.T) {
+	s := newAPIServer(validServerConfig())
+	job := s.jobStore.CreateJob(1, 1, 1, 1, validServerConfig())
+	s.jobStore.UpdateJob(job.ID, StatusCompleted, 100, "")
+	capture := newWSClient(nil, 1)
+	s.wsHub.clients[capture] = struct{}{}
+	t.Cleanup(func() { s.wsHub.Unregister(capture) })
+
+	s.runJob(job.ID, func() {
+		panic("private-completed-panic-value")
+	})
+
+	gotJob, ok := s.jobStore.CopyJob(job.ID)
+	if !ok {
+		t.Fatal("completed panic job disappeared from store")
+	}
+	if gotJob.Status != StatusCompleted || gotJob.Progress != 100 || gotJob.Error != "" {
+		t.Fatalf("panic overwrote completed terminal state: status=%q progress=%v error=%q", gotJob.Status, gotJob.Progress, gotJob.Error)
+	}
+	if len(capture.send) != 0 {
+		t.Fatalf("panic after completion emitted %d failed events, want 0", len(capture.send))
+	}
+}
+
+func TestConcurrentProgressRemainsMonotonicInStateAndEvents(t *testing.T) {
+	s := newAPIServer(validServerConfig())
+	job := s.jobStore.CreateJob(1, 1, 1, 100, validServerConfig())
+	capture := newWSClient(nil, 128)
+	s.wsHub.clients[capture] = struct{}{}
+	t.Cleanup(func() { s.wsHub.Unregister(capture) })
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for progress := 1; progress <= 100; progress++ {
+		wg.Add(1)
+		go func(progress float64) {
+			defer wg.Done()
+			<-start
+			s.updateRunningProgress(job.ID, progress, "downloading", nil)
+		}(float64(progress))
+	}
+	close(start)
+	wg.Wait()
+
+	gotJob, ok := s.jobStore.CopyJob(job.ID)
+	if !ok {
+		t.Fatal("progress job disappeared")
+	}
+	if gotJob.Status != StatusRunning || gotJob.Progress != 100 {
+		t.Fatalf("final progress state = %q/%v, want running/100", gotJob.Status, gotJob.Progress)
+	}
+
+	last := float64(-1)
+	for len(capture.send) > 0 {
+		var event wsEvent
+		if err := json.Unmarshal(<-capture.send, &event); err != nil {
+			t.Fatalf("Unmarshal(progress event) failed: %v", err)
+		}
+		if event.Progress < last {
+			t.Fatalf("progress event regressed from %v to %v", last, event.Progress)
+		}
+		last = event.Progress
+	}
+	if last != gotJob.Progress {
+		t.Fatalf("last progress event = %v, final state = %v", last, gotJob.Progress)
+	}
+}
+
+func TestConcurrentCancellationIsTerminalForStateAndEvents(t *testing.T) {
+	s := newAPIServer(validServerConfig())
+	job := s.jobStore.CreateJob(1, 1, 1, 100, validServerConfig())
+	capture := newWSClient(nil, 128)
+	s.wsHub.clients[capture] = struct{}{}
+	t.Cleanup(func() { s.wsHub.Unregister(capture) })
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for progress := 1; progress <= 100; progress++ {
+		wg.Add(1)
+		go func(progress float64) {
+			defer wg.Done()
+			<-start
+			s.updateRunningProgress(job.ID, progress, "downloading", nil)
+		}(float64(progress))
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		if err := s.cancelJob(job.ID); err != nil {
+			t.Errorf("cancelJob() failed: %v", err)
+		}
+	}()
+	close(start)
+	wg.Wait()
+
+	gotJob, ok := s.jobStore.CopyJob(job.ID)
+	if !ok {
+		t.Fatal("canceled job disappeared")
+	}
+	if gotJob.Status != StatusCanceled {
+		t.Fatalf("concurrent progress resurrected status %q, want canceled", gotJob.Status)
+	}
+
+	canceled := false
+	for len(capture.send) > 0 {
+		var event wsEvent
+		if err := json.Unmarshal(<-capture.send, &event); err != nil {
+			t.Fatalf("Unmarshal(terminal event) failed: %v", err)
+		}
+		if canceled {
+			t.Fatalf("event %q followed terminal cancellation", event.Type)
+		}
+		if event.Type == jobCancelledEventType {
+			canceled = true
+		}
+	}
+	if !canceled {
+		t.Fatal("cancellation event was not emitted")
+	}
+
+	s.completeJob(job.ID, []string{"late.mp4"})
+	s.failJob(job.ID, "late failure")
+	after, _ := s.jobStore.CopyJob(job.ID)
+	if after.Status != StatusCanceled || len(after.Outputs) != 0 || after.Error != "" {
+		t.Fatalf("late terminal transition overwrote cancellation: %+v", after)
+	}
+	if len(capture.send) != 0 {
+		t.Fatalf("late terminal transition emitted %d events, want 0", len(capture.send))
+	}
+}
+
+func TestConcurrentLectureProgressDoesNotRegress(t *testing.T) {
+	store := NewJobStore()
+	job := store.CreateJob(1, 1, 1, 100, validServerConfig())
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for completed := 1; completed <= 100; completed++ {
+		wg.Add(1)
+		go func(completed int) {
+			defer wg.Done()
+			<-start
+			store.SetLectureProgress(job.ID, completed, 100)
+		}(completed)
+	}
+	close(start)
+	wg.Wait()
+	got, ok := store.CopyJob(job.ID)
+	if !ok || got.CompletedLectures != 100 || got.TotalLectures != 100 {
+		t.Fatalf("final lecture progress = %+v, want 100/100", got)
 	}
 }
