@@ -14,10 +14,10 @@ build:
 # Create a private config file, or secure an existing one without overwriting it.
 config-init:
 	@if [ -e "$(CONFIG_FILE)" ]; then \
-		chmod 600 "$(CONFIG_FILE)"; \
+		chmod 600 "$(CONFIG_FILE)" && \
 		echo "Secured existing $(CONFIG_FILE) (mode 0600)."; \
 	else \
-		install -m 600 "$(SAMPLE_CONFIG)" "$(CONFIG_FILE)"; \
+		install -m 600 "$(SAMPLE_CONFIG)" "$(CONFIG_FILE)" && \
 		echo "Created $(CONFIG_FILE) from $(SAMPLE_CONFIG) (mode 0600)."; \
 	fi
 
