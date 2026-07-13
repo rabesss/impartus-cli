@@ -102,10 +102,6 @@ func (s *APIServer) refreshReadiness(parent context.Context, done chan struct{})
 		completed bool
 	)
 	defer func() {
-		if recover() != nil {
-			log.Print("panic in readiness probe; discarding result")
-		}
-
 		s.readinessCache.mu.Lock()
 		if completed {
 			s.readinessCache.response = response
@@ -116,11 +112,27 @@ func (s *APIServer) refreshReadiness(parent context.Context, done chan struct{})
 		close(done)
 		s.readinessCache.mu.Unlock()
 	}()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Printf("panic in readiness probe (%T); caching degraded result", recovered)
+			response = readinessProbeFailedResponse()
+			completed = true
+		}
+	}()
 
 	ctx, cancel := context.WithTimeout(parent, upstreamProbeTimeout)
 	defer cancel()
 	response = s.collectReadiness(ctx)
 	completed = true
+}
+
+func readinessProbeFailedResponse() healthResponse {
+	return healthResponse{
+		Status:   "degraded",
+		Config:   configCheckResult{Status: "unknown"},
+		Upstream: statusCheckResult{Status: "unknown"},
+		FFmpeg:   statusCheckResult{Status: "unknown"},
+	}
 }
 
 func (s *APIServer) collectReadiness(ctx context.Context) healthResponse {

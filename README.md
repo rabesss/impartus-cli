@@ -422,6 +422,7 @@ Status values:
 - `config.status`: `ok` (all fields set) or `misconfigured` (missing fields)
 - `upstream.status`: `reachable` (server responds), `unreachable` (TCP/HTTP fails), or `not_configured` (no baseUrl)
 - `ffmpeg.status`: `available` (in PATH) or `not_found`
+- Any sub-check may report `unknown` if readiness probing fails internally; inspect server logs for details
 - Overall `status`: `ok` (all sub-checks pass) or `degraded` (one or more sub-checks fail)
 
 The unauthenticated health response deliberately exposes only aggregate configuration status; it does not reveal which credential fields are present.

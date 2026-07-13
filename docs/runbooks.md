@@ -77,7 +77,7 @@ Expected response (structured envelope with sub-checks):
 }
 ```
 
-If any component is not configured or unavailable, the overall `status` becomes `degraded` and the relevant sub-check shows `not_configured`, `unreachable`, or `not_found`.
+If any component is not configured or unavailable, the overall `status` becomes `degraded` and the relevant sub-check shows `not_configured`, `unreachable`, or `not_found`. A sub-check reports `unknown` if readiness probing fails internally; inspect server logs for details.
 The unauthenticated response intentionally reports only aggregate configuration status; inspect the local configuration or server logs to diagnose a `misconfigured` result.
 Readiness results, including degraded results, are cached for 15 seconds and may be that old. `/api/v1/health` remains a compatibility alias for readiness. Both readiness paths return HTTP 200 when degraded, so automation must inspect `data.status`.
 

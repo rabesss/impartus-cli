@@ -287,22 +287,28 @@ func TestHealthCacheCanceledOwnerDoesNotCancelSharedRefresh(t *testing.T) {
 	}
 }
 
-func TestHealthCacheProbePanicReleasesWaitersAndRetries(t *testing.T) {
+func TestHealthCachePersistentProbePanicCachesDegradedFallback(t *testing.T) {
 	s := newAPIServer(validServerConfig())
 	var probes atomic.Int32
 	s.readinessProbe = func(context.Context) healthResponse {
-		if probes.Add(1) == 1 {
-			panic("test panic")
-		}
-		return testHealthResponse("ok")
+		probes.Add(1)
+		panic("test panic")
 	}
 
 	response, ok := s.cachedReadiness(context.Background())
-	if !ok || response.Status != "ok" {
-		t.Fatalf("expected successful retry after probe panic, got response=%+v ok=%v", response, ok)
+	if !ok || response != readinessProbeFailedResponse() {
+		t.Fatalf("expected degraded fallback after probe panic, got response=%+v ok=%v", response, ok)
 	}
-	if got := probes.Load(); got != 2 {
-		t.Fatalf("expected one panicked probe and one retry, got %d probes", got)
+	if got := probes.Load(); got != 1 {
+		t.Fatalf("persistent panic caused an immediate retry loop; got %d probes", got)
+	}
+
+	cached, ok := s.cachedReadiness(context.Background())
+	if !ok || cached != response {
+		t.Fatalf("expected panic fallback to be cached, got response=%+v ok=%v", cached, ok)
+	}
+	if got := probes.Load(); got != 1 {
+		t.Fatalf("cached panic fallback started another probe; got %d probes", got)
 	}
 
 	s.readinessCache.mu.Lock()
@@ -311,7 +317,7 @@ func TestHealthCacheProbePanicReleasesWaitersAndRetries(t *testing.T) {
 		t.Fatal("probe panic left readiness cache refreshing")
 	}
 	if !s.readinessCache.valid {
-		t.Fatal("successful retry did not populate readiness cache")
+		t.Fatal("probe panic did not populate degraded fallback")
 	}
 }
 

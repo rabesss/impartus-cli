@@ -86,6 +86,7 @@ Possible `status` values:
 The `config.status` will be `misconfigured` if username, password, or baseUrl are missing.
 The `upstream.status` will be `unreachable` if the Impartus API cannot be contacted.
 The `ffmpeg.status` will be `not_found` if FFmpeg is not installed or not in PATH.
+Any sub-check can be `unknown` if readiness probing fails internally; inspect server logs for details.
 
 Because this endpoint is unauthenticated, configuration health is deliberately aggregate: the response does not reveal which credential fields are present or missing.
 Healthy and degraded readiness results are cached for 15 seconds and may be that old. Both readiness paths retain HTTP 200 when degraded; clients must inspect `data.status`.
