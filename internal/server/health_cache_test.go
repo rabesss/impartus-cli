@@ -288,7 +288,9 @@ func TestHealthCacheCanceledOwnerDoesNotCancelSharedRefresh(t *testing.T) {
 }
 
 func TestHealthCachePersistentProbePanicCachesDegradedFallback(t *testing.T) {
+	clock := &fakeHealthClock{now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}
 	s := newAPIServer(validServerConfig())
+	s.healthNow = clock.Now
 	var probes atomic.Int32
 	s.readinessProbe = func(context.Context) healthResponse {
 		probes.Add(1)
@@ -309,6 +311,20 @@ func TestHealthCachePersistentProbePanicCachesDegradedFallback(t *testing.T) {
 	}
 	if got := probes.Load(); got != 1 {
 		t.Fatalf("cached panic fallback started another probe; got %d probes", got)
+	}
+	clock.Advance(readinessCacheTTL - time.Nanosecond)
+	if _, ok := s.cachedReadiness(context.Background()); !ok {
+		t.Fatal("expected panic fallback to remain cached before expiry")
+	}
+	if got := probes.Load(); got != 1 {
+		t.Fatalf("panic fallback expired before the injected-clock boundary; got %d probes", got)
+	}
+	clock.Advance(time.Nanosecond)
+	if _, ok := s.cachedReadiness(context.Background()); !ok {
+		t.Fatal("expected degraded fallback after refresh at expiry")
+	}
+	if got := probes.Load(); got != 2 {
+		t.Fatalf("expected one refresh at the injected-clock expiry boundary, got %d probes", got)
 	}
 
 	s.readinessCache.mu.Lock()

@@ -117,7 +117,7 @@ func (s *APIServer) refreshReadiness(parent context.Context, done chan struct{})
 		if recovered := recover(); recovered != nil {
 			log.Printf("panic in readiness probe (%T); caching degraded result", recovered)
 			response = readinessProbeFailedResponse()
-			expiresAt = time.Now().Add(readinessCacheTTL)
+			expiresAt = s.readinessExpiry()
 			completed = true
 		}
 	}()
@@ -125,8 +125,17 @@ func (s *APIServer) refreshReadiness(parent context.Context, done chan struct{})
 	ctx, cancel := context.WithTimeout(parent, upstreamProbeTimeout)
 	defer cancel()
 	response = s.collectReadiness(ctx)
-	expiresAt = s.healthNow().Add(readinessCacheTTL)
+	expiresAt = s.readinessExpiry()
 	completed = true
+}
+
+func (s *APIServer) readinessExpiry() (expiresAt time.Time) {
+	defer func() {
+		if recover() != nil {
+			expiresAt = time.Now().Add(readinessCacheTTL)
+		}
+	}()
+	return s.healthNow().Add(readinessCacheTTL)
 }
 
 func readinessProbeFailedResponse() healthResponse {
