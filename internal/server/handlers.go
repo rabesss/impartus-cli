@@ -23,6 +23,8 @@ import (
 
 const (
 	healthCommand                 = "health"
+	readinessCacheTTL             = 15 * time.Second
+	upstreamProbeTimeout          = 5 * time.Second
 	jobCancelledEventType         = "job.cancelled"
 	lectureSubjectQueryParam      = "subjectId"
 	lectureSubjectLegacyParam     = "subject_id"
@@ -39,6 +41,8 @@ func (s *APIServer) registerRoutes() {
 
 	api := s.router.PathPrefix("/api/v1").Subrouter()
 	api.HandleFunc("/health", s.healthHandler).Methods(http.MethodGet, http.MethodOptions)
+	api.HandleFunc("/health/live", s.livenessHandler).Methods(http.MethodGet, http.MethodOptions)
+	api.HandleFunc("/health/ready", s.healthHandler).Methods(http.MethodGet, http.MethodOptions)
 	api.HandleFunc("/auth/login", s.loginHandler).Methods(http.MethodPost, http.MethodOptions)
 
 	protected := api.PathPrefix("").Subrouter()
@@ -52,9 +56,104 @@ func (s *APIServer) registerRoutes() {
 	protected.HandleFunc("/jobs/{id}", s.deleteJobHandler).Methods(http.MethodDelete, http.MethodOptions)
 }
 
-func (s *APIServer) healthHandler(w http.ResponseWriter, _ *http.Request) {
+func (s *APIServer) livenessHandler(w http.ResponseWriter, _ *http.Request) {
+	respondWithEnvelope(w, http.StatusOK, healthCommand, livenessResponse{Status: "ok"})
+}
+
+func (s *APIServer) healthHandler(w http.ResponseWriter, r *http.Request) {
+	response, ok := s.cachedReadiness(r.Context())
+	if !ok {
+		return
+	}
+	respondWithEnvelope(w, http.StatusOK, healthCommand, response)
+}
+
+func (s *APIServer) cachedReadiness(ctx context.Context) (healthResponse, bool) {
+	for {
+		now := s.healthNow()
+
+		s.readinessCache.mu.Lock()
+		if s.readinessCache.valid && now.Before(s.readinessCache.expiresAt) {
+			response := s.readinessCache.response
+			s.readinessCache.mu.Unlock()
+			return response, true
+		}
+		if !s.readinessCache.refreshing {
+			done := make(chan struct{})
+			s.readinessCache.refreshing = true
+			s.readinessCache.refreshDone = done
+			go s.refreshReadiness(context.WithoutCancel(ctx), done)
+		}
+		done := s.readinessCache.refreshDone
+		s.readinessCache.mu.Unlock()
+
+		select {
+		case <-done:
+			continue
+		case <-ctx.Done():
+			return healthResponse{}, false
+		}
+	}
+}
+
+func (s *APIServer) refreshReadiness(parent context.Context, done chan struct{}) {
+	var (
+		response  healthResponse
+		expiresAt time.Time
+		completed bool
+	)
+	defer func() {
+		s.readinessCache.mu.Lock()
+		defer s.readinessCache.mu.Unlock()
+		if completed {
+			s.readinessCache.response = response
+			s.readinessCache.expiresAt = expiresAt
+			s.readinessCache.valid = true
+		}
+		s.readinessCache.refreshing = false
+		close(done)
+	}()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Printf("panic in readiness probe (%T); caching degraded result", recovered)
+			response = readinessProbeFailedResponse()
+			expiresAt = s.readinessExpiry()
+			completed = true
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(parent, upstreamProbeTimeout)
+	defer cancel()
+	response = s.collectReadiness(ctx)
+	expiresAt = s.readinessExpiry()
+	completed = true
+}
+
+func (s *APIServer) readinessExpiry() (expiresAt time.Time) {
+	defer func() {
+		if recover() != nil {
+			expiresAt = time.Now().Add(readinessCacheTTL)
+		}
+	}()
+	return s.healthNow().Add(readinessCacheTTL)
+}
+
+func readinessProbeFailedResponse() healthResponse {
+	return healthResponse{
+		Status:   "degraded",
+		Config:   configCheckResult{Status: "unknown"},
+		Upstream: statusCheckResult{Status: "unknown"},
+		FFmpeg:   statusCheckResult{Status: "unknown"},
+	}
+}
+
+func (s *APIServer) collectReadiness(ctx context.Context) healthResponse {
+	if s.readinessProbe != nil {
+		return s.readinessProbe(ctx)
+	}
+
 	configStatus := s.checkConfigStatus()
-	upstreamStatus := s.checkUpstreamStatus()
+	upstreamStatus := s.checkUpstreamStatus(ctx)
 	ffmpegStatus := s.checkFFmpegStatus()
 
 	overallStatus := "ok"
@@ -62,12 +161,12 @@ func (s *APIServer) healthHandler(w http.ResponseWriter, _ *http.Request) {
 		overallStatus = "degraded"
 	}
 
-	respondWithEnvelope(w, http.StatusOK, healthCommand, healthResponse{
+	return healthResponse{
 		Status:   overallStatus,
 		Config:   configStatus,
 		Upstream: upstreamStatus,
 		FFmpeg:   ffmpegStatus,
-	})
+	}
 }
 
 func (s *APIServer) checkConfigStatus() configCheckResult {
@@ -85,15 +184,15 @@ func (s *APIServer) checkConfigStatus() configCheckResult {
 	return configCheckResult{Status: "ok"}
 }
 
-func (s *APIServer) checkUpstreamStatus() statusCheckResult {
+func (s *APIServer) checkUpstreamStatus(ctx context.Context) statusCheckResult {
 	if s.cfg == nil || s.cfg.BaseURL == "" {
 		return statusCheckResult{Status: "not_configured"}
 	}
 
-	reachable, probed := s.probeUpstreamHTTP()
+	reachable, probed := s.probeUpstreamHTTP(ctx)
 	if !probed {
 		// No cached token to authenticate the HTTP probe; fall back to TCP.
-		reachable = s.probeUpstreamTCP()
+		reachable = s.probeUpstreamTCP(ctx)
 	}
 	status := "unreachable"
 	if reachable {
@@ -108,7 +207,7 @@ func (s *APIServer) checkUpstreamStatus() statusCheckResult {
 // When probed is true, reachable reflects whether the upstream returned 2xx —
 // an explicit non-2xx (e.g. 401/500) is honored as unreachable and must NOT be
 // overridden by a TCP probe.
-func (s *APIServer) probeUpstreamHTTP() (reachable, probed bool) {
+func (s *APIServer) probeUpstreamHTTP(parent context.Context) (reachable, probed bool) {
 	s.upstreamCacheMu.RLock()
 	cached := s.upstreamCache
 	s.upstreamCacheMu.RUnlock()
@@ -120,7 +219,7 @@ func (s *APIServer) probeUpstreamHTTP() (reachable, probed bool) {
 	baseURL := s.ensureScheme(s.cfg.BaseURL)
 	profileURL := strings.TrimSuffix(baseURL, "/") + "/user/profile"
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(parent, upstreamProbeTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, profileURL, nil)
@@ -129,7 +228,7 @@ func (s *APIServer) probeUpstreamHTTP() (reachable, probed bool) {
 	}
 	req.Header.Set("Authorization", "Bearer "+cached.token)
 
-	httpClient := &http.Client{Timeout: 5 * time.Second}
+	httpClient := &http.Client{Timeout: upstreamProbeTimeout}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return false, true
@@ -142,7 +241,7 @@ func (s *APIServer) probeUpstreamHTTP() (reachable, probed bool) {
 	return resp.StatusCode >= 200 && resp.StatusCode < 300, true
 }
 
-func (s *APIServer) probeUpstreamTCP() bool {
+func (s *APIServer) probeUpstreamTCP(parent context.Context) bool {
 	baseURL := s.ensureScheme(s.cfg.BaseURL)
 
 	u, err := url.Parse(baseURL)
@@ -159,7 +258,7 @@ func (s *APIServer) probeUpstreamTCP() bool {
 		host = net.JoinHostPort(host, port)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(parent, upstreamProbeTimeout)
 	defer cancel()
 
 	dialer := &net.Dialer{}

@@ -64,6 +64,7 @@ func newAPIServerFull(port string, cfg *config.Config, loginFn UpstreamLoginFunc
 		upstreamLogin: loginFn,
 		loginLimiter:  limiter,
 		jobSem:        make(chan struct{}, 10), // limit concurrent running jobs
+		healthNow:     time.Now,
 	}
 	// loopback determines whether permissive CORS/WS origin checks are safe.
 	// Binding a non-loopback address (e.g. 0.0.0.0) tightens them below.

@@ -34,9 +34,27 @@ Base path: `http://localhost:8080/api/v1`
 
 ## Health
 
-`GET /health`
+`GET /health/live`
 
-Returns the health status of the API server and its dependencies. No authentication required.
+Returns process liveness without checking configuration, the upstream service, token caches, the filesystem, or FFmpeg. No authentication required.
+
+Success (`200`):
+```json
+{
+  "success": true,
+  "data": {
+    "status": "ok"
+  },
+  "meta": {
+    "command": "health",
+    "mode": "api"
+  }
+}
+```
+
+`GET /health/ready`
+
+Returns dependency readiness. `GET /health` is a compatibility alias that returns the same readiness response. No authentication required.
 
 Success (`200`):
 ```json
@@ -68,8 +86,10 @@ Possible `status` values:
 The `config.status` will be `misconfigured` if username, password, or baseUrl are missing.
 The `upstream.status` will be `unreachable` if the Impartus API cannot be contacted.
 The `ffmpeg.status` will be `not_found` if FFmpeg is not installed or not in PATH.
+Any sub-check can be `unknown` if readiness probing fails internally; inspect server logs for details.
 
 Because this endpoint is unauthenticated, configuration health is deliberately aggregate: the response does not reveal which credential fields are present or missing.
+Healthy and degraded readiness results are cached for 15 seconds and may be that old. Both readiness paths retain HTTP 200 when degraded; clients must inspect `data.status`.
 
 ## Authentication
 
@@ -90,6 +110,8 @@ Protected routes:
 
 Public routes:
 - `GET /health`
+- `GET /health/live`
+- `GET /health/ready`
 - `POST /auth/login`
 
 ### Login

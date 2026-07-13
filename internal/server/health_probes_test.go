@@ -246,7 +246,7 @@ func TestCheckUpstreamStatus_HTTPRejectionBeatsTCPReachable(t *testing.T) {
 	s.upstreamCache = &upstreamCacheEntry{token: "test-token", expiresAt: time.Now().Add(time.Hour)}
 	s.upstreamCacheMu.Unlock()
 
-	if got := s.checkUpstreamStatus().Status; got != "unreachable" {
+	if got := s.checkUpstreamStatus(context.Background()).Status; got != "unreachable" {
 		t.Errorf("expected unreachable (HTTP 401 must beat an open TCP port), got %q", got)
 	}
 }

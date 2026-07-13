@@ -39,10 +39,18 @@ This document provides operational runbooks for common incidents and troubleshoo
 
 ## Service Health Checks
 
-### Check API Server Status
+### Check API Server Liveness
 
 ```bash
-curl -s http://localhost:8080/api/v1/health
+curl -s http://localhost:8080/api/v1/health/live
+```
+
+Use the liveness path for process and container liveness checks. It performs no dependency checks.
+
+### Check Dependency Readiness
+
+```bash
+curl -s http://localhost:8080/api/v1/health/ready
 ```
 
 Expected response (structured envelope with sub-checks):
@@ -69,8 +77,9 @@ Expected response (structured envelope with sub-checks):
 }
 ```
 
-If any component is not configured or unavailable, the overall `status` becomes `degraded` and the relevant sub-check shows `not_configured`, `unreachable`, or `not_found`.
+If any component is not configured or unavailable, the overall `status` becomes `degraded` and the relevant sub-check shows `not_configured`, `unreachable`, or `not_found`. A sub-check reports `unknown` if readiness probing fails internally; inspect server logs for details.
 The unauthenticated response intentionally reports only aggregate configuration status; inspect the local configuration or server logs to diagnose a `misconfigured` result.
+Readiness results, including degraded results, are cached for 15 seconds and may be that old. `/api/v1/health` remains a compatibility alias for readiness. Both readiness paths return HTTP 200 when degraded, so automation must inspect `data.status`.
 
 ### Check Download Jobs
 
@@ -183,7 +192,8 @@ sudo pacman -S ffmpeg
    pkill impartus
    ./impartus serve --port 8080
    ```
-5. Verify health: `curl http://localhost:8080/api/v1/health`
+5. Verify liveness: `curl http://localhost:8080/api/v1/health/live`
+6. Verify dependency readiness: `curl http://localhost:8080/api/v1/health/ready`
 
 ### P2: Download Failures
 
@@ -254,7 +264,8 @@ Current operational visibility is intentionally simple and built from live featu
 
 | Signal | Source | Purpose |
 |--------|--------|---------|
-| Health endpoint | `GET /api/v1/health` | Verify config, upstream reachability, and FFmpeg availability |
+| Liveness endpoint | `GET /api/v1/health/live` | Verify that the API process can serve requests without probing dependencies |
+| Readiness endpoint | `GET /api/v1/health/ready` | Verify cached config, upstream reachability, and FFmpeg status |
 | Request correlation | `X-Request-ID` header | Trace a request across handler logs |
 | API logs | `api.log` | Inspect server/runtime failures after deploys or incidents |
 | CI/CD status | GitHub Actions | Confirm build/test state before and after rollouts |
@@ -265,8 +276,11 @@ There is no built-in metrics export or webhook alerting in the current codebase.
 ### Deployment Verification
 
 ```bash
-# Verify service health
-curl -s http://localhost:8080/api/v1/health | jq
+# Verify process liveness
+curl -s http://localhost:8080/api/v1/health/live | jq
+
+# Verify dependency readiness (inspect data.status; HTTP remains 200 when degraded)
+curl -s http://localhost:8080/api/v1/health/ready | jq
 
 # Check recent logs for errors
 tail -50 api.log | grep -i error

@@ -87,6 +87,19 @@ type statusCheckResult struct {
 	Status string `json:"status"`
 }
 
+type livenessResponse struct {
+	Status string `json:"status"`
+}
+
+type readinessCache struct {
+	mu          sync.Mutex
+	response    healthResponse
+	expiresAt   time.Time
+	valid       bool
+	refreshing  bool
+	refreshDone chan struct{}
+}
+
 // JobConfigOptions contains optional per-job configuration overrides for download settings.
 type JobConfigOptions struct {
 	Quality                   *string `json:"quality,omitempty"`
@@ -310,6 +323,9 @@ type APIServer struct {
 	upstreamCacheMu  sync.RWMutex
 	upstreamLogin    UpstreamLoginFunc
 	loginLimiter     *loginRateLimiter
+	readinessCache   readinessCache
+	healthNow        func() time.Time
+	readinessProbe   func(context.Context) healthResponse
 	// loopback reports whether the server binds a loopback address. When false
 	// (e.g. ListenAddr=0.0.0.0), CORS and WebSocket origin checks are tightened.
 	loopback bool

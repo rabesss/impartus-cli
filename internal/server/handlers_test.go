@@ -52,7 +52,7 @@ func TestEnsureScheme(t *testing.T) {
 func TestProbeUpstreamHTTP_NoCache(t *testing.T) {
 	s := newAPIServer(validServerConfig())
 	// No upstream cache set: nothing to authenticate with, so not probed.
-	reachable, probed := s.probeUpstreamHTTP()
+	reachable, probed := s.probeUpstreamHTTP(context.Background())
 	if probed {
 		t.Error("expected not probed when no upstream cache")
 	}
@@ -67,7 +67,7 @@ func TestProbeUpstreamHTTP_EmptyToken(t *testing.T) {
 	s.upstreamCache = &upstreamCacheEntry{token: ""}
 	s.upstreamCacheMu.Unlock()
 
-	reachable, probed := s.probeUpstreamHTTP()
+	reachable, probed := s.probeUpstreamHTTP(context.Background())
 	if probed {
 		t.Error("expected not probed when token is empty")
 	}
@@ -89,7 +89,7 @@ func TestProbeUpstreamHTTP_InvalidURL(t *testing.T) {
 
 	// A token exists so the probe is attempted, but the invalid URL means it
 	// cannot reach: probed=true, reachable=false (no TCP fallback).
-	reachable, probed := s.probeUpstreamHTTP()
+	reachable, probed := s.probeUpstreamHTTP(context.Background())
 	if !probed {
 		t.Error("expected probed despite invalid URL")
 	}
@@ -123,7 +123,7 @@ func TestProbeUpstreamHTTP_SuccessfulProbe(t *testing.T) {
 	s.upstreamCache = &upstreamCacheEntry{token: "valid-token"}
 	s.upstreamCacheMu.Unlock()
 
-	reachable, probed := s.probeUpstreamHTTP()
+	reachable, probed := s.probeUpstreamHTTP(context.Background())
 	if !probed {
 		t.Error("expected probe to be issued against reachable upstream")
 	}
@@ -152,7 +152,7 @@ func TestProbeUpstreamHTTP_ServerReturnsError(t *testing.T) {
 
 	// A 5xx response indicates an unhealthy upstream; the probe must report it
 	// as not reachable (probed=true) rather than letting a TCP probe flip it.
-	reachable, probed := s.probeUpstreamHTTP()
+	reachable, probed := s.probeUpstreamHTTP(context.Background())
 	if !probed {
 		t.Error("expected probe to be issued against 500 upstream")
 	}
@@ -173,7 +173,7 @@ func TestProbeUpstreamTCP_InvalidURL(t *testing.T) {
 		DownloadLocation: "./downloads",
 	})
 
-	result := s.probeUpstreamTCP()
+	result := s.probeUpstreamTCP(context.Background())
 	if result {
 		t.Error("expected false for invalid URL")
 	}
@@ -187,7 +187,7 @@ func TestProbeUpstreamTCP_UnreachableHost(t *testing.T) {
 		DownloadLocation: "./downloads",
 	})
 
-	if s.probeUpstreamTCP() {
+	if s.probeUpstreamTCP(context.Background()) {
 		t.Error("expected probeUpstreamTCP to return false for a refused connection")
 	}
 }
@@ -203,7 +203,7 @@ func TestProbeUpstreamTCP_ReachableServer(t *testing.T) {
 		DownloadLocation: "./downloads",
 	})
 
-	result := s.probeUpstreamTCP()
+	result := s.probeUpstreamTCP(context.Background())
 	if !result {
 		t.Error("expected true for reachable local test server")
 	}
@@ -215,7 +215,7 @@ func TestProbeUpstreamTCP_ReachableServer(t *testing.T) {
 
 func TestCheckUpstreamStatus_NilConfig(t *testing.T) {
 	s := newAPIServer(nil)
-	result := s.checkUpstreamStatus()
+	result := s.checkUpstreamStatus(context.Background())
 	if result.Status != "not_configured" {
 		t.Errorf("expected not_configured, got %s", result.Status)
 	}
@@ -228,7 +228,7 @@ func TestCheckUpstreamStatus_EmptyBaseURL(t *testing.T) {
 		BaseURL:          "",
 		DownloadLocation: "./downloads",
 	})
-	result := s.checkUpstreamStatus()
+	result := s.checkUpstreamStatus(context.Background())
 	if result.Status != "not_configured" {
 		t.Errorf("expected not_configured, got %s", result.Status)
 	}
@@ -245,7 +245,7 @@ func TestCheckUpstreamStatus_Reachable(t *testing.T) {
 		DownloadLocation: "./downloads",
 	})
 
-	result := s.checkUpstreamStatus()
+	result := s.checkUpstreamStatus(context.Background())
 	if result.Status != "reachable" {
 		t.Errorf("expected reachable, got %s", result.Status)
 	}
