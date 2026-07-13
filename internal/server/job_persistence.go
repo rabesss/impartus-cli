@@ -48,15 +48,10 @@ func newJobPersistence(path string) *jobPersistence {
 	return &jobPersistence{path: path}
 }
 
-// save writes the current job store contents to disk.
-func (p *jobPersistence) save(jobs map[string]*Job) error {
+// save writes an immutable snapshot of the current job store to disk.
+func (p *jobPersistence) save(persisted map[string]persistedJob) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-
-	persisted := make(map[string]persistedJob, len(jobs))
-	for id, job := range jobs {
-		persisted[id] = jobToPersisted(job)
-	}
 
 	data, err := json.MarshalIndent(persisted, "", "  ")
 	if err != nil {

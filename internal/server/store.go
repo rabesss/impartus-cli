@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 	"time"
 
@@ -18,7 +19,11 @@ type JobStore struct {
 	idempotencyKeys map[string]string // idempotencyKey -> jobID
 	mu              sync.RWMutex
 	persistence     *jobPersistence
+	coordinator     *persistenceCoordinator
+	revision        uint64
 }
+
+const maxRetainedTerminalJobs = 1000
 
 // NewJobStore creates an in-memory job store with no persistence.
 func NewJobStore() *JobStore {
@@ -36,7 +41,16 @@ func NewJobStoreWithPersistence(path string) *JobStore {
 		idempotencyKeys: make(map[string]string),
 		persistence:     newJobPersistence(path),
 	}
-	js.loadFromDisk()
+	changed := js.loadFromDisk()
+	js.coordinator = newPersistenceCoordinator(js.persistence.save)
+	if changed {
+		js.mu.Lock()
+		revision, snapshot := js.snapshotLocked()
+		js.mu.Unlock()
+		if err := js.publishAndFlush(revision, snapshot); err != nil {
+			log.Printf("warning: failed to persist restored jobs to %s: %v", js.persistence.path, err)
+		}
+	}
 	return js
 }
 
@@ -54,14 +68,24 @@ func (js *JobStore) CreateJob(subjectID, sessionID, startIndex, endIndex int, cf
 // whether the job was newly created (true) or returned from the idempotency
 // cache (false).
 func (js *JobStore) CreateJobWithKey(subjectID, sessionID, startIndex, endIndex int, cfg *config.Config, idempotencyKey string) (*Job, bool) {
+	job, created, err := js.createJobWithKeyDurable(subjectID, sessionID, startIndex, endIndex, cfg, idempotencyKey)
+	if err != nil {
+		log.Printf("warning: failed to persist created job: %v", err)
+	}
+	return job, created
+}
+
+func (js *JobStore) createJobWithKeyDurable(subjectID, sessionID, startIndex, endIndex int, cfg *config.Config, idempotencyKey string) (*Job, bool, error) {
 	js.mu.Lock()
-	defer js.mu.Unlock()
 
 	// Check idempotency key for existing job
 	if idempotencyKey != "" {
 		if existingID, ok := js.idempotencyKeys[idempotencyKey]; ok {
 			if job, ok := js.jobs[existingID]; ok {
-				return job.copy(), false
+				copy := job.copy()
+				revision, snapshot := js.snapshotLocked()
+				js.mu.Unlock()
+				return copy, false, js.publishAndFlush(revision, snapshot)
 			}
 		}
 	}
@@ -92,8 +116,9 @@ func (js *JobStore) CreateJobWithKey(subjectID, sessionID, startIndex, endIndex 
 		js.idempotencyKeys[idempotencyKey] = jobID
 	}
 
-	js.saveToDisk()
-	return job, true
+	revision, snapshot := js.snapshotLocked()
+	js.mu.Unlock()
+	return job, true, js.publishAndFlush(revision, snapshot)
 }
 
 func (js *JobStore) jobByIdempotencyKey(key string) (*Job, bool) {
@@ -164,93 +189,142 @@ func (js *JobStore) GetJobStatus(id string) (JobStatus, bool) {
 // SetFilteredLectures sets the filtered lecture count for a job under the write lock.
 func (js *JobStore) SetFilteredLectures(id string, count int) {
 	js.mu.Lock()
-	defer js.mu.Unlock()
-	if job, ok := js.jobs[id]; ok {
-		job.FilteredLectures = count
+	job, ok := js.jobs[id]
+	if !ok {
+		js.mu.Unlock()
+		return
 	}
+	job.FilteredLectures = count
+	job.UpdatedAt = time.Now()
+	revision, snapshot := js.snapshotLocked()
+	js.mu.Unlock()
+	js.publish(revision, snapshot)
 }
 
 // UpdateJob updates a job's status, progress, and error message.
 func (js *JobStore) UpdateJob(id string, status JobStatus, progress float64, errMsg string) {
+	if err := js.updateJobDurable(id, status, progress, errMsg); err != nil {
+		log.Printf("warning: failed to persist updated job: %v", err)
+	}
+}
+
+func (js *JobStore) updateJobDurable(id string, status JobStatus, progress float64, errMsg string) error {
 	js.mu.Lock()
-	defer js.mu.Unlock()
 
 	job, ok := js.jobs[id]
 	if !ok {
-		return
+		js.mu.Unlock()
+		return nil
 	}
 
 	job.Status = status
 	job.Progress = progress
 	job.Error = errMsg
 	job.UpdatedAt = time.Now()
-	js.saveToDisk()
+	if isTerminalStatus(status) {
+		js.pruneTerminalJobsLocked()
+	}
+	revision, snapshot := js.snapshotLocked()
+	js.mu.Unlock()
+	if isTerminalStatus(status) {
+		return js.publishAndFlush(revision, snapshot)
+	}
+	js.publish(revision, snapshot)
+	return nil
 }
 
 // SetLectureProgress updates the completed and total lecture counts for a job.
 func (js *JobStore) SetLectureProgress(id string, completed, total int) {
 	js.mu.Lock()
-	defer js.mu.Unlock()
 
 	job, ok := js.jobs[id]
 	if !ok {
+		js.mu.Unlock()
 		return
 	}
 	job.CompletedLectures = completed
 	job.TotalLectures = total
 	job.UpdatedAt = time.Now()
-	js.saveToDisk()
+	revision, snapshot := js.snapshotLocked()
+	js.mu.Unlock()
+	js.publish(revision, snapshot)
 }
 
 // SetOutputs sets the output file paths for a completed job, copying the slice to avoid aliasing.
 func (js *JobStore) SetOutputs(id string, outputs []string) {
 	js.mu.Lock()
-	defer js.mu.Unlock()
 
 	job, ok := js.jobs[id]
 	if !ok {
+		js.mu.Unlock()
 		return
 	}
 	job.Outputs = append([]string{}, outputs...)
 	job.UpdatedAt = time.Now()
-	js.saveToDisk()
+	revision, snapshot := js.snapshotLocked()
+	js.mu.Unlock()
+	js.publish(revision, snapshot)
+}
+
+// CompleteJob atomically assigns outputs and transitions a job to completed.
+func (js *JobStore) CompleteJob(id string, outputs []string) error {
+	js.mu.Lock()
+	job, ok := js.jobs[id]
+	if !ok {
+		js.mu.Unlock()
+		return ErrJobNotFound
+	}
+	job.Outputs = append([]string{}, outputs...)
+	job.Status = StatusCompleted
+	job.Progress = 100
+	job.Error = ""
+	job.UpdatedAt = time.Now()
+	js.pruneTerminalJobsLocked()
+	revision, snapshot := js.snapshotLocked()
+	js.mu.Unlock()
+	return js.publishAndFlush(revision, snapshot)
 }
 
 // CancelJob transitions a non-terminal job to canceled status and cancels its context.
 // Returns an error if the job is not found or already in a terminal state.
 func (js *JobStore) CancelJob(id string) (*Job, error) {
 	js.mu.Lock()
-	defer js.mu.Unlock()
 
 	job, ok := js.jobs[id]
 	if !ok {
+		js.mu.Unlock()
 		return nil, ErrJobNotFound
 	}
 
 	if job.Status == StatusCompleted || job.Status == StatusFailed || job.Status == StatusCanceled {
+		js.mu.Unlock()
 		return nil, &TerminalStatusError{Status: job.Status}
 	}
 
 	job.Status = StatusCanceled
 	job.UpdatedAt = time.Now()
 	job.cancel()
-	js.saveToDisk()
-	return job.copy(), nil
+	js.pruneTerminalJobsLocked()
+	revision, snapshot := js.snapshotLocked()
+	copy := job.copy()
+	js.mu.Unlock()
+	return copy, js.publishAndFlush(revision, snapshot)
 }
 
 // loadFromDisk loads previously persisted jobs from the persistence file.
 // Jobs that were in a terminal state (completed, failed, canceled) are restored
 // with their preserved state. Running/pending jobs are restored as "failed" since
 // they cannot be resumed after a restart.
-func (js *JobStore) loadFromDisk() {
+func (js *JobStore) loadFromDisk() bool {
 	if js.persistence == nil {
-		return
+		return false
 	}
 
 	persisted := js.persistence.load()
 	if persisted == nil {
-		return
+		return false
 	}
+	persisted, changed := prunePersistedTerminalJobs(persisted)
 
 	for _, pj := range persisted {
 		createdAt, err := time.Parse(persistedTimeFormat, pj.CreatedAt)
@@ -266,6 +340,7 @@ func (js *JobStore) loadFromDisk() {
 		status := pj.Status
 		if status == StatusPending || status == StatusRunning {
 			status = StatusFailed
+			changed = true
 			if pj.Error == "" {
 				pj.Error = "job interrupted by server restart"
 			}
@@ -298,14 +373,135 @@ func (js *JobStore) loadFromDisk() {
 			js.idempotencyKeys[pj.IdempotencyKey] = pj.ID
 		}
 	}
+	return changed
 }
 
-// saveToDisk persists all jobs to the persistence file.
-func (js *JobStore) saveToDisk() {
-	if js.persistence == nil {
+// Flush waits until all mutations visible at call time have been attempted on disk.
+func (js *JobStore) Flush(ctx context.Context) error {
+	if js.coordinator == nil {
+		return nil
+	}
+	js.mu.RLock()
+	revision := js.revision
+	js.mu.RUnlock()
+	return js.coordinator.flushTo(ctx, revision)
+}
+
+// Close flushes pending persistence and stops the persistence worker. It is idempotent.
+func (js *JobStore) Close(ctx context.Context) error {
+	if js.coordinator == nil {
+		return nil
+	}
+	return js.coordinator.close(ctx)
+}
+
+func (js *JobStore) snapshotLocked() (uint64, map[string]persistedJob) {
+	js.revision++
+	snapshot := make(map[string]persistedJob, len(js.jobs))
+	for id, job := range js.jobs {
+		snapshot[id] = jobToPersisted(job)
+	}
+	return js.revision, snapshot
+}
+
+func (js *JobStore) publish(revision uint64, snapshot map[string]persistedJob) {
+	if js.coordinator == nil {
 		return
 	}
-	if err := js.persistence.save(js.jobs); err != nil {
+	if err := js.coordinator.publish(revision, snapshot); err != nil {
+		log.Printf("warning: failed to schedule job persistence: %v", err)
+	}
+}
+
+func (js *JobStore) publishAndFlush(revision uint64, snapshot map[string]persistedJob) error {
+	if js.coordinator == nil {
+		return nil
+	}
+	if err := js.coordinator.publish(revision, snapshot); err != nil {
+		return err
+	}
+	return js.coordinator.flushTo(context.Background(), revision)
+}
+
+// saveToDisk remains as an internal compatibility helper for callers that
+// explicitly request a durable snapshot.
+func (js *JobStore) saveToDisk() {
+	if js.coordinator == nil {
+		return
+	}
+	js.mu.Lock()
+	revision, snapshot := js.snapshotLocked()
+	js.mu.Unlock()
+	if err := js.publishAndFlush(revision, snapshot); err != nil {
 		log.Printf("warning: failed to persist jobs to %s: %v", js.persistence.path, err)
 	}
+}
+
+func isTerminalStatus(status JobStatus) bool {
+	return status == StatusCompleted || status == StatusFailed || status == StatusCanceled
+}
+
+func (js *JobStore) pruneTerminalJobsLocked() {
+	type terminalJob struct {
+		id        string
+		updatedAt time.Time
+	}
+	terminal := make([]terminalJob, 0)
+	for id, job := range js.jobs {
+		if isTerminalStatus(job.Status) {
+			terminal = append(terminal, terminalJob{id: id, updatedAt: job.UpdatedAt})
+		}
+	}
+	if len(terminal) <= maxRetainedTerminalJobs {
+		return
+	}
+	sort.Slice(terminal, func(i, j int) bool {
+		if terminal[i].updatedAt.Equal(terminal[j].updatedAt) {
+			return terminal[i].id < terminal[j].id
+		}
+		return terminal[i].updatedAt.Before(terminal[j].updatedAt)
+	})
+	for _, old := range terminal[:len(terminal)-maxRetainedTerminalJobs] {
+		job := js.jobs[old.id]
+		if job.cancel != nil {
+			job.cancel()
+		}
+		if job.IdempotencyKey != "" {
+			delete(js.idempotencyKeys, job.IdempotencyKey)
+		}
+		delete(js.jobs, old.id)
+	}
+}
+
+func prunePersistedTerminalJobs(jobs map[string]persistedJob) (map[string]persistedJob, bool) {
+	type terminalJob struct {
+		id        string
+		updatedAt time.Time
+	}
+	terminal := make([]terminalJob, 0)
+	for id, job := range jobs {
+		// Pending and running entries are deliberately retained here. They are
+		// converted to failed during restoration, preserving restart semantics.
+		if !isTerminalStatus(job.Status) {
+			continue
+		}
+		updatedAt, err := time.Parse(persistedTimeFormat, job.UpdatedAt)
+		if err != nil {
+			updatedAt = time.Time{}
+		}
+		terminal = append(terminal, terminalJob{id: id, updatedAt: updatedAt})
+	}
+	if len(terminal) <= maxRetainedTerminalJobs {
+		return jobs, false
+	}
+	sort.Slice(terminal, func(i, j int) bool {
+		if terminal[i].updatedAt.Equal(terminal[j].updatedAt) {
+			return terminal[i].id < terminal[j].id
+		}
+		return terminal[i].updatedAt.Before(terminal[j].updatedAt)
+	})
+	for _, old := range terminal[:len(terminal)-maxRetainedTerminalJobs] {
+		delete(jobs, old.id)
+	}
+	return jobs, true
 }

@@ -293,7 +293,12 @@ func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, created := s.jobStore.CreateJobWithKey(req.SubjectID, req.SessionID, req.StartIndex, req.EndIndex, mergedCfg, req.IdempotencyKey)
+	job, created, persistErr := s.jobStore.createJobWithKeyDurable(req.SubjectID, req.SessionID, req.StartIndex, req.EndIndex, mergedCfg, req.IdempotencyKey)
+	if persistErr != nil {
+		log.Printf("failed to persist created job %s: %v", job.ID, persistErr)
+		respondWithError(w, http.StatusInternalServerError, "JOB_PERSISTENCE_FAILED", "Job could not be durably created", "createJob", &retryHint{Retryable: true, RetryAfter: 10})
+		return
+	}
 
 	if !created {
 		respondWithEnvelope(w, http.StatusConflict, "createJob", createJobConflictResponse{
@@ -365,7 +370,8 @@ func (s *APIServer) deleteJobHandler(w http.ResponseWriter, r *http.Request) {
 			respondWithError(w, http.StatusBadRequest, "JOB_CANNOT_CANCEL", "Cannot cancel job in terminal state", "cancelJob", nil, map[string]string{"status": string(terminalErr.Status)})
 			return
 		}
-		respondWithError(w, http.StatusInternalServerError, "CANCEL_FAILED", err.Error(), "cancelJob", &retryHint{Retryable: true, RetryAfter: 10})
+		log.Printf("failed to durably cancel job: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "CANCEL_FAILED", "Job cancellation could not be persisted", "cancelJob", &retryHint{Retryable: true, RetryAfter: 10})
 		return
 	}
 

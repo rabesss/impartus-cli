@@ -682,7 +682,16 @@ func TestSaveToDisk_NoPersistence(t *testing.T) {
 
 func TestSaveToDisk_WithBadPath(t *testing.T) {
 	tmpDir := t.TempDir()
-	js := NewJobStoreWithPersistence(filepath.Join(tmpDir, "jobs.json"))
+	persistencePath := filepath.Join(tmpDir, "jobs.json")
+	js := NewJobStoreWithPersistence(persistencePath)
+	t.Cleanup(func() {
+		js.persistence.path = persistencePath
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := js.Close(ctx); err != nil {
+			t.Errorf("close persistent job store: %v", err)
+		}
+	})
 	cfg := &config.Config{DownloadLocation: "./downloads"}
 	js.CreateJob(1, 1, 1, 5, cfg)
 	// Corrupt the persistence path to trigger an error

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -10,6 +11,28 @@ import (
 
 	"github.com/rabesss/impartus-cli/internal/config"
 )
+
+func newTestPersistentStore(t *testing.T, path string) *JobStore {
+	t.Helper()
+	store := NewJobStoreWithPersistence(path)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := store.Close(ctx); err != nil {
+			t.Errorf("close persistent job store: %v", err)
+		}
+	})
+	return store
+}
+
+func flushTestStore(t *testing.T, store *JobStore) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := store.Flush(ctx); err != nil {
+		t.Fatalf("flush persistent job store: %v", err)
+	}
+}
 
 // ============================================================================
 // Job Persistence Tests
@@ -21,7 +44,7 @@ func TestPersistenceCreatedJobPersistedToDisk(t *testing.T) {
 	tmpDir := t.TempDir()
 	persistencePath := filepath.Join(tmpDir, ".jobs.json")
 
-	js := NewJobStoreWithPersistence(persistencePath)
+	js := newTestPersistentStore(t, persistencePath)
 	cfg := &config.Config{
 		Username:         "user",
 		Password:         "pass",
@@ -72,13 +95,14 @@ func TestPersistenceJobStatusUpdatesPersisted(t *testing.T) {
 	tmpDir := t.TempDir()
 	persistencePath := filepath.Join(tmpDir, ".jobs.json")
 
-	js := NewJobStoreWithPersistence(persistencePath)
+	js := newTestPersistentStore(t, persistencePath)
 	cfg := &config.Config{DownloadLocation: "./downloads"}
 
 	job := js.CreateJob(1, 1, 1, 5, cfg)
 
 	// Transition: pending -> running
 	js.UpdateJob(job.ID, "running", 50.0, "")
+	flushTestStore(t, js)
 
 	persisted := readPersistedJobs(t, persistencePath)
 	if persisted[job.ID].Status != "running" {
@@ -91,6 +115,7 @@ func TestPersistenceJobStatusUpdatesPersisted(t *testing.T) {
 	// Transition: running -> completed
 	js.UpdateJob(job.ID, "completed", 100.0, "")
 	js.SetOutputs(job.ID, []string{"output1.mp4", "output2.mp4"})
+	flushTestStore(t, js)
 
 	persisted = readPersistedJobs(t, persistencePath)
 	if persisted[job.ID].Status != "completed" {
@@ -125,13 +150,14 @@ func TestPersistenceJobsSurviveServerRestart(t *testing.T) {
 	cfg := &config.Config{DownloadLocation: "./downloads"}
 
 	// First server instance: create a job
-	js1 := NewJobStoreWithPersistence(persistencePath)
+	js1 := newTestPersistentStore(t, persistencePath)
 	job1 := js1.CreateJob(123, 456, 1, 5, cfg)
 	js1.UpdateJob(job1.ID, "completed", 100.0, "")
 	js1.SetOutputs(job1.ID, []string{"lecture1.mp4"})
+	flushTestStore(t, js1)
 
 	// Simulate server restart: create a new job store with same path
-	js2 := NewJobStoreWithPersistence(persistencePath)
+	js2 := newTestPersistentStore(t, persistencePath)
 
 	// The job should be found in the new store
 	retrieved, ok := js2.GetJob(job1.ID)
@@ -158,11 +184,12 @@ func TestPersistenceAllJobStatesPreservedAfterRestart(t *testing.T) {
 	cfg := &config.Config{DownloadLocation: "./downloads"}
 
 	// Create jobs in different terminal states
-	js1 := NewJobStoreWithPersistence(persistencePath)
+	js1 := newTestPersistentStore(t, persistencePath)
 
 	completedJob := js1.CreateJob(1, 1, 1, 1, cfg)
 	js1.UpdateJob(completedJob.ID, "completed", 100.0, "")
 	js1.SetOutputs(completedJob.ID, []string{"output.mp4"})
+	flushTestStore(t, js1)
 
 	failedJob := js1.CreateJob(2, 2, 1, 1, cfg)
 	js1.UpdateJob(failedJob.ID, "failed", 0.0, "network error")
@@ -173,7 +200,7 @@ func TestPersistenceAllJobStatesPreservedAfterRestart(t *testing.T) {
 	}
 
 	// Simulate restart
-	js2 := NewJobStoreWithPersistence(persistencePath)
+	js2 := newTestPersistentStore(t, persistencePath)
 
 	// Verify completed job
 	retrieved, ok := js2.GetJob(completedJob.ID)
@@ -212,7 +239,7 @@ func TestPersistenceFileContainsNoCredentials(t *testing.T) {
 	tmpDir := t.TempDir()
 	persistencePath := filepath.Join(tmpDir, ".jobs.json")
 
-	js := NewJobStoreWithPersistence(persistencePath)
+	js := newTestPersistentStore(t, persistencePath)
 	cfg := &config.Config{
 		Username:         "testuser",
 		Password:         "testpass",
@@ -271,7 +298,7 @@ func TestPersistenceCorruptFileHandledGracefully(t *testing.T) {
 	}
 
 	// Creating a job store with corrupt persistence should not panic
-	js := NewJobStoreWithPersistence(persistencePath)
+	js := newTestPersistentStore(t, persistencePath)
 
 	// Job store should be empty
 	jobs := js.ListJobs()
@@ -299,7 +326,7 @@ func TestPersistenceNonExistentFileHandledGracefully(t *testing.T) {
 	tmpDir := t.TempDir()
 	persistencePath := filepath.Join(tmpDir, ".nonexistent.json")
 
-	js := NewJobStoreWithPersistence(persistencePath)
+	js := newTestPersistentStore(t, persistencePath)
 
 	jobs := js.ListJobs()
 	if len(jobs) != 0 {
@@ -317,7 +344,7 @@ func TestPersistenceRunningJobsMarkedFailedOnRestart(t *testing.T) {
 	cfg := &config.Config{DownloadLocation: "./downloads"}
 
 	// Create a job and leave it in "running" state
-	js1 := NewJobStoreWithPersistence(persistencePath)
+	js1 := newTestPersistentStore(t, persistencePath)
 	job := js1.CreateJob(1, 1, 1, 5, cfg)
 	js1.UpdateJob(job.ID, "running", 42.0, "")
 
@@ -325,7 +352,7 @@ func TestPersistenceRunningJobsMarkedFailedOnRestart(t *testing.T) {
 	job2 := js1.CreateJob(2, 2, 1, 1, cfg)
 
 	// Simulate restart
-	js2 := NewJobStoreWithPersistence(persistencePath)
+	js2 := newTestPersistentStore(t, persistencePath)
 
 	// Running job should be marked as failed
 	retrieved, ok := js2.GetJob(job.ID)
@@ -356,7 +383,7 @@ func TestPersistenceAtomicWrite(t *testing.T) {
 	persistencePath := filepath.Join(tmpDir, ".jobs.json")
 	tmpPath := persistencePath + ".tmp"
 
-	js := NewJobStoreWithPersistence(persistencePath)
+	js := newTestPersistentStore(t, persistencePath)
 	cfg := &config.Config{DownloadLocation: "./downloads"}
 
 	js.CreateJob(1, 1, 1, 1, cfg)
@@ -378,7 +405,7 @@ func TestPersistenceFilePermissions(t *testing.T) {
 	tmpDir := t.TempDir()
 	persistencePath := filepath.Join(tmpDir, ".jobs.json")
 
-	js := NewJobStoreWithPersistence(persistencePath)
+	js := newTestPersistentStore(t, persistencePath)
 	cfg := &config.Config{DownloadLocation: "./downloads"}
 
 	js.CreateJob(1, 1, 1, 1, cfg)
@@ -404,7 +431,7 @@ func TestPersistenceEmptyStoreOnStart(t *testing.T) {
 		t.Fatalf("failed to write empty json file: %v", err)
 	}
 
-	js := NewJobStoreWithPersistence(persistencePath)
+	js := newTestPersistentStore(t, persistencePath)
 
 	jobs := js.ListJobs()
 	if len(jobs) != 0 {
@@ -434,11 +461,12 @@ func TestPersistenceSetLectureProgressUpdatesFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	persistencePath := filepath.Join(tmpDir, ".jobs.json")
 
-	js := NewJobStoreWithPersistence(persistencePath)
+	js := newTestPersistentStore(t, persistencePath)
 	cfg := &config.Config{DownloadLocation: "./downloads"}
 
 	job := js.CreateJob(1, 1, 1, 5, cfg)
 	js.SetLectureProgress(job.ID, 3, 5)
+	flushTestStore(t, js)
 
 	persisted := readPersistedJobs(t, persistencePath)
 	if persisted[job.ID].CompletedLectures != 3 {
@@ -454,7 +482,7 @@ func TestPersistenceCancelJobUpdatesFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	persistencePath := filepath.Join(tmpDir, ".jobs.json")
 
-	js := NewJobStoreWithPersistence(persistencePath)
+	js := newTestPersistentStore(t, persistencePath)
 	cfg := &config.Config{DownloadLocation: "./downloads"}
 
 	job := js.CreateJob(1, 1, 1, 1, cfg)
@@ -488,11 +516,11 @@ func TestPersistencePreservesConfigFields(t *testing.T) {
 		EnablePipeline:   true,
 	}
 
-	js1 := NewJobStoreWithPersistence(persistencePath)
+	js1 := newTestPersistentStore(t, persistencePath)
 	job := js1.CreateJob(1, 1, 1, 5, cfg)
 
 	// Restart
-	js2 := NewJobStoreWithPersistence(persistencePath)
+	js2 := newTestPersistentStore(t, persistencePath)
 	retrieved, ok := js2.GetJob(job.ID)
 	if !ok {
 		t.Fatal("expected job found after restart")
@@ -523,7 +551,7 @@ func TestPersistenceTimestampsRoundTrip(t *testing.T) {
 
 	cfg := &config.Config{DownloadLocation: "./downloads"}
 
-	js1 := NewJobStoreWithPersistence(persistencePath)
+	js1 := newTestPersistentStore(t, persistencePath)
 	job := js1.CreateJob(1, 1, 1, 1, cfg)
 	originalCreatedAt := job.CreatedAt
 	originalUpdatedAt := job.UpdatedAt
@@ -531,9 +559,10 @@ func TestPersistenceTimestampsRoundTrip(t *testing.T) {
 	// Small delay to ensure timestamps differ
 	time.Sleep(10 * time.Millisecond)
 	js1.UpdateJob(job.ID, "running", 50.0, "")
+	flushTestStore(t, js1)
 
 	// Restart
-	js2 := NewJobStoreWithPersistence(persistencePath)
+	js2 := newTestPersistentStore(t, persistencePath)
 	retrieved, ok := js2.GetJob(job.ID)
 	if !ok {
 		t.Fatal("expected job found after restart")
@@ -553,7 +582,7 @@ func TestPersistenceMultipleJobsAllPersisted(t *testing.T) {
 	tmpDir := t.TempDir()
 	persistencePath := filepath.Join(tmpDir, ".jobs.json")
 
-	js := NewJobStoreWithPersistence(persistencePath)
+	js := newTestPersistentStore(t, persistencePath)
 	cfg := &config.Config{DownloadLocation: "./downloads"}
 
 	js.CreateJob(1, 1, 1, 5, cfg)
