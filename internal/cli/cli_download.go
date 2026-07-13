@@ -37,13 +37,53 @@ type downloadResult struct {
 	TotalLectures int      `json:"totalLectures,omitempty"`
 }
 
+// downloadPresentationOptions keeps user-facing output policy at the CLI
+// boundary. Machine-readable commands leave both writers nil so download
+// orchestration cannot create progress bars or emit warning text.
+type downloadPresentationOptions struct {
+	showProgress   bool
+	progressOutput io.Writer
+	warningOutput  io.Writer
+}
+
+func humanDownloadPresentation() downloadPresentationOptions {
+	return downloadPresentationOptions{
+		showProgress:   true,
+		progressOutput: os.Stdout,
+		warningOutput:  os.Stderr,
+	}
+}
+
+func quietDownloadPresentation() downloadPresentationOptions {
+	return downloadPresentationOptions{}
+}
+
+type downloadExecutionDependencies struct {
+	ensureFFmpeg     func() error
+	initClient       func(context.Context) (*config.Config, *client.Client, error)
+	downloadLectures func(context.Context, *config.Config, *client.Client, client.Lectures, downloadPresentationOptions) (downloadResult, error)
+}
+
+type lectureDownloadRunner interface {
+	FetchLecturePlaylists(context.Context, []client.Lecture) ([]client.ParsedPlaylist, error)
+	DownloadAndJoinPlaylist(context.Context, client.ParsedPlaylist, *mpb.Progress, *downloader.ProgressTracker) (downloader.JoinResult, error)
+}
+
+func defaultDownloadExecutionDependencies() downloadExecutionDependencies {
+	return downloadExecutionDependencies{
+		ensureFFmpeg:     ensureFFmpeg,
+		initClient:       initClient,
+		downloadLectures: downloadLectures,
+	}
+}
+
 func runDownload(args []string) error {
-	_, err := executeDownload(args)
+	_, err := executeDownload(args, humanDownloadPresentation())
 	return err
 }
 
 func runDownloadJSON(args []string) (downloadResult, error) {
-	return executeDownload(args)
+	return executeDownload(args, quietDownloadPresentation())
 }
 
 func parseDownloadFlags(args []string) (downloadFlags, error) {
@@ -77,18 +117,22 @@ func parseDownloadFlags(args []string) (downloadFlags, error) {
 	return f, nil
 }
 
-func executeDownload(args []string) (downloadResult, error) {
+func executeDownload(args []string, presentation downloadPresentationOptions) (downloadResult, error) {
+	return executeDownloadWithDependencies(args, presentation, defaultDownloadExecutionDependencies())
+}
+
+func executeDownloadWithDependencies(args []string, presentation downloadPresentationOptions, deps downloadExecutionDependencies) (downloadResult, error) {
 	f, err := parseDownloadFlags(args)
 	if err != nil {
 		return downloadResult{}, err
 	}
 
-	if ffmpegErr := ensureFFmpeg(); ffmpegErr != nil {
+	if ffmpegErr := deps.ensureFFmpeg(); ffmpegErr != nil {
 		return downloadResult{}, ffmpegErr
 	}
 
 	ctx := context.Background()
-	cfg, apiClient, err := initClient(ctx)
+	cfg, apiClient, err := deps.initClient(ctx)
 	if err != nil {
 		return downloadResult{}, err
 	}
@@ -114,9 +158,9 @@ func executeDownload(args []string) (downloadResult, error) {
 
 	// Warn about no-audio lectures in the selection (only when not filtering).
 	totalLectures := len(selected) + filteredCount
-	warnNoAudioLectures(selected, cfg.SkipNoAudio)
+	warnNoAudioLectures(presentation.warningOutput, selected, cfg.SkipNoAudio)
 
-	result, err := downloadLectures(ctx, cfg, apiClient, selected)
+	result, err := deps.downloadLectures(ctx, cfg, apiClient, selected, presentation)
 	if err != nil {
 		return downloadResult{}, err
 	}
@@ -162,7 +206,11 @@ func applyAndValidateFlags(cfg *config.Config, quality, views string, audioOnly 
 	return cfg, nil
 }
 
-func downloadLectures(ctx context.Context, cfg *config.Config, apiClient *client.Client, lectures client.Lectures) (downloadResult, error) {
+func downloadLectures(ctx context.Context, cfg *config.Config, apiClient *client.Client, lectures client.Lectures, presentation downloadPresentationOptions) (downloadResult, error) {
+	return downloadLecturesWithRunner(ctx, cfg, downloader.New(cfg, apiClient), lectures, presentation)
+}
+
+func downloadLecturesWithRunner(ctx context.Context, cfg *config.Config, d lectureDownloadRunner, lectures client.Lectures, presentation downloadPresentationOptions) (downloadResult, error) {
 	if len(lectures) == 0 {
 		return downloadResult{}, errors.New("no lectures selected")
 	}
@@ -173,7 +221,6 @@ func downloadLectures(ctx context.Context, cfg *config.Config, apiClient *client
 		return downloadResult{}, err
 	}
 
-	d := downloader.New(cfg, apiClient)
 	playlists, err := d.FetchLecturePlaylists(ctx, lectures)
 	if err != nil {
 		return downloadResult{}, err
@@ -182,13 +229,21 @@ func downloadLectures(ctx context.Context, cfg *config.Config, apiClient *client
 		return downloadResult{}, errors.New("no playlists available for selected lectures")
 	}
 
-	p := mpb.New(mpb.WithWidth(70))
+	var p *mpb.Progress
+	if presentation.showProgress {
+		progressOptions := []mpb.ContainerOption{mpb.WithWidth(70)}
+		if presentation.progressOutput != nil {
+			progressOptions = append(progressOptions, mpb.WithOutput(presentation.progressOutput))
+		}
+		p = mpb.New(progressOptions...)
+	}
 	var tracker *downloader.ProgressTracker
-	if cfg.ProgressTracking.Enabled {
+	if p != nil && cfg.ProgressTracking.Enabled {
 		tracker = downloader.NewProgressTracker(len(playlists), countChunks(playlists, cfg.Views), p)
 	}
 
 	outputPaths := make([]string, 0, len(playlists))
+	completedLectures := 0
 	for _, playlist := range playlists {
 		// Route through the shared DownloadAndJoinPlaylist (the same method the
 		// server job runner uses) so per-lecture download+join logic has one home.
@@ -197,6 +252,7 @@ func downloadLectures(ctx context.Context, cfg *config.Config, apiClient *client
 			return downloadResult{}, err
 		}
 		outputPaths = append(outputPaths, joinResult.OutputPaths()...)
+		completedLectures++
 
 		if tracker != nil {
 			downloader.LectureCompleted(tracker)
@@ -207,6 +263,8 @@ func downloadLectures(ctx context.Context, cfg *config.Config, apiClient *client
 		tracker.Stop()
 	}
 
-	p.Wait()
-	return downloadResult{Status: "completed", OutputPaths: outputPaths, LectureCount: len(outputPaths)}, nil
+	if p != nil {
+		p.Wait()
+	}
+	return downloadResult{Status: "completed", OutputPaths: outputPaths, LectureCount: completedLectures}, nil
 }

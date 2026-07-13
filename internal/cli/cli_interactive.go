@@ -39,7 +39,7 @@ func runInteractive() error {
 		return err
 	}
 
-	_, err = downloadLectures(ctx, cfg, apiClient, selected)
+	_, err = downloadLectures(ctx, cfg, apiClient, selected, humanDownloadPresentation())
 	return err
 }
 

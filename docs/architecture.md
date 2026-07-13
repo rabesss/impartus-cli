@@ -64,6 +64,13 @@ sequenceDiagram
   end
 ```
 
+The stream boundary is part of the JSON-mode contract. Success writes exactly
+one envelope to stdout and writes no progress or warning text; successful
+downloads leave stderr empty. Failure returns a non-zero exit status, leaves
+stdout empty, and writes exactly one error envelope to stderr. For download
+results, `lectureCount` counts completed lectures, while `outputPaths` may hold
+multiple files for each lecture.
+
 ## CLI play command flow
 
 The `play` command streams lectures directly in **mpv** without writing output files or invoking FFmpeg join.

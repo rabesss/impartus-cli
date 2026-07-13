@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -34,11 +35,15 @@ func countNoAudioLectures(lectures client.Lectures) int {
 	return count
 }
 
-func warnNoAudioLectures(lectures client.Lectures, skipNoAudio bool) {
+func warnNoAudioLectures(output io.Writer, lectures client.Lectures, skipNoAudio bool) {
 	noaudioCount := countNoAudioLectures(lectures)
-	if noaudioCount > 0 && !skipNoAudio {
-		fmt.Printf("[WARNING] %d lecture(s) in selection have no audio track (noaudio=1)\n", noaudioCount)
-		fmt.Printf("[INFO] Use --skip-no-audio to filter these out, or --include-noaudio to include anyway\n")
+	if output != nil && noaudioCount > 0 && !skipNoAudio {
+		if _, err := fmt.Fprintf(output, "[WARNING] %d lecture(s) in selection have no audio track (noaudio=1)\n", noaudioCount); err != nil {
+			return
+		}
+		if _, err := fmt.Fprintln(output, "[INFO] Use --skip-no-audio to filter these out, or --include-noaudio to include anyway"); err != nil {
+			return
+		}
 	}
 }
 

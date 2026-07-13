@@ -33,6 +33,7 @@ func restoreCLIState(t *testing.T) {
 	oldCourses := runCoursesFn
 	oldLectures := runLecturesFn
 	oldDownload := runDownloadFn
+	oldDownloadJSON := runDownloadJSONFn
 	oldServe := runServeFn
 	oldPlay := runPlayFn
 	t.Cleanup(func() {
@@ -41,6 +42,7 @@ func restoreCLIState(t *testing.T) {
 		runCoursesFn = oldCourses
 		runLecturesFn = oldLectures
 		runDownloadFn = oldDownload
+		runDownloadJSONFn = oldDownloadJSON
 		runServeFn = oldServe
 		runPlayFn = oldPlay
 	})
