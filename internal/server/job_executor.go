@@ -20,7 +20,7 @@ import (
 )
 
 func (s *APIServer) executeJob(jobID string) {
-	job, ok := s.jobStore.GetJob(jobID)
+	job, ok := s.jobStore.runtimeJobSnapshot(jobID)
 	if !ok {
 		return
 	}
@@ -56,13 +56,15 @@ func (s *APIServer) executeJob(jobID string) {
 }
 
 func (s *APIServer) updateRunningProgress(jobID string, progress float64, phase string, details any) bool {
-	job, ok := s.jobStore.GetJob(jobID)
+	job, ok := s.jobStore.runtimeJobSnapshot(jobID)
 	if !ok {
 		return false
 	}
 	status, _ := s.jobStore.GetJobStatus(jobID)
 	if job.ctx.Err() != nil || status == StatusCanceled {
-		s.jobStore.UpdateJob(jobID, StatusCanceled, progress, "")
+		if err := s.jobStore.updateJobDurable(jobID, StatusCanceled, progress, ""); err != nil {
+			log.Printf("failed to persist canceled job %s: %v", jobID, err)
+		}
 		return false
 	}
 
@@ -82,9 +84,13 @@ func (s *APIServer) handleCancelIfNeeded(jobID string, jobErr error) bool {
 	}
 	job, ok := s.jobStore.CopyJob(jobID)
 	if ok {
-		s.jobStore.UpdateJob(jobID, StatusCanceled, job.Progress, "")
+		if err := s.jobStore.updateJobDurable(jobID, StatusCanceled, job.Progress, ""); err != nil {
+			log.Printf("failed to persist canceled job %s: %v", jobID, err)
+		}
 	} else {
-		s.jobStore.UpdateJob(jobID, StatusCanceled, 0, "")
+		if err := s.jobStore.updateJobDurable(jobID, StatusCanceled, 0, ""); err != nil {
+			log.Printf("failed to persist canceled job %s: %v", jobID, err)
+		}
 	}
 
 	return true
@@ -230,8 +236,10 @@ func (s *APIServer) runPlaylistDownloads(ctx context.Context, jobCtx context.Con
 }
 
 func (s *APIServer) completeJob(jobID string, finalOutputs []string) {
-	s.jobStore.SetOutputs(jobID, finalOutputs)
-	s.jobStore.UpdateJob(jobID, StatusCompleted, 100, "")
+	if err := s.jobStore.CompleteJob(jobID, finalOutputs); err != nil {
+		log.Printf("failed to durably complete job %s: %v", jobID, err)
+		return
+	}
 	evt := newWSEvent("job.completed", jobID)
 	evt.Status = StatusCompleted
 	evt.Progress = 100
@@ -240,7 +248,10 @@ func (s *APIServer) completeJob(jobID string, finalOutputs []string) {
 }
 
 func (s *APIServer) failJob(jobID, errMsg string) {
-	s.jobStore.UpdateJob(jobID, StatusFailed, 0, errMsg)
+	if err := s.jobStore.updateJobDurable(jobID, StatusFailed, 0, errMsg); err != nil {
+		log.Printf("failed to durably fail job %s: %v", jobID, err)
+		return
+	}
 	evt := newWSEvent("job.failed", jobID)
 	evt.Status = StatusFailed
 	evt.Error = errMsg

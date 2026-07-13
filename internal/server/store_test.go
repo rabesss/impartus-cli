@@ -181,12 +181,12 @@ func TestJobStore_Persistence(t *testing.T) {
 	path := filepath.Join(dir, ".jobs.json")
 	cfg := &config.Config{Quality: "720p"}
 
-	store1 := NewJobStoreWithPersistence(path)
+	store1 := newTestPersistentStore(t, path)
 	job := store1.CreateJob(1, 2, 1, 10, cfg)
 	store1.UpdateJob(job.ID, StatusCompleted, 100.0, "")
 
 	// Create new store loading from same file
-	store2 := NewJobStoreWithPersistence(path)
+	store2 := newTestPersistentStore(t, path)
 	got, ok := store2.GetJob(job.ID)
 	if !ok {
 		t.Fatal("expected persisted job to be loaded")
@@ -204,12 +204,12 @@ func TestJobStore_PendingBecomesFailedOnLoad(t *testing.T) {
 	path := filepath.Join(dir, ".jobs.json")
 	cfg := &config.Config{}
 
-	store1 := NewJobStoreWithPersistence(path)
+	store1 := newTestPersistentStore(t, path)
 	job := store1.CreateJob(1, 2, 1, 10, cfg)
 	// Job is still pending, should become failed on reload
 	_ = job
 
-	store2 := NewJobStoreWithPersistence(path)
+	store2 := newTestPersistentStore(t, path)
 	got, _ := store2.GetJob(job.ID)
 	if got.Status != StatusFailed {
 		t.Errorf("pending job on reload: Status = %q, want %q", got.Status, StatusFailed)

@@ -214,7 +214,7 @@ func TestIdempotencyKeyPersistedAcrossRestart(t *testing.T) {
 	persistencePath := filepath.Join(tmpDir, ".jobs.json")
 	cfg := &config.Config{DownloadLocation: "./downloads"}
 
-	js1 := NewJobStoreWithPersistence(persistencePath)
+	js1 := newTestPersistentStore(t, persistencePath)
 	job1, created := js1.CreateJobWithKey(123, 456, 1, 5, cfg, "persist-key")
 	if !created {
 		t.Fatal("expected first creation to succeed")
@@ -222,7 +222,7 @@ func TestIdempotencyKeyPersistedAcrossRestart(t *testing.T) {
 	js1.UpdateJob(job1.ID, "completed", 100, "")
 
 	// Simulate restart
-	js2 := NewJobStoreWithPersistence(persistencePath)
+	js2 := newTestPersistentStore(t, persistencePath)
 
 	// Same key should return the existing job
 	job2, created2 := js2.CreateJobWithKey(999, 888, 2, 10, cfg, "persist-key")
@@ -271,7 +271,7 @@ func TestIdempotencyKeyInPersistedFile(t *testing.T) {
 	persistencePath := filepath.Join(tmpDir, ".jobs.json")
 	cfg := &config.Config{DownloadLocation: "./downloads"}
 
-	js := NewJobStoreWithPersistence(persistencePath)
+	js := newTestPersistentStore(t, persistencePath)
 	js.CreateJobWithKey(1, 1, 1, 1, cfg, "file-key-xyz")
 
 	data, err := os.ReadFile(persistencePath)

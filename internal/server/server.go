@@ -96,6 +96,13 @@ func (s *APIServer) Start(ctxs ...context.Context) error {
 	if s.stopLoginLimiter != nil {
 		defer s.stopLoginLimiter()
 	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.jobStore.Close(shutdownCtx); err != nil {
+			log.Printf("job persistence shutdown failed: %v", err)
+		}
+	}()
 
 	// 0600: the log may capture redacted-but-sensitive upstream error context;
 	// restrict to owner read/write only (no group/world access).
@@ -110,6 +117,8 @@ func (s *APIServer) Start(ctxs ...context.Context) error {
 		defer func() {
 			_ = logFile.Close() //nolint:errcheck
 		}()
+		previousLogOutput := log.Writer()
+		defer log.SetOutput(previousLogOutput)
 		log.SetOutput(logFile)
 	}
 

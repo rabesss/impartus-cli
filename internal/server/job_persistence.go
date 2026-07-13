@@ -2,8 +2,12 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -37,46 +41,167 @@ type persistedJob struct {
 // It ensures no credentials are persisted by only storing the
 // JobRuntimeConfig (which excludes username, password, token).
 type jobPersistence struct {
-	mu   sync.Mutex
-	path string
+	mu       sync.Mutex
+	path     string
+	syncFile func(*os.File) error
+	syncDir  func(string) error
+	linkFile func(string, string) error
 }
 
 func newJobPersistence(path string) *jobPersistence {
 	if path == "" {
 		path = defaultPersistencePath
 	}
-	return &jobPersistence{path: path}
+	return &jobPersistence{
+		path:     path,
+		syncFile: func(file *os.File) error { return file.Sync() },
+		syncDir:  syncPersistenceDirectory,
+		linkFile: os.Link,
+	}
 }
 
-// save writes the current job store contents to disk.
-func (p *jobPersistence) save(jobs map[string]*Job) error {
+// save writes an immutable snapshot of the current job store to disk.
+func (p *jobPersistence) save(persisted map[string]persistedJob) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-
-	persisted := make(map[string]persistedJob, len(jobs))
-	for id, job := range jobs {
-		persisted[id] = jobToPersisted(job)
-	}
 
 	data, err := json.MarshalIndent(persisted, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	// Write to temp file then rename for atomicity
+	// Write and sync a restrictive temp file before atomically replacing the
+	// live snapshot. Keep a rollback point until the parent directory
+	// confirms the rename is durable.
 	tmpPath := p.path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+	backupPath := p.path + ".bak"
+	_ = os.Remove(tmpPath)                                                      //nolint:errcheck // stale temp cleanup is best-effort
+	tmp, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304 -- operator-configured persistence path
+	if err != nil {
 		return err
+	}
+	cleanupTemp := true
+	defer func() {
+		if cleanupTemp {
+			_ = os.Remove(tmpPath) //nolint:errcheck // deferred temp cleanup is best-effort
+		}
+	}()
+	if chmodErr := tmp.Chmod(0o600); chmodErr != nil {
+		_ = tmp.Close() //nolint:errcheck // preserving the primary chmod error
+		return fmt.Errorf("restrict persistence temp file: %w", chmodErr)
+	}
+	written, err := tmp.Write(data)
+	if err == nil && written != len(data) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		_ = tmp.Close() //nolint:errcheck // preserving the primary write error
+		return fmt.Errorf("write persistence temp file: %w", err)
+	}
+	if syncErr := p.syncFile(tmp); syncErr != nil {
+		_ = tmp.Close() //nolint:errcheck // preserving the primary sync error
+		return fmt.Errorf("sync persistence temp file: %w", syncErr)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close persistence temp file: %w", err)
 	}
 
-	if err := os.Rename(tmpPath, p.path); err != nil {
-		// Clean up temp file on rename failure
-		//nolint:errcheck
-		_ = os.Remove(tmpPath)
-		return err
+	_ = os.Remove(backupPath) //nolint:errcheck // stale rollback link cleanup is best-effort
+	hadPrevious, rollbackErr := p.createRollbackFile(backupPath)
+	if rollbackErr != nil {
+		return rollbackErr
 	}
+
+	if err := replacePersistenceFile(tmpPath, p.path); err != nil {
+		_ = os.Remove(backupPath) //nolint:errcheck // rollback link is unused when rename fails
+		return fmt.Errorf("replace persistence file: %w", err)
+	}
+	cleanupTemp = false
+
+	parent := filepath.Dir(p.path)
+	if err := p.syncDir(parent); err != nil {
+		rollbackErr := rollbackPersistenceRename(p.path, backupPath, hadPrevious)
+		syncRollbackErr := p.syncDir(parent)
+		return errors.Join(
+			fmt.Errorf("sync persistence directory: %w", err),
+			wrapPersistenceRollbackError(rollbackErr),
+			wrapPersistenceRollbackSyncError(syncRollbackErr),
+		)
+	}
+	_ = os.Remove(backupPath) //nolint:errcheck // a stale rollback link does not affect the durable primary
 
 	return nil
+}
+
+func (p *jobPersistence) createRollbackFile(backupPath string) (bool, error) {
+	if _, err := os.Stat(p.path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("inspect existing persistence file: %w", err)
+	}
+	if linkErr := p.linkFile(p.path, backupPath); linkErr != nil {
+		if copyErr := p.copyRollbackFile(backupPath); copyErr != nil {
+			return false, errors.Join(
+				fmt.Errorf("create persistence rollback link: %w", linkErr),
+				fmt.Errorf("copy persistence rollback file: %w", copyErr),
+			)
+		}
+	}
+	return true, nil
+}
+
+func (p *jobPersistence) copyRollbackFile(backupPath string) error {
+	source, err := os.Open(p.path) // #nosec G304 -- operator-configured persistence path
+	if err != nil {
+		return err
+	}
+	defer source.Close() //nolint:errcheck
+
+	backup, err := os.OpenFile(backupPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600) // #nosec G304 -- adjacent rollback path
+	if err != nil {
+		return err
+	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(backupPath) //nolint:errcheck // preserving the primary copy/sync error
+		}
+	}()
+	if _, err := io.Copy(backup, source); err != nil {
+		_ = backup.Close() //nolint:errcheck // preserving the primary copy error
+		return err
+	}
+	if err := p.syncFile(backup); err != nil {
+		_ = backup.Close() //nolint:errcheck // preserving the primary sync error
+		return err
+	}
+	if err := backup.Close(); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
+}
+
+func rollbackPersistenceRename(path, backupPath string, hadPrevious bool) error {
+	if hadPrevious {
+		return replacePersistenceFile(backupPath, path)
+	}
+	return os.Remove(path)
+}
+
+func wrapPersistenceRollbackError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("roll back persistence rename: %w", err)
+}
+
+func wrapPersistenceRollbackSyncError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("sync persistence rollback: %w", err)
 }
 
 // load reads jobs from the persistence file. Returns nil map if file

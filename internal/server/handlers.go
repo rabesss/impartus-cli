@@ -293,7 +293,12 @@ func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, created := s.jobStore.CreateJobWithKey(req.SubjectID, req.SessionID, req.StartIndex, req.EndIndex, mergedCfg, req.IdempotencyKey)
+	job, created, persistErr := s.jobStore.createJobWithKeyDurable(req.SubjectID, req.SessionID, req.StartIndex, req.EndIndex, mergedCfg, req.IdempotencyKey)
+	if persistErr != nil {
+		log.Printf("failed to persist created job: %v", persistErr)
+		respondWithError(w, http.StatusInternalServerError, "JOB_PERSISTENCE_FAILED", "Job could not be durably created", "createJob", &retryHint{Retryable: true, RetryAfter: 10})
+		return
+	}
 
 	if !created {
 		respondWithEnvelope(w, http.StatusConflict, "createJob", createJobConflictResponse{
@@ -303,9 +308,8 @@ func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// CreateJobWithKey returns a copy for the idempotency-conflict path (!created),
-	// and a live pointer for the created path. Use CopyJob to get a safe snapshot
-	// for the response before the goroutine starts mutating the job.
+	// Refresh the detached creation result from committed store state before
+	// returning it; the executor may begin advancing the live job immediately.
 	jobCopy, ok := s.jobStore.CopyJob(job.ID)
 	if !ok {
 		respondWithError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "job disappeared after creation", "createJob", nil)
@@ -319,7 +323,9 @@ func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("panic in job executor for job %s: %v", job.ID, r)
-				s.jobStore.UpdateJob(job.ID, StatusFailed, 0, fmt.Sprintf("internal error: %v", r))
+				if err := s.jobStore.updateJobDurable(job.ID, StatusFailed, 0, fmt.Sprintf("internal error: %v", r)); err != nil {
+					log.Printf("failed to persist panicked job: %v", err)
+				}
 			}
 		}()
 		s.executeJob(job.ID)
@@ -365,7 +371,8 @@ func (s *APIServer) deleteJobHandler(w http.ResponseWriter, r *http.Request) {
 			respondWithError(w, http.StatusBadRequest, "JOB_CANNOT_CANCEL", "Cannot cancel job in terminal state", "cancelJob", nil, map[string]string{"status": string(terminalErr.Status)})
 			return
 		}
-		respondWithError(w, http.StatusInternalServerError, "CANCEL_FAILED", err.Error(), "cancelJob", &retryHint{Retryable: true, RetryAfter: 10})
+		log.Printf("failed to durably cancel job: %v", err)
+		respondWithError(w, http.StatusInternalServerError, "CANCEL_FAILED", "Job cancellation could not be persisted", "cancelJob", &retryHint{Retryable: true, RetryAfter: 10})
 		return
 	}
 
