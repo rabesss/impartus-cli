@@ -5,7 +5,8 @@
 
 * [Runbooks - Incident Response Playbooks](#runbooks---incident-response-playbooks)
   * [Service Health Checks](#service-health-checks)
-    * [Check API Server Status](#check-api-server-status)
+    * [Check API Server Liveness](#check-api-server-liveness)
+    * [Check Dependency Readiness](#check-dependency-readiness)
     * [Check Download Jobs](#check-download-jobs)
   * [Common Issues & Troubleshooting](#common-issues--troubleshooting)
     * [Issue: "ffmpeg not found" Error](#issue-ffmpeg-not-found-error)

@@ -26,7 +26,6 @@
   * [Development](#development)
     * [Build & Test](#build--test)
     * [Makefile Targets](#makefile-targets)
-    * [Code Quality](#code-quality)
     * [Running Tests](#running-tests)
   * [Architecture](#architecture)
     * [Package Structure](#package-structure)
@@ -510,9 +509,6 @@ make lint
 # Run pre-commit hooks
 make pre-commit
 
-# Install the pinned scanner into .venv-desloppify/, then enforce the gate
-make quality-gate-install
-make quality-gate
 ```
 
 ### Makefile Targets
@@ -528,9 +524,6 @@ make quality-gate
 | `make install` | Install to `$GOPATH/bin` |
 | `make run-cli` | Run CLI interactive mode |
 | `make run-api` | Start API server on port 8080 |
-| `make quality-gate-install` | Install pinned Desloppify 1.0 into `.venv-desloppify/` |
-| `make quality-gate` | Enforce a minimum Desloppify objective/mechanical score of 80 |
-| `make quality-gate-scan` | Run a diagnostic Desloppify scan without applying the score policy |
 | `make docs` | Generate docs table of contents |
 | `make docs-toc` | Generate documentation table of contents |
 | `make security` | Run all security scans (gitleaks, gosec, trivy, govulncheck) |
@@ -538,16 +531,6 @@ make quality-gate
 | `make security-gosec` | Run Go security analysis |
 | `make security-trivy` | Run vulnerability scanning |
 | `make security-govulncheck` | Run Go vulnerability check |
-
-### Code Quality
-
-- **golangci-lint** - Comprehensive linting with `.golangci.yml`
-- **pre-commit** - Git hooks for formatting and validation
-- **Quality gate** - `make quality-gate` requires a complete Desloppify Go scan and an objective/mechanical score of at least 80. Overall and strict scores are reported separately because clean CI has no maintained subjective-review state. The scan-scoped adapter supports golangci-lint v2 without changing normal lint commands; `make quality-gate-scan` is diagnostic-only.
-- **CI/CD** - Automated testing and linting on push/PR, with at least 40% aggregate Go test coverage required
-
-Desloppify's project-wide suppressions and the evidence required to maintain
-them are documented in [`docs/desloppify-go-triage.md`](docs/desloppify-go-triage.md).
 
 Install development tools:
 
