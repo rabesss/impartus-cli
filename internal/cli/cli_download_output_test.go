@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -122,7 +123,7 @@ func TestHumanDownloadPresentationKeepsWarningsAndProgress(t *testing.T) {
 
 func TestJSONDownloadStreamContract(t *testing.T) {
 	restoreCLIState(t)
-	cfg, apiClient, cleanup := newJSONDownloadIntegration(t)
+	cfg, apiClient, cleanup := newJSONDownloadIntegration(t, false)
 	defer cleanup()
 
 	deps := downloadExecutionDependencies{
@@ -147,7 +148,7 @@ func TestJSONDownloadStreamContract(t *testing.T) {
 	}
 
 	runDownloadJSONFn = func(args []string) (downloadResult, error) {
-		return executeDownloadWithDependencies(args, quietDownloadPresentation(), deps)
+		return runDownloadJSONWithDependencies(args, deps)
 	}
 	os.Args = []string{"impartus", "download", "--json", "-s", "1", "-S", "2"}
 	stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("test", "test") })
@@ -175,6 +176,74 @@ func TestJSONDownloadStreamContract(t *testing.T) {
 	}
 	if !envelope.Success || envelope.Data.Status != "completed" || envelope.Data.LectureCount != 1 || len(envelope.Data.OutputPaths) != 1 {
 		t.Fatalf("unexpected JSON download envelope: %+v", envelope)
+	}
+}
+
+func TestJSONDownloadFailureStreamSuppressesDownloaderLogs(t *testing.T) {
+	restoreCLIState(t)
+	cfg, apiClient, cleanup := newJSONDownloadIntegration(t, true)
+	defer cleanup()
+
+	deps := downloadExecutionDependencies{
+		ensureFFmpeg: func() error { return nil },
+		initClient: func(context.Context) (*config.Config, *client.Client, error) {
+			return cfg, apiClient, nil
+		},
+		downloadLectures: downloadLectures,
+	}
+	runDownloadJSONFn = func(args []string) (downloadResult, error) {
+		return runDownloadJSONWithDependencies(args, deps)
+	}
+	os.Args = []string{"impartus", "download", "--json", "-s", "1", "-S", "2"}
+
+	originalLogOutput := log.Writer()
+	t.Cleanup(func() { log.SetOutput(originalLogOutput) })
+	stdout, stderr, runErr := captureOutputStreams(t, func() error {
+		// The standard logger keeps the writer it was configured with, so point it
+		// at the captured process stderr before entering the JSON scope.
+		log.SetOutput(os.Stderr)
+		executeErr := Execute("test", "test")
+		if executeErr != nil {
+			if _, writeErr := fmt.Fprintln(os.Stderr, executeErr); writeErr != nil {
+				return fmt.Errorf("write JSON error envelope: %w", writeErr)
+			}
+		}
+		return executeErr
+	})
+	log.SetOutput(originalLogOutput)
+
+	if runErr == nil {
+		t.Fatal("expected real downloader failure to return an error")
+	}
+	if stdout != "" {
+		t.Fatalf("failed JSON download wrote stdout: %q", stdout)
+	}
+	decoder := json.NewDecoder(strings.NewReader(stderr))
+	var envelope jsonEnvelope
+	if decodeErr := decoder.Decode(&envelope); decodeErr != nil {
+		t.Fatalf("decode stderr envelope: %v; stderr=%q", decodeErr, stderr)
+	}
+	if decodeErr := decoder.Decode(&struct{}{}); decodeErr != io.EOF {
+		t.Fatalf("stderr contained downloader logs or another JSON value: %v; stderr=%q", decodeErr, stderr)
+	}
+	if envelope.Success || envelope.Error == nil || envelope.Meta.Command != "download" {
+		t.Fatalf("unexpected failure envelope: %+v", envelope)
+	}
+	if !strings.Contains(envelope.Error.Message, "download incomplete") {
+		t.Fatalf("failure envelope did not contain the downloader error: %+v", envelope.Error)
+	}
+
+	// The logger must remain available outside the scoped JSON wrapper. Running
+	// the same real failure directly exercises the human/non-JSON logging path.
+	var humanLogs bytes.Buffer
+	log.SetOutput(&humanLogs)
+	_, humanErr := executeDownloadWithDependencies([]string{"-s", "1", "-S", "2"}, quietDownloadPresentation(), deps)
+	log.SetOutput(originalLogOutput)
+	if humanErr == nil {
+		t.Fatal("expected human/non-JSON execution to return the downloader error")
+	}
+	if !strings.Contains(humanLogs.String(), "chunk 0 failed") {
+		t.Fatalf("standard downloader logging was not restored outside JSON execution: %q", humanLogs.String())
 	}
 }
 
@@ -221,7 +290,7 @@ func TestJSONFailureProcessHelper(t *testing.T) {
 	os.Exit(0)
 }
 
-func newJSONDownloadIntegration(t *testing.T) (*config.Config, *client.Client, func()) {
+func newJSONDownloadIntegration(t *testing.T, failChunk bool) (*config.Config, *client.Client, func()) {
 	t.Helper()
 	tempDir := t.TempDir()
 	binDir := t.TempDir()
@@ -254,6 +323,14 @@ func newJSONDownloadIntegration(t *testing.T) (*config.Config, *client.Client, f
 				return
 			}
 		case "/chunk0.ts":
+			if failChunk {
+				// A successful but malformed encrypted chunk reaches the real
+				// decrypt-and-log failure path without retry backoff.
+				if _, err := w.Write([]byte{0}); err != nil {
+					return
+				}
+				return
+			}
 			if _, err := w.Write(make([]byte, 16)); err != nil {
 				return
 			}
@@ -296,6 +373,30 @@ func captureOutputStreams(t *testing.T, fn func() error) (string, string, error)
 	if err != nil {
 		t.Fatalf("stderr pipe: %v", err)
 	}
+	defer func() {
+		os.Stdout, os.Stderr = oldStdout, oldStderr
+		for _, stream := range []*os.File{stdoutWriter, stderrWriter, stdoutReader, stderrReader} {
+			if closeErr := stream.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
+				t.Logf("cleanup captured stream: %v", closeErr)
+			}
+		}
+	}()
+
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	stdoutCh := make(chan readResult, 1)
+	stderrCh := make(chan readResult, 1)
+	go func() {
+		data, readErr := io.ReadAll(stdoutReader)
+		stdoutCh <- readResult{data: data, err: readErr}
+	}()
+	go func() {
+		data, readErr := io.ReadAll(stderrReader)
+		stderrCh <- readResult{data: data, err: readErr}
+	}()
+
 	os.Stdout, os.Stderr = stdoutWriter, stderrWriter
 	runErr := fn()
 	stdoutCloseErr := stdoutWriter.Close()
@@ -307,19 +408,56 @@ func captureOutputStreams(t *testing.T, fn func() error) (string, string, error)
 	if stderrCloseErr != nil {
 		t.Fatalf("close stderr writer: %v", stderrCloseErr)
 	}
-	stdout, err := io.ReadAll(stdoutReader)
-	if err != nil {
-		t.Fatalf("read stdout: %v", err)
-	}
-	stderr, err := io.ReadAll(stderrReader)
-	if err != nil {
-		t.Fatalf("read stderr: %v", err)
-	}
+	stdout := <-stdoutCh
+	stderr := <-stderrCh
 	if err := stdoutReader.Close(); err != nil {
 		t.Fatalf("close stdout reader: %v", err)
 	}
 	if err := stderrReader.Close(); err != nil {
 		t.Fatalf("close stderr reader: %v", err)
 	}
-	return string(stdout), string(stderr), runErr
+	if stdout.err != nil {
+		t.Fatalf("read stdout: %v", stdout.err)
+	}
+	if stderr.err != nil {
+		t.Fatalf("read stderr: %v", stderr.err)
+	}
+	return string(stdout.data), string(stderr.data), runErr
+}
+
+func TestCaptureOutputStreamsDrainsConcurrently(t *testing.T) {
+	payload := strings.Repeat("x", 1<<20)
+	stdout, stderr, err := captureOutputStreams(t, func() error {
+		if _, writeErr := io.WriteString(os.Stdout, payload); writeErr != nil {
+			return writeErr
+		}
+		if _, writeErr := io.WriteString(os.Stderr, payload); writeErr != nil {
+			return writeErr
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("captureOutputStreams() error = %v", err)
+	}
+	if stdout != payload || stderr != payload {
+		t.Fatalf("captured lengths stdout=%d stderr=%d, want %d each", len(stdout), len(stderr), len(payload))
+	}
+}
+
+func TestCaptureOutputStreamsRestoresGlobalsAfterPanic(t *testing.T) {
+	oldStdout, oldStderr := os.Stdout, os.Stderr
+	func() {
+		defer func() {
+			if recovered := recover(); recovered == nil {
+				t.Fatal("expected capture callback panic")
+			}
+		}()
+		_, _, captureErr := captureOutputStreams(t, func() error { panic("synthetic panic") })
+		if captureErr != nil {
+			t.Fatalf("unexpected capture error: %v", captureErr)
+		}
+	}()
+	if os.Stdout != oldStdout || os.Stderr != oldStderr {
+		t.Fatal("captureOutputStreams did not restore process streams after panic")
+	}
 }

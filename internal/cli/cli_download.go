@@ -5,7 +5,9 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"log"
 	"os"
+	"sync"
 
 	"github.com/vbauerster/mpb/v8"
 
@@ -58,6 +60,8 @@ func quietDownloadPresentation() downloadPresentationOptions {
 	return downloadPresentationOptions{}
 }
 
+var standardLoggerOutputMu sync.Mutex
+
 type downloadExecutionDependencies struct {
 	ensureFFmpeg     func() error
 	initClient       func(context.Context) (*config.Config, *client.Client, error)
@@ -83,7 +87,20 @@ func runDownload(args []string) error {
 }
 
 func runDownloadJSON(args []string) (downloadResult, error) {
-	return executeDownload(args, quietDownloadPresentation())
+	return runDownloadJSONWithDependencies(args, defaultDownloadExecutionDependencies())
+}
+
+func runDownloadJSONWithDependencies(args []string, deps downloadExecutionDependencies) (downloadResult, error) {
+	// The standard logger is used by the downloader for per-chunk diagnostics.
+	// Keep it out of the strict JSON stream only for the synchronous JSON
+	// download execution, then restore the caller's writer unconditionally.
+	standardLoggerOutputMu.Lock()
+	defer standardLoggerOutputMu.Unlock()
+	previousLogOutput := log.Writer()
+	log.SetOutput(io.Discard)
+	defer log.SetOutput(previousLogOutput)
+
+	return executeDownloadWithDependencies(args, quietDownloadPresentation(), deps)
 }
 
 func parseDownloadFlags(args []string) (downloadFlags, error) {
