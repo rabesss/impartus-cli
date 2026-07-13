@@ -1,13 +1,25 @@
-.PHONY: build test run-cli run-api lint clean install pre-commit-install pre-commit quality-gate quality-gate-scan quality-gate-next docs docs-toc security security-scan security-gitleaks security-gosec security-trivy security-govulncheck
+.PHONY: build config-init test run-cli run-api lint clean install pre-commit-install pre-commit quality-gate quality-gate-scan quality-gate-next docs docs-toc security security-scan security-gitleaks security-gosec security-trivy security-govulncheck
 
 DESLOPPIFY_VERSION ?= 0.9.12
 GO_TOOLCHAIN ?= $(shell awk '/^toolchain / { print $$2 }' go.mod)
+CONFIG_FILE ?= config.json
+SAMPLE_CONFIG ?= sample.config.json
 
 # Build the impartus binary
 build:
 	@echo "Building impartus..."
 	go build -o impartus .
 	@echo "Build complete!"
+
+# Create a private config file, or secure an existing one without overwriting it.
+config-init:
+	@if [ -e "$(CONFIG_FILE)" ]; then \
+		chmod 600 "$(CONFIG_FILE)" && \
+		echo "Secured existing $(CONFIG_FILE) (mode 0600)."; \
+	else \
+		install -m 600 "$(SAMPLE_CONFIG)" "$(CONFIG_FILE)" && \
+		echo "Created $(CONFIG_FILE) from $(SAMPLE_CONFIG) (mode 0600)."; \
+	fi
 
 # Run tests
 test:
@@ -187,6 +199,7 @@ security: security-gitleaks security-gosec security-trivy security-govulncheck
 help:
 	@echo "Available targets:"
 	@echo "  build              - Build the impartus binary"
+	@echo "  config-init        - Create or secure config.json with owner-only permissions"
 	@echo "  test               - Run tests"
 	@echo "  run-cli            - Run CLI in interactive mode"
 	@echo "  run-cli-download-help - Show download command help"
