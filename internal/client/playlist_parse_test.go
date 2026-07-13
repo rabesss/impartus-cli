@@ -61,3 +61,44 @@ https://cdn.placeholder.test/right-000.ts
 		t.Fatalf("unexpected second view URL: %q", got.SecondViewURLs[0])
 	}
 }
+
+func TestParsePlaylistResolvesMediaReferences(t *testing.T) {
+	playlist := "#EXTM3U\r\n\r\n#EXT-X-KEY:METHOD=AES-128,URI=\"../keys/key.bin\"\r\n#EXTINF:10,\r\n left-000.ts \r\n#EXT-X-DISCONTINUITY\r\n#EXTINF:10,\r\n//cdn.placeholder.test/right-000.ts\r\n"
+	scanner := bufio.NewScanner(strings.NewReader(playlist))
+
+	got, err := parsePlaylist(scanner, "https://media.placeholder.test/course/index.m3u8", 789, "Lecture-3", 3)
+	if err != nil {
+		t.Fatalf("parsePlaylist() unexpected error: %v", err)
+	}
+	if got.KeyURL != "https://media.placeholder.test/keys/key.bin" {
+		t.Fatalf("unexpected key URL: %q", got.KeyURL)
+	}
+	if len(got.FirstViewURLs) != 1 || got.FirstViewURLs[0] != "https://media.placeholder.test/course/left-000.ts" {
+		t.Fatalf("unexpected first-view URLs: %#v", got.FirstViewURLs)
+	}
+	if len(got.SecondViewURLs) != 1 || got.SecondViewURLs[0] != "https://cdn.placeholder.test/right-000.ts" {
+		t.Fatalf("unexpected second-view URLs: %#v", got.SecondViewURLs)
+	}
+}
+
+func TestParsePlaylistRejectsInvalidMediaReferences(t *testing.T) {
+	tests := []struct {
+		name     string
+		playlist string
+		want     string
+	}{
+		{name: "invalid key scheme", playlist: "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"file:///key.bin\"\nsegment.ts\n", want: "key URI"},
+		{name: "invalid segment scheme", playlist: "#EXTM3U\nfile:///segment.ts\n", want: "segment URI"},
+		{name: "malformed segment", playlist: "#EXTM3U\nhttp://[::1\n", want: "segment URI"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scanner := bufio.NewScanner(strings.NewReader(tt.playlist))
+			_, err := parsePlaylist(scanner, "https://media.placeholder.test/course/index.m3u8", 1, "Lecture", 1)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("parsePlaylist() error = %v, want contextual %q error", err, tt.want)
+			}
+		})
+	}
+}

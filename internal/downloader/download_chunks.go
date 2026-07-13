@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -14,15 +15,31 @@ import (
 	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
-// maxChunkSize caps the amount of data read into memory for a single chunk.
-// This mirrors the play server's maxSegmentSize limit (50 MB) to prevent
-// unbounded memory consumption from a malicious or malformed upstream response.
+// maxChunkSize caps every single-chunk response, whether streamed to disk or
+// read into memory. It mirrors the play server's maxSegmentSize limit (50 MiB).
 const maxChunkSize = 50 * 1024 * 1024 // 50 MB
+
+var errDownloadSizeLimit = errors.New("download exceeds size limit")
+
+func copyWithLimit(dst io.Writer, src io.Reader, limit int64) (int64, error) {
+	written, err := io.Copy(dst, io.LimitReader(src, limit+1))
+	if err != nil {
+		return written, err
+	}
+	if written > limit {
+		return written, errDownloadSizeLimit
+	}
+	return written, nil
+}
 
 // doDownloadChunk performs a single HTTP download, writing to a file or reading to memory
 // depending on the toMemory flag. It handles rate limiting, error status codes, and
 // returns the file path (when toMemory=false) or data bytes (when toMemory=true).
 func (d *Downloader) doDownloadChunk(ctx context.Context, url string, id int, chunk int, view string, toMemory bool) (string, []byte, int64, error) {
+	return d.doDownloadChunkWithLimit(ctx, url, id, chunk, view, toMemory, maxChunkSize)
+}
+
+func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, id int, chunk int, view string, toMemory bool, limit int64) (string, []byte, int64, error) {
 	if err := d.rateLimiter.WaitForDownload(ctx); err != nil {
 		return "", nil, 0, err
 	}
@@ -48,14 +65,17 @@ func (d *Downloader) doDownloadChunk(ctx context.Context, url string, id int, ch
 	outFilepath := filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_%s_%04d.ts.temp", id, view, chunk))
 
 	if toMemory {
-		data, readErr := io.ReadAll(io.LimitReader(resp.Body, maxChunkSize+1))
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 		if readErr != nil {
 			return "", nil, 0, fmt.Errorf("could not read chunk %d: %w", chunk, readErr)
 		}
-		if int64(len(data)) > maxChunkSize {
-			return "", nil, 0, fmt.Errorf("chunk %d exceeds max size %d bytes (possibly truncated)", chunk, maxChunkSize)
+		if int64(len(data)) > limit {
+			return "", nil, 0, fmt.Errorf("chunk %d exceeds max size %d bytes: %w", chunk, limit, errDownloadSizeLimit)
 		}
 		return outFilepath, data, int64(len(data)), nil
+	}
+	if resp.ContentLength > limit {
+		return "", nil, 0, fmt.Errorf("chunk %d exceeds max size %d bytes: %w", chunk, limit, errDownloadSizeLimit)
 	}
 
 	// G304: file paths are constructed from validated config and internal data
@@ -64,12 +84,25 @@ func (d *Downloader) doDownloadChunk(ctx context.Context, url string, id int, ch
 	if createErr != nil {
 		return "", nil, 0, fmt.Errorf("could not create file for chunk %d: %w", chunk, createErr)
 	}
-	defer func() { closeErr := outFile.Close(); _ = closeErr }()
+	removePartial := true
+	defer func() {
+		_ = outFile.Close() //nolint:errcheck
+		if removePartial {
+			_ = os.Remove(outFilepath) //nolint:errcheck
+		}
+	}()
 
-	bytesWritten, copyErr := io.Copy(outFile, resp.Body)
+	bytesWritten, copyErr := copyWithLimit(outFile, resp.Body, limit)
 	if copyErr != nil {
+		if errors.Is(copyErr, errDownloadSizeLimit) {
+			return "", nil, 0, fmt.Errorf("chunk %d exceeds max size %d bytes: %w", chunk, limit, copyErr)
+		}
 		return "", nil, 0, fmt.Errorf("could not write chunk %d: %w", chunk, copyErr)
 	}
+	if closeErr := outFile.Close(); closeErr != nil {
+		return "", nil, 0, fmt.Errorf("could not close chunk %d: %w", chunk, closeErr)
+	}
+	removePartial = false
 
 	return outFilepath, nil, bytesWritten, nil
 }
