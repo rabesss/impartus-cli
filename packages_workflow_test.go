@@ -23,12 +23,13 @@ func TestPackagesWorkflowPublishesScannedMultiPlatformArtifact(t *testing.T) {
 	required := []string{
 		"platforms: linux/amd64,linux/arm64",
 		"push: false",
-		"outputs: type=oci,dest=/tmp/impartus-image,tar=false",
+		"outputs: type=oci,dest=/tmp/impartus-image.tar,tar=true",
 		"id: scan_amd64",
 		"TRIVY_PLATFORM: linux/amd64",
 		"id: scan_arm64",
 		"TRIVY_PLATFORM: linux/arm64",
-		"input: '/tmp/impartus-image:prepublish-scan'",
+		"input: '/tmp/impartus-image.tar'",
+		"tar --extract --file /tmp/impartus-image.tar --directory /tmp/impartus-image",
 		"oras cp --from-oci-layout /tmp/impartus-image:prepublish-scan",
 		"oras resolve --oci-layout /tmp/impartus-image:prepublish-scan",
 	}
@@ -44,8 +45,14 @@ func TestPackagesWorkflowPublishesScannedMultiPlatformArtifact(t *testing.T) {
 	if got := strings.Count(workflow, "uses: aquasecurity/trivy-action@"); got != 2 {
 		t.Errorf("Trivy action invocation count = %d, want one scan per platform", got)
 	}
-	if got := strings.Count(workflow, "input: '/tmp/impartus-image:prepublish-scan'"); got != 2 {
-		t.Errorf("OCI layout scan input count = %d, want both scans to use the same artifact", got)
+	if got := strings.Count(workflow, "input: '/tmp/impartus-image.tar'"); got != 2 {
+		t.Errorf("OCI archive scan input count = %d, want both scans to use the same artifact", got)
+	}
+	if strings.Contains(workflow, "input: '/tmp/impartus-image:prepublish-scan'") {
+		t.Error("Trivy action input must be the OCI archive, not a tagged layout directory")
+	}
+	if got := strings.Count(workflow, "tar --extract --file /tmp/impartus-image.tar"); got != 1 {
+		t.Errorf("OCI archive extraction count = %d, want exactly one extraction after both scans", got)
 	}
 	if strings.Contains(workflow, "push: true") {
 		t.Error("packages workflow rebuilds or pushes through Buildx instead of publishing the scanned OCI artifact")
@@ -60,6 +67,7 @@ func TestPackagesWorkflowScanOutcomesGateCredentialsAndPublish(t *testing.T) {
 		"- name: Scan linux/amd64 image before publish",
 		"- name: Scan linux/arm64 image before publish",
 		"- name: Upload Trivy image reports",
+		"- name: Extract scanned OCI image",
 		"- name: Set up ORAS",
 		"- name: Log in to GHCR",
 		"- name: Publish scanned multi-platform OCI image",
@@ -77,8 +85,11 @@ func TestPackagesWorkflowScanOutcomesGateCredentialsAndPublish(t *testing.T) {
 	}
 
 	scanGate := "steps.scan_amd64.outcome == 'success' && steps.scan_arm64.outcome == 'success'"
-	if got := strings.Count(workflow, scanGate); got != 3 {
-		t.Errorf("explicit two-platform scan gate count = %d, want ORAS setup, login, and publish gates", got)
+	if got := strings.Count(workflow, scanGate); got != 4 {
+		t.Errorf("explicit two-platform scan gate count = %d, want extraction, ORAS setup, login, and publish gates", got)
+	}
+	if got := strings.Count(workflow, "steps.extract.outcome == 'success'"); got != 3 {
+		t.Errorf("successful extraction gate count = %d, want ORAS setup, login, and publish gates", got)
 	}
 	if strings.Contains(workflow, "success()") {
 		t.Error("generic success() gate makes report-upload outcomes affect publication")
