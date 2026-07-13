@@ -119,14 +119,14 @@ jobs:
 
       - name: Upload linux/amd64 Trivy SARIF results
         if: ${{ always() && github.event.repository.security_and_analysis.advanced_security.status == 'enabled' }}
-        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a # v4
+        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4
         with:
           sarif_file: trivy-image-amd64-results.sarif
           category: trivy-image-amd64
 
       - name: Upload linux/arm64 Trivy SARIF results
         if: ${{ always() && github.event.repository.security_and_analysis.advanced_security.status == 'enabled' }}
-        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a # v4
+        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4
         with:
           sarif_file: trivy-image-arm64-results.sarif
           category: trivy-image-arm64
