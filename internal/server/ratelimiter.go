@@ -120,10 +120,12 @@ func (l *loginRateLimiter) cleanup() {
 func (l *loginRateLimiter) startCleanup() func() {
 	ticker := time.NewTicker(l.window)
 	stop := make(chan struct{})
+	done := make(chan struct{})
 	var stopOnce sync.Once
 
 	go func() {
 		defer ticker.Stop()
+		defer close(done)
 		for {
 			select {
 			case <-ticker.C:
@@ -140,6 +142,7 @@ func (l *loginRateLimiter) startCleanup() func() {
 		stopOnce.Do(func() {
 			close(stop)
 		})
+		<-done
 	}
 }
 

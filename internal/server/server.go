@@ -73,8 +73,12 @@ func newAPIServerFull(port string, cfg *config.Config, loginFn UpstreamLoginFunc
 		return s.originAllowed(r)
 	}}
 
-	// Start rate limiter cleanup
-	s.stopLoginLimiter = limiter.startCleanup()
+	// Register background cleanup workers without starting them. Start owns the
+	// active lifecycle, so constructing a server cannot leak a goroutine.
+	s.cleanupLifecycle = newCleanupLifecycle(
+		func() func() { return StartTokenCleanup(s.tokenStore) },
+		limiter.startCleanup,
+	)
 
 	// Initialize job store (with persistence if enabled)
 	if persistenceEnabled {
@@ -90,13 +94,8 @@ func newAPIServerFull(port string, cfg *config.Config, loginFn UpstreamLoginFunc
 // Start starts the API server on the configured port. Accepts an optional context
 // for graceful shutdown.
 func (s *APIServer) Start(ctxs ...context.Context) error {
-	if s.stopTokenCleanup == nil {
-		s.stopTokenCleanup = StartTokenCleanup(s.tokenStore)
-	}
-	defer s.stopTokenCleanup()
-	if s.stopLoginLimiter != nil {
-		defer s.stopLoginLimiter()
-	}
+	defer s.cleanupLifecycle.Close()
+	s.cleanupLifecycle.Start()
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

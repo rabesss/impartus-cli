@@ -82,10 +82,12 @@ func (ts *TokenStore) CleanupExpired() {
 func StartTokenCleanup(tokenStore *TokenStore) func() {
 	ticker := time.NewTicker(1 * time.Hour)
 	stop := make(chan struct{})
+	done := make(chan struct{})
 	var stopOnce sync.Once
 
 	go func() {
 		defer ticker.Stop()
+		defer close(done)
 		for {
 			select {
 			case <-ticker.C:
@@ -100,6 +102,7 @@ func StartTokenCleanup(tokenStore *TokenStore) func() {
 		stopOnce.Do(func() {
 			close(stop)
 		})
+		<-done
 	}
 }
 
