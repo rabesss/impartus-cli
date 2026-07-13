@@ -402,7 +402,7 @@
         "fields": {
           "id": {
             "type": "string",
-            "description": "Job ID (format: job-{unixNano})"
+            "description": "Opaque job identifier beginning with job-. The current implementation appends a UUID; do not parse the value or infer creation time or ordering from it."
           },
           "subjectId": {
             "type": "integer"
@@ -540,7 +540,7 @@
         "id": {
           "type": "string",
           "required": true,
-          "description": "Job ID",
+          "description": "Opaque job identifier returned by the Jobs API; do not parse it or infer creation time or ordering.",
           "location": "path"
         }
       },
@@ -562,7 +562,7 @@
         "id": {
           "type": "string",
           "required": true,
-          "description": "Job ID",
+          "description": "Opaque job identifier returned by the Jobs API; do not parse it or infer creation time or ordering.",
           "location": "path"
         }
       },
@@ -685,7 +685,8 @@
             "value": "job.started"
           },
           "jobId": {
-            "type": "string"
+            "type": "string",
+            "description": "Opaque job identifier returned by the Jobs API"
           },
           "status": {
             "type": "string",
@@ -706,7 +707,8 @@
             "value": "job.progress"
           },
           "jobId": {
-            "type": "string"
+            "type": "string",
+            "description": "Opaque job identifier returned by the Jobs API"
           },
           "progress": {
             "type": "number",
@@ -754,7 +756,8 @@
             "value": "job.completed"
           },
           "jobId": {
-            "type": "string"
+            "type": "string",
+            "description": "Opaque job identifier returned by the Jobs API"
           },
           "status": {
             "type": "string",
@@ -784,7 +787,8 @@
             "value": "job.failed"
           },
           "jobId": {
-            "type": "string"
+            "type": "string",
+            "description": "Opaque job identifier returned by the Jobs API"
           },
           "status": {
             "type": "string",
@@ -809,7 +813,8 @@
             "value": "job.cancelled"
           },
           "jobId": {
-            "type": "string"
+            "type": "string",
+            "description": "Opaque job identifier returned by the Jobs API"
           },
           "status": {
             "type": "string",
@@ -1031,7 +1036,6 @@
   },
   "knownLimitations": [
     "Lectures endpoint uses query params (subject_id, session_id) instead of RESTful path params",
-    "Job ID is Unix timestamp-based (job-{unixNano}), not UUID",
     "Job responses use 'id' field, not 'jobId'",
     "WebSocket events have no 'data' wrapper — additional fields are at top level",
     "WebSocket timestamps are Unix integers, not ISO 8601 strings",
