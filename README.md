@@ -546,6 +546,9 @@ make quality-gate
 - **Quality gate** - `make quality-gate` requires a complete Desloppify Go scan and an objective/mechanical score of at least 80. Overall and strict scores are reported separately because clean CI has no maintained subjective-review state. The scan-scoped adapter supports golangci-lint v2 without changing normal lint commands; `make quality-gate-scan` is diagnostic-only.
 - **CI/CD** - Automated testing and linting on push/PR, with at least 40% aggregate Go test coverage required
 
+Desloppify's project-wide suppressions and the evidence required to maintain
+them are documented in [`docs/desloppify-go-triage.md`](docs/desloppify-go-triage.md).
+
 Install development tools:
 
 ```bash
