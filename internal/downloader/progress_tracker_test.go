@@ -208,15 +208,27 @@ func TestProgressTrackerOptionsControlIntervalAndWindow(t *testing.T) {
 	}
 }
 
-func TestProgressTrackerOptionsNormalizeZeroSamplingValues(t *testing.T) {
-	pt := NewProgressTrackerWithOptions(1, 1, nil, ProgressTrackerOptions{})
-	defer pt.Stop()
-
-	if pt.sampleInterval != defaultProgressSampleInterval {
-		t.Fatalf("sample interval = %v, want %v", pt.sampleInterval, defaultProgressSampleInterval)
+func TestProgressTrackerOptionsNormalizeNonPositiveSamplingValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		options ProgressTrackerOptions
+	}{
+		{name: "zero"},
+		{name: "negative", options: ProgressTrackerOptions{SampleInterval: -time.Second, SpeedWindowSize: -1}},
 	}
-	if pt.maxSamples != defaultProgressSpeedWindow {
-		t.Fatalf("max samples = %d, want %d", pt.maxSamples, defaultProgressSpeedWindow)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pt := NewProgressTrackerWithOptions(1, 1, nil, tt.options)
+			defer pt.Stop()
+
+			if pt.sampleInterval != defaultProgressSampleInterval {
+				t.Fatalf("sample interval = %v, want %v", pt.sampleInterval, defaultProgressSampleInterval)
+			}
+			if pt.maxSamples != defaultProgressSpeedWindow {
+				t.Fatalf("max samples = %d, want %d", pt.maxSamples, defaultProgressSpeedWindow)
+			}
+		})
 	}
 }
 

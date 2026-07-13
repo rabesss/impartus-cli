@@ -89,10 +89,10 @@ func NewProgressTracker(totalLectures, totalChunks int, p *mpb.Progress) *Progre
 func NewProgressTrackerWithOptions(totalLectures, totalChunks int, p *mpb.Progress, options ProgressTrackerOptions) *ProgressTracker {
 	lectures := clampIntToInt32(totalLectures)
 	chunks := clampIntToInt32(totalChunks)
-	if options.SampleInterval == 0 {
+	if options.SampleInterval <= 0 {
 		options.SampleInterval = defaultProgressSampleInterval
 	}
-	if options.SpeedWindowSize == 0 {
+	if options.SpeedWindowSize <= 0 {
 		options.SpeedWindowSize = defaultProgressSpeedWindow
 	}
 

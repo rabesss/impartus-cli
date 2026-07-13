@@ -246,6 +246,9 @@ func downloadLecturesWithRunner(ctx context.Context, cfg *config.Config, d lectu
 	if err != nil {
 		return downloadResult{}, err
 	}
+	if p != nil {
+		defer p.Shutdown()
+	}
 	if tracker != nil {
 		defer tracker.Stop()
 	}
