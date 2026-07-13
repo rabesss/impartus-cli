@@ -19,6 +19,7 @@ func TestParseStreamInfosFromBody(t *testing.T) {
 		name      string
 		body      string
 		wantCount int
+		wantURLs  []string
 		wantErr   bool
 	}{
 		{
@@ -51,6 +52,18 @@ func TestParseStreamInfosFromBody(t *testing.T) {
 			wantCount: 1,
 			wantErr:   false,
 		},
+		{
+			name:      "trims CRLF and surrounding whitespace",
+			body:      "  https://media.placeholder.test/1280x720/index.m3u8\r\n",
+			wantCount: 1,
+			wantURLs:  []string{"https://media.placeholder.test/1280x720/index.m3u8"},
+		},
+		{
+			name:      "rejects misleading scheme and missing host",
+			body:      "httpx://media.placeholder.test/1280x720/index.m3u8\nhttp:///1280x720/index.m3u8\nhttps://media.placeholder.test/640x360/index.m3u8\n",
+			wantCount: 1,
+			wantURLs:  []string{"https://media.placeholder.test/640x360/index.m3u8"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -62,6 +75,11 @@ func TestParseStreamInfosFromBody(t *testing.T) {
 			}
 			if len(got) != tt.wantCount {
 				t.Errorf("ParseStreamInfosFromBody() got %d infos, want %d", len(got), tt.wantCount)
+			}
+			for i, wantURL := range tt.wantURLs {
+				if i >= len(got) || got[i].URL != wantURL {
+					t.Fatalf("ParseStreamInfosFromBody() URL[%d] = %q, want %q", i, got[i].URL, wantURL)
+				}
 			}
 		})
 	}

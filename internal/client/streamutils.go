@@ -1,6 +1,7 @@
 package client
 
 import (
+	"net/url"
 	"regexp"
 	"strings"
 )
@@ -16,13 +17,19 @@ func ParseStreamInfosFromBody(body []byte) ([]StreamInfo, error) {
 
 	streamInfos := make([]StreamInfo, 0)
 	for _, line := range lines {
-		if strings.HasPrefix(line, "http") || strings.HasPrefix(line, "https") {
-			match := resolutionRe.FindStringSubmatch(line)
-			if len(match) > 0 {
-				resolution := strings.Split(match[0], "x")
-				if len(resolution) == 2 {
-					streamInfos = append(streamInfos, StreamInfo{Quality: resolution[1], URL: line})
-				}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parsedURL, err := url.Parse(line)
+		if err != nil || !validHTTPURL(parsedURL) {
+			continue
+		}
+		match := resolutionRe.FindStringSubmatch(line)
+		if len(match) > 0 {
+			resolution := strings.Split(match[0], "x")
+			if len(resolution) == 2 {
+				streamInfos = append(streamInfos, StreamInfo{Quality: resolution[1], URL: line})
 			}
 		}
 	}

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -255,7 +256,7 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 		}
 
 		scanner := bufio.NewScanner(resp.Body)
-		parsed, parseErr := ParsePlaylist(scanner, lecture.TTID, lecture.Topic, lecture.SeqNo)
+		parsed, parseErr := parsePlaylist(scanner, streamURL, lecture.TTID, lecture.Topic, lecture.SeqNo)
 		_ = resp.Body.Close() //nolint:errcheck
 		if parseErr != nil {
 			return parsedPlaylists, fmt.Errorf("parse playlist for lecture %d (%s): %w", lecture.TTID, lecture.Topic, parseErr)
@@ -291,8 +292,22 @@ func (c *Client) getStreamInfos(ctx context.Context, baseURL, token string, lect
 	return ParseStreamInfosFromBody(body)
 }
 
-// ParsePlaylist parses an HLS playlist from the given scanner, extracting chunk URLs and key information.
+// ParsePlaylist parses an HLS playlist without a base URL. It is retained for
+// package compatibility; production ingestion uses parsePlaylist so relative
+// media references are resolved before they leave the client package.
 func ParsePlaylist(scanner *bufio.Scanner, id int, title string, seqNo int) (ParsedPlaylist, error) {
+	return parsePlaylistWithBase(scanner, nil, id, title, seqNo)
+}
+
+func parsePlaylist(scanner *bufio.Scanner, playlistURL string, id int, title string, seqNo int) (ParsedPlaylist, error) {
+	baseURL, err := url.Parse(playlistURL)
+	if err != nil || !validHTTPURL(baseURL) {
+		return ParsedPlaylist{}, errors.New("invalid playlist base URL")
+	}
+	return parsePlaylistWithBase(scanner, baseURL, id, title, seqNo)
+}
+
+func parsePlaylistWithBase(scanner *bufio.Scanner, baseURL *url.URL, id int, title string, seqNo int) (ParsedPlaylist, error) {
 	parsedOutput := ParsedPlaylist{
 		ID:    id,
 		Title: title,
@@ -307,22 +322,33 @@ func ParsePlaylist(scanner *bufio.Scanner, id int, title string, seqNo int) (Par
 	pendingDuration := 0.0
 
 	for scanner.Scan() {
-		line := scanner.Text()
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
 		if parsedOutput.KeyURL == "" && strings.HasPrefix(line, "#EXT-X-KEY") {
 			match := uriValueRe.FindStringSubmatch(line)
 			if len(match) == 2 {
-				parsedOutput.KeyURL = match[1]
+				keyURL, err := resolveMediaReference(baseURL, match[1])
+				if err != nil {
+					return ParsedPlaylist{}, fmt.Errorf("invalid playlist key URI: %w", err)
+				}
+				parsedOutput.KeyURL = keyURL
 			}
 		} else if strings.HasPrefix(line, "#EXTINF:") {
 			pendingDuration = parseEXTINFDuration(line)
-		} else if strings.HasPrefix(line, "#EXT-X-DISCONTINUITY") {
+		} else if line == "#EXT-X-DISCONTINUITY" {
 			isFirstView = false
-		} else if !strings.HasPrefix(line, "#EXT") {
+		} else if !strings.HasPrefix(line, "#") {
+			segmentURL, err := resolveMediaReference(baseURL, line)
+			if err != nil {
+				return ParsedPlaylist{}, fmt.Errorf("invalid playlist segment URI: %w", err)
+			}
 			if isFirstView {
-				firstViewURLs = append(firstViewURLs, line)
+				firstViewURLs = append(firstViewURLs, segmentURL)
 				firstDurations = append(firstDurations, pendingDuration)
 			} else {
-				secondViewURLs = append(secondViewURLs, line)
+				secondViewURLs = append(secondViewURLs, segmentURL)
 				secondDurations = append(secondDurations, pendingDuration)
 			}
 			pendingDuration = 0
@@ -342,6 +368,32 @@ func ParsePlaylist(scanner *bufio.Scanner, id int, title string, seqNo int) (Par
 	}
 
 	return parsedOutput, nil
+}
+
+func resolveMediaReference(baseURL *url.URL, rawReference string) (string, error) {
+	reference := strings.TrimSpace(rawReference)
+	if reference == "" {
+		return "", errors.New("empty URI")
+	}
+	parsedReference, err := url.Parse(reference)
+	if err != nil {
+		return "", errors.New("malformed URI")
+	}
+	if baseURL == nil {
+		if parsedReference.IsAbs() && !validHTTPURL(parsedReference) {
+			return "", errors.New("URI must use HTTP or HTTPS")
+		}
+		return reference, nil
+	}
+	resolved := baseURL.ResolveReference(parsedReference)
+	if !validHTTPURL(resolved) {
+		return "", errors.New("resolved URI must use HTTP or HTTPS with a host")
+	}
+	return resolved.String(), nil
+}
+
+func validHTTPURL(parsedURL *url.URL) bool {
+	return parsedURL != nil && (parsedURL.Scheme == "http" || parsedURL.Scheme == "https") && parsedURL.Host != ""
 }
 
 func parseEXTINFDuration(line string) float64 {
