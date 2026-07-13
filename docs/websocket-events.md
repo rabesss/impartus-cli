@@ -71,7 +71,7 @@ All events follow this structure:
 ```json
 {
   "type": "event.type",
-  "jobId": "job-identifier",
+  "jobId": "job-9d7e6db6-0df8-4b6c-9e66-e7269c8931ab",
   "timestamp": 1705339200,
   "...": "additional fields vary by event type"
 }
@@ -80,10 +80,12 @@ All events follow this structure:
 | Field | Type | Description |
 |--------|-------|-------------|
 | `type` | string | Event type identifier |
-| `jobId` | string | Job ID (Unix timestamp-based) |
+| `jobId` | string | Opaque job identifier beginning with `job-`; current values are UUID-backed |
 | `timestamp` | integer | Unix timestamp (seconds since epoch) |
 
 > **NOTE:** Unlike the design spec, events do **not** have a `data` wrapper. Additional fields are placed at the top level. The timestamp is a Unix integer, not ISO 8601 string.
+
+Treat `jobId` as an opaque value: store and compare the complete identifier, and do not parse it or infer creation time or ordering from it.
 
 ---
 
@@ -98,7 +100,7 @@ Emitted when a job begins execution.
 ```json
 {
   "type": "job.started",
-  "jobId": "job-1234567890",
+  "jobId": "job-9d7e6db6-0df8-4b6c-9e66-e7269c8931ab",
   "status": "running",
   "timestamp": 1705339200
 }
@@ -113,7 +115,7 @@ Emitted periodically as download progresses.
 ```json
 {
   "type": "job.progress",
-  "jobId": "job-1234567890",
+  "jobId": "job-9d7e6db6-0df8-4b6c-9e66-e7269c8931ab",
   "progress": 50,
   "status": "running",
   "phase": "downloading",
@@ -143,7 +145,7 @@ Emitted when all lectures finish successfully.
 ```json
 {
   "type": "job.completed",
-  "jobId": "job-1234567890",
+  "jobId": "job-9d7e6db6-0df8-4b6c-9e66-e7269c8931ab",
   "status": "completed",
   "progress": 100,
   "outputs": [
@@ -163,7 +165,7 @@ Emitted when a job errors and cannot continue.
 ```json
 {
   "type": "job.failed",
-  "jobId": "job-1234567890",
+  "jobId": "job-9d7e6db6-0df8-4b6c-9e66-e7269c8931ab",
   "status": "failed",
   "error": "lecture 003: download failed",
   "timestamp": 1705342100
@@ -181,7 +183,7 @@ Emitted when a job is cancelled.
 ```json
 {
   "type": "job.cancelled",
-  "jobId": "job-1234567890",
+  "jobId": "job-9d7e6db6-0df8-4b6c-9e66-e7269c8931ab",
   "status": "canceled",
   "progress": 42,
   "timestamp": 1705342000

@@ -229,7 +229,7 @@ Returns lectures as a JSON array.
 
 ```json
 {
-  "id": "job-1739366400000000000",
+  "id": "job-9d7e6db6-0df8-4b6c-9e66-e7269c8931ab",
   "subjectId": 678,
   "sessionId": 12345,
   "startIndex": 1,
@@ -259,6 +259,7 @@ Returns lectures as a JSON array.
 ```
 
 Notes:
+- `id`: opaque identifier beginning with `job-`; the current implementation appends a UUID. Store and compare the complete value without parsing it or inferring creation time or ordering.
 - `status`: `pending | running | completed | failed | canceled`
 - `progress`: float percentage (0-100)
 - `totalLectures`, `completedLectures`, `outputs`, `error` are populated as work advances
@@ -336,7 +337,7 @@ Success (`200`):
 {
   "success": true,
   "data": {
-    "id": "job-1739366400000000000",
+    "id": "job-9d7e6db6-0df8-4b6c-9e66-e7269c8931ab",
     "status": "canceled"
   }
 }
