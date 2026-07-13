@@ -1,6 +1,10 @@
-.PHONY: build config-init test run-cli run-api lint clean install pre-commit-install pre-commit quality-gate quality-gate-scan quality-gate-next docs docs-toc security security-scan security-gitleaks security-gosec security-trivy security-govulncheck
+.PHONY: build config-init test run-cli run-api lint clean install pre-commit-install pre-commit quality-gate-install quality-gate quality-gate-scan quality-gate-next docs docs-toc security security-scan security-gitleaks security-gosec security-trivy security-govulncheck
 
-DESLOPPIFY_VERSION ?= 0.9.12
+DESLOPPIFY_VERSION ?= 1.0.0
+TREE_SITTER_LANGUAGE_PACK_VERSION ?= 1.6.2
+DESLOPPIFY_VENV ?= .venv-desloppify
+DESLOPPIFY_BIN ?= $(DESLOPPIFY_VENV)/bin/desloppify
+QUALITY_MIN_SCORE ?= 80
 GO_TOOLCHAIN ?= $(shell awk '/^toolchain / { print $$2 }' go.mod)
 CONFIG_FILE ?= config.json
 SAMPLE_CONFIG ?= sample.config.json
@@ -106,33 +110,38 @@ test-health:
 	@echo "Testing health endpoint..."
 	@curl -s http://localhost:8080/api/v1/health || echo "Server not running. Start with 'make run-api'"
 
+# Install the pinned scanner into the repository-local tool environment.
+quality-gate-install:
+	python3 -m venv "$(DESLOPPIFY_VENV)"
+	"$(DESLOPPIFY_VENV)/bin/python" -m pip install --disable-pip-version-check \
+		"desloppify[full]==$(DESLOPPIFY_VERSION)" \
+		"tree-sitter-language-pack==$(TREE_SITTER_LANGUAGE_PACK_VERSION)"
+
 # Quality gate: desloppify scan (run after refactors and feature additions)
 quality-gate-scan:
 	@echo "Running desloppify quality gate scan..."
-	@if command -v desloppify >/dev/null 2>&1; then \
-		desloppify scan --path .; \
+	@if [ -x "$(DESLOPPIFY_BIN)" ]; then \
+		"$(DESLOPPIFY_BIN)" scan --path . --no-badge; \
 	else \
-		echo "desloppify not found. Install with:"; \
-		echo "  python3 -m pip install --user --upgrade \"desloppify[full]==$(DESLOPPIFY_VERSION)\""; \
+		echo "project-local desloppify not found. Install with:"; \
+		echo "  make quality-gate-install"; \
 		exit 1; \
 	fi
 
 # Quality gate: show next prioritized items
 quality-gate-next:
 	@echo "Showing desloppify next items..."
-	@if command -v desloppify >/dev/null 2>&1; then \
-		desloppify next; \
+	@if [ -x "$(DESLOPPIFY_BIN)" ]; then \
+		"$(DESLOPPIFY_BIN)" next; \
 	else \
-		echo "desloppify not found. Install with:"; \
-		echo "  python3 -m pip install --user --upgrade \"desloppify[full]==$(DESLOPPIFY_VERSION)\""; \
+		echo "project-local desloppify not found. Install with:"; \
+		echo "  make quality-gate-install"; \
 		exit 1; \
 	fi
 
-# Full quality gate: scan and enforce score threshold (>80)
-quality-gate: quality-gate-scan
-	@echo "Checking score threshold..."
-	@echo "NOTE: Target score is >80. Current score may be lower."
-	@echo "Run 'make quality-gate-next' to see prioritized items for improvement."
+# Full quality gate: scan once and enforce the objective/mechanical threshold.
+quality-gate:
+	@DESLOPPIFY_BIN="$(DESLOPPIFY_BIN)" QUALITY_MIN_SCORE="$(QUALITY_MIN_SCORE)" bash scripts/run-quality-gate.sh
 
 # Generate documentation table of contents using Go-based generator
 docs-toc:
@@ -212,9 +221,10 @@ help:
 	@echo "  install            - Install to GOPATH/bin"
 	@echo "  build-release      - Build with version info"
 	@echo "  test-health        - Test health endpoint (server must be running)"
+	@echo "  quality-gate-install - Install desloppify $(DESLOPPIFY_VERSION) into .venv-desloppify"
 	@echo "  quality-gate-scan  - Run desloppify $(DESLOPPIFY_VERSION) quality gate scan"
 	@echo "  quality-gate-next  - Show desloppify $(DESLOPPIFY_VERSION) prioritized items"
-	@echo "  quality-gate       - Full quality gate (scan + threshold check)"
+	@echo "  quality-gate       - Enforce a minimum Desloppify objective score of $(QUALITY_MIN_SCORE)"
 	@echo "  docs-toc           - Generate documentation table of contents"
 	@echo "  docs               - Run docs-toc"
 	@echo "  security-gitleaks  - Run secret scanning with gitleaks"
