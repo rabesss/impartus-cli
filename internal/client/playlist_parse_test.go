@@ -106,6 +106,26 @@ func TestParsePlaylistIgnoresNonEXTComments(t *testing.T) {
 	}
 }
 
+func TestParsePlaylistDiscontinuitySequenceDoesNotChangeViews(t *testing.T) {
+	playlist := "#EXTM3U\n#EXT-X-DISCONTINUITY-SEQUENCE:7\n#EXTINF:4,\nfirst.ts\n#EXTINF:5,\nsecond.ts\n"
+	scanner := bufio.NewScanner(strings.NewReader(playlist))
+
+	got, err := parsePlaylist(scanner, "https://media.placeholder.test/course/index.m3u8", 1, "Lecture", 1)
+	if err != nil {
+		t.Fatalf("parsePlaylist() unexpected error: %v", err)
+	}
+	if got.HasMultipleViews {
+		t.Fatal("DISCONTINUITY-SEQUENCE incorrectly created a second view")
+	}
+	if len(got.FirstViewURLs) != 2 || len(got.SecondViewURLs) != 0 {
+		t.Fatalf("unexpected view URL counts: first=%d second=%d", len(got.FirstViewURLs), len(got.SecondViewURLs))
+	}
+	if got.FirstViewURLs[0] != "https://media.placeholder.test/course/first.ts" ||
+		got.FirstViewURLs[1] != "https://media.placeholder.test/course/second.ts" {
+		t.Fatalf("unexpected first-view URLs: %#v", got.FirstViewURLs)
+	}
+}
+
 func TestParsePlaylistRejectsInvalidMediaReferences(t *testing.T) {
 	tests := []struct {
 		name     string
