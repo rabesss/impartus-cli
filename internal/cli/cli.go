@@ -14,12 +14,13 @@ import (
 )
 
 var (
-	runInteractiveFn = runInteractive
-	runCoursesFn     = runCourses
-	runLecturesFn    = runLectures
-	runDownloadFn    = runDownload
-	runServeFn       = runServe
-	runPlayFn        = runPlay
+	runInteractiveFn  = runInteractive
+	runCoursesFn      = runCourses
+	runLecturesFn     = runLectures
+	runDownloadFn     = runDownload
+	runDownloadJSONFn = runDownloadJSON
+	runServeFn        = runServe
+	runPlayFn         = runPlay
 )
 
 // Execute runs the root CLI command with the given version and build date.
@@ -89,7 +90,7 @@ func executeJSON(args []string, version, date string) error {
 		}
 		return emitJSONEnvelope(newSuccessEnvelope("lectures", lectures))
 	case "download":
-		result, err := runDownloadJSON(args[1:])
+		result, err := runDownloadJSONFn(args[1:])
 		if err != nil {
 			return newJSONError("download", err)
 		}

@@ -1,29 +1,14 @@
 package cli
 
 import (
-	"io"
 	"os"
 	"testing"
 )
 
 func captureStdout(t *testing.T, fn func() error) (string, error) {
 	t.Helper()
-	oldStdout := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe: %v", err)
-	}
-	os.Stdout = w
-	runErr := fn()
-	//nolint:errcheck // closing write end of pipe in test helper
-	w.Close()
-	os.Stdout = oldStdout
-
-	out, readErr := io.ReadAll(r)
-	if readErr != nil {
-		t.Fatalf("ReadAll: %v", readErr)
-	}
-	return string(out), runErr
+	stdout, _, err := captureOutputStreams(t, fn)
+	return stdout, err
 }
 
 func restoreCLIState(t *testing.T) {
@@ -33,6 +18,7 @@ func restoreCLIState(t *testing.T) {
 	oldCourses := runCoursesFn
 	oldLectures := runLecturesFn
 	oldDownload := runDownloadFn
+	oldDownloadJSON := runDownloadJSONFn
 	oldServe := runServeFn
 	oldPlay := runPlayFn
 	t.Cleanup(func() {
@@ -41,6 +27,7 @@ func restoreCLIState(t *testing.T) {
 		runCoursesFn = oldCourses
 		runLecturesFn = oldLectures
 		runDownloadFn = oldDownload
+		runDownloadJSONFn = oldDownloadJSON
 		runServeFn = oldServe
 		runPlayFn = oldPlay
 	})

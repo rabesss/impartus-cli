@@ -71,7 +71,7 @@ func runPlay(args []string) error {
 		return err
 	}
 
-	warnNoAudioLectures(selected, cfg.SkipNoAudio)
+	warnNoAudioLectures(os.Stderr, selected, cfg.SkipNoAudio)
 
 	return playLectures(ctx, cfg, apiClient, selected)
 }

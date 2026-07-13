@@ -234,7 +234,15 @@ Response envelope:
 }
 ```
 
-On failure, `success` is `false`, `data` is `null`, and `error.message` contains the error text.
+Successful JSON commands write exactly one response envelope to stdout. They do
+not write progress bars or warning text, and successful downloads leave stderr
+empty. Failed JSON commands exit non-zero and write exactly one error envelope
+to stderr while leaving stdout empty; in that envelope, `success` is `false`,
+`data` is `null`, and `error.message` contains the error text.
+
+For JSON downloads, `lectureCount` is the number of lectures completed.
+`outputPaths` contains the files produced, so one completed lecture can add
+multiple paths when multiple views or output forms are requested.
 
 ### Command Reference
 
