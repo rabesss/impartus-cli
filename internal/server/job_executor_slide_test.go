@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/rabesss/impartus-cli/internal/client"
@@ -21,6 +22,7 @@ func TestDownloadLectureSlideLimitAndAtomicReplacement(t *testing.T) {
 		wantErr     bool
 		wantLimit   bool
 		wantContent string
+		wantMode    os.FileMode
 	}{
 		{
 			name: "exact limit replaces final atomically",
@@ -28,6 +30,7 @@ func TestDownloadLectureSlideLimitAndAtomicReplacement(t *testing.T) {
 				_, _ = io.WriteString(w, "12345678") //nolint:errcheck
 			},
 			wantContent: "12345678",
+			wantMode:    0o600,
 		},
 		{
 			name: "declared oversize preserves final",
@@ -86,9 +89,42 @@ func TestDownloadLectureSlideLimitAndAtomicReplacement(t *testing.T) {
 			if string(contents) != wantContent {
 				t.Fatalf("final slide = %q, want %q", contents, wantContent)
 			}
+			if runtime.GOOS != "windows" && tt.wantMode != 0 {
+				info, statErr := os.Stat(finalPath)
+				if statErr != nil {
+					t.Fatal(statErr)
+				}
+				if got := info.Mode().Perm(); got != tt.wantMode {
+					t.Fatalf("final slide mode = %04o, want %04o", got, tt.wantMode)
+				}
+			}
 			assertNoSlideParts(t, downloadDir)
 		})
 	}
+}
+
+func TestDownloadLectureSlideNewFileUsesReadableMode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "slide") //nolint:errcheck
+	}))
+	defer server.Close()
+	downloadDir := t.TempDir()
+	cfg := &config.Config{BaseURL: server.URL, DownloadLocation: downloadDir, Token: "placeholder-token"}
+	lecture := client.Lecture{VideoID: 10, SeqNo: 1, Topic: "Lecture"}
+
+	if err := downloadLectureSlideWithLimit(context.Background(), client.New(server.Client(), nil), cfg, lecture, 8); err != nil {
+		t.Fatalf("downloadLectureSlideWithLimit() unexpected error: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(filepath.Join(downloadDir, "LEC 001 Lecture.pdf"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0o644 {
+			t.Fatalf("final slide mode = %04o, want 0644", got)
+		}
+	}
+	assertNoSlideParts(t, downloadDir)
 }
 
 func TestDownloadLectureSlideInterruptedReadPreservesFinal(t *testing.T) {

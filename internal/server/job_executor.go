@@ -431,10 +431,27 @@ func downloadLectureSlideWithLimit(ctx context.Context, c *client.Client, cfg *c
 		return fmt.Errorf("close slide response: %w", closeErr)
 	}
 	bodyClosed = true
-	if renameErr := os.Rename(partPath, filePath); renameErr != nil {
-		return fmt.Errorf("finalize slide download: %w", renameErr)
+	if finalizeErr := finalizeSlideDownload(partPath, filePath); finalizeErr != nil {
+		return finalizeErr
 	}
 	removePart = false
+	return nil
+}
+
+func finalizeSlideDownload(partPath, filePath string) error {
+	mode := os.FileMode(0o644)
+	info, err := os.Stat(filePath)
+	if err == nil {
+		mode = info.Mode().Perm()
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect existing slide download: %w", err)
+	}
+	if err := os.Chmod(partPath, mode); err != nil {
+		return fmt.Errorf("set slide download permissions: %w", err)
+	}
+	if err := os.Rename(partPath, filePath); err != nil {
+		return fmt.Errorf("finalize slide download: %w", err)
+	}
 	return nil
 }
 

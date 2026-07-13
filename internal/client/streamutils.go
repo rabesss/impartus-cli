@@ -22,7 +22,7 @@ func ParseStreamInfosFromBody(body []byte) ([]StreamInfo, error) {
 			continue
 		}
 		parsedURL, err := url.Parse(line)
-		if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
+		if err != nil || !validHTTPURL(parsedURL) {
 			continue
 		}
 		match := resolutionRe.FindStringSubmatch(line)
