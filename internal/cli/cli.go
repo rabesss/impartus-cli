@@ -21,6 +21,8 @@ var (
 	runDownloadJSONFn = runDownloadJSON
 	runServeFn        = runServe
 	runPlayFn         = runPlay
+	loadResolvedFn    = config.LoadResolved
+	newLoggedInFn     = client.NewLoggedIn
 )
 
 // Execute runs the root CLI command with the given version and build date.
@@ -189,7 +191,7 @@ func initClient(ctx context.Context) (*config.Config, *client.Client, error) {
 		return nil, nil, err
 	}
 
-	apiClient, err := client.NewLoggedIn(ctx, cfg)
+	apiClient, err := newLoggedInFn(ctx, cfg)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -198,7 +200,7 @@ func initClient(ctx context.Context) (*config.Config, *client.Client, error) {
 }
 
 func loadConfig() (*config.Config, error) {
-	cfg, err := config.LoadResolved("")
+	cfg, err := loadResolvedFn("")
 	if err != nil {
 		return nil, err
 	}
