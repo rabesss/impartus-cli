@@ -446,6 +446,43 @@ func TestDurableMutationFailureRollsBackMemoryDiskAndIdempotency(t *testing.T) {
 	}
 }
 
+func TestCompatibilityCreateWrappersDoNotReturnRolledBackJobs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jobs.json")
+	store := newTestPersistentStore(t, path)
+	cfg := &config.Config{DownloadLocation: "downloads"}
+
+	realSync := store.persistence.syncFile
+	var attempts atomic.Int64
+	store.persistence.mu.Lock()
+	store.persistence.syncFile = func(file *os.File) error {
+		if attempts.Add(1)%2 == 1 {
+			return errors.New("injected transient sync failure")
+		}
+		return realSync(file)
+	}
+	store.persistence.mu.Unlock()
+
+	job, created := store.CreateJobWithKey(1, 1, 1, 1, cfg, "wrapper-key")
+	if job != nil || created {
+		t.Fatalf("CreateJobWithKey failure = (%+v, %v), want (nil, false)", job, created)
+	}
+	if _, ok := store.jobByIdempotencyKey("wrapper-key"); ok {
+		t.Fatal("CreateJobWithKey failure left an idempotency entry")
+	}
+	if job := store.CreateJob(2, 2, 1, 1, cfg); job != nil {
+		t.Fatalf("CreateJob failure returned rolled-back job %+v", job)
+	}
+	if jobs := store.ListJobs(); len(jobs) != 0 {
+		t.Fatalf("compatibility wrapper failures left jobs in memory: %+v", jobs)
+	}
+	if jobs := readPersistedJobs(t, path); len(jobs) != 0 {
+		t.Fatalf("compatibility wrapper failures left jobs on disk: %+v", jobs)
+	}
+	if got := attempts.Load(); got != 4 {
+		t.Fatalf("sync attempts = %d, want failed writes plus synchronous rollbacks", got)
+	}
+}
+
 func TestDurableMutationTransientFailureFlushesRollbackBeforeReturn(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "jobs.json")
 	store := newTestPersistentStore(t, path)

@@ -66,7 +66,8 @@ func NewJobStoreWithPersistence(path string) *JobStore {
 	return js
 }
 
-// CreateJob creates a new download job and stores it. Returns the created job.
+// CreateJob creates a new download job and stores it. Returns the created job,
+// or nil if a persistent store cannot durably create it.
 // It is a convenience wrapper around CreateJobWithKey with no idempotency key.
 func (js *JobStore) CreateJob(subjectID, sessionID, startIndex, endIndex int, cfg *config.Config) *Job {
 	job, _ := js.CreateJobWithKey(subjectID, sessionID, startIndex, endIndex, cfg, "")
@@ -78,11 +79,12 @@ func (js *JobStore) CreateJob(subjectID, sessionID, startIndex, endIndex int, cf
 // existing job instead of creating a new one. This prevents duplicate job
 // creation on network retries. Returns the job and a boolean indicating
 // whether the job was newly created (true) or returned from the idempotency
-// cache (false).
+// cache (false). A persistence failure is logged and returned as (nil, false).
 func (js *JobStore) CreateJobWithKey(subjectID, sessionID, startIndex, endIndex int, cfg *config.Config, idempotencyKey string) (*Job, bool) {
 	job, created, err := js.createJobWithKeyDurable(subjectID, sessionID, startIndex, endIndex, cfg, idempotencyKey)
 	if err != nil {
 		log.Printf("warning: failed to persist created job: %v", err)
+		return nil, false
 	}
 	return job, created
 }
