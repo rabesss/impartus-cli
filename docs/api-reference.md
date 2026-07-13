@@ -45,10 +45,7 @@ Success (`200`):
   "data": {
     "status": "ok",
     "config": {
-      "status": "ok",
-      "username": "ok",
-      "password": "ok",
-      "baseUrl": "ok"
+      "status": "ok"
     },
     "upstream": {
       "status": "reachable"
@@ -71,6 +68,8 @@ Possible `status` values:
 The `config.status` will be `misconfigured` if username, password, or baseUrl are missing.
 The `upstream.status` will be `unreachable` if the Impartus API cannot be contacted.
 The `ffmpeg.status` will be `not_found` if FFmpeg is not installed or not in PATH.
+
+Because this endpoint is unauthenticated, configuration health is deliberately aggregate: the response does not reveal which credential fields are present or missing.
 
 ## Authentication
 

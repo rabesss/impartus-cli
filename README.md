@@ -136,7 +136,7 @@ cp sample.config.json config.json
 | `username` | string | Yes | - | Impartus username (email) |
 | `password` | string | Yes | - | Impartus password |
 | `baseUrl` | string | Yes | - | Impartus API base URL |
-| `quality` | string | No | `"144"` | Video quality: `144`, `450`, `720` |
+| `quality` | string | No | `"720"` | Video quality: `144`, `450`, `720` |
 | `views` | string | No | `"both"` | Views: `left`, `right`, `both`, `first`, `second` |
 | `downloadLocation` | string | No | `"./downloads"` | Output directory |
 | `tempDirLocation` | string | No | `"./temp"` | Temporary directory |
@@ -144,12 +144,12 @@ cp sample.config.json config.json
 | `audioOnly` | bool | No | `false` | Download audio only |
 | `audioFormat` | string | No | `"mp3"` | Audio format: `mp3`, `m4a`, `aac`, `opus` |
 | `numWorkers` | int | No | `5` | Concurrent lecture workers (1-50); active playlist downloads are bounded by per-lecture media workers to preserve the browser-observed burst envelope |
-| `rateLimit` | float | No | `100` | Download rate limit (req/sec) |
-| `apiRateLimit` | float | No | `2` | API rate limit (req/sec) |
+| `rateLimit` | float | No | `100` | Download rate limit (0.1-100 req/sec) |
+| `apiRateLimit` | float | No | `2` | API rate limit (0.1-20 req/sec) |
 | `enablePipeline` | bool | No | `false` | Enable concurrent download+decrypt |
 | `downloadWorkersPerLecture` | int | No | `12` | Download workers per lecture (1-12) |
 | `decryptWorkersPerLecture` | int | No | `4` | Decrypt workers per lecture (1-10) |
-| `httpTimeout` | string | No | `"10m"` | HTTP timeout for chunks (30s-60m) |
+| `httpTimeout` | string | No | `"10m"` | Timeout for the shared upstream HTTP client, including login, API, playlist, and media requests (30s-60m) |
 | `enableJitter` | bool | No | `true` | Add small random delays to API requests |
 | `skipNoAudio` | bool | No | `false` | Skip lectures with no audio track |
 | `listenAddr` | string | No | `"127.0.0.1"` | API server bind address (loopback only unless `allowRemoteAccess` is set) |
@@ -160,24 +160,38 @@ cp sample.config.json config.json
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | bool | `false` | Enable progress bar display |
-| `showSpeed` | bool | `false` | Show download speed |
-| `showETA` | bool | `false` | Show estimated time remaining |
-| `updateInterval` | string | `"2s"` | Progress update interval (500ms-10s) |
-| `speedWindowSize` | int | `10` | Speed calculation window (3-30 samples) |
+| `enabled` | bool | `false` | Enable all progress bars in human-readable mode; JSON mode remains quiet |
+| `showSpeed` | bool | `false` | Include download speed in the aggregate progress status |
+| `showETA` | bool | `false` | Include estimated time remaining in the aggregate progress status |
+| `updateInterval` | string | `"2s"` | Speed-sampling interval (500ms-10s) |
+| `speedWindowSize` | int | `10` | Number of samples used for the speed moving average (3-30) |
 
 #### Environment Variables
 
-All configuration values can be overridden via environment variables:
+Only the settings listed below have environment-variable overrides. Settings absent from this table must be configured in JSON.
 
-```bash
-export IMPARTUS_USERNAME="your_email"
-export IMPARTUS_PASSWORD="your_password"
-export IMPARTUS_BASE_URL="https://a.impartus.com/api"
-# Optional: expose the API beyond loopback (requires allowRemoteAccess opt-in)
-# export IMPARTUS_LISTEN_ADDR="0.0.0.0"
-# export IMPARTUS_ALLOW_REMOTE_ACCESS=1
-```
+| Environment variable | Config field | Notes |
+|----------------------|--------------|-------|
+| `IMPARTUS_USERNAME` | `username` | Required unless supplied in JSON |
+| `IMPARTUS_PASSWORD` | `password` | Required unless supplied in JSON |
+| `IMPARTUS_BASE_URL` | `baseUrl` | Required unless supplied in JSON |
+| `IMPARTUS_QUALITY` | `quality` | `144`, `450`, or `720` |
+| `IMPARTUS_VIEWS` | `views` | `left`, `right`, `both`, `first`, or `second` |
+| `IMPARTUS_DOWNLOAD_LOCATION` | `downloadLocation` | Output directory |
+| `IMPARTUS_TEMP_DIR` | `tempDirLocation` | Temporary directory |
+| `IMPARTUS_TEMP_DIR_LOCATION` | `tempDirLocation` | Compatibility alias for the shorter temporary-directory variable |
+| `IMPARTUS_AUDIO_FORMAT` | `audioFormat` | `mp3`, `m4a`, `aac`, or `opus` |
+| `IMPARTUS_HTTP_TIMEOUT` | `httpTimeout` | Go duration between 30s and 60m |
+| `IMPARTUS_LISTEN_ADDR` | `listenAddr` | Non-loopback values also require remote-access opt-in |
+| `IMPARTUS_AUDIO_ONLY` | `audioOnly` | Boolean |
+| `IMPARTUS_SLIDES` | `slides` | Boolean |
+| `IMPARTUS_SKIP_NO_AUDIO` | `skipNoAudio` | Boolean |
+| `IMPARTUS_ALLOW_REMOTE_ACCESS` | `allowRemoteAccess` | Boolean |
+| `IMPARTUS_ENABLE_JITTER` | `enableJitter` | Boolean |
+| `IMPARTUS_PROGRESS_TRACKING_ENABLED` | `progressTracking.enabled` | Boolean; controls all progress bars |
+| `IMPARTUS_NUM_WORKERS` | `numWorkers` | Integer from 1-50 |
+| `IMPARTUS_RATE_LIMIT` | `rateLimit` | Number from 0.1-100 |
+| `IMPARTUS_API_RATE_LIMIT` | `apiRateLimit` | Number from 0.1-20 |
 
 #### Validation Rules
 
@@ -380,10 +394,7 @@ curl http://localhost:8080/api/v1/health
   "data": {
     "status": "ok",
     "config": {
-      "status": "ok",
-      "username": "ok",
-      "password": "ok",
-      "baseUrl": "ok"
+      "status": "ok"
     },
     "upstream": {
       "status": "reachable"
@@ -405,6 +416,8 @@ Status values:
 - `upstream.status`: `reachable` (server responds), `unreachable` (TCP/HTTP fails), or `not_configured` (no baseUrl)
 - `ffmpeg.status`: `available` (in PATH) or `not_found`
 - Overall `status`: `ok` (all sub-checks pass) or `degraded` (one or more sub-checks fail)
+
+The unauthenticated health response deliberately exposes only aggregate configuration status; it does not reveal which credential fields are present.
 
 ### Create Download Job
 
