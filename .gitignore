@@ -35,6 +35,10 @@
 !fixtures/**
 !assets/**
 !Makefile
+!/scripts/desloppify-golangci-lint-adapter.sh
+!/scripts/test-desloppify-golangci-lint-adapter.sh
+!/scripts/run-quality-gate.sh
+!/scripts/test-quality-gate.sh
 
 # ...even if they are in subdirectories
 !*/
@@ -74,6 +78,7 @@ config.json
 
 
 # Desloppify quality gate local state
+.venv-desloppify/
 .desloppify/
 scorecard.png
 query.json

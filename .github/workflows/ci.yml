@@ -100,11 +100,17 @@ jobs:
           # Enforce minimum coverage threshold (40%)
           COVERAGE=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
           echo "Total coverage: ${COVERAGE}%"
-          if [ "$(echo "$COVERAGE < 40" | bc)" -eq 1 ]; then
-            echo "::warning::Coverage ${COVERAGE}% is below 40% threshold"
+          if ! awk -v value="$COVERAGE" 'BEGIN { exit !(value ~ /^[0-9]+([.][0-9]+)?$/) }'; then
+            echo "::error::Could not extract a numeric aggregate coverage value: ${COVERAGE:-<empty>}"
+            exit 1
+          fi
+          if ! awk -v value="$COVERAGE" 'BEGIN { exit !(value >= 40) }'; then
+            echo "::error::Coverage ${COVERAGE}% is below 40% threshold"
+            exit 1
           fi
 
       - name: Upload coverage artifact
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: coverage-report
@@ -169,69 +175,74 @@ jobs:
     name: Quality Gate
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    env:
+      DESLOPPIFY_BIN: ${{ github.workspace }}/.venv-desloppify/bin/desloppify
+      DESLOPPIFY_GOLANGCI_LINT_REAL: ${{ github.workspace }}/.venv-desloppify/bin/golangci-lint
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: 'go.mod'
+          cache: true
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: '3.11'
 
-      - name: Install desloppify
-        run: python3 -m pip install --user --upgrade "desloppify[full]==0.9.12" "tree-sitter-language-pack==1.6.2"
+      - name: Install project-local desloppify
+        run: make quality-gate-install
+
+      - name: Install golangci-lint for Desloppify
+        run: |
+          GOBIN="$PWD/.venv-desloppify/bin" go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.1
+          "$DESLOPPIFY_GOLANGCI_LINT_REAL" --version
+
+      - name: Test quality gate tooling
+        run: |
+          bash scripts/test-desloppify-golangci-lint-adapter.sh
+          bash scripts/test-quality-gate.sh
 
       - name: Run desloppify quality gate
-        id: desloppify
         run: |
-          # Run desloppify scan and capture output. The scan may exit non-zero
-          # when it finds quality issues; keep the job alive long enough to
-          # print the report and apply the threshold policy below.
           set +e
-          OUTPUT=$(desloppify scan --path . 2>&1)
-          SCAN_EXIT=$?
+          OUTPUT=$(QUALITY_MIN_SCORE=80 bash scripts/run-quality-gate.sh 2>&1)
+          GATE_EXIT=$?
           set -e
-          echo "$OUTPUT"
+          printf '%s\n' "$OUTPUT"
+          printf '%s\n' "$OUTPUT" > desloppify-report.txt
 
-          # Extract overall score from output
-          # Look for patterns like "Overall Score: XX/100" or "Score: XX"
-          SCORE=$(echo "$OUTPUT" | grep -i "overall" | grep -oE "[0-9]+(\.[0-9]+)?/100" | head -1 | cut -d'/' -f1)
-          if [ -z "$SCORE" ]; then
-            SCORE=$(echo "$OUTPUT" | grep -iE "^score:" | grep -oE "[0-9]+(\.[0-9]+)?" | head -1)
-          fi
+          {
+            echo "## Desloppify Quality Gate"
+            echo ""
+            echo '```text'
+            printf '%s\n' "$OUTPUT" | tail -100
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
-          echo "Desloppify exit code: $SCAN_EXIT"
-          echo "Desloppify score: $SCORE"
-          echo "score=$SCORE" >> $GITHUB_OUTPUT
+          exit "$GATE_EXIT"
 
-          # Write to step summary
-          echo "## Desloppify Quality Gate" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Overall Score: $SCORE/100" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Check if score exceeds threshold (80)
-          if [ -n "$SCORE" ]; then
-            SCORE_INT=$(echo "$SCORE" | cut -d'.' -f1)
-            if [ "$SCORE_INT" -lt 80 ]; then
-              echo "::warning::Desloppify score $SCORE is below 80 threshold"
-              echo "Score $SCORE is below 80 threshold - see desloppify output for details" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "Score $SCORE exceeds 80 threshold ✓" >> $GITHUB_STEP_SUMMARY
-            fi
-          elif [ "$SCAN_EXIT" -ne 0 ]; then
-            echo "::error::desloppify exited with $SCAN_EXIT before reporting a score"
-            echo "desloppify exited with $SCAN_EXIT before reporting a score" >> $GITHUB_STEP_SUMMARY
-            exit "$SCAN_EXIT"
-          else
-            echo "::warning::Could not extract desloppify score"
-          fi
+      - name: Upload quality scan artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: desloppify-report
+          path: |
+            desloppify-report.txt
+            query.json
+            .desloppify/
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Show next prioritized items
+        if: always()
         run: |
-          echo "## Next Priorities" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          desloppify next 2>&1 | head -30 >> $GITHUB_STEP_SUMMARY || true
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "## Next Priorities" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+          "$DESLOPPIFY_BIN" next 2>&1 | head -30 >> "$GITHUB_STEP_SUMMARY" || true
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
 
   docs:
     name: Documentation
