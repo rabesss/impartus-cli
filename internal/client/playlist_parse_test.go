@@ -81,6 +81,31 @@ func TestParsePlaylistResolvesMediaReferences(t *testing.T) {
 	}
 }
 
+func TestParsePlaylistIgnoresNonEXTComments(t *testing.T) {
+	playlist := "#EXTM3U\n#EXTINF:4,\nfirst.ts\n#EXTINF:5,\n# vendor comment\nsecond.ts\n"
+	scanner := bufio.NewScanner(strings.NewReader(playlist))
+
+	got, err := parsePlaylist(scanner, "https://media.placeholder.test/course/index.m3u8", 1, "Lecture", 1)
+	if err != nil {
+		t.Fatalf("parsePlaylist() unexpected error: %v", err)
+	}
+	wantURLs := []string{
+		"https://media.placeholder.test/course/first.ts",
+		"https://media.placeholder.test/course/second.ts",
+	}
+	if len(got.FirstViewURLs) != len(wantURLs) {
+		t.Fatalf("FirstViewURLs = %#v, want %#v", got.FirstViewURLs, wantURLs)
+	}
+	for i := range wantURLs {
+		if got.FirstViewURLs[i] != wantURLs[i] {
+			t.Fatalf("FirstViewURLs[%d] = %q, want %q", i, got.FirstViewURLs[i], wantURLs[i])
+		}
+	}
+	if len(got.FirstDurations) != 2 || got.FirstDurations[0] != 4 || got.FirstDurations[1] != 5 {
+		t.Fatalf("FirstDurations = %#v, want [4 5]", got.FirstDurations)
+	}
+}
+
 func TestParsePlaylistRejectsInvalidMediaReferences(t *testing.T) {
 	tests := []struct {
 		name     string

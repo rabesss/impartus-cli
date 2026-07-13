@@ -339,7 +339,7 @@ func parsePlaylistWithBase(scanner *bufio.Scanner, baseURL *url.URL, id int, tit
 			pendingDuration = parseEXTINFDuration(line)
 		} else if strings.HasPrefix(line, "#EXT-X-DISCONTINUITY") {
 			isFirstView = false
-		} else if !strings.HasPrefix(line, "#EXT") {
+		} else if !strings.HasPrefix(line, "#") {
 			segmentURL, err := resolveMediaReference(baseURL, line)
 			if err != nil {
 				return ParsedPlaylist{}, fmt.Errorf("invalid playlist segment URI: %w", err)
