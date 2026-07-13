@@ -43,7 +43,6 @@
 # Impartus CLI
 
 [![Build Status](https://github.com/rabesss/impartus-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/rabesss/impartus-cli/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/rabesss/impartus-cli)](https://goreportcard.com/report/github.com/rabesss/impartus-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A Go-based CLI and HTTP API server for downloading lecture videos from Impartus platforms. Features interactive mode for humans and deterministic JSON mode for automation and AI agents.
