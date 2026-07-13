@@ -616,4 +616,3 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [`docs/websocket-events.md`](docs/websocket-events.md) - WebSocket event schemas
 - [`docs/error-codes.md`](docs/error-codes.md) - Error code reference
 - [`docs/runbooks.md`](docs/runbooks.md) - Incident response and troubleshooting
-- [`docs/openclaw-manifest.json`](docs/openclaw-manifest.json) - OpenClaw agent integration

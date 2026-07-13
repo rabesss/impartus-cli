@@ -59,11 +59,6 @@
         {
           "type": "generic",
           "path": "internal/buildinfo/buildinfo.go"
-        },
-        {
-          "type": "json",
-          "path": "docs/openclaw-manifest.json",
-          "jsonpath": "$.version"
         }
       ]
     }

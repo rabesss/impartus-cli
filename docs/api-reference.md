@@ -263,6 +263,7 @@ Notes:
 - `status`: `pending | running | completed | failed | canceled`
 - `progress`: float percentage (0-100)
 - `totalLectures`, `completedLectures`, `outputs`, `error` are populated as work advances
+- `filteredLectures`: number of selected lectures skipped by `skipNoAudio`; omitted when zero
 
 ### Create job
 
