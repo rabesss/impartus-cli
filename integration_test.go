@@ -2,8 +2,6 @@
 package main
 
 import (
-	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/rabesss/impartus-cli/internal/buildinfo"
@@ -11,12 +9,7 @@ import (
 )
 
 func TestSampleConfigIsValidJSONAndConfig(t *testing.T) {
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("could not locate integration test source")
-	}
-
-	cfg, err := iconfig.Parse(filepath.Join(filepath.Dir(currentFile), "sample.config.json"))
+	cfg, err := iconfig.Parse("sample.config.json")
 	if err != nil {
 		t.Fatalf("sample config could not be parsed: %v", err)
 	}
