@@ -109,11 +109,16 @@ file is ephemeral when the container is removed unless `/work` is persisted.
 
 ### Configuration
 
-1. Copy the sample configuration:
+1. Create a private configuration file:
 
 ```bash
-cp sample.config.json config.json
+make config-init
 ```
+
+This copies the sample when `config.json` does not exist and sets owner-only
+permissions (`0600`). If the file already exists, the command only tightens its
+permissions and never overwrites your configuration. You can apply the same
+protection manually with `chmod 600 config.json`.
 
 2. Edit `config.json` with your credentials:
 
