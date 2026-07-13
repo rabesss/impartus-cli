@@ -52,10 +52,7 @@ Expected response (structured envelope with sub-checks):
   "data": {
     "status": "ok",
     "config": {
-      "status": "ok",
-      "username": "configured",
-      "password": "[REDACTED]",
-      "baseUrl": "configured"
+      "status": "ok"
     },
     "upstream": {
       "status": "reachable"
@@ -73,6 +70,7 @@ Expected response (structured envelope with sub-checks):
 ```
 
 If any component is not configured or unavailable, the overall `status` becomes `degraded` and the relevant sub-check shows `not_configured`, `unreachable`, or `not_found`.
+The unauthenticated response intentionally reports only aggregate configuration status; inspect the local configuration or server logs to diagnose a `misconfigured` result.
 
 ### Check Download Jobs
 
@@ -285,10 +283,7 @@ Expected health response shape:
   "data": {
     "status": "ok",
     "config": {
-      "status": "ok",
-      "username": "configured",
-      "password": "[REDACTED]",
-      "baseUrl": "configured"
+      "status": "ok"
     },
     "upstream": {
       "status": "reachable"
@@ -306,6 +301,7 @@ Expected health response shape:
 ```
 
 If any sub-check fails, the top-level `data.status` becomes `degraded`.
+Configuration health remains aggregate because this endpoint is unauthenticated; use local configuration and logs for field-level diagnosis.
 
 ### Log Analysis
 
