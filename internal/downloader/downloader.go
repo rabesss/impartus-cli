@@ -67,6 +67,9 @@ type Downloader struct {
 	maxRetries    int
 	ffmpegPath    string
 	playlistSlots chan struct{}
+
+	// pipelineObserver is a package-private lifecycle hook used by tests.
+	pipelineObserver func(*LecturePipeline)
 }
 
 // New creates a new Downloader with the given config and API client.
@@ -172,6 +175,10 @@ func (d *Downloader) downloadPlaylistPipelined(ctx context.Context, playlist cli
 	}
 
 	pipeline := d.newLecturePipeline(ctx, playlist, decryptionKey, tracker)
+	defer pipeline.cancelPipeline()
+	if d.pipelineObserver != nil {
+		d.pipelineObserver(pipeline)
+	}
 	pipeline.Start()
 
 	downloadBar := d.newPipelineBar(p, playlist.SeqNo, totalChunks)
@@ -203,24 +210,35 @@ func (d *Downloader) downloadPlaylistPipelined(ctx context.Context, playlist cli
 
 // DownloadAndJoinPlaylist downloads a playlist and joins the chunks into final output file(s).
 func (d *Downloader) DownloadAndJoinPlaylist(ctx context.Context, playlist client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) (JoinResult, error) {
-	downloadedPlaylist, err := d.DownloadPlaylist(ctx, playlist, p, tracker)
+	// Each invocation owns a unique child workspace. The configured base
+	// directory remains caller-owned and may be shared by concurrent downloads.
+	if err := os.MkdirAll(d.config.TempDirLocation, 0o755); err != nil { // #nosec G301
+		return JoinResult{}, err
+	}
+	workspace, err := os.MkdirTemp(d.config.TempDirLocation, fmt.Sprintf("lecture-%d-", playlist.ID))
 	if err != nil {
 		return JoinResult{}, err
 	}
-	metadataFile, err := d.CreateTempM3U8File(downloadedPlaylist)
-	if err != nil {
-		return JoinResult{}, err
-	}
-	// Ensure temp M3U8 manifest files are removed on both success and failure paths.
 	defer func() {
-		if metadataFile.FirstViewFile != "" {
-			_ = os.Remove(metadataFile.FirstViewFile) //nolint:errcheck // best-effort cleanup
-		}
-		if metadataFile.SecondViewFile != "" {
-			_ = os.Remove(metadataFile.SecondViewFile) //nolint:errcheck // best-effort cleanup
+		if cleanupErr := os.RemoveAll(workspace); cleanupErr != nil {
+			log.Printf("warning: failed to remove temporary workspace for lecture %d: %s", playlist.ID, secrets.ScrubError(cleanupErr))
 		}
 	}()
-	return d.JoinLectureOutput(ctx, metadataFile)
+
+	invocationConfig := *d.config
+	invocationConfig.TempDirLocation = workspace
+	invocationDownloader := *d
+	invocationDownloader.config = &invocationConfig
+
+	downloadedPlaylist, err := invocationDownloader.DownloadPlaylist(ctx, playlist, p, tracker)
+	if err != nil {
+		return JoinResult{}, err
+	}
+	metadataFile, err := invocationDownloader.CreateTempM3U8File(downloadedPlaylist)
+	if err != nil {
+		return JoinResult{}, err
+	}
+	return invocationDownloader.JoinLectureOutput(ctx, metadataFile)
 }
 
 // JoinLectureOutput joins the chunks described by the M3U8 file into final output.
