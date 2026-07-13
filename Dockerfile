@@ -44,7 +44,9 @@ RUN apt-get update && \
     apt-get install --no-install-recommends -y ca-certificates ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
-RUN useradd --create-home --shell /usr/sbin/nologin impartus
+RUN useradd --create-home --shell /usr/sbin/nologin impartus && \
+    install -d -o impartus -g impartus -m 0750 \
+      /work /work/temp /work/downloads
 
 WORKDIR /work
 

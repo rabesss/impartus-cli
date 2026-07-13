@@ -128,6 +128,27 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum
 
+  container-permissions:
+    name: Container permissions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Build local image
+        run: docker build -t impartus:permission-test .
+
+      - name: Verify non-root writable runtime
+        run: |
+          docker run --rm --entrypoint sh impartus:permission-test -c \
+            'test "$(id -u)" -ne 0 && touch /work/.jobs.json.tmp && mkdir -p /work/temp /work/downloads && test -w /work -a -w /work/temp -a -w /work/downloads'
+
+      - name: Verify CLI entrypoint
+        run: docker run --rm impartus:permission-test --help
+
   build:
     name: Build
     runs-on: ubuntu-latest
