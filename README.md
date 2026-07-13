@@ -488,6 +488,11 @@ ws.onmessage = (event) => {
 
 See [`docs/websocket-events.md`](docs/websocket-events.md) for complete event schemas.
 
+WebSocket events are live notifications, not a durable event stream. A client
+that stops reading may be disconnected when its bounded outbound queue fills.
+Reconnect and query `GET /api/v1/jobs/{id}` to recover the current job state;
+events that occurred while disconnected are not replayed.
+
 ## Development
 
 ### Build & Test

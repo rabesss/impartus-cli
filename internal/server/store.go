@@ -285,6 +285,10 @@ func (js *JobStore) updateJobDurable(id string, status JobStatus, progress float
 		js.mu.Unlock()
 		return nil
 	}
+	if isTerminalStatus(job.Status) {
+		js.mu.Unlock()
+		return nil
+	}
 	var before jobStoreState
 	if isTerminalStatus(status) {
 		before = js.captureStateLocked()
@@ -311,6 +315,66 @@ func (js *JobStore) updateJobDurable(id string, status JobStatus, progress float
 	return nil
 }
 
+// UpdateRunningIfActive advances a non-terminal job to running state without
+// allowing progress to regress. It returns true only when the update was
+// applied, so callers can keep emitted progress events aligned with store
+// transition order.
+func (js *JobStore) UpdateRunningIfActive(id string, progress float64) (bool, error) {
+	if err := js.beginMutation(); err != nil {
+		return false, err
+	}
+	defer js.endMutation()
+	js.mu.Lock()
+
+	job, ok := js.jobs[id]
+	if !ok || isTerminalStatus(job.Status) || progress < job.Progress {
+		js.mu.Unlock()
+		return false, nil
+	}
+	job.Status = StatusRunning
+	job.Progress = progress
+	job.Error = ""
+	job.UpdatedAt = time.Now()
+	revision, snapshot := js.snapshotLocked()
+	js.mu.Unlock()
+	js.publish(revision, snapshot)
+	return true, nil
+}
+
+// FailJobIfNonTerminal atomically and durably transitions an existing
+// non-terminal job to failed. It returns true only after the transition has
+// been persisted. Callers must use the result to avoid emitting a failed event
+// for a job that already completed, failed, or was canceled concurrently.
+func (js *JobStore) FailJobIfNonTerminal(id, errMsg string) (bool, error) {
+	if err := js.beginMutation(); err != nil {
+		return false, err
+	}
+	defer js.endMutation()
+	js.visibilityMu.Lock()
+	defer js.visibilityMu.Unlock()
+	js.mu.Lock()
+
+	job, ok := js.jobs[id]
+	if !ok || isTerminalStatus(job.Status) {
+		js.mu.Unlock()
+		return false, nil
+	}
+	before := js.captureStateLocked()
+
+	job.Status = StatusFailed
+	job.Progress = 0
+	job.Error = errMsg
+	job.UpdatedAt = time.Now()
+	pruned := js.pruneTerminalJobsLocked()
+	revision, snapshot := js.snapshotLocked()
+	js.mu.Unlock()
+	if err := js.publishAndFlush(revision, snapshot); err != nil {
+		return false, js.rollbackMutation(before, err)
+	}
+	cancelJobs(pruned)
+	return true, nil
+}
+
 // SetLectureProgress updates the completed and total lecture counts for a job.
 func (js *JobStore) SetLectureProgress(id string, completed, total int) {
 	if err := js.beginMutation(); err != nil {
@@ -320,7 +384,7 @@ func (js *JobStore) SetLectureProgress(id string, completed, total int) {
 	js.mu.Lock()
 
 	job, ok := js.jobs[id]
-	if !ok {
+	if !ok || isTerminalStatus(job.Status) || completed < job.CompletedLectures {
 		js.mu.Unlock()
 		return
 	}
@@ -366,6 +430,11 @@ func (js *JobStore) CompleteJob(id string, outputs []string) error {
 		js.mu.Unlock()
 		return ErrJobNotFound
 	}
+	if isTerminalStatus(job.Status) {
+		status := job.Status
+		js.mu.Unlock()
+		return &TerminalStatusError{Status: status}
+	}
 	before := js.captureStateLocked()
 	job.Outputs = append([]string{}, outputs...)
 	job.Status = StatusCompleted
@@ -399,9 +468,10 @@ func (js *JobStore) CancelJob(id string) (*Job, error) {
 		return nil, ErrJobNotFound
 	}
 
-	if job.Status == StatusCompleted || job.Status == StatusFailed || job.Status == StatusCanceled {
+	if isTerminalStatus(job.Status) {
+		status := job.Status
 		js.mu.Unlock()
-		return nil, &TerminalStatusError{Status: job.Status}
+		return nil, &TerminalStatusError{Status: status}
 	}
 	before := js.captureStateLocked()
 

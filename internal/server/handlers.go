@@ -15,24 +15,25 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/gorilla/websocket"
 
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
 const (
-	healthCommand                 = "health"
-	readinessCacheTTL             = 15 * time.Second
-	upstreamProbeTimeout          = 5 * time.Second
-	jobCancelledEventType         = "job.cancelled"
-	lectureSubjectQueryParam      = "subjectId"
-	lectureSubjectLegacyParam     = "subject_id"
-	lectureSessionQueryParam      = "sessionId"
-	lectureSessionLegacyParam     = "session_id"
-	upstreamLoginFailedMessage    = "Failed to authenticate with Impartus API"
-	upstreamCoursesFailedMessage  = "Failed to fetch courses from Impartus"
-	upstreamLecturesFailedMessage = "Failed to fetch lectures from Impartus"
+	healthCommand                       = "health"
+	internalJobExecutionError           = "internal job execution error"
+	readinessCacheTTL                   = 15 * time.Second
+	upstreamProbeTimeout                = 5 * time.Second
+	jobCancelledEventType               = "job.cancelled"
+	websocketReadLimit            int64 = 4096
+	lectureSubjectQueryParam            = "subjectId"
+	lectureSubjectLegacyParam           = "subject_id"
+	lectureSessionQueryParam            = "sessionId"
+	lectureSessionLegacyParam           = "session_id"
+	upstreamLoginFailedMessage          = "Failed to authenticate with Impartus API"
+	upstreamCoursesFailedMessage        = "Failed to fetch courses from Impartus"
+	upstreamLecturesFailedMessage       = "Failed to fetch lectures from Impartus"
 )
 
 func (s *APIServer) registerRoutes() {
@@ -416,19 +417,23 @@ func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	respondWithEnvelope(w, http.StatusCreated, "createJob", jobCopy)
 
-	go func() {
-		s.jobSem <- struct{}{}
-		defer func() { <-s.jobSem }()
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("panic in job executor for job %s: %v", job.ID, r)
-				if err := s.jobStore.updateJobDurable(job.ID, StatusFailed, 0, fmt.Sprintf("internal error: %v", r)); err != nil {
-					log.Printf("failed to persist panicked job: %v", err)
-				}
-			}
-		}()
+	go s.runJob(job.ID, func() {
 		s.executeJob(job.ID)
+	})
+}
+
+func (s *APIServer) runJob(jobID string, execute func()) {
+	s.jobSem <- struct{}{}
+	defer func() { <-s.jobSem }()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			// The panic type is sufficient to categorize private diagnostics. The
+			// value may contain credentials, URLs, paths, or other sensitive data.
+			log.Printf("panic in job executor for job %s (type %T)", jobID, recovered)
+			s.failJob(jobID, internalJobExecutionError)
+		}
 	}()
+	execute()
 }
 
 func (s *APIServer) listJobsHandler(w http.ResponseWriter, _ *http.Request) {
@@ -459,7 +464,7 @@ func (s *APIServer) deleteJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := s.jobStore.CancelJob(jobID)
+	err := s.cancelJob(jobID)
 	if err != nil {
 		if errors.Is(err, ErrJobNotFound) {
 			respondWithError(w, http.StatusNotFound, "JOB_NOT_FOUND", "Job not found", "cancelJob", nil)
@@ -475,12 +480,21 @@ func (s *APIServer) deleteJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	respondWithSuccess(w, "cancelJob", cancelJobResponse{ID: jobID, Status: StatusCanceled})
+}
+
+func (s *APIServer) cancelJob(jobID string) error {
+	s.jobEventMu.Lock()
+	defer s.jobEventMu.Unlock()
+	job, err := s.jobStore.CancelJob(jobID)
+	if err != nil {
+		return err
+	}
 	evt := newWSEvent(jobCancelledEventType, jobID)
 	evt.Status = StatusCanceled
 	evt.Progress = job.Progress
 	broadcastEvent(s.wsHub, evt)
-
-	respondWithSuccess(w, "cancelJob", cancelJobResponse{ID: jobID, Status: StatusCanceled})
+	return nil
 }
 
 func (s *APIServer) websocketHandler(w http.ResponseWriter, r *http.Request) {
@@ -489,11 +503,9 @@ func (s *APIServer) websocketHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("WebSocket upgrade error: %v", err)
 		return
 	}
-	defer func() {
-		_ = conn.Close() //nolint:errcheck
-	}()
-
+	conn.SetReadLimit(websocketReadLimit)
 	if err := conn.SetReadDeadline(time.Now().Add(60 * time.Second)); err != nil {
+		_ = conn.Close() //nolint:errcheck
 		return
 	}
 	conn.SetPongHandler(func(string) error {
@@ -501,26 +513,14 @@ func (s *APIServer) websocketHandler(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	s.wsHub.Register(conn)
-	defer s.wsHub.Unregister(conn)
-
-	// Start ping ticker to keep the connection alive and detect dead peers.
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)); err != nil {
-					return
-				}
-			}
-		}
+	client := s.wsHub.Register(conn)
+	if client == nil {
+		_ = conn.Close() //nolint:errcheck
+		return
+	}
+	defer func() {
+		s.wsHub.Unregister(client)
+		<-client.writeDone
 	}()
 
 	for {

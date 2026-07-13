@@ -56,19 +56,20 @@ func (s *APIServer) executeJob(jobID string) {
 }
 
 func (s *APIServer) updateRunningProgress(jobID string, progress float64, phase string, details any) bool {
-	job, ok := s.jobStore.runtimeJobSnapshot(jobID)
-	if !ok {
-		return false
-	}
-	status, _ := s.jobStore.GetJobStatus(jobID)
-	if job.ctx.Err() != nil || status == StatusCanceled {
-		if err := s.jobStore.updateJobDurable(jobID, StatusCanceled, progress, ""); err != nil {
-			log.Printf("failed to persist canceled job %s: %v", jobID, err)
-		}
-		return false
-	}
+	s.jobEventMu.Lock()
+	defer s.jobEventMu.Unlock()
+	return s.updateRunningProgressLocked(jobID, progress, phase, details)
+}
 
-	s.jobStore.UpdateJob(jobID, StatusRunning, progress, "")
+func (s *APIServer) updateRunningProgressLocked(jobID string, progress float64, phase string, details any) bool {
+	applied, err := s.jobStore.UpdateRunningIfActive(jobID, progress)
+	if err != nil {
+		log.Printf("failed to persist running job %s: %v", jobID, err)
+		return false
+	}
+	if !applied {
+		return false
+	}
 	evt := newWSEvent("job.progress", jobID)
 	evt.Status = StatusRunning
 	evt.Progress = progress
@@ -82,13 +83,12 @@ func (s *APIServer) handleCancelIfNeeded(jobID string, jobErr error) bool {
 	if jobErr == nil {
 		return false
 	}
-	job, ok := s.jobStore.CopyJob(jobID)
-	if ok {
-		if err := s.jobStore.updateJobDurable(jobID, StatusCanceled, job.Progress, ""); err != nil {
-			log.Printf("failed to persist canceled job %s: %v", jobID, err)
-		}
-	} else {
-		if err := s.jobStore.updateJobDurable(jobID, StatusCanceled, 0, ""); err != nil {
+	s.jobEventMu.Lock()
+	_, err := s.jobStore.CancelJob(jobID)
+	s.jobEventMu.Unlock()
+	if err != nil {
+		var terminalErr *TerminalStatusError
+		if !errors.As(err, &terminalErr) && !errors.Is(err, ErrJobNotFound) {
 			log.Printf("failed to persist canceled job %s: %v", jobID, err)
 		}
 	}
@@ -97,7 +97,9 @@ func (s *APIServer) handleCancelIfNeeded(jobID string, jobErr error) bool {
 }
 
 func (s *APIServer) startJob(jobID string) bool {
-	if !s.updateRunningProgress(jobID, 2, "initializing", nil) {
+	s.jobEventMu.Lock()
+	defer s.jobEventMu.Unlock()
+	if !s.updateRunningProgressLocked(jobID, 2, "initializing", nil) {
 		return false
 	}
 	evt := newWSEvent("job.started", jobID)
@@ -236,8 +238,13 @@ func (s *APIServer) runPlaylistDownloads(ctx context.Context, jobCtx context.Con
 }
 
 func (s *APIServer) completeJob(jobID string, finalOutputs []string) {
+	s.jobEventMu.Lock()
+	defer s.jobEventMu.Unlock()
 	if err := s.jobStore.CompleteJob(jobID, finalOutputs); err != nil {
-		log.Printf("failed to durably complete job %s: %v", jobID, err)
+		var terminalErr *TerminalStatusError
+		if !errors.As(err, &terminalErr) {
+			log.Printf("failed to durably complete job %s: %v", jobID, err)
+		}
 		return
 	}
 	evt := newWSEvent("job.completed", jobID)
@@ -248,8 +255,14 @@ func (s *APIServer) completeJob(jobID string, finalOutputs []string) {
 }
 
 func (s *APIServer) failJob(jobID, errMsg string) {
-	if err := s.jobStore.updateJobDurable(jobID, StatusFailed, 0, errMsg); err != nil {
+	s.jobEventMu.Lock()
+	defer s.jobEventMu.Unlock()
+	applied, err := s.jobStore.FailJobIfNonTerminal(jobID, errMsg)
+	if err != nil {
 		log.Printf("failed to durably fail job %s: %v", jobID, err)
+		return
+	}
+	if !applied {
 		return
 	}
 	evt := newWSEvent("job.failed", jobID)
