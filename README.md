@@ -8,6 +8,7 @@
   * [Quick Start](#quick-start)
     * [Install](#install)
     * [Requirements](#requirements)
+    * [Container usage](#container-usage)
     * [Configuration](#configuration)
   * [CLI Usage](#cli-usage)
     * [Interactive Mode](#interactive-mode)
@@ -85,6 +86,27 @@ go build -o impartus .
 - **FFmpeg** - Required for video processing (must be in `PATH`)
 - **mpv** - Required for the `play` command (must be in `PATH`)
 - **Impartus Account** - Valid credentials for your institution's Impartus platform
+
+### Container usage
+
+The `--help` command above is a quick image and entrypoint smoke test. For a
+real download, mount the configuration read-only and provide writable download
+and temporary directories:
+
+```bash
+mkdir -p downloads temp
+docker run --rm \
+  --volume "$PWD/config.json:/work/config.json:ro" \
+  --volume "$PWD/downloads:/work/downloads" \
+  --volume "$PWD/temp:/work/temp" \
+  ghcr.io/rabesss/impartus-cli:main \
+  download --subject 123 --session 456
+```
+
+The image runs as the non-root `impartus` user. Bind-mounted `downloads` and
+`temp` directories retain their host ownership and permissions, so they must be
+writable by that container user. API jobs are stored in `/work/.jobs.json`; the
+file is ephemeral when the container is removed unless `/work` is persisted.
 
 ### Configuration
 
