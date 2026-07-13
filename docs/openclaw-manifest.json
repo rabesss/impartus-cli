@@ -1,7 +1,7 @@
 {
   "name": "impartus",
   "description": "CLI and HTTP API for downloading Impartus lecture recordings. Supports interactive and deterministic JSON modes for human and agent use.",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "author": "rabesss",
   "homepage": "https://github.com/rabesss/impartus-cli",
   "endpoints": {

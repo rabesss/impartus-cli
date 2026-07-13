@@ -1,5 +1,77 @@
 # Changelog
 
+## [0.1.20](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.19...impartus-cli-v0.1.20) (2026-07-13)
+
+
+### Bug Fixes
+
+* apply http and progress configuration ([#95](https://github.com/rabesss/impartus-cli/issues/95)) ([5e40278](https://github.com/rabesss/impartus-cli/commit/5e402789b7d0d611c07dd152a00a3a9c7a421581))
+* apply http and progress configuration ([#95](https://github.com/rabesss/impartus-cli/issues/95)) ([2ee3dac](https://github.com/rabesss/impartus-cli/commit/2ee3dac61151bea10a919a0342e0c4f04bcd3e29))
+* bound and normalize upstream media ingestion ([e34d79a](https://github.com/rabesss/impartus-cli/commit/e34d79acf098fcf92228379929aa6ece72f9a66b))
+* bound readiness panic recovery ([1287ad7](https://github.com/rabesss/impartus-cli/commit/1287ad7495f4d6c2541e851d7749843801bca8ac))
+* bound websocket clients and sanitize job panics ([8e42d6f](https://github.com/rabesss/impartus-cli/commit/8e42d6fb6a776b6e0e85eb471155e1b6ba30e922))
+* bound WebSocket delivery and preserve terminal events ([7c77c13](https://github.com/rabesss/impartus-cli/commit/7c77c1371edac683d5e835d3763e9d1babeb6e58))
+* **ci:** enforce quality and coverage thresholds ([#99](https://github.com/rabesss/impartus-cli/issues/99)) ([#131](https://github.com/rabesss/impartus-cli/issues/131)) ([ead5d5d](https://github.com/rabesss/impartus-cli/commit/ead5d5d0b31a0300d6a005ada570c4821554dbf5))
+* close progress configuration review gaps ([25ea373](https://github.com/rabesss/impartus-cli/commit/25ea373c4d5410b0dd01f6d25a4f9137dcf75479))
+* detach shared readiness refresh ([caab23e](https://github.com/rabesss/impartus-cli/commit/caab23efb2fe5f032fb128fb0fcaf6dfe22e478c))
+* distinguish HLS discontinuity tags ([17ee5d7](https://github.com/rabesss/impartus-cli/commit/17ee5d7f480cc833b238f1d5ba03bae73004cbd2))
+* harden readiness cleanup ([8b4efee](https://github.com/rabesss/impartus-cli/commit/8b4efee79e877c407312ea10c5ef54e9acd0350f))
+* ignore HLS comment lines during parsing ([c84c7b8](https://github.com/rabesss/impartus-cli/commit/c84c7b87e811f73be5b4caf6b1415f8fd329bce4))
+* isolate downloader diagnostics per instance ([0d1f13d](https://github.com/rabesss/impartus-cli/commit/0d1f13d7ec16425c2dbaf4deb56a788ab25fa40d))
+* isolate json download diagnostics ([351dc28](https://github.com/rabesss/impartus-cli/commit/351dc281ece79d574262b2865d901e170732b717))
+* isolate temporary workspaces ([#92](https://github.com/rabesss/impartus-cli/issues/92)) ([#105](https://github.com/rabesss/impartus-cli/issues/105)) ([e9f8e60](https://github.com/rabesss/impartus-cli/commit/e9f8e60e9b7808944ffa7ce6bb27c382b1916c96))
+* keep json downloads machine readable ([06951e0](https://github.com/rabesss/impartus-cli/commit/06951e0bc6b981d2082976dc8349fad7f7b3ee0c))
+* keep json downloads machine readable ([47382f4](https://github.com/rabesss/impartus-cli/commit/47382f44b7d2c1f7983af03d53a42c0021c2e851)), closes [#94](https://github.com/rabesss/impartus-cli/issues/94)
+* keep panic cache on health clock ([6ba91dc](https://github.com/rabesss/impartus-cli/commit/6ba91dce5a7dbdbda321bff2ee7b364ba244dab2))
+* make container workdir writable ([#93](https://github.com/rabesss/impartus-cli/issues/93)) ([#104](https://github.com/rabesss/impartus-cli/issues/104)) ([c962492](https://github.com/rabesss/impartus-cli/commit/c962492772790aa94507ec610ab079ef70e36e03))
+* make sample config valid and sync docs ([#96](https://github.com/rabesss/impartus-cli/issues/96)) ([ba46311](https://github.com/rabesss/impartus-cli/commit/ba463116e3ea961c81a3bc2080620351b1ab0763))
+* make sample config valid and sync docs ([#96](https://github.com/rabesss/impartus-cli/issues/96)) ([24642f0](https://github.com/rabesss/impartus-cli/commit/24642f0934febceb71211e1d85b0aa3aca00e96f))
+* normalize and bound media ingestion ([1648164](https://github.com/rabesss/impartus-cli/commit/16481644c0ae9c7781b76d40895f6fb817109185))
+* preserve final slide permissions ([18c842e](https://github.com/rabesss/impartus-cli/commit/18c842e1c532fcefb54eab15d907b30bfed6739d))
+* preserve terminal and websocket event ordering ([bbbebde](https://github.com/rabesss/impartus-cli/commit/bbbebde0b688cfe01fbdf51063ad2478b98950ae))
+* propagate config setup failures ([848e4e4](https://github.com/rabesss/impartus-cli/commit/848e4e49ee6f71b5b9701ef4823825e1ec13d2e5))
+* scan container before publishing ([#98](https://github.com/rabesss/impartus-cli/issues/98)) ([#107](https://github.com/rabesss/impartus-cli/issues/107)) ([cb00fb0](https://github.com/rabesss/impartus-cli/commit/cb00fb0be56c6fc4374ef82b870b0c54843cbbc3))
+* **server:** own cleanup lifecycle in Start ([#122](https://github.com/rabesss/impartus-cli/issues/122)) ([#129](https://github.com/rabesss/impartus-cli/issues/129)) ([649462d](https://github.com/rabesss/impartus-cli/commit/649462da99fb13dc0ce5dcce74a480887e37d652))
+
+
+### Performance
+
+* cache dependency readiness probes ([#100](https://github.com/rabesss/impartus-cli/issues/100)) ([7859778](https://github.com/rabesss/impartus-cli/commit/78597788dfd75bc63b2b958a5dd4f9a6aed39fd8))
+* cache dependency readiness probes ([#100](https://github.com/rabesss/impartus-cli/issues/100)) ([1d008e1](https://github.com/rabesss/impartus-cli/commit/1d008e145021d4070c82432e968933651745486c))
+* coalesce job persistence writes ([#111](https://github.com/rabesss/impartus-cli/issues/111)) ([fd4167c](https://github.com/rabesss/impartus-cli/commit/fd4167c4931076c095eca78b48b34c98bb46d47f))
+
+
+### Refactoring
+
+* split package ownership seams ([#124](https://github.com/rabesss/impartus-cli/issues/124)) ([#130](https://github.com/rabesss/impartus-cli/issues/130)) ([7dc4a79](https://github.com/rabesss/impartus-cli/commit/7dc4a792cabc218b2276b26c43bf28af18ef8dd2))
+
+
+### Documentation
+
+* document opaque UUID-backed job IDs ([#125](https://github.com/rabesss/impartus-cli/issues/125)) ([#127](https://github.com/rabesss/impartus-cli/issues/127)) ([6ab2eac](https://github.com/rabesss/impartus-cli/commit/6ab2eacffbc47514428b4f1c11a567cf03456c40))
+* simplify README development guidance ([#110](https://github.com/rabesss/impartus-cli/issues/110))
+* remove retired Go Report Card badge ([b67af49](https://github.com/rabesss/impartus-cli/commit/b67af4981431865000ca7654063ada376f8b6cb4))
+* remove retired Go Report Card badge ([7470ebc](https://github.com/rabesss/impartus-cli/commit/7470ebc7e19c0241255ada80bd1acd1fbd059cbf))
+
+
+### Testing
+
+* cover focused startup and selection gaps ([#123](https://github.com/rabesss/impartus-cli/issues/123)) ([#128](https://github.com/rabesss/impartus-cli/issues/128)) ([48df2e4](https://github.com/rabesss/impartus-cli/commit/48df2e4a898cae5f6deb68eb24972c858cc4799d))
+* drain stdout capture concurrently ([d716c18](https://github.com/rabesss/impartus-cli/commit/d716c180a577ff343cc76cd62b73255c8ed09d9e))
+* load sample config from package directory ([373a516](https://github.com/rabesss/impartus-cli/commit/373a5169b82f569953784de937034ff3fc089ae6))
+
+
+### Build System
+
+* update Go builder to 1.26.5 ([#108](https://github.com/rabesss/impartus-cli/issues/108)) ([#109](https://github.com/rabesss/impartus-cli/issues/109)) ([6cc925d](https://github.com/rabesss/impartus-cli/commit/6cc925defc92eed24cac8acd981a80dc9183ceb0))
+
+
+### CI/CD
+
+* **deps:** bump pullfrog/pullfrog to 0.1.35 ([#101](https://github.com/rabesss/impartus-cli/issues/101))
+* **deps:** bump github/codeql-action/upload-sarif to 4.37.0 ([#102](https://github.com/rabesss/impartus-cli/issues/102))
+* **deps:** bump actions/setup-python to 6.3.0 ([#103](https://github.com/rabesss/impartus-cli/issues/103))
+
 ## [0.1.19](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.18...impartus-cli-v0.1.19) (2026-07-12)
 
 
