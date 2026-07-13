@@ -369,7 +369,9 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/courses
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| `GET` | `/api/v1/health` | No | Health check |
+| `GET` | `/api/v1/health/live` | No | Process liveness check |
+| `GET` | `/api/v1/health/ready` | No | Cached dependency readiness check |
+| `GET` | `/api/v1/health` | No | Compatibility alias for readiness |
 | `POST` | `/api/v1/auth/login` | No | Authenticate |
 | `GET` | `/api/v1/courses` | Yes | List courses |
 | `GET` | `/api/v1/lectures` | Yes | List lectures |
@@ -382,11 +384,16 @@ curl -H "Authorization: Bearer <token>" http://localhost:8080/api/v1/courses
 ### Health Endpoint
 
 ```bash
-# Check API health
-curl http://localhost:8080/api/v1/health
+# Use this for process or container liveness probes (no dependency checks)
+curl http://localhost:8080/api/v1/health/live
+
+# Use this for dependency readiness
+curl http://localhost:8080/api/v1/health/ready
 ```
 
-**Response:** Returns a structured `{success, data, error, meta}` envelope with sub-checks for config, upstream, and FFmpeg status:
+`/api/v1/health/live` returns the standard envelope with `data.status` set to `ok` and performs no configuration, network, token-cache, filesystem, or executable checks.
+
+`/api/v1/health/ready` returns a structured `{success, data, error, meta}` envelope with sub-checks for config, upstream, and FFmpeg status. `/api/v1/health` remains a compatibility alias with the same readiness response:
 
 ```json
 {
@@ -418,6 +425,7 @@ Status values:
 - Overall `status`: `ok` (all sub-checks pass) or `degraded` (one or more sub-checks fail)
 
 The unauthenticated health response deliberately exposes only aggregate configuration status; it does not reveal which credential fields are present.
+Readiness results, including degraded results, are cached for 15 seconds and may be that old. Readiness endpoints retain HTTP 200 when degraded, so callers must inspect `data.status` rather than relying on the HTTP status alone.
 
 ### Create Download Job
 
