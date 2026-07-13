@@ -27,6 +27,7 @@ type fakeLectureDownloadRunner struct {
 	playlists []client.ParsedPlaylist
 	results   []downloader.JoinResult
 	progress  []*mpb.Progress
+	trackers  []*downloader.ProgressTracker
 	next      int
 }
 
@@ -34,8 +35,9 @@ func (f *fakeLectureDownloadRunner) FetchLecturePlaylists(context.Context, []cli
 	return f.playlists, nil
 }
 
-func (f *fakeLectureDownloadRunner) DownloadAndJoinPlaylist(_ context.Context, _ client.ParsedPlaylist, progress *mpb.Progress, _ *downloader.ProgressTracker) (downloader.JoinResult, error) {
+func (f *fakeLectureDownloadRunner) DownloadAndJoinPlaylist(_ context.Context, _ client.ParsedPlaylist, progress *mpb.Progress, tracker *downloader.ProgressTracker) (downloader.JoinResult, error) {
 	f.progress = append(f.progress, progress)
+	f.trackers = append(f.trackers, tracker)
 	result := f.results[f.next]
 	f.next++
 	return result, nil
@@ -113,7 +115,17 @@ func TestHumanDownloadPresentationKeepsWarningsAndProgress(t *testing.T) {
 		playlists: []client.ParsedPlaylist{{ID: 1}},
 		results:   []downloader.JoinResult{{LeftOutput: "left.mp4"}},
 	}
-	if _, err := downloadLecturesWithRunner(context.Background(), &config.Config{DownloadLocation: t.TempDir()}, runner, client.Lectures{{TTID: 1}}, presentation); err != nil {
+	cfg := &config.Config{
+		DownloadLocation: t.TempDir(),
+		ProgressTracking: config.ProgressConfig{
+			Enabled:         true,
+			ShowSpeed:       true,
+			ShowETA:         true,
+			UpdateInterval:  "500ms",
+			SpeedWindowSize: 3,
+		},
+	}
+	if _, err := downloadLecturesWithRunner(context.Background(), cfg, runner, client.Lectures{{TTID: 1}}, presentation); err != nil {
 		t.Fatalf("downloadLecturesWithRunner() error = %v", err)
 	}
 	if len(runner.progress) != 1 || runner.progress[0] == nil {
@@ -121,6 +133,54 @@ func TestHumanDownloadPresentationKeepsWarningsAndProgress(t *testing.T) {
 	}
 	if humanDownloadPresentation().diagnosticOutput != nil {
 		t.Fatal("human downloads should preserve the downloader's standard diagnostics")
+	}
+	if len(runner.trackers) != 1 || runner.trackers[0] == nil {
+		t.Fatal("human download did not pass a progress tracker to the downloader")
+	}
+}
+
+func TestProgressTrackingModeMatrix(t *testing.T) {
+	tests := []struct {
+		name         string
+		presentation downloadPresentationOptions
+		enabled      bool
+		wantProgress bool
+	}{
+		{name: "human enabled", presentation: downloadPresentationOptions{showProgress: true, progressOutput: io.Discard}, enabled: true, wantProgress: true},
+		{name: "human disabled", presentation: downloadPresentationOptions{showProgress: true, progressOutput: io.Discard}, enabled: false},
+		{name: "json enabled", presentation: quietDownloadPresentation(), enabled: true},
+		{name: "json disabled", presentation: quietDownloadPresentation(), enabled: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &fakeLectureDownloadRunner{
+				playlists: []client.ParsedPlaylist{{ID: 1}},
+				results:   []downloader.JoinResult{{LeftOutput: "left.mp4"}},
+			}
+			cfg := &config.Config{
+				DownloadLocation: t.TempDir(),
+				ProgressTracking: config.ProgressConfig{
+					Enabled:         tt.enabled,
+					ShowSpeed:       true,
+					ShowETA:         true,
+					UpdateInterval:  "500ms",
+					SpeedWindowSize: 3,
+				},
+			}
+			if _, err := downloadLecturesWithRunner(context.Background(), cfg, runner, client.Lectures{{TTID: 1}}, tt.presentation); err != nil {
+				t.Fatalf("downloadLecturesWithRunner() error = %v", err)
+			}
+
+			gotProgress := len(runner.progress) == 1 && runner.progress[0] != nil
+			gotTracker := len(runner.trackers) == 1 && runner.trackers[0] != nil
+			if gotProgress != tt.wantProgress {
+				t.Fatalf("progress container present = %v, want %v", gotProgress, tt.wantProgress)
+			}
+			if gotTracker != tt.wantProgress {
+				t.Fatalf("progress tracker present = %v, want %v", gotTracker, tt.wantProgress)
+			}
+		})
 	}
 }
 
