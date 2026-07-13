@@ -22,6 +22,7 @@ type persistenceCoordinator struct {
 	pendingRevision uint64
 	writtenRevision uint64
 	attemptRevision uint64
+	attemptCount    uint64
 	lastErr         error
 	changed         chan struct{}
 	closed          bool
@@ -71,9 +72,17 @@ func (pc *persistenceCoordinator) flushTo(ctx context.Context, revision uint64) 
 		return nil
 	}
 
+	pc.mu.Lock()
+	initialAttemptCount := pc.attemptCount
+	pc.mu.Unlock()
+
 	for {
 		pc.mu.Lock()
-		if pc.attemptRevision >= revision {
+		if pc.writtenRevision >= revision {
+			pc.mu.Unlock()
+			return nil
+		}
+		if pc.attemptRevision >= revision && pc.attemptCount > initialAttemptCount {
 			err := pc.lastErr
 			pc.mu.Unlock()
 			return err
@@ -93,7 +102,11 @@ func (pc *persistenceCoordinator) flushTo(ctx context.Context, revision uint64) 
 			pc.mu.Lock()
 			err := pc.lastErr
 			attempted := pc.attemptRevision
+			written := pc.writtenRevision
 			pc.mu.Unlock()
+			if written >= revision {
+				return nil
+			}
 			if attempted < revision && err == nil {
 				return errPersistenceClosed
 			}
@@ -180,6 +193,7 @@ func (pc *persistenceCoordinator) writeLatest() {
 	// A newer pending snapshot may have arrived while this write ran. Record
 	// only the revision actually attempted; the worker will write the newer one.
 	pc.attemptRevision = revision
+	pc.attemptCount++
 	pc.lastErr = err
 	if err == nil && revision > pc.writtenRevision {
 		pc.writtenRevision = revision

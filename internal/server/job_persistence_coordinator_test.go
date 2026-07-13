@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -184,6 +186,10 @@ func TestJobStoreRetentionPreservesNewestTerminalAndActiveJobs(t *testing.T) {
 		store.idempotencyKeys["key-"+id] = id
 	}
 	store.pruneTerminalJobsLocked()
+	if got, want := len(store.jobs), maxRetainedTerminalJobs+2; got != want {
+		store.mu.Unlock()
+		t.Fatalf("live retained job count = %d, want %d", got, want)
+	}
 	revision, snapshot := store.snapshotLocked()
 	store.mu.Unlock()
 	if err := store.publishAndFlush(revision, snapshot); err != nil {
@@ -192,7 +198,7 @@ func TestJobStoreRetentionPreservesNewestTerminalAndActiveJobs(t *testing.T) {
 
 	restarted := newTestPersistentStore(t, path)
 	jobs := restarted.ListJobCopies()
-	if got, want := len(jobs), maxRetainedTerminalJobs+2; got != want {
+	if got, want := len(jobs), maxRetainedTerminalJobs; got != want {
 		t.Fatalf("restored job count = %d, want %d", got, want)
 	}
 	for i := 0; i < 5; i++ {
@@ -212,15 +218,11 @@ func TestJobStoreRetentionPreservesNewestTerminalAndActiveJobs(t *testing.T) {
 	}
 	for i := 0; i < 2; i++ {
 		id := fmt.Sprintf("active-%d", i)
-		job, ok := restarted.CopyJob(id)
-		if !ok {
-			t.Fatalf("active job %s missing", id)
+		if _, ok := restarted.CopyJob(id); ok {
+			t.Fatalf("interrupted job %s should be converted before retention", id)
 		}
-		if job.Status != StatusFailed {
-			t.Fatalf("restored active job status = %q, want failed", job.Status)
-		}
-		if _, ok := restarted.jobByIdempotencyKey("key-" + id); !ok {
-			t.Fatalf("active job idempotency index %s missing", id)
+		if _, ok := restarted.jobByIdempotencyKey("key-" + id); ok {
+			t.Fatalf("pruned interrupted job idempotency index %s remains", id)
 		}
 	}
 }
@@ -245,7 +247,7 @@ func TestPersistenceLoadPrunesTerminalJobsUsingIDTieBreaker(t *testing.T) {
 	}
 
 	store := newTestPersistentStore(t, path)
-	if got, want := len(store.ListJobCopies()), maxRetainedTerminalJobs+1; got != want {
+	if got, want := len(store.ListJobCopies()), maxRetainedTerminalJobs; got != want {
 		t.Fatalf("loaded job count = %d, want %d", got, want)
 	}
 	for _, id := range []string{"terminal-0000", "terminal-0001"} {
@@ -256,19 +258,15 @@ func TestPersistenceLoadPrunesTerminalJobsUsingIDTieBreaker(t *testing.T) {
 			t.Errorf("pruned idempotency entry remains for %s", id)
 		}
 	}
-	active, ok := store.CopyJob("active")
-	if !ok {
-		t.Fatal("active job was pruned while loading")
+	if _, ok := store.CopyJob("active"); ok {
+		t.Fatal("interrupted job was not included in restored terminal retention")
 	}
-	if active.Status != StatusFailed {
-		t.Fatalf("active job restart status = %q, want failed", active.Status)
-	}
-	if _, ok := store.jobByIdempotencyKey("key-active"); !ok {
-		t.Fatal("active job idempotency entry missing")
+	if _, ok := store.jobByIdempotencyKey("key-active"); ok {
+		t.Fatal("pruned interrupted job idempotency entry remains")
 	}
 	flushTestStore(t, store)
-	if got := len(readPersistedJobs(t, path)); got != maxRetainedTerminalJobs+1 {
-		t.Fatalf("pruned persistence file contains %d jobs, want %d", got, maxRetainedTerminalJobs+1)
+	if got := len(readPersistedJobs(t, path)); got != maxRetainedTerminalJobs {
+		t.Fatalf("pruned persistence file contains %d jobs, want %d", got, maxRetainedTerminalJobs)
 	}
 }
 
@@ -317,5 +315,266 @@ func TestJobStoreConcurrentMutationFlushAndClose(t *testing.T) {
 	restarted := newTestPersistentStore(t, path)
 	if got := len(restarted.ListJobCopies()); got != len(jobs) {
 		t.Fatalf("restored jobs = %d, want %d", got, len(jobs))
+	}
+}
+
+func TestJobStoreCloseWaitsForAdmittedMutationPublish(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jobs.json")
+	store := newTestPersistentStore(t, path)
+	job := store.CreateJob(1, 1, 1, 5, &config.Config{DownloadLocation: "downloads"})
+
+	snapshotted := make(chan struct{})
+	releasePublish := make(chan struct{})
+	producerDone := make(chan error, 1)
+	go func() {
+		if err := store.beginMutation(); err != nil {
+			producerDone <- err
+			return
+		}
+		store.mu.Lock()
+		store.jobs[job.ID].CompletedLectures = 4
+		store.jobs[job.ID].TotalLectures = 5
+		revision, snapshot := store.snapshotLocked()
+		store.mu.Unlock()
+		close(snapshotted)
+		<-releasePublish
+		err := store.coordinator.publish(revision, snapshot)
+		store.endMutation()
+		producerDone <- err
+	}()
+	<-snapshotted
+
+	closeDone := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		closeDone <- store.Close(ctx)
+	}()
+	select {
+	case err := <-closeDone:
+		t.Fatalf("close returned before admitted mutation published: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releasePublish)
+	if err := <-producerDone; err != nil {
+		t.Fatalf("publish admitted mutation: %v", err)
+	}
+	if err := <-closeDone; err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	restarted := newTestPersistentStore(t, path)
+	restored, ok := restarted.CopyJob(job.ID)
+	if !ok {
+		t.Fatal("job missing after close")
+	}
+	if restored.CompletedLectures != 4 || restored.TotalLectures != 5 {
+		t.Fatalf("restored progress = %d/%d, want 4/5", restored.CompletedLectures, restored.TotalLectures)
+	}
+}
+
+func TestDurableMutationFailureRollsBackMemoryDiskAndIdempotency(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jobs.json")
+	store := newTestPersistentStore(t, path)
+	cfg := &config.Config{DownloadLocation: "downloads"}
+	baseline, created := store.CreateJobWithKey(1, 1, 1, 5, cfg, "baseline-key")
+	if !created {
+		t.Fatal("baseline job was not created")
+	}
+
+	realSync := store.persistence.syncFile
+	failWrites := func() {
+		store.persistence.mu.Lock()
+		store.persistence.syncFile = func(*os.File) error { return errors.New("injected file sync failure") }
+		store.persistence.mu.Unlock()
+	}
+	restoreWrites := func() {
+		store.persistence.mu.Lock()
+		store.persistence.syncFile = realSync
+		store.persistence.mu.Unlock()
+		flushTestStore(t, store)
+	}
+
+	failWrites()
+	phantom, created, err := store.createJobWithKeyDurable(2, 2, 1, 1, cfg, "phantom-key")
+	if err == nil || !created {
+		t.Fatalf("failed create = (%v, %v), want created with error", created, err)
+	}
+	if _, ok := store.CopyJob(phantom.ID); ok {
+		t.Fatal("failed create left a phantom in memory")
+	}
+	if _, ok := store.jobByIdempotencyKey("phantom-key"); ok {
+		t.Fatal("failed create left an idempotency entry")
+	}
+	if _, ok := readPersistedJobs(t, path)[phantom.ID]; ok {
+		t.Fatal("failed create reached disk")
+	}
+	restoreWrites()
+
+	for _, test := range []struct {
+		name   string
+		mutate func() error
+	}{
+		{name: "failed", mutate: func() error { return store.updateJobDurable(baseline.ID, StatusFailed, 0, "failure") }},
+		{name: "completed", mutate: func() error { return store.CompleteJob(baseline.ID, []string{"phantom.mp4"}) }},
+		{name: "canceled", mutate: func() error { _, err := store.CancelJob(baseline.ID); return err }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			failWrites()
+			if err := test.mutate(); err == nil {
+				t.Fatal("durable mutation unexpectedly succeeded")
+			}
+			job, ok := store.CopyJob(baseline.ID)
+			if !ok {
+				t.Fatal("baseline job disappeared")
+			}
+			if job.Status != StatusPending || len(job.Outputs) != 0 || job.Error != "" {
+				t.Fatalf("memory was not rolled back: status=%s outputs=%v error=%q", job.Status, job.Outputs, job.Error)
+			}
+			store.mu.RLock()
+			ctxErr := store.jobs[baseline.ID].ctx.Err()
+			store.mu.RUnlock()
+			if ctxErr != nil {
+				t.Fatalf("failed durable mutation canceled runtime context: %v", ctxErr)
+			}
+			persisted := readPersistedJobs(t, path)[baseline.ID]
+			if persisted.Status != StatusPending || len(persisted.Outputs) != 0 || persisted.Error != "" {
+				t.Fatalf("disk was not rolled back: status=%s outputs=%v error=%q", persisted.Status, persisted.Outputs, persisted.Error)
+			}
+			restoreWrites()
+		})
+	}
+}
+
+func TestDurableMutationIsNotVisibleBeforeCommit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jobs.json")
+	store := newTestPersistentStore(t, path)
+	job := store.CreateJob(1, 1, 1, 1, &config.Config{DownloadLocation: "downloads"})
+	realSync := store.persistence.syncFile
+	syncStarted := make(chan struct{})
+	releaseSync := make(chan struct{})
+	store.persistence.mu.Lock()
+	store.persistence.syncFile = func(*os.File) error {
+		close(syncStarted)
+		<-releaseSync
+		return errors.New("injected blocked sync failure")
+	}
+	store.persistence.mu.Unlock()
+
+	mutationDone := make(chan error, 1)
+	go func() {
+		mutationDone <- store.updateJobDurable(job.ID, StatusFailed, 0, "uncommitted")
+	}()
+	<-syncStarted
+	readDone := make(chan *Job, 1)
+	go func() {
+		copy, _ := store.CopyJob(job.ID)
+		readDone <- copy
+	}()
+	select {
+	case visible := <-readDone:
+		t.Fatalf("read observed transaction before persistence completed: %+v", visible)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseSync)
+	if err := <-mutationDone; err == nil {
+		t.Fatal("blocked persistence failure was not returned")
+	}
+	visible := <-readDone
+	if visible.Status != StatusPending || visible.Error != "" {
+		t.Fatalf("read observed rolled-back transaction as status=%s error=%q", visible.Status, visible.Error)
+	}
+
+	store.persistence.mu.Lock()
+	store.persistence.syncFile = realSync
+	store.persistence.mu.Unlock()
+	flushTestStore(t, store)
+}
+
+func TestPersistenceSaveSyncsFileAndDirectoryAndRollsBackSyncFailures(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jobs.json")
+	persistence := newJobPersistence(path)
+	stamp := time.Now().UTC().Format(persistedTimeFormat)
+	oldSnapshot := map[string]persistedJob{"job": {ID: "job", Status: StatusPending, CreatedAt: stamp, UpdatedAt: stamp}}
+	newSnapshot := map[string]persistedJob{"job": {ID: "job", Status: StatusCompleted, CreatedAt: stamp, UpdatedAt: stamp}}
+	if err := persistence.save(oldSnapshot); err != nil {
+		t.Fatalf("seed persistence: %v", err)
+	}
+
+	realFileSync := persistence.syncFile
+	persistence.syncFile = func(*os.File) error { return errors.New("injected file sync failure") }
+	if err := persistence.save(newSnapshot); err == nil {
+		t.Fatal("file sync failure was not propagated")
+	}
+	if got := readPersistedJobs(t, path)["job"].Status; got != StatusPending {
+		t.Fatalf("file sync failure changed live snapshot to %q", got)
+	}
+	if _, err := os.Stat(path + ".tmp"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("temp file remains after file sync failure: %v", err)
+	}
+	persistence.syncFile = realFileSync
+
+	realDirSync := persistence.syncDir
+	persistence.syncDir = func(string) error { return errors.New("injected directory sync failure") }
+	if err := persistence.save(newSnapshot); err == nil {
+		t.Fatal("directory sync failure was not propagated")
+	}
+	if got := readPersistedJobs(t, path)["job"].Status; got != StatusPending {
+		t.Fatalf("directory sync failure did not visibly roll back, status=%q", got)
+	}
+	if _, err := os.Stat(path + ".bak"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("rollback link remains after directory sync failure: %v", err)
+	}
+	persistence.syncDir = realDirSync
+
+	var directorySyncs atomic.Int64
+	persistence.syncDir = func(path string) error {
+		directorySyncs.Add(1)
+		return realDirSync(path)
+	}
+	if err := persistence.save(newSnapshot); err != nil {
+		t.Fatalf("save synced snapshot: %v", err)
+	}
+	if directorySyncs.Load() != 1 {
+		t.Fatalf("parent directory sync count = %d, want 1", directorySyncs.Load())
+	}
+	if got := readPersistedJobs(t, path)["job"].Status; got != StatusCompleted {
+		t.Fatalf("synced snapshot status = %q, want completed", got)
+	}
+}
+
+func TestIdempotencyDuplicateDoesNotWriteOrIncrementRevision(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jobs.json")
+	store := newTestPersistentStore(t, path)
+	cfg := &config.Config{DownloadLocation: "downloads"}
+	first, created := store.CreateJobWithKey(1, 1, 1, 1, cfg, "same-key")
+	if !created {
+		t.Fatal("first job was not created")
+	}
+	store.mu.RLock()
+	revision := store.revision
+	store.mu.RUnlock()
+
+	var fileSyncs atomic.Int64
+	realSync := store.persistence.syncFile
+	store.persistence.mu.Lock()
+	store.persistence.syncFile = func(file *os.File) error {
+		fileSyncs.Add(1)
+		return realSync(file)
+	}
+	store.persistence.mu.Unlock()
+
+	duplicate, created := store.CreateJobWithKey(9, 9, 1, 9, cfg, "same-key")
+	if created || duplicate.ID != first.ID {
+		t.Fatalf("duplicate result = (%s, %v), want existing %s", duplicate.ID, created, first.ID)
+	}
+	store.mu.RLock()
+	gotRevision := store.revision
+	store.mu.RUnlock()
+	if gotRevision != revision {
+		t.Fatalf("duplicate revision = %d, want unchanged %d", gotRevision, revision)
+	}
+	if got := fileSyncs.Load(); got != 0 {
+		t.Fatalf("duplicate triggered %d persistence writes", got)
 	}
 }

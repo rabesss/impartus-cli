@@ -295,7 +295,7 @@ func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 
 	job, created, persistErr := s.jobStore.createJobWithKeyDurable(req.SubjectID, req.SessionID, req.StartIndex, req.EndIndex, mergedCfg, req.IdempotencyKey)
 	if persistErr != nil {
-		log.Printf("failed to persist created job %s: %v", job.ID, persistErr)
+		log.Printf("failed to persist created job: %v", persistErr)
 		respondWithError(w, http.StatusInternalServerError, "JOB_PERSISTENCE_FAILED", "Job could not be durably created", "createJob", &retryHint{Retryable: true, RetryAfter: 10})
 		return
 	}
@@ -324,7 +324,9 @@ func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("panic in job executor for job %s: %v", job.ID, r)
-				s.jobStore.UpdateJob(job.ID, StatusFailed, 0, fmt.Sprintf("internal error: %v", r))
+				if err := s.jobStore.updateJobDurable(job.ID, StatusFailed, 0, fmt.Sprintf("internal error: %v", r)); err != nil {
+					log.Printf("failed to persist panicked job: %v", err)
+				}
 			}
 		}()
 		s.executeJob(job.ID)

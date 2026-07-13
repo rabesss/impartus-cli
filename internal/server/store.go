@@ -18,12 +18,18 @@ type JobStore struct {
 	jobs            map[string]*Job
 	idempotencyKeys map[string]string // idempotencyKey -> jobID
 	mu              sync.RWMutex
+	mutationMu      sync.Mutex
+	visibilityMu    sync.RWMutex
+	lifecycleMu     sync.RWMutex
+	closed          bool
 	persistence     *jobPersistence
 	coordinator     *persistenceCoordinator
 	revision        uint64
 }
 
 const maxRetainedTerminalJobs = 1000
+
+var errJobStoreClosed = fmt.Errorf("job store is closed")
 
 // NewJobStore creates an in-memory job store with no persistence.
 func NewJobStore() *JobStore {
@@ -76,6 +82,13 @@ func (js *JobStore) CreateJobWithKey(subjectID, sessionID, startIndex, endIndex 
 }
 
 func (js *JobStore) createJobWithKeyDurable(subjectID, sessionID, startIndex, endIndex int, cfg *config.Config, idempotencyKey string) (*Job, bool, error) {
+	if err := js.beginMutation(); err != nil {
+		return nil, false, err
+	}
+	defer js.endMutation()
+	js.visibilityMu.Lock()
+	defer js.visibilityMu.Unlock()
+
 	js.mu.Lock()
 
 	// Check idempotency key for existing job
@@ -83,12 +96,12 @@ func (js *JobStore) createJobWithKeyDurable(subjectID, sessionID, startIndex, en
 		if existingID, ok := js.idempotencyKeys[idempotencyKey]; ok {
 			if job, ok := js.jobs[existingID]; ok {
 				copy := job.copy()
-				revision, snapshot := js.snapshotLocked()
 				js.mu.Unlock()
-				return copy, false, js.publishAndFlush(revision, snapshot)
+				return copy, false, nil
 			}
 		}
 	}
+	before := js.captureStateLocked()
 
 	jobID := fmt.Sprintf("job-%s", uuid.NewString())
 	ctx, cancel := context.WithCancel(context.Background())
@@ -118,10 +131,16 @@ func (js *JobStore) createJobWithKeyDurable(subjectID, sessionID, startIndex, en
 
 	revision, snapshot := js.snapshotLocked()
 	js.mu.Unlock()
-	return job, true, js.publishAndFlush(revision, snapshot)
+	if err := js.publishAndFlush(revision, snapshot); err != nil {
+		js.rollbackMutation(before)
+		return job, true, err
+	}
+	return job, true, nil
 }
 
 func (js *JobStore) jobByIdempotencyKey(key string) (*Job, bool) {
+	js.visibilityMu.RLock()
+	defer js.visibilityMu.RUnlock()
 	js.mu.RLock()
 	defer js.mu.RUnlock()
 	jobID, ok := js.idempotencyKeys[key]
@@ -134,6 +153,8 @@ func (js *JobStore) jobByIdempotencyKey(key string) (*Job, bool) {
 
 // GetJob retrieves a job by ID. Returns the job and whether it was found.
 func (js *JobStore) GetJob(id string) (*Job, bool) {
+	js.visibilityMu.RLock()
+	defer js.visibilityMu.RUnlock()
 	js.mu.RLock()
 	defer js.mu.RUnlock()
 	job, ok := js.jobs[id]
@@ -142,6 +163,8 @@ func (js *JobStore) GetJob(id string) (*Job, bool) {
 
 // ListJobs returns a snapshot of all jobs in the store.
 func (js *JobStore) ListJobs() []*Job {
+	js.visibilityMu.RLock()
+	defer js.visibilityMu.RUnlock()
 	js.mu.RLock()
 	defer js.mu.RUnlock()
 
@@ -155,6 +178,8 @@ func (js *JobStore) ListJobs() []*Job {
 // CopyJob retrieves a deep copy of a job by ID under the read lock.
 // Returns the copy and whether the job was found.
 func (js *JobStore) CopyJob(id string) (*Job, bool) {
+	js.visibilityMu.RLock()
+	defer js.visibilityMu.RUnlock()
 	js.mu.RLock()
 	defer js.mu.RUnlock()
 	job, ok := js.jobs[id]
@@ -166,6 +191,8 @@ func (js *JobStore) CopyJob(id string) (*Job, bool) {
 
 // ListJobCopies returns a slice of deep copies of all jobs, copied under the read lock.
 func (js *JobStore) ListJobCopies() []*Job {
+	js.visibilityMu.RLock()
+	defer js.visibilityMu.RUnlock()
 	js.mu.RLock()
 	defer js.mu.RUnlock()
 	out := make([]*Job, 0, len(js.jobs))
@@ -177,6 +204,8 @@ func (js *JobStore) ListJobCopies() []*Job {
 
 // GetJobStatus returns the status of a job by ID under the read lock.
 func (js *JobStore) GetJobStatus(id string) (JobStatus, bool) {
+	js.visibilityMu.RLock()
+	defer js.visibilityMu.RUnlock()
 	js.mu.RLock()
 	defer js.mu.RUnlock()
 	job, ok := js.jobs[id]
@@ -188,6 +217,10 @@ func (js *JobStore) GetJobStatus(id string) (JobStatus, bool) {
 
 // SetFilteredLectures sets the filtered lecture count for a job under the write lock.
 func (js *JobStore) SetFilteredLectures(id string, count int) {
+	if err := js.beginMutation(); err != nil {
+		return
+	}
+	defer js.endMutation()
 	js.mu.Lock()
 	job, ok := js.jobs[id]
 	if !ok {
@@ -209,6 +242,14 @@ func (js *JobStore) UpdateJob(id string, status JobStatus, progress float64, err
 }
 
 func (js *JobStore) updateJobDurable(id string, status JobStatus, progress float64, errMsg string) error {
+	if err := js.beginMutation(); err != nil {
+		return err
+	}
+	defer js.endMutation()
+	if isTerminalStatus(status) {
+		js.visibilityMu.Lock()
+		defer js.visibilityMu.Unlock()
+	}
 	js.mu.Lock()
 
 	job, ok := js.jobs[id]
@@ -216,18 +257,28 @@ func (js *JobStore) updateJobDurable(id string, status JobStatus, progress float
 		js.mu.Unlock()
 		return nil
 	}
+	var before jobStoreState
+	if isTerminalStatus(status) {
+		before = js.captureStateLocked()
+	}
 
 	job.Status = status
 	job.Progress = progress
 	job.Error = errMsg
 	job.UpdatedAt = time.Now()
+	var pruned []*Job
 	if isTerminalStatus(status) {
-		js.pruneTerminalJobsLocked()
+		pruned = js.pruneTerminalJobsLocked()
 	}
 	revision, snapshot := js.snapshotLocked()
 	js.mu.Unlock()
 	if isTerminalStatus(status) {
-		return js.publishAndFlush(revision, snapshot)
+		if err := js.publishAndFlush(revision, snapshot); err != nil {
+			js.rollbackMutation(before)
+			return err
+		}
+		cancelJobs(pruned)
+		return nil
 	}
 	js.publish(revision, snapshot)
 	return nil
@@ -235,6 +286,10 @@ func (js *JobStore) updateJobDurable(id string, status JobStatus, progress float
 
 // SetLectureProgress updates the completed and total lecture counts for a job.
 func (js *JobStore) SetLectureProgress(id string, completed, total int) {
+	if err := js.beginMutation(); err != nil {
+		return
+	}
+	defer js.endMutation()
 	js.mu.Lock()
 
 	job, ok := js.jobs[id]
@@ -252,6 +307,10 @@ func (js *JobStore) SetLectureProgress(id string, completed, total int) {
 
 // SetOutputs sets the output file paths for a completed job, copying the slice to avoid aliasing.
 func (js *JobStore) SetOutputs(id string, outputs []string) {
+	if err := js.beginMutation(); err != nil {
+		return
+	}
+	defer js.endMutation()
 	js.mu.Lock()
 
 	job, ok := js.jobs[id]
@@ -268,26 +327,44 @@ func (js *JobStore) SetOutputs(id string, outputs []string) {
 
 // CompleteJob atomically assigns outputs and transitions a job to completed.
 func (js *JobStore) CompleteJob(id string, outputs []string) error {
+	if err := js.beginMutation(); err != nil {
+		return err
+	}
+	defer js.endMutation()
+	js.visibilityMu.Lock()
+	defer js.visibilityMu.Unlock()
 	js.mu.Lock()
 	job, ok := js.jobs[id]
 	if !ok {
 		js.mu.Unlock()
 		return ErrJobNotFound
 	}
+	before := js.captureStateLocked()
 	job.Outputs = append([]string{}, outputs...)
 	job.Status = StatusCompleted
 	job.Progress = 100
 	job.Error = ""
 	job.UpdatedAt = time.Now()
-	js.pruneTerminalJobsLocked()
+	pruned := js.pruneTerminalJobsLocked()
 	revision, snapshot := js.snapshotLocked()
 	js.mu.Unlock()
-	return js.publishAndFlush(revision, snapshot)
+	if err := js.publishAndFlush(revision, snapshot); err != nil {
+		js.rollbackMutation(before)
+		return err
+	}
+	cancelJobs(pruned)
+	return nil
 }
 
 // CancelJob transitions a non-terminal job to canceled status and cancels its context.
 // Returns an error if the job is not found or already in a terminal state.
 func (js *JobStore) CancelJob(id string) (*Job, error) {
+	if err := js.beginMutation(); err != nil {
+		return nil, err
+	}
+	defer js.endMutation()
+	js.visibilityMu.Lock()
+	defer js.visibilityMu.Unlock()
 	js.mu.Lock()
 
 	job, ok := js.jobs[id]
@@ -300,15 +377,21 @@ func (js *JobStore) CancelJob(id string) (*Job, error) {
 		js.mu.Unlock()
 		return nil, &TerminalStatusError{Status: job.Status}
 	}
+	before := js.captureStateLocked()
 
 	job.Status = StatusCanceled
 	job.UpdatedAt = time.Now()
-	job.cancel()
-	js.pruneTerminalJobsLocked()
+	pruned := js.pruneTerminalJobsLocked()
 	revision, snapshot := js.snapshotLocked()
 	copy := job.copy()
 	js.mu.Unlock()
-	return copy, js.publishAndFlush(revision, snapshot)
+	if err := js.publishAndFlush(revision, snapshot); err != nil {
+		js.rollbackMutation(before)
+		return copy, err
+	}
+	job.cancel()
+	cancelJobs(pruned)
+	return copy, nil
 }
 
 // loadFromDisk loads previously persisted jobs from the persistence file.
@@ -324,7 +407,22 @@ func (js *JobStore) loadFromDisk() bool {
 	if persisted == nil {
 		return false
 	}
-	persisted, changed := prunePersistedTerminalJobs(persisted)
+	changed := false
+	// Interrupted jobs become terminal before retention is enforced so the
+	// restored store never exceeds the configured terminal-history bound.
+	for id, pj := range persisted {
+		if pj.Status == StatusPending || pj.Status == StatusRunning {
+			pj.Status = StatusFailed
+			if pj.Error == "" {
+				pj.Error = "job interrupted by server restart"
+			}
+			persisted[id] = pj
+			changed = true
+		}
+	}
+	var pruned bool
+	persisted, pruned = prunePersistedTerminalJobs(persisted)
+	changed = changed || pruned
 
 	for _, pj := range persisted {
 		createdAt, err := time.Parse(persistedTimeFormat, pj.CreatedAt)
@@ -336,16 +434,6 @@ func (js *JobStore) loadFromDisk() bool {
 			updatedAt = time.Time{}
 		}
 
-		// Jobs that were running/pending at shutdown cannot be resumed
-		status := pj.Status
-		if status == StatusPending || status == StatusRunning {
-			status = StatusFailed
-			changed = true
-			if pj.Error == "" {
-				pj.Error = "job interrupted by server restart"
-			}
-		}
-
 		ctx, cancel := context.WithCancel(context.Background())
 		js.jobs[pj.ID] = &Job{
 			ID:                pj.ID,
@@ -353,7 +441,7 @@ func (js *JobStore) loadFromDisk() bool {
 			SessionID:         pj.SessionID,
 			StartIndex:        pj.StartIndex,
 			EndIndex:          pj.EndIndex,
-			Status:            status,
+			Status:            pj.Status,
 			Progress:          pj.Progress,
 			Error:             pj.Error,
 			TotalLectures:     pj.TotalLectures,
@@ -381,6 +469,8 @@ func (js *JobStore) Flush(ctx context.Context) error {
 	if js.coordinator == nil {
 		return nil
 	}
+	js.lifecycleMu.RLock()
+	defer js.lifecycleMu.RUnlock()
 	js.mu.RLock()
 	revision := js.revision
 	js.mu.RUnlock()
@@ -392,7 +482,67 @@ func (js *JobStore) Close(ctx context.Context) error {
 	if js.coordinator == nil {
 		return nil
 	}
-	return js.coordinator.close(ctx)
+	js.lifecycleMu.Lock()
+	js.closed = true
+	err := js.coordinator.close(ctx)
+	js.lifecycleMu.Unlock()
+	return err
+}
+
+func (js *JobStore) beginMutation() error {
+	js.lifecycleMu.RLock()
+	if js.closed {
+		js.lifecycleMu.RUnlock()
+		return errJobStoreClosed
+	}
+	js.mutationMu.Lock()
+	return nil
+}
+
+func (js *JobStore) endMutation() {
+	js.mutationMu.Unlock()
+	js.lifecycleMu.RUnlock()
+}
+
+type jobStoreState struct {
+	jobs            map[string]*Job
+	idempotencyKeys map[string]string
+}
+
+func (js *JobStore) captureStateLocked() jobStoreState {
+	state := jobStoreState{
+		jobs:            make(map[string]*Job, len(js.jobs)),
+		idempotencyKeys: make(map[string]string, len(js.idempotencyKeys)),
+	}
+	for id, job := range js.jobs {
+		state.jobs[id] = cloneJobState(job)
+	}
+	for key, id := range js.idempotencyKeys {
+		state.idempotencyKeys[key] = id
+	}
+	return state
+}
+
+func cloneJobState(job *Job) *Job {
+	clone := job.copy()
+	clone.ctx = job.ctx
+	clone.cancel = job.cancel
+	clone.cfg = job.cfg
+	return clone
+}
+
+func (js *JobStore) rollbackMutation(state jobStoreState) {
+	js.mu.Lock()
+	for id, job := range js.jobs {
+		if _, existed := state.jobs[id]; !existed && job.cancel != nil {
+			job.cancel()
+		}
+	}
+	js.jobs = state.jobs
+	js.idempotencyKeys = state.idempotencyKeys
+	revision, snapshot := js.snapshotLocked()
+	js.mu.Unlock()
+	js.publish(revision, snapshot)
 }
 
 func (js *JobStore) snapshotLocked() (uint64, map[string]persistedJob) {
@@ -429,6 +579,10 @@ func (js *JobStore) saveToDisk() {
 	if js.coordinator == nil {
 		return
 	}
+	if err := js.beginMutation(); err != nil {
+		return
+	}
+	defer js.endMutation()
 	js.mu.Lock()
 	revision, snapshot := js.snapshotLocked()
 	js.mu.Unlock()
@@ -441,7 +595,7 @@ func isTerminalStatus(status JobStatus) bool {
 	return status == StatusCompleted || status == StatusFailed || status == StatusCanceled
 }
 
-func (js *JobStore) pruneTerminalJobsLocked() {
+func (js *JobStore) pruneTerminalJobsLocked() []*Job {
 	type terminalJob struct {
 		id        string
 		updatedAt time.Time
@@ -453,7 +607,7 @@ func (js *JobStore) pruneTerminalJobsLocked() {
 		}
 	}
 	if len(terminal) <= maxRetainedTerminalJobs {
-		return
+		return nil
 	}
 	sort.Slice(terminal, func(i, j int) bool {
 		if terminal[i].updatedAt.Equal(terminal[j].updatedAt) {
@@ -461,15 +615,23 @@ func (js *JobStore) pruneTerminalJobsLocked() {
 		}
 		return terminal[i].updatedAt.Before(terminal[j].updatedAt)
 	})
+	pruned := make([]*Job, 0, len(terminal)-maxRetainedTerminalJobs)
 	for _, old := range terminal[:len(terminal)-maxRetainedTerminalJobs] {
 		job := js.jobs[old.id]
-		if job.cancel != nil {
-			job.cancel()
-		}
+		pruned = append(pruned, job)
 		if job.IdempotencyKey != "" {
 			delete(js.idempotencyKeys, job.IdempotencyKey)
 		}
 		delete(js.jobs, old.id)
+	}
+	return pruned
+}
+
+func cancelJobs(jobs []*Job) {
+	for _, job := range jobs {
+		if job.cancel != nil {
+			job.cancel()
+		}
 	}
 }
 
@@ -480,8 +642,6 @@ func prunePersistedTerminalJobs(jobs map[string]persistedJob) (map[string]persis
 	}
 	terminal := make([]terminalJob, 0)
 	for id, job := range jobs {
-		// Pending and running entries are deliberately retained here. They are
-		// converted to failed during restoration, preserving restart semantics.
 		if !isTerminalStatus(job.Status) {
 			continue
 		}

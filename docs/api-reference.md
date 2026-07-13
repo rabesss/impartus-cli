@@ -350,7 +350,7 @@ Jobs are persisted to a `.jobs.json` file on disk and survive server restarts.
 
 Idempotency keys are also persisted, so duplicate submissions after restart return the existing job (409 Conflict).
 
-The server retains metadata for the newest 1000 terminal jobs. Pending and running jobs are never pruned while the server is running. Pruning removes only job metadata and its idempotency-key entry; downloaded media is not deleted. Pending or running jobs restored after a restart are still converted to failed as described above.
+The server retains metadata for the newest 1000 terminal jobs. Pending and running jobs are never pruned while the server is running. On restart, interrupted jobs are first converted to failed and then the 1000-job terminal retention limit is applied. Pruning removes only job metadata and its idempotency-key entry; downloaded media is not deleted.
 
 Persistence writes use atomic file replacement. Progress writes are coalesced, while job creation, cancellation, terminal transitions, and graceful server shutdown are flushed before they are reported as durable.
 

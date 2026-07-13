@@ -240,7 +240,7 @@ git checkout HEAD~1 -- config.json
 Jobs are persisted to `.jobs.json` on disk. On restart:
 - Completed, failed, and canceled jobs are restored with their preserved state
 - Running/pending jobs are marked as failed (non-resumable) since downloads cannot continue after server restart
-- Metadata for the newest 1000 terminal jobs is retained; active jobs are not pruned while running
+- Metadata for the newest 1000 terminal jobs is retained; active jobs are not pruned while running, but interrupted jobs become failed before restart retention is applied
 - Retention affects metadata only and never deletes downloaded media
 - Graceful shutdown flushes pending coalesced persistence writes before the store closes
 
