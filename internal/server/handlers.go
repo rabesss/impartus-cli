@@ -308,9 +308,8 @@ func (s *APIServer) createJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// CreateJobWithKey returns a copy for the idempotency-conflict path (!created),
-	// and a live pointer for the created path. Use CopyJob to get a safe snapshot
-	// for the response before the goroutine starts mutating the job.
+	// Refresh the detached creation result from committed store state before
+	// returning it; the executor may begin advancing the live job immediately.
 	jobCopy, ok := s.jobStore.CopyJob(job.ID)
 	if !ok {
 		respondWithError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "job disappeared after creation", "createJob", nil)

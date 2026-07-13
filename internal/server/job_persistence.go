@@ -115,7 +115,7 @@ func (p *jobPersistence) save(persisted map[string]persistedJob) error {
 		return fmt.Errorf("inspect existing persistence file: %w", err)
 	}
 
-	if err := os.Rename(tmpPath, p.path); err != nil {
+	if err := replacePersistenceFile(tmpPath, p.path); err != nil {
 		_ = os.Remove(backupPath) //nolint:errcheck // rollback link is unused when rename fails
 		return fmt.Errorf("replace persistence file: %w", err)
 	}
@@ -138,7 +138,7 @@ func (p *jobPersistence) save(persisted map[string]persistedJob) error {
 
 func rollbackPersistenceRename(path, backupPath string, hadPrevious bool) error {
 	if hadPrevious {
-		return os.Rename(backupPath, path)
+		return replacePersistenceFile(backupPath, path)
 	}
 	return os.Remove(path)
 }

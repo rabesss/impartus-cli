@@ -446,6 +446,38 @@ func TestDurableMutationFailureRollsBackMemoryDiskAndIdempotency(t *testing.T) {
 	}
 }
 
+func TestDurableMutationTransientFailureFlushesRollbackBeforeReturn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jobs.json")
+	store := newTestPersistentStore(t, path)
+	job := store.CreateJob(1, 1, 1, 1, &config.Config{DownloadLocation: "downloads"})
+	realSync := store.persistence.syncFile
+	var attempts atomic.Int64
+	store.persistence.mu.Lock()
+	store.persistence.syncFile = func(file *os.File) error {
+		if attempts.Add(1) == 1 {
+			return errors.New("injected transient sync failure")
+		}
+		return realSync(file)
+	}
+	store.persistence.mu.Unlock()
+
+	if err := store.updateJobDurable(job.ID, StatusFailed, 0, "rejected"); err == nil {
+		t.Fatal("transient persistence failure was not returned")
+	}
+	if got := attempts.Load(); got != 2 {
+		t.Fatalf("sync attempts = %d, want rejected write plus synchronous rollback", got)
+	}
+	visible, ok := store.CopyJob(job.ID)
+	if !ok || visible.Status != StatusPending || visible.Error != "" {
+		t.Fatalf("memory after rollback = %+v, want pending", visible)
+	}
+	flushTestStore(t, store)
+	persisted := readPersistedJobs(t, path)[job.ID]
+	if persisted.Status != StatusPending || persisted.Error != "" {
+		t.Fatalf("disk after rollback = status %s error %q", persisted.Status, persisted.Error)
+	}
+}
+
 func TestDurableMutationIsNotVisibleBeforeCommit(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "jobs.json")
 	store := newTestPersistentStore(t, path)
@@ -453,9 +485,10 @@ func TestDurableMutationIsNotVisibleBeforeCommit(t *testing.T) {
 	realSync := store.persistence.syncFile
 	syncStarted := make(chan struct{})
 	releaseSync := make(chan struct{})
+	var startedOnce sync.Once
 	store.persistence.mu.Lock()
 	store.persistence.syncFile = func(*os.File) error {
-		close(syncStarted)
+		startedOnce.Do(func() { close(syncStarted) })
 		<-releaseSync
 		return errors.New("injected blocked sync failure")
 	}
@@ -489,6 +522,49 @@ func TestDurableMutationIsNotVisibleBeforeCommit(t *testing.T) {
 	store.persistence.syncFile = realSync
 	store.persistence.mu.Unlock()
 	flushTestStore(t, store)
+}
+
+func TestJobStoreCloseHonorsContextWhileProducerIsStuck(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jobs.json")
+	store := newTestPersistentStore(t, path)
+	job := store.CreateJob(1, 1, 1, 1, &config.Config{DownloadLocation: "downloads"})
+	realSync := store.persistence.syncFile
+	syncStarted := make(chan struct{})
+	releaseSync := make(chan struct{})
+	store.persistence.mu.Lock()
+	store.persistence.syncFile = func(file *os.File) error {
+		close(syncStarted)
+		<-releaseSync
+		return realSync(file)
+	}
+	store.persistence.mu.Unlock()
+
+	mutationDone := make(chan error, 1)
+	go func() {
+		mutationDone <- store.updateJobDurable(job.ID, StatusFailed, 0, "durable")
+	}()
+	<-syncStarted
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	started := time.Now()
+	err := store.Close(ctx)
+	elapsed := time.Since(started)
+	cancel()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("close error = %v, want deadline exceeded", err)
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("close ignored context deadline for %v", elapsed)
+	}
+	close(releaseSync)
+	if err := <-mutationDone; err != nil {
+		t.Fatalf("stuck mutation did not finish: %v", err)
+	}
+	closeCtx, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer closeCancel()
+	if err := store.Close(closeCtx); err != nil {
+		t.Fatalf("close after producer drain: %v", err)
+	}
 }
 
 func TestPersistenceSaveSyncsFileAndDirectoryAndRollsBackSyncFailures(t *testing.T) {
@@ -576,5 +652,50 @@ func TestIdempotencyDuplicateDoesNotWriteOrIncrementRevision(t *testing.T) {
 	}
 	if got := fileSyncs.Load(); got != 0 {
 		t.Fatalf("duplicate triggered %d persistence writes", got)
+	}
+}
+
+func TestJobStoreReadAPIsReturnDetachedCopiesAcrossRollback(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jobs.json")
+	store := newTestPersistentStore(t, path)
+	cfg := &config.Config{DownloadLocation: "downloads"}
+	created, ok := store.CreateJobWithKey(1, 1, 1, 1, cfg, "detached-key")
+	if !ok {
+		t.Fatal("job was not created")
+	}
+	created.Progress = 88
+	created.Outputs = []string{"created.mp4"}
+
+	getCopy, _ := store.GetJob(created.ID)
+	listCopy := store.ListJobs()[0]
+	idempotencyCopy, _ := store.jobByIdempotencyKey("detached-key")
+	getCopy.Status = StatusCompleted
+	getCopy.Outputs = []string{"get.mp4"}
+	listCopy.SubjectID = 999
+	idempotencyCopy.Error = "mutated"
+	actual, _ := store.CopyJob(created.ID)
+	if actual.Status != StatusPending || actual.Progress != 0 || len(actual.Outputs) != 0 || actual.SubjectID != 1 || actual.Error != "" {
+		t.Fatalf("read result aliased live state: %+v", actual)
+	}
+
+	realSync := store.persistence.syncFile
+	var attempts atomic.Int64
+	store.persistence.mu.Lock()
+	store.persistence.syncFile = func(file *os.File) error {
+		if attempts.Add(1) == 1 {
+			return errors.New("injected rollback failure")
+		}
+		return realSync(file)
+	}
+	store.persistence.mu.Unlock()
+	stale, _ := store.GetJob(created.ID)
+	if err := store.updateJobDurable(created.ID, StatusFailed, 0, "rejected"); err == nil {
+		t.Fatal("durable mutation unexpectedly succeeded")
+	}
+	stale.Status = StatusCanceled
+	stale.Outputs = append(stale.Outputs, "stale.mp4")
+	actual, _ = store.CopyJob(created.ID)
+	if actual.Status != StatusPending || len(actual.Outputs) != 0 || actual.Error != "" {
+		t.Fatalf("stale pointer affected rolled-back state: %+v", actual)
 	}
 }

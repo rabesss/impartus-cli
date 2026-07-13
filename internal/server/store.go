@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -20,8 +21,10 @@ type JobStore struct {
 	mu              sync.RWMutex
 	mutationMu      sync.Mutex
 	visibilityMu    sync.RWMutex
-	lifecycleMu     sync.RWMutex
+	lifecycleMu     sync.Mutex
 	closed          bool
+	producers       int
+	producersDone   chan struct{}
 	persistence     *jobPersistence
 	coordinator     *persistenceCoordinator
 	revision        uint64
@@ -29,14 +32,16 @@ type JobStore struct {
 
 const maxRetainedTerminalJobs = 1000
 
-var errJobStoreClosed = fmt.Errorf("job store is closed")
+var errJobStoreClosed = errors.New("job store is closed")
 
 // NewJobStore creates an in-memory job store with no persistence.
 func NewJobStore() *JobStore {
-	return &JobStore{
+	js := &JobStore{
 		jobs:            make(map[string]*Job),
 		idempotencyKeys: make(map[string]string),
 	}
+	js.producersDone = closedSignal()
+	return js
 }
 
 // NewJobStoreWithPersistence creates a job store that persists to the given file path.
@@ -47,6 +52,7 @@ func NewJobStoreWithPersistence(path string) *JobStore {
 		idempotencyKeys: make(map[string]string),
 		persistence:     newJobPersistence(path),
 	}
+	js.producersDone = closedSignal()
 	changed := js.loadFromDisk()
 	js.coordinator = newPersistenceCoordinator(js.persistence.save)
 	if changed {
@@ -131,11 +137,11 @@ func (js *JobStore) createJobWithKeyDurable(subjectID, sessionID, startIndex, en
 
 	revision, snapshot := js.snapshotLocked()
 	js.mu.Unlock()
+	result := cloneJobState(job)
 	if err := js.publishAndFlush(revision, snapshot); err != nil {
-		js.rollbackMutation(before)
-		return job, true, err
+		return result, true, js.rollbackMutation(before, err)
 	}
-	return job, true, nil
+	return result, true, nil
 }
 
 func (js *JobStore) jobByIdempotencyKey(key string) (*Job, bool) {
@@ -148,7 +154,10 @@ func (js *JobStore) jobByIdempotencyKey(key string) (*Job, bool) {
 		return nil, false
 	}
 	job, ok := js.jobs[jobID]
-	return job, ok
+	if !ok {
+		return nil, false
+	}
+	return job.copy(), true
 }
 
 // GetJob retrieves a job by ID. Returns the job and whether it was found.
@@ -158,7 +167,10 @@ func (js *JobStore) GetJob(id string) (*Job, bool) {
 	js.mu.RLock()
 	defer js.mu.RUnlock()
 	job, ok := js.jobs[id]
-	return job, ok
+	if !ok {
+		return nil, false
+	}
+	return job.copy(), true
 }
 
 // ListJobs returns a snapshot of all jobs in the store.
@@ -170,9 +182,23 @@ func (js *JobStore) ListJobs() []*Job {
 
 	jobs := make([]*Job, 0, len(js.jobs))
 	for _, job := range js.jobs {
-		jobs = append(jobs, job)
+		jobs = append(jobs, job.copy())
 	}
 	return jobs
+}
+
+// runtimeJobSnapshot returns detached job state while retaining the immutable
+// runtime context and config references needed by the executor.
+func (js *JobStore) runtimeJobSnapshot(id string) (*Job, bool) {
+	js.visibilityMu.RLock()
+	defer js.visibilityMu.RUnlock()
+	js.mu.RLock()
+	defer js.mu.RUnlock()
+	job, ok := js.jobs[id]
+	if !ok {
+		return nil, false
+	}
+	return cloneJobState(job), true
 }
 
 // CopyJob retrieves a deep copy of a job by ID under the read lock.
@@ -274,8 +300,7 @@ func (js *JobStore) updateJobDurable(id string, status JobStatus, progress float
 	js.mu.Unlock()
 	if isTerminalStatus(status) {
 		if err := js.publishAndFlush(revision, snapshot); err != nil {
-			js.rollbackMutation(before)
-			return err
+			return js.rollbackMutation(before, err)
 		}
 		cancelJobs(pruned)
 		return nil
@@ -349,8 +374,7 @@ func (js *JobStore) CompleteJob(id string, outputs []string) error {
 	revision, snapshot := js.snapshotLocked()
 	js.mu.Unlock()
 	if err := js.publishAndFlush(revision, snapshot); err != nil {
-		js.rollbackMutation(before)
-		return err
+		return js.rollbackMutation(before, err)
 	}
 	cancelJobs(pruned)
 	return nil
@@ -386,8 +410,7 @@ func (js *JobStore) CancelJob(id string) (*Job, error) {
 	copy := job.copy()
 	js.mu.Unlock()
 	if err := js.publishAndFlush(revision, snapshot); err != nil {
-		js.rollbackMutation(before)
-		return copy, err
+		return copy, js.rollbackMutation(before, err)
 	}
 	job.cancel()
 	cancelJobs(pruned)
@@ -469,8 +492,6 @@ func (js *JobStore) Flush(ctx context.Context) error {
 	if js.coordinator == nil {
 		return nil
 	}
-	js.lifecycleMu.RLock()
-	defer js.lifecycleMu.RUnlock()
 	js.mu.RLock()
 	revision := js.revision
 	js.mu.RUnlock()
@@ -484,24 +505,45 @@ func (js *JobStore) Close(ctx context.Context) error {
 	}
 	js.lifecycleMu.Lock()
 	js.closed = true
-	err := js.coordinator.close(ctx)
+	drained := js.producersDone
 	js.lifecycleMu.Unlock()
-	return err
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-drained:
+		return js.coordinator.close(ctx)
+	}
 }
 
 func (js *JobStore) beginMutation() error {
-	js.lifecycleMu.RLock()
+	js.lifecycleMu.Lock()
 	if js.closed {
-		js.lifecycleMu.RUnlock()
+		js.lifecycleMu.Unlock()
 		return errJobStoreClosed
 	}
+	if js.producers == 0 {
+		js.producersDone = make(chan struct{})
+	}
+	js.producers++
+	js.lifecycleMu.Unlock()
 	js.mutationMu.Lock()
 	return nil
 }
 
 func (js *JobStore) endMutation() {
 	js.mutationMu.Unlock()
-	js.lifecycleMu.RUnlock()
+	js.lifecycleMu.Lock()
+	js.producers--
+	if js.producers == 0 {
+		close(js.producersDone)
+	}
+	js.lifecycleMu.Unlock()
+}
+
+func closedSignal() chan struct{} {
+	closed := make(chan struct{})
+	close(closed)
+	return closed
 }
 
 type jobStoreState struct {
@@ -531,7 +573,7 @@ func cloneJobState(job *Job) *Job {
 	return clone
 }
 
-func (js *JobStore) rollbackMutation(state jobStoreState) {
+func (js *JobStore) rollbackMutation(state jobStoreState, mutationErr error) error {
 	js.mu.Lock()
 	for id, job := range js.jobs {
 		if _, existed := state.jobs[id]; !existed && job.cancel != nil {
@@ -542,7 +584,10 @@ func (js *JobStore) rollbackMutation(state jobStoreState) {
 	js.idempotencyKeys = state.idempotencyKeys
 	revision, snapshot := js.snapshotLocked()
 	js.mu.Unlock()
-	js.publish(revision, snapshot)
+	if rollbackErr := js.publishAndFlush(revision, snapshot); rollbackErr != nil {
+		return errors.Join(mutationErr, fmt.Errorf("persist transaction rollback: %w", rollbackErr))
+	}
+	return mutationErr
 }
 
 func (js *JobStore) snapshotLocked() (uint64, map[string]persistedJob) {

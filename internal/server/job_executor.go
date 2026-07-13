@@ -20,7 +20,7 @@ import (
 )
 
 func (s *APIServer) executeJob(jobID string) {
-	job, ok := s.jobStore.GetJob(jobID)
+	job, ok := s.jobStore.runtimeJobSnapshot(jobID)
 	if !ok {
 		return
 	}
@@ -56,7 +56,7 @@ func (s *APIServer) executeJob(jobID string) {
 }
 
 func (s *APIServer) updateRunningProgress(jobID string, progress float64, phase string, details any) bool {
-	job, ok := s.jobStore.GetJob(jobID)
+	job, ok := s.jobStore.runtimeJobSnapshot(jobID)
 	if !ok {
 		return false
 	}
