@@ -119,7 +119,7 @@ func showHelp(version, date string) {
 	fmt.Println("  --upload / --no-upload  Enable or disable NotebookLM upload")
 	fmt.Println("  --once              Run a single poll cycle then exit")
 	fmt.Println("  --dry-run           List new lectures without downloading")
-	fmt.Println("  --check             Validate ffmpeg/config and upload auth then exit")
+	fmt.Println("  --check             Validate ffmpeg/config (and NotebookLM auth if upload is enabled), then exit")
 	fmt.Println("  --output,-o         Output directory")
 	fmt.Println("\nNo command starts interactive download mode (or interactive play mode if 'play' is used without flags).")
 }

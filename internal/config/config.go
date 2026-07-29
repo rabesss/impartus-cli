@@ -176,10 +176,10 @@ func (c *Config) applyWatchDefaults() {
 		c.Watch.StateFile = "./.watch-state.json"
 	}
 	c.Watch.StatePath = c.Watch.StateFile
-	if c.Watch.MaxLecturesPerCycle <= 0 {
+	if c.Watch.MaxLecturesPerCycle == 0 {
 		c.Watch.MaxLecturesPerCycle = 3
 	}
-	if c.Watch.MaxUploadRetries <= 0 {
+	if c.Watch.MaxUploadRetries == 0 {
 		c.Watch.MaxUploadRetries = 3
 	}
 	if c.Watch.Quality == "" {
@@ -219,7 +219,7 @@ func (c *Config) applyNotebookLMDefaults() {
 	if nlm.UploadTimeout == "" {
 		nlm.UploadTimeout = "30m"
 	}
-	if nlm.MaxSourcesPerNotebook <= 0 {
+	if nlm.MaxSourcesPerNotebook == 0 {
 		nlm.MaxSourcesPerNotebook = 300
 	}
 	c.NotebookLM = *nlm
@@ -451,9 +451,6 @@ func (c *Config) validatePipeline() error {
 
 func (c *Config) validateWatch() error {
 	targets := c.ResolvedTargets()
-	if !c.Watch.Enabled && len(targets) == 0 {
-		return c.validateWatchShape()
-	}
 	if err := c.validateWatchShape(); err != nil {
 		return err
 	}
@@ -473,9 +470,6 @@ func (c *Config) validateWatch() error {
 			return fmt.Errorf("watch.targets: duplicate subjectId/sessionId %s", key)
 		}
 		seen[key] = struct{}{}
-		if c.Watch.Upload && strings.TrimSpace(target.NotebookID) == "" && strings.TrimSpace(c.Watch.NotebookLM.NotebookID) == "" {
-			return fmt.Errorf("watch.targets[%d]: notebookId is required when watch.upload is true", i)
-		}
 	}
 	return nil
 }
@@ -491,11 +485,11 @@ func (c *Config) validateWatchShape() error {
 			return fmt.Errorf("watch.pollInterval must be between 5m and 24h, got %v", interval)
 		}
 	}
-	if c.Watch.MaxLecturesPerCycle < 0 {
-		return fmt.Errorf("watch.maxLecturesPerCycle must be >= 0")
+	if c.Watch.MaxLecturesPerCycle < 1 {
+		return fmt.Errorf("watch.maxLecturesPerCycle must be >= 1")
 	}
-	if c.Watch.MaxUploadRetries < 0 {
-		return fmt.Errorf("watch.maxUploadRetries must be >= 0")
+	if c.Watch.MaxUploadRetries < 1 {
+		return fmt.Errorf("watch.maxUploadRetries must be >= 1")
 	}
 	if c.Watch.Quality != "" && !OneOf(c.Watch.Quality, "144", "450", "720") {
 		return fmt.Errorf("watch.quality must be one of: 144, 450, 720")
@@ -511,10 +505,7 @@ func (c *Config) validateWatchShape() error {
 
 func (c *Config) validateNotebookLM() error {
 	nlm := c.Watch.NotebookLM
-	if nlm.Provider == "" && c.NotebookLM.Provider == "" {
-		nlm = c.NotebookLM
-	}
-	provider := firstNonEmpty(nlm.Provider, c.Watch.NotebookLM.Provider, "notebooklm-py")
+	provider := firstNonEmpty(nlm.Provider, "notebooklm-py")
 	if provider != "" && !OneOf(provider, "notebooklm-py", "nlm") {
 		return fmt.Errorf("watch.notebooklm.provider must be one of: notebooklm-py, nlm")
 	}
@@ -527,12 +518,15 @@ func (c *Config) validateNotebookLM() error {
 			return fmt.Errorf("watch.notebooklm.uploadTimeout must be between 1m and 2h, got %v", d)
 		}
 	}
+	if nlm.MaxSourcesPerNotebook < 1 {
+		return fmt.Errorf("watch.notebooklm.maxSourcesPerNotebook must be >= 1")
+	}
 	if !c.Watch.Upload {
 		return nil
 	}
 	targets := c.ResolvedTargets()
 	for i, target := range targets {
-		nb := firstNonEmpty(target.NotebookID, c.Watch.NotebookLM.NotebookID, c.NotebookLM.NotebookID)
+		nb := c.resolveNotebookID(target)
 		if nb == "" {
 			return fmt.Errorf("watch.targets[%d].notebookId (or watch.notebooklm.notebookId) is required when watch.upload is true", i)
 		}
@@ -543,6 +537,10 @@ func (c *Config) validateNotebookLM() error {
 		}
 	}
 	return nil
+}
+
+func (c *Config) resolveNotebookID(target WatchTarget) string {
+	return firstNonEmpty(target.NotebookID, c.Watch.NotebookLM.NotebookID, c.NotebookLM.NotebookID)
 }
 
 func (c *Config) validateTimeout() error {

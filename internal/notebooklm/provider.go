@@ -18,9 +18,10 @@ const (
 
 // UploadRequest is the input to Upload.
 type UploadRequest struct {
-	FilePath   string
-	Title      string
-	NotebookID string
+	FilePath       string
+	Title          string
+	NotebookID     string
+	IdempotencyKey string
 }
 
 // Config is the subset of NotebookLM settings the uploader needs.

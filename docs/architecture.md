@@ -103,14 +103,20 @@ flowchart TD
   Claim --> DL["downloader audioOnly views=left quality=144"]
   DL --> Mark1["state: downloaded"]
   Mark1 --> Up
-  Up --> Mark2["state: uploaded + sourceId"]
+  Up --> Recon["list routed notebook sources"]
+  Recon -->|exact upload key exists| Mark2
+  Recon -->|absent and below source cap| Add["add source"]
+  Add -->|success| Mark2["state: uploaded + sourceId"]
+  Add -->|ambiguous| Recheck["reconcile exact upload key"]
+  Recheck -->|found| Mark2
+  Recheck -->|not found or unreadable| Retry
   Mark2 --> Clean["optional delete local audio"]
   DL -->|error| Retry["state: failed; retry next cycle"]
-  Up -->|auth error| Abort["abort cycle"]
-  Up -->|transient| Retry
+  Recon -->|auth error| Abort["abort cycle"]
+  Add -->|auth error| Abort
 ```
 
-Auth for NotebookLM is out-of-band: see [`notebooklm-auth.md`](notebooklm-auth.md). State persistence reuses the atomic write/sync pattern from job persistence.
+Auth for NotebookLM is out-of-band: see [`notebooklm-auth.md`](notebooklm-auth.md). The deterministic key is stored with the lecture state before upload, so retries and crash recovery can reconcile the same provider source. State persistence reuses the atomic write/sync pattern from job persistence.
 
 ## API authenticated job lifecycle flow
 

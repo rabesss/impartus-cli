@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,12 +50,16 @@ type fakeUploader struct {
 	calls       int
 	notebookIDs []string
 	paths       []string
+	titles      []string
+	uploadKeys  []string
 }
 
-func (f *fakeUploader) UploadToNotebook(_ context.Context, notebookID, path, _ string) (notebooklm.UploadResult, error) {
+func (f *fakeUploader) UploadToNotebook(_ context.Context, notebookID, path, title, uploadKey string) (notebooklm.UploadResult, error) {
 	f.calls++
 	f.notebookIDs = append(f.notebookIDs, notebookID)
 	f.paths = append(f.paths, path)
+	f.titles = append(f.titles, title)
+	f.uploadKeys = append(f.uploadKeys, uploadKey)
 	return f.result, f.err
 }
 
@@ -294,6 +299,11 @@ func TestRunCycleUsesPerTargetNotebookAndSharedBudget(t *testing.T) {
 	if result.Uploaded != 2 || len(uploader.notebookIDs) != 2 ||
 		uploader.notebookIDs[0] != "nb-one" || uploader.notebookIDs[1] != "nb-two" {
 		t.Fatalf("per-target routing failed: result=%+v notebooks=%v", result, uploader.notebookIDs)
+	}
+	if uploader.uploadKeys[0] != "impartus:1:2:10" || uploader.uploadKeys[1] != "impartus:3:4:20" ||
+		!strings.Contains(uploader.titles[0], "[impartus:1:2:10]") ||
+		!strings.Contains(uploader.titles[1], "[impartus:3:4:20]") {
+		t.Fatalf("durable upload identities missing: titles=%v keys=%v", uploader.titles, uploader.uploadKeys)
 	}
 }
 

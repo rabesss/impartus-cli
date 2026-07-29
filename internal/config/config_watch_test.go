@@ -90,6 +90,30 @@ func TestValidateWatchIntervalBounds(t *testing.T) {
 	}
 }
 
+func TestWatchCountDefaultsAndNegativeValidationAgree(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.ApplyDefaults()
+	if cfg.Watch.MaxLecturesPerCycle != 3 || cfg.Watch.MaxUploadRetries != 3 ||
+		cfg.Watch.NotebookLM.MaxSourcesPerNotebook != 300 {
+		t.Fatalf("watch count defaults changed: %+v", cfg.Watch)
+	}
+
+	cfg.Watch.MaxLecturesPerCycle = -1
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "maxLecturesPerCycle") {
+		t.Fatalf("expected negative lecture limit rejection, got %v", err)
+	}
+	cfg.Watch.MaxLecturesPerCycle = 3
+	cfg.Watch.MaxUploadRetries = -1
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "maxUploadRetries") {
+		t.Fatalf("expected negative retry rejection, got %v", err)
+	}
+	cfg.Watch.MaxUploadRetries = 3
+	cfg.Watch.NotebookLM.MaxSourcesPerNotebook = -1
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "maxSourcesPerNotebook") {
+		t.Fatalf("expected negative source cap rejection, got %v", err)
+	}
+}
+
 func TestValidateNotebookLMProvider(t *testing.T) {
 	cfg := minimalValidConfig()
 	cfg.ApplyDefaults()

@@ -35,6 +35,7 @@ type watchFlags struct {
 type watchResult struct {
 	Status string            `json:"status"`
 	Cycle  watch.CycleResult `json:"cycle"`
+	Checks map[string]string `json:"checks,omitempty"`
 }
 
 func runWatch(args []string) error {
@@ -97,7 +98,7 @@ func executeWatch(args []string, jsonMode bool) (watchResult, error) {
 		return runWatchCheck(ctx, cfg, cfg.Watch.Upload, uploader, jsonMode)
 	}
 
-	if err = ensureWatchRuntime(ctx, f, cfg.Watch.Upload, uploader); err != nil {
+	if err = ensureWatchRuntime(ctx, f, cfg, uploader); err != nil {
 		return watchResult{}, err
 	}
 
@@ -150,14 +151,14 @@ func prepareWatchConfig(ctx context.Context, f watchFlags) (*config.Config, *cli
 	return cfg, apiClient, nil
 }
 
-func ensureWatchRuntime(ctx context.Context, f watchFlags, uploadEnabled bool, uploader *notebooklm.Uploader) error {
+func ensureWatchRuntime(ctx context.Context, f watchFlags, cfg *config.Config, uploader *notebooklm.Uploader) error {
 	if !f.dryRun {
 		if err := ensureFFmpeg(); err != nil {
 			return err
 		}
 	}
-	if uploadEnabled && !f.dryRun {
-		if err := uploader.Doctor(ctx); err != nil {
+	if cfg.Watch.Upload && !f.dryRun {
+		if err := uploader.DoctorNotebooks(ctx, watchNotebookIDs(cfg)); err != nil {
 			return err
 		}
 	}
@@ -329,13 +330,13 @@ func runWatchCheck(ctx context.Context, cfg *config.Config, uploadEnabled bool, 
 		"provider": cfg.Watch.NotebookLM.Provider,
 	}
 	if uploadEnabled {
-		if err := uploader.Doctor(ctx); err != nil {
+		if err := uploader.DoctorNotebooks(ctx, watchNotebookIDs(cfg)); err != nil {
 			return watchResult{}, err
 		}
 		checks["notebooklm"] = "ok"
 	}
 	if jsonMode {
-		return watchResult{Status: "ok", Cycle: watch.CycleResult{}}, nil
+		return watchResult{Status: "ok", Checks: checks}, nil
 	}
 	fmt.Fprintln(os.Stderr, "watch check passed:")
 	for _, key := range []string{"ffmpeg", "config", "targets", "state", "interval", "quality", "views", "upload", "provider", "notebooklm"} {
@@ -344,4 +345,22 @@ func runWatchCheck(ctx context.Context, cfg *config.Config, uploadEnabled bool, 
 		}
 	}
 	return watchResult{Status: "ok"}, nil
+}
+
+func watchNotebookIDs(cfg *config.Config) []string {
+	targets := cfg.ResolvedTargets()
+	notebookIDs := make([]string, 0, len(targets))
+	for _, target := range targets {
+		notebookID := firstNonEmpty(target.NotebookID, cfg.Watch.NotebookLM.NotebookID, cfg.NotebookLM.NotebookID)
+		if notebookID != "" {
+			notebookIDs = append(notebookIDs, notebookID)
+		}
+	}
+	if len(notebookIDs) == 0 {
+		notebookID := firstNonEmpty(cfg.Watch.NotebookLM.NotebookID, cfg.NotebookLM.NotebookID)
+		if notebookID != "" {
+			notebookIDs = append(notebookIDs, notebookID)
+		}
+	}
+	return notebookIDs
 }

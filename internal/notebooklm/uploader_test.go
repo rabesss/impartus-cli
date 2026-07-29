@@ -111,6 +111,109 @@ func TestUploadHonorsRequestNotebookID(t *testing.T) {
 	}
 }
 
+func TestUploadReusesSourceWithMatchingIdempotentTitle(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	title := "LEC 001 Intro [impartus:1:2:10]"
+	runner := &seqRunner{responses: []struct {
+		stdout string
+		err    error
+	}{
+		{stdout: `[{"id":"existing","title":"` + title + `"}]`},
+	}}
+	u := NewWithRunner(Config{CLIPath: "notebooklm"}, runner)
+	result, err := u.Upload(context.Background(), UploadRequest{
+		NotebookID: "routed", FilePath: file, Title: title, IdempotencyKey: "impartus:1:2:10",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SourceID != "existing" || len(runner.calls) != 1 {
+		t.Fatalf("existing source was not reused: result=%+v calls=%v", result, runner.calls)
+	}
+	if joined := strings.Join(runner.calls[0], " "); !strings.Contains(joined, "--notebook routed") ||
+		!strings.Contains(joined, "source list") {
+		t.Fatalf("wrong reconciliation target: %v", runner.calls[0])
+	}
+}
+
+func TestUploadReconcilesSourceAfterAmbiguousTimeout(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	title := "LEC 001 Intro [impartus:1:2:10]"
+	runner := &seqRunner{responses: []struct {
+		stdout string
+		err    error
+	}{
+		{stdout: `[]`},
+		{err: context.DeadlineExceeded},
+		{stdout: `[{"source_id":"created","title":"` + title + `"}]`},
+	}}
+	u := NewWithRunner(Config{CLIPath: "notebooklm"}, runner)
+	result, err := u.Upload(context.Background(), UploadRequest{
+		NotebookID: "routed", FilePath: file, Title: title, IdempotencyKey: "impartus:1:2:10",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SourceID != "created" || len(runner.calls) != 3 {
+		t.Fatalf("ambiguous upload was not reconciled: result=%+v calls=%v", result, runner.calls)
+	}
+}
+
+func TestUploadDefersAmbiguousWriteWhenReconciliationFindsNothing(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &seqRunner{responses: []struct {
+		stdout string
+		err    error
+	}{
+		{stdout: `[]`},
+		{err: context.DeadlineExceeded},
+		{stdout: `[]`},
+	}}
+	u := NewWithRunner(Config{CLIPath: "notebooklm"}, runner)
+	_, err := u.Upload(context.Background(), UploadRequest{
+		NotebookID: "routed", FilePath: file,
+		Title: "LEC 001 Intro [impartus:1:2:10]", IdempotencyKey: "impartus:1:2:10",
+	})
+	var typed *Error
+	if !errors.As(err, &typed) || typed.Kind != ErrAmbiguous || typed.Retryable() {
+		t.Fatalf("ambiguous add must defer instead of retrying immediately: %v", err)
+	}
+}
+
+func TestUploadChecksCapOnRoutedNotebook(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &seqRunner{responses: []struct {
+		stdout string
+		err    error
+	}{
+		{stdout: `[{"id":"1","title":"a"},{"id":"2","title":"b"}]`},
+	}}
+	u := NewWithRunner(Config{CLIPath: "notebooklm", MaxSourcesPerNotebook: 2}, runner)
+	_, err := u.Upload(context.Background(), UploadRequest{
+		NotebookID: "routed", FilePath: file,
+		Title: "LEC 001 Intro [impartus:1:2:10]", IdempotencyKey: "impartus:1:2:10",
+	})
+	if err == nil || !strings.Contains(err.Error(), "cap") || len(runner.calls) != 1 {
+		t.Fatalf("routed notebook cap was not enforced: err=%v calls=%v", err, runner.calls)
+	}
+}
+
 func TestDoctorRequiresOKStatus(t *testing.T) {
 	u := NewWithRunner(Config{NotebookID: "nb1", CLIPath: os.Args[0]}, &fakeRunner{
 		stdout: `{"status":"error"}`,
@@ -153,7 +256,7 @@ func TestDoctorFailsWhenSourceCapCannotBeChecked(t *testing.T) {
 	u := NewWithRunner(Config{
 		NotebookID: "nb1", CLIPath: os.Args[0], MaxSourcesPerNotebook: 300,
 	}, seq)
-	if err := u.Doctor(context.Background()); err == nil || !strings.Contains(err.Error(), "source count") {
+	if err := u.Doctor(context.Background()); err == nil || !strings.Contains(err.Error(), "notebook sources") {
 		t.Fatalf("expected source-count check failure, got %v", err)
 	}
 }
@@ -179,10 +282,12 @@ type seqRunner struct {
 		stdout string
 		err    error
 	}
-	i int
+	i     int
+	calls [][]string
 }
 
-func (s *seqRunner) Run(_ context.Context, _ string, _ []string, _ []string) (string, string, error) {
+func (s *seqRunner) Run(_ context.Context, _ string, args []string, _ []string) (string, string, error) {
+	s.calls = append(s.calls, append([]string(nil), args...))
 	if s.i >= len(s.responses) {
 		return "", "", errors.New("unexpected call")
 	}
@@ -211,6 +316,49 @@ func TestClassifyErrorKinds(t *testing.T) {
 		if typed.Kind != tc.kind || typed.Retryable() != tc.retry {
 			t.Fatalf("%q => kind=%v retry=%v", tc.detail, typed.Kind, typed.Retryable())
 		}
+	}
+}
+
+func TestClassifyErrorUsesTypedTimeoutAndAuthSignals(t *testing.T) {
+	timeoutErr := ClassifyError(context.DeadlineExceeded, "", "")
+	var typed *Error
+	if !errors.As(timeoutErr, &typed) || typed.Kind != ErrTransient || !typed.Retryable() {
+		t.Fatalf("deadline was not transient: %v", timeoutErr)
+	}
+	authErr := ClassifyError(errors.New("exit 1"), "", "HTTP 401 unauthorized")
+	if !errors.As(authErr, &typed) || typed.Kind != ErrAuth || typed.Retryable() {
+		t.Fatalf("401 was not classified as auth: %v", authErr)
+	}
+}
+
+func TestDoctorRejectsEmptyGarbageAndNegativeAuthOutput(t *testing.T) {
+	for _, output := range []string{"", "not json", "Not authenticated", `{"status":""}`} {
+		t.Run(output, func(t *testing.T) {
+			u := NewWithRunner(Config{CLIPath: os.Args[0]}, &fakeRunner{stdout: output})
+			if err := u.Doctor(context.Background()); err == nil {
+				t.Fatalf("Doctor accepted unusable auth output %q", output)
+			}
+		})
+	}
+}
+
+func TestDoctorChecksEveryUniqueRoutedNotebook(t *testing.T) {
+	runner := &seqRunner{responses: []struct {
+		stdout string
+		err    error
+	}{
+		{stdout: `{"status":"ok"}`},
+		{stdout: `[]`},
+		{stdout: `[]`},
+	}}
+	u := NewWithRunner(Config{CLIPath: os.Args[0]}, runner)
+	if err := u.DoctorNotebooks(context.Background(), []string{"nb-one", "nb-two", "nb-one"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.calls) != 3 ||
+		!strings.Contains(strings.Join(runner.calls[1], " "), "--notebook nb-one") ||
+		!strings.Contains(strings.Join(runner.calls[2], " "), "--notebook nb-two") {
+		t.Fatalf("routed notebooks were not checked exactly once: %v", runner.calls)
 	}
 }
 

@@ -1,6 +1,7 @@
 package notebooklm
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,11 @@ type UploadResult struct {
 	Title      string `json:"title,omitempty"`
 	NotebookID string `json:"notebookId,omitempty"`
 	Raw        string `json:"-"`
+}
+
+type sourceInventory struct {
+	Sources []UploadResult
+	Count   int
 }
 
 func parseAuthStatus(stdout string) (string, error) {
@@ -49,31 +55,71 @@ func parseUploadResult(stdout, notebookID string) (UploadResult, error) {
 			result.Title = stringField(nested, "title", "name")
 		}
 	}
+	if result.SourceID == "" {
+		return UploadResult{}, fmt.Errorf("response did not include a source id")
+	}
 	return result, nil
 }
 
 func parseSourceCount(stdout string) (int, error) {
-	trimmed := strings.TrimSpace(stdout)
-	if trimmed == "" {
-		return 0, fmt.Errorf("empty source list response")
-	}
-	var asArray []any
-	if err := json.Unmarshal([]byte(trimmed), &asArray); err == nil {
-		return len(asArray), nil
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+	inventory, err := parseSourceInventory(stdout, "")
+	if err != nil {
 		return 0, err
 	}
-	for _, key := range []string{"sources", "items", "data"} {
-		if arr, ok := payload[key].([]any); ok {
-			return len(arr), nil
+	return inventory.Count, nil
+}
+
+func parseSourceInventory(stdout, notebookID string) (sourceInventory, error) {
+	trimmed := strings.TrimSpace(stdout)
+	if trimmed == "" {
+		return sourceInventory{}, fmt.Errorf("empty source list response")
+	}
+	var payload any
+	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		return sourceInventory{}, err
+	}
+
+	items, count, ok := sourceItems(payload)
+	if !ok {
+		return sourceInventory{}, fmt.Errorf("unrecognized source list JSON")
+	}
+	inventory := sourceInventory{Count: count}
+	for _, item := range items {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if nested, nestedOK := entry["source"].(map[string]any); nestedOK {
+			entry = nested
+		}
+		inventory.Sources = append(inventory.Sources, UploadResult{
+			SourceID:   stringField(entry, "source_id", "sourceId", "id"),
+			Title:      stringField(entry, "title", "name", "display_name", "displayName"),
+			NotebookID: notebookID,
+		})
+	}
+	return inventory, nil
+}
+
+func sourceItems(payload any) ([]any, int, bool) {
+	switch typed := payload.(type) {
+	case []any:
+		return typed, len(typed), true
+	case map[string]any:
+		for _, key := range []string{"sources", "items", "data"} {
+			value, exists := typed[key]
+			if !exists {
+				continue
+			}
+			if items, count, ok := sourceItems(value); ok {
+				return items, count, true
+			}
+		}
+		if n, ok := typed["count"].(float64); ok {
+			return nil, int(n), true
 		}
 	}
-	if n, ok := payload["count"].(float64); ok {
-		return int(n), nil
-	}
-	return 0, fmt.Errorf("unrecognized source list JSON")
+	return nil, 0, false
 }
 
 func stringField(m map[string]any, keys ...string) string {
@@ -90,19 +136,32 @@ func stringField(m map[string]any, keys ...string) string {
 // ClassifyError turns a CLI failure into a typed error for retry decisions.
 func ClassifyError(err error, stdout, stderr string) error {
 	detail := firstNonEmpty(secrets.Scrub(stderr), secrets.Scrub(stdout), secrets.ScrubError(err))
+	if errors.Is(err, context.DeadlineExceeded) {
+		return &Error{Kind: ErrTransient, Message: trimForError(detail), Err: err}
+	}
 	lower := strings.ToLower(detail)
 	switch {
-	case strings.Contains(lower, "authentication") || strings.Contains(lower, "re-authenticate") || strings.Contains(lower, "auth status") || strings.Contains(lower, "unauthenticated"):
+	case containsAny(lower,
+		"authentication", "re-authenticate", "auth status", "unauthenticated",
+		"unauthorized", "not authenticated", "invalid credential", "http 401",
+	):
 		return &Error{Kind: ErrAuth, Message: trimForError(detail), Err: err}
-	case strings.Contains(lower, "rate limit") || strings.Contains(lower, "rate-limit") ||
-		strings.Contains(lower, "rate_limit") || strings.Contains(lower, "429") ||
-		strings.Contains(lower, "quota") || strings.Contains(lower, "throttl"):
+	case containsAny(lower, "rate limit", "rate-limit", "rate_limit", "429", "quota", "throttl"):
 		return &Error{Kind: ErrRateLimit, Message: trimForError(detail), Err: err}
-	case strings.Contains(lower, "timeout") || strings.Contains(lower, "temporar") || strings.Contains(lower, "connection reset"):
+	case containsAny(lower, "timeout", "temporar", "connection reset"):
 		return &Error{Kind: ErrTransient, Message: trimForError(detail), Err: err}
 	default:
 		return &Error{Kind: ErrPermanent, Message: trimForError(detail), Err: err}
 	}
+}
+
+func containsAny(value string, fragments ...string) bool {
+	for _, fragment := range fragments {
+		if strings.Contains(value, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 // ErrorKind classifies NotebookLM failures for the watcher's retry policy.
@@ -117,6 +176,9 @@ const (
 	ErrAuth
 	// ErrRateLimit indicates quota or HTTP 429 throttling; retryable with backoff.
 	ErrRateLimit
+	// ErrAmbiguous means an add may have succeeded remotely and must be
+	// reconciled before another write is attempted.
+	ErrAmbiguous
 )
 
 // Error is a classified NotebookLM failure.

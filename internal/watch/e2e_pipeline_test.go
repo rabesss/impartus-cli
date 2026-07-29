@@ -44,6 +44,10 @@ printf 'ID3fakeaudio' > "$last"
 	notebooklmCLI := filepath.Join(binDir, "notebooklm")
 	writeExecutable(t, notebooklmCLI, `#!/bin/sh
 set -eu
+if [ "$1" = "source" ] && [ "$2" = "list" ]; then
+  printf '%s\n' '[]'
+  exit 0
+fi
 printf '%s\n' "$@" > "$NOTEBOOKLM_TEST_LOG"
 printf '%s\n' '{"source_id":"src-e2e","title":"from-fake"}'
 `)
@@ -102,13 +106,20 @@ printf '%s\n' '{"source_id":"src-e2e","title":"from-fake"}'
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"source\nadd", "--notebook\nnb-e2e", "--type\nfile", first.Outputs[0]} {
+	for _, want := range []string{
+		"source\nadd",
+		"--notebook\nnb-e2e",
+		"--type\nfile",
+		first.Outputs[0],
+		"LEC 001 Integration lecture [impartus:1:2:101]",
+	} {
 		if !strings.Contains(string(argv), want) {
 			t.Fatalf("NotebookLM argv missing %q:\n%s", want, argv)
 		}
 	}
 	seen, ok := store.Get(1, 2, 101)
-	if !ok || seen.Status != watch.StatusUploaded || seen.SourceID != "src-e2e" {
+	if !ok || seen.Status != watch.StatusUploaded || seen.SourceID != "src-e2e" ||
+		seen.UploadKey != "impartus:1:2:101" {
 		t.Fatalf("durable state not uploaded: %+v ok=%v", seen, ok)
 	}
 

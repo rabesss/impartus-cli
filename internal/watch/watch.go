@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -28,7 +29,7 @@ type AudioProducer interface {
 
 // SourceUploader uploads a local audio file to NotebookLM.
 type SourceUploader interface {
-	UploadToNotebook(ctx context.Context, notebookID, filePath, title string) (notebooklm.UploadResult, error)
+	UploadToNotebook(ctx context.Context, notebookID, filePath, title, idempotencyKey string) (notebooklm.UploadResult, error)
 	Doctor(ctx context.Context) error
 }
 
@@ -239,7 +240,7 @@ func (w *Watcher) runTarget(ctx context.Context, target config.WatchTarget, limi
 }
 
 func (w *Watcher) processLecture(ctx context.Context, target config.WatchTarget, lecture client.Lecture, result *CycleResult) error {
-	title := lectureTitle(lecture)
+	title, existing, seen := w.pendingLecture(target, lecture)
 	w.logf("watch: %s new lecture seq=%d ttid=%d topic=%q", targetLabel(target), lecture.SeqNo, lecture.TTID, lecture.Topic)
 
 	if w.opts.DryRun {
@@ -250,15 +251,6 @@ func (w *Watcher) processLecture(ctx context.Context, target config.WatchTarget,
 		return fmt.Errorf("audio producer is not configured")
 	}
 
-	existing, _ := w.store.Get(target.SubjectID, target.SessionID, lecture.TTID)
-	seen := SeenLecture{
-		Status:     StatusPending,
-		SeqNo:      lecture.SeqNo,
-		Topic:      lecture.Topic,
-		StartTime:  lecture.StartTime,
-		NotebookID: firstNonEmpty(target.NotebookID, w.opts.NotebookID),
-		Attempts:   existing.Attempts + 1,
-	}
 	if err := w.store.Mark(target.SubjectID, target.SessionID, seen, lecture.TTID); err != nil {
 		return fmt.Errorf("persist pending state: %w", err)
 	}
@@ -287,7 +279,7 @@ func (w *Watcher) processLecture(ctx context.Context, target config.WatchTarget,
 		return fmt.Errorf("uploader is not configured")
 	}
 
-	upload, uploadErr := w.uploadWithRetries(ctx, seen.NotebookID, output, title)
+	upload, uploadErr := w.uploadWithRetries(ctx, seen.NotebookID, output, title, seen.UploadKey)
 	if uploadErr != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
@@ -302,18 +294,38 @@ func (w *Watcher) processLecture(ctx context.Context, target config.WatchTarget,
 	seen.SourceID = upload.SourceID
 	seen.NotebookID = firstNonEmpty(upload.NotebookID, seen.NotebookID)
 	seen.Error = ""
-	result.Uploaded++
-	w.logf("watch: uploaded %q as source %s", title, upload.SourceID)
 
 	if err := w.store.Mark(target.SubjectID, target.SessionID, seen, lecture.TTID); err != nil {
-		return fmt.Errorf("persist watch state: %w", err)
+		return fmt.Errorf("persist watch state after successful upload (source=%s): %w", upload.SourceID, err)
 	}
+	result.Uploaded++
+	w.logf("watch: uploaded %q as source %s", title, upload.SourceID)
 	if w.opts.DeleteAudioAfterUpload {
 		if rmErr := os.Remove(output); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
 			w.logf("watch: warning: failed to delete audio %s: %v", output, rmErr)
 		}
 	}
 	return nil
+}
+
+func (w *Watcher) pendingLecture(
+	target config.WatchTarget,
+	lecture client.Lecture,
+) (string, SeenLecture, SeenLecture) {
+	existing, _ := w.store.Get(target.SubjectID, target.SessionID, lecture.TTID)
+	key := existing.UploadKey
+	if key == "" {
+		key = lectureUploadKey(target, lecture)
+	}
+	return lectureTitle(lecture, key), existing, SeenLecture{
+		Status:     StatusPending,
+		SeqNo:      lecture.SeqNo,
+		Topic:      lecture.Topic,
+		StartTime:  lecture.StartTime,
+		NotebookID: firstNonEmpty(target.NotebookID, w.opts.NotebookID),
+		UploadKey:  key,
+		Attempts:   existing.Attempts + 1,
+	}
 }
 
 func (w *Watcher) ensureAudio(
@@ -368,11 +380,11 @@ func (w *Watcher) ensureAudio(
 	return output, true, nil
 }
 
-func (w *Watcher) uploadWithRetries(ctx context.Context, notebookID, output, title string) (notebooklm.UploadResult, error) {
+func (w *Watcher) uploadWithRetries(ctx context.Context, notebookID, output, title, uploadKey string) (notebooklm.UploadResult, error) {
 	var upload notebooklm.UploadResult
 	err := withRetries(ctx, w.opts.MaxRetries, w.opts.RetryBackoff, w.opts.Log, func() error {
 		var err error
-		upload, err = w.uploader.UploadToNotebook(ctx, notebookID, output, title)
+		upload, err = w.uploader.UploadToNotebook(ctx, notebookID, output, title, uploadKey)
 		if notebooklm.IsAuth(err) {
 			return err // withRetries will stop because auth is not Retryable
 		}
@@ -417,6 +429,13 @@ func isRetryable(err error) bool {
 	if errors.As(err, &nlmErr) {
 		return nlmErr.Retryable()
 	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var networkErr net.Error
+	if errors.As(err, &networkErr) && networkErr.Timeout() {
+		return true
+	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "timeout") ||
 		strings.Contains(msg, "temporar") ||
@@ -427,8 +446,10 @@ func isRetryable(err error) bool {
 func filterEmptyLectures(lectures client.Lectures) client.Lectures {
 	filtered := make(client.Lectures, 0, len(lectures))
 	for _, lecture := range lectures {
-		topic := strings.ToLower(strings.TrimSpace(lecture.Topic))
-		if strings.Contains(topic, "no class") || strings.Contains(topic, "no lecture") {
+		topic := strings.Trim(strings.ToLower(strings.TrimSpace(lecture.Topic)), " .:-_")
+		switch topic {
+		case "no class", "no class today", "no class scheduled",
+			"no lecture", "no lecture today", "no lecture scheduled":
 			continue
 		}
 		filtered = append(filtered, lecture)
@@ -436,12 +457,16 @@ func filterEmptyLectures(lectures client.Lectures) client.Lectures {
 	return filtered
 }
 
-func lectureTitle(lecture client.Lecture) string {
+func lectureTitle(lecture client.Lecture, uploadKey string) string {
 	topic := strings.TrimSpace(lecture.Topic)
 	if topic == "" {
 		topic = "Lecture"
 	}
-	return fmt.Sprintf("LEC %03d %s", lecture.SeqNo, topic)
+	return fmt.Sprintf("LEC %03d %s [%s]", lecture.SeqNo, topic, uploadKey)
+}
+
+func lectureUploadKey(target config.WatchTarget, lecture client.Lecture) string {
+	return fmt.Sprintf("impartus:%d:%d:%d", target.SubjectID, target.SessionID, lecture.TTID)
 }
 
 func firstOutput(join downloader.JoinResult) string {

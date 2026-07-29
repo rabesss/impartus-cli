@@ -15,6 +15,7 @@ native Google sign-in:
 
 ```bash
 uv tool install "notebooklm-py[browser]"
+playwright install chromium
 notebooklm login
 notebooklm auth check --test --json
 ```
@@ -34,8 +35,9 @@ the provider's native bootstrap:
 
 ```bash
 uv tool install --force "notebooklm-py[browser,headless]==0.8.0rc1"
-notebooklm login --master-token --account you@example.com
-notebooklm login --master-token-refresh
+playwright install chromium
+notebooklm --profile work login --master-token --account you@example.com
+notebooklm --profile work login --master-token-refresh
 ```
 
 The headless runtime or container only needs the pinned headless extra:

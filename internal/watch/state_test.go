@@ -106,6 +106,7 @@ func TestMarkWithoutStatusPreservesUploadedState(t *testing.T) {
 	}
 	if err := store.Mark(1, 2, SeenLecture{
 		Status: StatusUploaded, OutputPath: "/tmp/a.mp3", NotebookID: "nb", SourceID: "src",
+		UploadKey: "impartus:1:2:7",
 	}, 7); err != nil {
 		t.Fatal(err)
 	}
@@ -113,8 +114,40 @@ func TestMarkWithoutStatusPreservesUploadedState(t *testing.T) {
 		t.Fatal(err)
 	}
 	seen, _ := store.Get(1, 2, 7)
-	if seen.Status != StatusUploaded || !seen.Uploaded || seen.SourceID != "src" || seen.NotebookID != "nb" {
+	if seen.Status != StatusUploaded || !seen.Uploaded || seen.SourceID != "src" ||
+		seen.NotebookID != "nb" || seen.UploadKey != "impartus:1:2:7" {
 		t.Fatalf("uploaded state regressed: %+v", seen)
+	}
+}
+
+func TestMarkRollsBackMemoryWhenPersistenceFails(t *testing.T) {
+	dir := t.TempDir()
+	store, err := LoadStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markErr := store.Mark(1, 2, SeenLecture{
+		Status: StatusDownloaded, OutputPath: "/tmp/a.mp3", SourceID: "before",
+	}, 7); markErr != nil {
+		t.Fatal(markErr)
+	}
+	badPath := filepath.Join(dir, "cannot-replace-directory")
+	if mkdirErr := os.Mkdir(badPath, 0o700); mkdirErr != nil {
+		t.Fatal(mkdirErr)
+	}
+	store.path = badPath
+	err = store.Mark(1, 2, SeenLecture{
+		Status: StatusUploaded, OutputPath: "/tmp/a.mp3", SourceID: "after",
+	}, 7)
+	if err == nil {
+		t.Fatalf("expected persistence failure")
+	}
+	seen, ok := store.Get(1, 2, 7)
+	if !ok || seen.Status != StatusDownloaded || seen.SourceID != "before" {
+		t.Fatalf("failed Mark leaked into memory: %+v ok=%v", seen, ok)
+	}
+	if store.Has(1, 2, 7) {
+		t.Fatalf("failed uploaded Mark must not affect deduplication")
 	}
 }
 

@@ -1,10 +1,15 @@
 package cli
 
 import (
+	"context"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/rabesss/impartus-cli/internal/config"
+	"github.com/rabesss/impartus-cli/internal/notebooklm"
 )
 
 func TestParseWatchFlags(t *testing.T) {
@@ -131,5 +136,40 @@ func TestHelpMentionsWatch(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("help payload missing watch command: %+v", payload.Commands)
+	}
+}
+
+func TestRunWatchCheckJSONReturnsDiagnostics(t *testing.T) {
+	binDir := t.TempDir()
+	ffmpeg := filepath.Join(binDir, "ffmpeg")
+	body := "#!/bin/sh\nexit 0\n"
+	if runtime.GOOS == "windows" {
+		ffmpeg += ".bat"
+		body = "@echo off\r\nexit /b 0\r\n"
+	}
+	if err := os.WriteFile(ffmpeg, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cfg := &config.Config{
+		Watch: config.WatchConfig{
+			Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2}},
+		},
+	}
+	cfg.ApplyDefaults()
+	result, err := runWatchCheck(
+		context.Background(),
+		cfg,
+		false,
+		notebooklm.New(notebooklm.Config{}),
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Checks["ffmpeg"] != "ok" || result.Checks["targets"] != "1" ||
+		result.Checks["upload"] != "false" {
+		t.Fatalf("JSON diagnostics missing: %+v", result.Checks)
 	}
 }

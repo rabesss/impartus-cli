@@ -53,6 +53,7 @@ type SeenLecture struct {
 	Uploaded    bool          `json:"uploaded"`
 	NotebookID  string        `json:"notebookId,omitempty"`
 	SourceID    string        `json:"sourceId,omitempty"`
+	UploadKey   string        `json:"uploadKey,omitempty"`
 	Attempts    int           `json:"attempts,omitempty"`
 	Error       string        `json:"lastError,omitempty"`
 	FirstSeenAt string        `json:"firstSeenAt,omitempty"`
@@ -213,37 +214,14 @@ func (s *Store) Mark(subjectID, sessionID int, lecture SeenLecture, ttid int) er
 	defer s.mu.Unlock()
 
 	key := CourseKey(subjectID, sessionID)
-	course, ok := s.data.Courses[key]
-	if !ok {
-		course = CourseState{SeenTTIDs: map[string]SeenLecture{}}
-	}
-	if course.SeenTTIDs == nil {
-		course.SeenTTIDs = map[string]SeenLecture{}
+	previousCourse, hadCourse := s.data.Courses[key]
+	course := CourseState{SeenTTIDs: make(map[string]SeenLecture, len(previousCourse.SeenTTIDs)+1)}
+	for existingTTID, existingLecture := range previousCourse.SeenTTIDs {
+		course.SeenTTIDs[existingTTID] = existingLecture
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if existing, ok := course.SeenTTIDs[strconv.Itoa(ttid)]; ok {
-		if lecture.FirstSeenAt == "" {
-			lecture.FirstSeenAt = existing.FirstSeenAt
-		}
-		if lecture.Attempts == 0 {
-			lecture.Attempts = existing.Attempts
-		}
-		if lecture.OutputPath == "" {
-			lecture.OutputPath = existing.OutputPath
-		}
-		if lecture.NotebookID == "" {
-			lecture.NotebookID = existing.NotebookID
-		}
-		if lecture.Status == "" {
-			lecture.Status = existing.Status
-			lecture.Uploaded = existing.Uploaded
-			if lecture.SourceID == "" {
-				lecture.SourceID = existing.SourceID
-			}
-			if lecture.Error == "" {
-				lecture.Error = existing.Error
-			}
-		}
+		lecture = mergeSeenLecture(existing, lecture)
 	}
 	if lecture.FirstSeenAt == "" {
 		lecture.FirstSeenAt = now
@@ -258,10 +236,50 @@ func (s *Store) Mark(subjectID, sessionID int, lecture SeenLecture, ttid int) er
 	lecture.SessionID = sessionID
 	lecture.Uploaded = lecture.Status == StatusUploaded
 	course.SeenTTIDs[strconv.Itoa(ttid)] = lecture
+	previousVersion, previousUpdatedAt := s.data.Version, s.data.UpdatedAt
 	s.data.Courses[key] = course
 	s.data.Version = stateVersion
 	s.data.UpdatedAt = now
-	return s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		if hadCourse {
+			s.data.Courses[key] = previousCourse
+		} else {
+			delete(s.data.Courses, key)
+		}
+		s.data.Version = previousVersion
+		s.data.UpdatedAt = previousUpdatedAt
+		return err
+	}
+	return nil
+}
+
+func mergeSeenLecture(existing, lecture SeenLecture) SeenLecture {
+	if lecture.FirstSeenAt == "" {
+		lecture.FirstSeenAt = existing.FirstSeenAt
+	}
+	if lecture.Attempts == 0 {
+		lecture.Attempts = existing.Attempts
+	}
+	if lecture.OutputPath == "" {
+		lecture.OutputPath = existing.OutputPath
+	}
+	if lecture.NotebookID == "" {
+		lecture.NotebookID = existing.NotebookID
+	}
+	if lecture.UploadKey == "" {
+		lecture.UploadKey = existing.UploadKey
+	}
+	if lecture.Status == "" {
+		lecture.Status = existing.Status
+		lecture.Uploaded = existing.Uploaded
+		if lecture.SourceID == "" {
+			lecture.SourceID = existing.SourceID
+		}
+		if lecture.Error == "" {
+			lecture.Error = existing.Error
+		}
+	}
+	return lecture
 }
 
 // Snapshot returns a deep-enough copy for inspection / JSON output.

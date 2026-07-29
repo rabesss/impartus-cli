@@ -22,6 +22,11 @@ func TestUploadFileAgainstFakeCLIBinary(t *testing.T) {
 	script := "#!/bin/sh\n" +
 		"echo \"$@\" >> \"$NOTEBOOKLM_ARGV_LOG\"\n" +
 		"echo '{\"source_id\":\"src-e2e\",\"title\":\"from-fake\"}'\n"
+	if runtime.GOOS == "windows" {
+		script = "@echo off\r\n" +
+			"echo %*>>\"%NOTEBOOKLM_ARGV_LOG%\"\r\n" +
+			"echo {\"source_id\":\"src-e2e\",\"title\":\"from-fake\"}\r\n"
+	}
 	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
