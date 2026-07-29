@@ -3,7 +3,6 @@ package notebooklm
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -55,7 +54,7 @@ func (u *Uploader) checkAuth(ctx context.Context) error {
 	doctorCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	args := BuildAuthCheckArgs(u.cfg)
-	stdout, stderr, err := u.runner.Run(doctorCtx, u.cfg.CLIPath, args, os.Environ())
+	stdout, stderr, err := u.runner.Run(doctorCtx, u.cfg.CLIPath, args, providerEnvironment())
 	if err != nil {
 		detail := firstNonEmpty(secrets.Scrub(stderr), secrets.Scrub(stdout), secrets.ScrubError(err))
 		return fmt.Errorf("notebooklm auth check failed: %s", trimForError(detail))
@@ -113,7 +112,7 @@ func (u *Uploader) listSources(ctx context.Context, notebookID string) (sourceIn
 	listCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	args := BuildListSourcesArgs(u.cfg, notebookID)
-	stdout, stderr, err := u.runner.Run(listCtx, u.cfg.CLIPath, args, os.Environ())
+	stdout, stderr, err := u.runner.Run(listCtx, u.cfg.CLIPath, args, providerEnvironment())
 	if err != nil {
 		detail := firstNonEmpty(secrets.Scrub(stderr), secrets.Scrub(stdout), secrets.ScrubError(err))
 		return sourceInventory{}, fmt.Errorf("check notebook sources: %s", trimForError(detail))

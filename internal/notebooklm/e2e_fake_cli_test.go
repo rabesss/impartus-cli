@@ -2,6 +2,7 @@ package notebooklm_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -19,13 +20,17 @@ func TestUploadFileAgainstFakeCLIBinary(t *testing.T) {
 		bin += ".bat"
 	}
 
-	script := "#!/bin/sh\n" +
-		"echo \"$@\" >> \"$NOTEBOOKLM_ARGV_LOG\"\n" +
-		"echo '{\"source_id\":\"src-e2e\",\"title\":\"from-fake\"}'\n"
+	logPathQuoted := "'" + strings.ReplaceAll(logPath, "'", "'\"'\"'") + "'"
+	script := fmt.Sprintf(
+		"#!/bin/sh\necho \"$@\" >> %s\necho '{\"source_id\":\"src-e2e\",\"title\":\"from-fake\"}'\n",
+		logPathQuoted,
+	)
 	if runtime.GOOS == "windows" {
-		script = "@echo off\r\n" +
-			"echo %*>>\"%NOTEBOOKLM_ARGV_LOG%\"\r\n" +
-			"echo {\"source_id\":\"src-e2e\",\"title\":\"from-fake\"}\r\n"
+		logPathQuoted = `"` + strings.ReplaceAll(logPath, `"`, `""`) + `"`
+		script = fmt.Sprintf(
+			"@echo off\r\necho %%*>>%s\r\necho {\"source_id\":\"src-e2e\",\"title\":\"from-fake\"}\r\n",
+			logPathQuoted,
+		)
 	}
 	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
@@ -36,7 +41,6 @@ func TestUploadFileAgainstFakeCLIBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("NOTEBOOKLM_ARGV_LOG", logPath)
 	u := notebooklm.New(notebooklm.Config{NotebookID: "nb-e2e", CLIPath: bin})
 	result, err := u.UploadFile(context.Background(), audio, "LEC 001 E2E")
 	if err != nil {

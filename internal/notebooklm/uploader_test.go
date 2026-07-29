@@ -14,13 +14,52 @@ type fakeRunner struct {
 	stderr string
 	err    error
 	last   []string
+	env    []string
 	calls  int
 }
 
-func (f *fakeRunner) Run(_ context.Context, _ string, args []string, _ []string) (string, string, error) {
+func (f *fakeRunner) Run(_ context.Context, _ string, args []string, env []string) (string, string, error) {
 	f.calls++
 	f.last = append([]string{}, args...)
+	f.env = append([]string{}, env...)
 	return f.stdout, f.stderr, f.err
+}
+
+func TestProviderEnvironmentDropsApplicationSecrets(t *testing.T) {
+	filtered := filterProviderEnvironment([]string{
+		"HOME=/home/example",
+		"PATH=/usr/bin",
+		"LC_ALL=C.UTF-8",
+		"HTTPS_PROXY=http://proxy.example",
+		"IMPARTUS_USERNAME=student",
+		"IMPARTUS_PASSWORD=secret",
+		"GITHUB_TOKEN=secret",
+		"OPENAI_API_KEY=secret",
+		"NOTEBOOKLM_AUTH_JSON=secret",
+		"MALFORMED",
+	})
+	joined := "\n" + strings.Join(filtered, "\n") + "\n"
+	for _, want := range []string{
+		"\nHOME=/home/example\n",
+		"\nPATH=/usr/bin\n",
+		"\nLC_ALL=C.UTF-8\n",
+		"\nHTTPS_PROXY=http://proxy.example\n",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("safe provider environment variable %q was dropped: %v", want, filtered)
+		}
+	}
+	for _, forbidden := range []string{
+		"IMPARTUS_USERNAME",
+		"IMPARTUS_PASSWORD",
+		"GITHUB_TOKEN",
+		"OPENAI_API_KEY",
+		"NOTEBOOKLM_AUTH_JSON",
+	} {
+		if strings.Contains(joined, forbidden+"=") {
+			t.Fatalf("secret environment variable %q was forwarded: %v", forbidden, filtered)
+		}
+	}
 }
 
 func TestBuildUploadArgsNotebookLMpy(t *testing.T) {
@@ -69,6 +108,8 @@ func TestBuildAuthCheckArgsMatchesProviders(t *testing.T) {
 }
 
 func TestUploadFileBuildsExpectedArgs(t *testing.T) {
+	t.Setenv("IMPARTUS_PASSWORD", "must-not-cross-provider-boundary")
+	t.Setenv("OPENAI_API_KEY", "must-not-cross-provider-boundary")
 	dir := t.TempDir()
 	file := filepath.Join(dir, "lec.mp3")
 	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
@@ -88,6 +129,12 @@ func TestUploadFileBuildsExpectedArgs(t *testing.T) {
 	for _, want := range []string{"--profile work", "source add", "--notebook nb1", "--type file", "--json", "--title LEC 001 Intro", file} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("args missing %q: %v", want, runner.last)
+		}
+	}
+	childEnv := "\n" + strings.Join(runner.env, "\n") + "\n"
+	for _, forbidden := range []string{"IMPARTUS_PASSWORD=", "OPENAI_API_KEY="} {
+		if strings.Contains(childEnv, "\n"+forbidden) {
+			t.Fatalf("provider subprocess received %s", forbidden)
 		}
 	}
 }

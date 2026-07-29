@@ -87,7 +87,7 @@ func (u *Uploader) executeUpload(
 	uploadCtx, cancel := context.WithTimeout(ctx, u.cfg.UploadTimeout)
 	defer cancel()
 
-	stdout, stderr, runErr := u.runner.Run(uploadCtx, u.cfg.CLIPath, args, os.Environ())
+	stdout, stderr, runErr := u.runner.Run(uploadCtx, u.cfg.CLIPath, args, providerEnvironment())
 	if runErr != nil {
 		classifyErr := runErr
 		if uploadCtx.Err() != nil {

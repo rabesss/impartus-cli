@@ -40,17 +40,17 @@ for arg in "$@"; do last="$arg"; done
 printf 'ID3fakeaudio' > "$last"
 `)
 	uploadLog := filepath.Join(dir, "notebooklm-argv.txt")
-	t.Setenv("NOTEBOOKLM_TEST_LOG", uploadLog)
+	uploadLogQuoted := "'" + strings.ReplaceAll(uploadLog, "'", "'\"'\"'") + "'"
 	notebooklmCLI := filepath.Join(binDir, "notebooklm")
-	writeExecutable(t, notebooklmCLI, `#!/bin/sh
+	writeExecutable(t, notebooklmCLI, fmt.Sprintf(`#!/bin/sh
 set -eu
 if [ "$1" = "source" ] && [ "$2" = "list" ]; then
-  printf '%s\n' '[]'
+  printf '%%s\n' '[]'
   exit 0
 fi
-printf '%s\n' "$@" > "$NOTEBOOKLM_TEST_LOG"
-printf '%s\n' '{"source_id":"src-e2e","title":"from-fake"}'
-`)
+printf '%%s\n' "$@" > %[1]s
+printf '%%s\n' '{"source_id":"src-e2e","title":"from-fake"}'
+`, uploadLogQuoted))
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	cfg := &config.Config{

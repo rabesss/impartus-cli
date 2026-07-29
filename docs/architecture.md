@@ -116,7 +116,7 @@ flowchart TD
   Add -->|auth error| Abort
 ```
 
-Auth for NotebookLM is out-of-band: see [`notebooklm-auth.md`](notebooklm-auth.md). The deterministic key is stored with the lecture state before upload, so retries and crash recovery can reconcile the same provider source. State persistence reuses the atomic write/sync pattern from job persistence.
+Auth for NotebookLM is out-of-band: see [`notebooklm-auth.md`](notebooklm-auth.md). Provider subprocesses receive an allowlisted operating-system environment rather than Impartus credentials or unrelated application tokens. The deterministic key is stored with the lecture state before upload, so retries and crash recovery can reconcile the same provider source. State persistence reuses the atomic write/sync pattern from job persistence.
 
 ## API authenticated job lifecycle flow
 
