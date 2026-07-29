@@ -15,6 +15,7 @@
     * [Deterministic JSON Mode](#deterministic-json-mode)
     * [Command Reference](#command-reference)
     * [Download / Play Flags](#download--play-flags)
+    * [Watch (NotebookLM)](#watch-notebooklm)
     * [API Server](#api-server)
   * [API Usage](#api-usage)
     * [Authentication](#authentication)
@@ -57,6 +58,7 @@ A Go-based CLI and HTTP API server for downloading lecture videos from Impartus 
 - **Progress Tracking with ETA** - Real-time progress bars with speed and time estimates
 - **Rate Limiting** - Configurable API and download rate limits
 - **Slide Download Support** - Download lecture slides alongside video content
+- **Watch + NotebookLM Upload** - Poll for new lectures, download audio, and upload to a NotebookLM notebook
 
 ## Quick Start
 
@@ -158,6 +160,32 @@ protection manually with `chmod 600 config.json`.
 | `listenAddr` | string | No | `"127.0.0.1"` | API server bind address (loopback only unless `allowRemoteAccess` is set) |
 | `allowRemoteAccess` | bool | No | `false` | Permit a non-loopback `listenAddr` (e.g. `0.0.0.0`); required to expose the API on the network |
 | `progressTracking` | object | No | see below | Progress bar tracking configuration |
+| `watch` | object | No | see below | Automated poll / download / NotebookLM upload |
+| `notebooklm` | object | No | see below | NotebookLM upload target (auth via env secrets) |
+
+#### Watch Options
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable watch defaults from config (CLI also enables when invoked) |
+| `interval` | string | `"5m"` | Poll interval (30s-24h) |
+| `statePath` | string | `"./.watch-state.json"` | Durable processed-lecture state file |
+| `subjectId` | int | `0` | Subject ID (required when enabled) |
+| `sessionId` | int | `0` | Session ID (required when enabled) |
+| `quality` | string | `"144"` | Forced for watch downloads |
+| `views` | string | `"left"` | Forced for watch downloads (one camera) |
+| `audioFormat` | string | `"mp3"` | Audio format for watch downloads |
+| `upload` | bool | `false` | Upload downloaded audio to NotebookLM |
+
+#### NotebookLM Options
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `notebookId` | string | `""` | Target notebook ID (required when `watch.upload` is true) |
+| `cliPath` | string | `"notebooklm"` | Path to the notebooklm-py CLI |
+| `authProfile` | string | `""` | Optional notebooklm-py profile name |
+
+Authentication for NotebookLM uses `NOTEBOOKLM_*` secrets — see [`docs/notebooklm-auth.md`](docs/notebooklm-auth.md). Install the CLI with `pip install --pre 'notebooklm-py[headless]>=0.8.0rc1'`.
 
 #### Progress Tracking Options
 
@@ -195,6 +223,18 @@ Only the settings listed below have environment-variable overrides. Settings abs
 | `IMPARTUS_NUM_WORKERS` | `numWorkers` | Integer from 1-50 |
 | `IMPARTUS_RATE_LIMIT` | `rateLimit` | Number from 0.1-100 |
 | `IMPARTUS_API_RATE_LIMIT` | `apiRateLimit` | Number from 0.1-20 |
+| `IMPARTUS_WATCH_ENABLED` | `watch.enabled` | Boolean |
+| `IMPARTUS_WATCH_INTERVAL` | `watch.interval` | Go duration between 30s and 24h |
+| `IMPARTUS_WATCH_STATE_PATH` | `watch.statePath` | State file path |
+| `IMPARTUS_WATCH_SUBJECT_ID` | `watch.subjectId` | Integer |
+| `IMPARTUS_WATCH_SESSION_ID` | `watch.sessionId` | Integer |
+| `IMPARTUS_WATCH_UPLOAD` | `watch.upload` | Boolean |
+| `IMPARTUS_WATCH_QUALITY` | `watch.quality` | `144`, `450`, or `720` |
+| `IMPARTUS_WATCH_VIEWS` | `watch.views` | `left`, `right`, `both`, `first`, or `second` |
+| `IMPARTUS_WATCH_AUDIO_FORMAT` | `watch.audioFormat` | `mp3`, `m4a`, `aac`, or `opus` |
+| `IMPARTUS_NOTEBOOKLM_NOTEBOOK_ID` | `notebooklm.notebookId` | Notebook ID |
+| `IMPARTUS_NOTEBOOKLM_CLI_PATH` | `notebooklm.cliPath` | Path to notebooklm CLI |
+| `IMPARTUS_NOTEBOOKLM_AUTH_PROFILE` | `notebooklm.authProfile` | Optional profile name |
 
 #### Validation Rules
 
@@ -272,6 +312,7 @@ multiple paths when multiple views or output forms are requested.
 | `impartus courses` | List available courses |
 | `impartus lectures -s ID -S ID` | List lectures for subject/session |
 | `impartus download [flags]` | Download lectures |
+| `impartus watch [flags]` | Poll for new lectures and upload audio to NotebookLM |
 | `impartus play [flags]` | Play lectures in mpv |
 | `impartus serve [--port PORT]` | Start HTTP API server |
 
@@ -317,6 +358,38 @@ multiple paths when multiple views or output forms are requested.
 # Play a specific lecture
 ./impartus play -s 123 -S 456 --lecture 3
 ```
+
+### Watch (NotebookLM)
+
+Poll Impartus for new lectures, download left-view audio at 144p, and optionally upload each file to a NotebookLM notebook. Processed TTIDs are recorded in a durable state file so restarts do not re-upload.
+
+```bash
+# One-shot dry run (list new lectures only)
+./impartus watch -s 123 -S 456 --once --dry-run
+
+# Preflight: ffmpeg + NotebookLM auth
+./impartus watch -s 123 -S 456 --upload --notebook NOTEBOOK_ID --check
+
+# Single poll cycle with upload
+./impartus watch -s 123 -S 456 --once --upload --notebook NOTEBOOK_ID
+
+# Daemon mode (default interval 5m)
+./impartus watch -s 123 -S 456 --upload --notebook NOTEBOOK_ID --interval 10m
+```
+
+| Flag | Description |
+|------|-------------|
+| `--subject,-s` / `--session,-S` | Course to watch (required) |
+| `--interval` | Poll interval (default `5m`) |
+| `--state` | State file path (default `./.watch-state.json`) |
+| `--notebook` | NotebookLM notebook ID |
+| `--upload` / `--no-upload` | Enable or disable upload |
+| `--once` | One poll cycle then exit |
+| `--dry-run` | List new lectures without downloading |
+| `--check` | Validate ffmpeg/auth/config then exit |
+| `--output,-o` | Output directory |
+
+Phone-based NotebookLM login and secret ingestion: [`docs/notebooklm-auth.md`](docs/notebooklm-auth.md).
 
 ### API Server
 

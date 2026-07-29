@@ -26,5 +26,21 @@
     "showETA": false,
     "updateInterval": "2s",
     "speedWindowSize": 10
+  },
+  "watch": {
+    "enabled": false,
+    "interval": "5m",
+    "statePath": "./.watch-state.json",
+    "subjectId": 0,
+    "sessionId": 0,
+    "quality": "144",
+    "views": "left",
+    "audioFormat": "mp3",
+    "upload": false
+  },
+  "notebooklm": {
+    "notebookId": "",
+    "cliPath": "notebooklm",
+    "authProfile": ""
   }
 }

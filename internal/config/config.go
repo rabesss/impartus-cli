@@ -23,6 +23,30 @@ type ProgressConfig struct {
 	SpeedWindowSize int    `json:"speedWindowSize"`
 }
 
+// WatchConfig controls the automated lecture poll / download / upload loop.
+// Media fields default to bandwidth-efficient audio (quality 144, left view)
+// when watch runs; leave them empty to keep those defaults.
+type WatchConfig struct {
+	Enabled     bool   `json:"enabled"`
+	Interval    string `json:"interval"`
+	StatePath   string `json:"statePath"`
+	SubjectID   int    `json:"subjectId"`
+	SessionID   int    `json:"sessionId"`
+	Quality     string `json:"quality,omitempty"`
+	Views       string `json:"views,omitempty"`
+	AudioFormat string `json:"audioFormat,omitempty"`
+	Upload      bool   `json:"upload"`
+}
+
+// NotebookLMConfig configures the NotebookLM upload step used by watch.
+// Authentication secrets stay out of this file — use NOTEBOOKLM_* env vars
+// (see docs/notebooklm-auth.md).
+type NotebookLMConfig struct {
+	NotebookID  string `json:"notebookId,omitempty"`
+	CLIPath     string `json:"cliPath,omitempty"`
+	AuthProfile string `json:"authProfile,omitempty"`
+}
+
 // Config holds all application configuration values.
 type Config struct {
 	Username         string  `json:"username"`
@@ -42,12 +66,14 @@ type Config struct {
 	EnableJitter     bool    `json:"enableJitter"`
 	SkipNoAudio      bool    `json:"skipNoAudio"`
 
-	EnablePipeline            bool           `json:"enablePipeline"`
-	DownloadWorkersPerLecture int            `json:"downloadWorkersPerLecture"`
-	DecryptWorkersPerLecture  int            `json:"decryptWorkersPerLecture"`
-	ProgressTracking          ProgressConfig `json:"progressTracking"`
-	HTTPTimeout               string         `json:"httpTimeout"`
-	ListenAddr                string         `json:"listenAddr,omitempty"`
+	EnablePipeline            bool             `json:"enablePipeline"`
+	DownloadWorkersPerLecture int              `json:"downloadWorkersPerLecture"`
+	DecryptWorkersPerLecture  int              `json:"decryptWorkersPerLecture"`
+	ProgressTracking          ProgressConfig   `json:"progressTracking"`
+	Watch                     WatchConfig      `json:"watch,omitempty"`
+	NotebookLM                NotebookLMConfig `json:"notebooklm,omitempty"`
+	HTTPTimeout               string           `json:"httpTimeout"`
+	ListenAddr                string           `json:"listenAddr,omitempty"`
 	// AllowRemoteAccess must be explicitly enabled to bind a non-loopback
 	// ListenAddr (e.g. 0.0.0.0). Defaults to false for safety.
 	AllowRemoteAccess bool `json:"allowRemoteAccess,omitempty"`
@@ -116,6 +142,49 @@ func (c *Config) applyProgressDefaults() {
 	} else {
 		c.Views = NormalizeViews(c.Views)
 	}
+	c.applyWatchDefaults()
+}
+
+func (c *Config) applyWatchDefaults() {
+	if c.Watch.Interval == "" {
+		c.Watch.Interval = "5m"
+	}
+	if c.Watch.StatePath == "" {
+		c.Watch.StatePath = "./.watch-state.json"
+	}
+	if c.Watch.Quality == "" {
+		c.Watch.Quality = "144"
+	}
+	if c.Watch.Views == "" {
+		c.Watch.Views = "left"
+	} else {
+		c.Watch.Views = NormalizeViews(c.Watch.Views)
+	}
+	if c.Watch.AudioFormat == "" {
+		c.Watch.AudioFormat = "mp3"
+	}
+	if c.NotebookLM.CLIPath == "" {
+		c.NotebookLM.CLIPath = "notebooklm"
+	}
+}
+
+// ApplyWatchMediaDefaults forces the bandwidth-efficient audio settings used by
+// the watch loop onto the top-level media fields the downloader reads.
+func (c *Config) ApplyWatchMediaDefaults() {
+	c.AudioOnly = true
+	c.SkipNoAudio = true
+	c.Quality = c.Watch.Quality
+	if c.Quality == "" {
+		c.Quality = "144"
+	}
+	c.Views = NormalizeViews(c.Watch.Views)
+	if c.Views == "" {
+		c.Views = "left"
+	}
+	c.AudioFormat = c.Watch.AudioFormat
+	if c.AudioFormat == "" {
+		c.AudioFormat = "mp3"
+	}
 }
 
 func (c *Config) applyListenDefaults() {
@@ -157,6 +226,12 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := c.validatePipeline(); err != nil {
+		return err
+	}
+	if err := c.validateWatch(); err != nil {
+		return err
+	}
+	if err := c.validateNotebookLM(); err != nil {
 		return err
 	}
 	return c.validateTimeout()
@@ -241,6 +316,55 @@ func (c *Config) validatePipeline() error {
 		return fmt.Errorf("decryptWorkersPerLecture must be between 1 and 10, got %d", c.DecryptWorkersPerLecture)
 	}
 
+	return nil
+}
+
+func (c *Config) validateWatch() error {
+	if !c.Watch.Enabled && c.Watch.SubjectID == 0 && c.Watch.SessionID == 0 {
+		// Unconfigured watch block: still validate interval/state path shape when set,
+		// but skip the subject/session requirement so a default empty config loads.
+		return c.validateWatchShape()
+	}
+	if err := c.validateWatchShape(); err != nil {
+		return err
+	}
+	if c.Watch.Enabled {
+		if c.Watch.SubjectID <= 0 || c.Watch.SessionID <= 0 {
+			return fmt.Errorf("watch.subjectId and watch.sessionId are required when watch.enabled is true")
+		}
+	}
+	return nil
+}
+
+func (c *Config) validateWatchShape() error {
+	if c.Watch.Interval != "" {
+		interval, err := time.ParseDuration(c.Watch.Interval)
+		if err != nil {
+			return fmt.Errorf("invalid watch.interval: %w", err)
+		}
+		if interval < 30*time.Second || interval > 24*time.Hour {
+			return fmt.Errorf("watch.interval must be between 30s and 24h, got %v", interval)
+		}
+	}
+	if c.Watch.Quality != "" && !OneOf(c.Watch.Quality, "144", "450", "720") {
+		return fmt.Errorf("watch.quality must be one of: 144, 450, 720")
+	}
+	if c.Watch.Views != "" && !OneOf(c.Watch.Views, "first", "second", "both", "left", "right") {
+		return fmt.Errorf("watch.views must be one of: first, second, both, left, right")
+	}
+	if c.Watch.AudioFormat != "" && !OneOf(c.Watch.AudioFormat, "mp3", "m4a", "aac", "opus") {
+		return fmt.Errorf("watch.audioFormat must be one of: mp3, m4a, aac, opus")
+	}
+	return nil
+}
+
+func (c *Config) validateNotebookLM() error {
+	if !c.Watch.Upload {
+		return nil
+	}
+	if strings.TrimSpace(c.NotebookLM.NotebookID) == "" {
+		return fmt.Errorf("notebooklm.notebookId is required when watch.upload is true")
+	}
 	return nil
 }
 
@@ -339,6 +463,14 @@ func applyEnvOverrides(cfg *Config) error {
 	applyStringEnv("IMPARTUS_AUDIO_FORMAT", &cfg.AudioFormat)
 	applyStringEnv("IMPARTUS_HTTP_TIMEOUT", &cfg.HTTPTimeout)
 	applyStringEnv("IMPARTUS_LISTEN_ADDR", &cfg.ListenAddr)
+	applyStringEnv("IMPARTUS_WATCH_INTERVAL", &cfg.Watch.Interval)
+	applyStringEnv("IMPARTUS_WATCH_STATE_PATH", &cfg.Watch.StatePath)
+	applyStringEnv("IMPARTUS_WATCH_QUALITY", &cfg.Watch.Quality)
+	applyStringEnv("IMPARTUS_WATCH_VIEWS", &cfg.Watch.Views)
+	applyStringEnv("IMPARTUS_WATCH_AUDIO_FORMAT", &cfg.Watch.AudioFormat)
+	applyStringEnv("IMPARTUS_NOTEBOOKLM_NOTEBOOK_ID", &cfg.NotebookLM.NotebookID)
+	applyStringEnv("IMPARTUS_NOTEBOOKLM_CLI_PATH", &cfg.NotebookLM.CLIPath)
+	applyStringEnv("IMPARTUS_NOTEBOOKLM_AUTH_PROFILE", &cfg.NotebookLM.AuthProfile)
 	for _, apply := range []func() error{
 		func() error { return applyBoolEnv("IMPARTUS_AUDIO_ONLY", &cfg.AudioOnly) },
 		func() error { return applyBoolEnv("IMPARTUS_SLIDES", &cfg.Slides) },
@@ -346,7 +478,11 @@ func applyEnvOverrides(cfg *Config) error {
 		func() error { return applyBoolEnv("IMPARTUS_ALLOW_REMOTE_ACCESS", &cfg.AllowRemoteAccess) },
 		func() error { return applyBoolEnv("IMPARTUS_ENABLE_JITTER", &cfg.EnableJitter) },
 		func() error { return applyBoolEnv("IMPARTUS_PROGRESS_TRACKING_ENABLED", &cfg.ProgressTracking.Enabled) },
+		func() error { return applyBoolEnv("IMPARTUS_WATCH_ENABLED", &cfg.Watch.Enabled) },
+		func() error { return applyBoolEnv("IMPARTUS_WATCH_UPLOAD", &cfg.Watch.Upload) },
 		func() error { return applyIntEnv("IMPARTUS_NUM_WORKERS", &cfg.NumWorkers) },
+		func() error { return applyIntEnv("IMPARTUS_WATCH_SUBJECT_ID", &cfg.Watch.SubjectID) },
+		func() error { return applyIntEnv("IMPARTUS_WATCH_SESSION_ID", &cfg.Watch.SessionID) },
 		func() error { return applyFloatEnv("IMPARTUS_RATE_LIMIT", &cfg.RateLimit) },
 		func() error { return applyFloatEnv("IMPARTUS_API_RATE_LIMIT", &cfg.APIRateLimit) },
 	} {

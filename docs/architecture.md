@@ -7,6 +7,7 @@
   * [CLI interactive mode flow](#cli-interactive-mode-flow)
   * [CLI deterministic JSON mode flow](#cli-deterministic-json-mode-flow)
   * [CLI play command flow](#cli-play-command-flow)
+  * [CLI watch command flow](#cli-watch-command-flow)
   * [API authenticated job lifecycle flow](#api-authenticated-job-lifecycle-flow)
   * [Internal package/module boundaries](#internal-packagemodule-boundaries)
 
@@ -87,6 +88,28 @@ flowchart TD
 
 Requires **mpv** on `PATH`. Supports the same `--start`/`--end` range flags as download (1-based inclusive).
 
+## CLI watch command flow
+
+The `watch` command polls Impartus for new lectures, downloads left-view audio at quality `144`, and optionally uploads each file to NotebookLM via the `notebooklm-py` CLI.
+
+```mermaid
+flowchart TD
+  A[impartus watch -s ID -S ID] --> B[cli.runWatch]
+  B --> C[Force audio: 144 / left / skip-no-audio]
+  C --> D[Load watch state file]
+  D --> E[client.GetLectures]
+  E --> F{New TTID?}
+  F -- No --> G[Sleep interval / exit if --once]
+  F -- Yes --> H[downloader.DownloadAndJoinPlaylist]
+  H --> I{upload enabled?}
+  I -- Yes --> J[notebooklm source add]
+  I -- No --> K[Mark state]
+  J --> K
+  K --> G
+```
+
+Auth for NotebookLM is out-of-band: see [`notebooklm-auth.md`](notebooklm-auth.md). State persistence reuses the atomic write/sync pattern from job persistence.
+
 ## API authenticated job lifecycle flow
 
 The API lifecycle is token-gated and executes downloads asynchronously in background jobs.
@@ -133,18 +156,26 @@ flowchart LR
     CFG[internal/config]
     CLT[internal/client]
     DL[internal/downloader]
+    WAT[internal/watch]
+    NLM[internal/notebooklm]
     SRV[internal/server]
   end
 
   IMP[(Impartus APIs)]
   FS[(Local files + ffmpeg)]
+  NLMCLI[(notebooklm-py CLI)]
 
   M1 --> CLI
   M2 --> CLI
   CLI --> CFG
   CLI --> CLT
   CLI --> DL
+  CLI --> WAT
   CLI --> SRV
+  WAT --> CLT
+  WAT --> DL
+  WAT --> NLM
+  NLM --> NLMCLI
   SRV --> CFG
   SRV --> CLT
   SRV --> DL

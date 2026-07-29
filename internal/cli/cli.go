@@ -21,6 +21,8 @@ var (
 	runDownloadJSONFn = runDownloadJSON
 	runServeFn        = runServe
 	runPlayFn         = runPlay
+	runWatchFn        = runWatch
+	runWatchJSONFn    = runWatchJSON
 	loadResolvedFn    = config.LoadResolved
 	newLoggedInFn     = client.NewLoggedIn
 )
@@ -59,6 +61,8 @@ func Execute(version, date string) error {
 		return runServeFn(args[1:], version)
 	case "play":
 		return runPlayFn(args[1:])
+	case "watch":
+		return runWatchFn(args[1:])
 	default:
 		showHelp(version, date)
 		return fmt.Errorf("unknown command: %s", args[0])
@@ -97,6 +101,12 @@ func executeJSON(args []string, version, date string) error {
 			return newJSONError("download", err)
 		}
 		return emitJSONEnvelope(newSuccessEnvelope("download", result))
+	case "watch":
+		result, err := runWatchJSONFn(args[1:])
+		if err != nil {
+			return newJSONError("watch", err)
+		}
+		return emitJSONEnvelope(newSuccessEnvelope("watch", result))
 	case "play":
 		return newJSONError("play", fmt.Errorf("play command is not supported in JSON mode"))
 	case "serve":

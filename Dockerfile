@@ -41,8 +41,9 @@ LABEL org.opencontainers.image.created="${BUILD_DATE}"
 LABEL org.opencontainers.image.revision="${COMMIT}"
 
 RUN apt-get update && \
-    apt-get install --no-install-recommends -y ca-certificates ffmpeg && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install --no-install-recommends -y ca-certificates ffmpeg python3 python3-pip python3-venv && \
+    rm -rf /var/lib/apt/lists/* && \
+    pip3 install --break-system-packages --no-cache-dir --pre 'notebooklm-py[headless]>=0.8.0rc1'
 
 RUN useradd --create-home --shell /usr/sbin/nologin impartus && \
     install -d -o impartus -g impartus -m 0750 \
@@ -51,6 +52,7 @@ RUN useradd --create-home --shell /usr/sbin/nologin impartus && \
 WORKDIR /work
 
 COPY --from=build /out/impartus /usr/local/bin/impartus
+COPY scripts/notebooklm-auth /usr/local/share/impartus/notebooklm-auth
 
 EXPOSE 8080
 
