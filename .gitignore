@@ -39,6 +39,8 @@
 !/scripts/test-desloppify-golangci-lint-adapter.sh
 !/scripts/run-quality-gate.sh
 !/scripts/test-quality-gate.sh
+!/scripts/notebooklm-auth/nlm_auth.py
+!/scripts/notebooklm-auth/phone-cookie-kit.html
 
 # ...even if they are in subdirectories
 !*/
