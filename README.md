@@ -161,31 +161,38 @@ protection manually with `chmod 600 config.json`.
 | `allowRemoteAccess` | bool | No | `false` | Permit a non-loopback `listenAddr` (e.g. `0.0.0.0`); required to expose the API on the network |
 | `progressTracking` | object | No | see below | Progress bar tracking configuration |
 | `watch` | object | No | see below | Automated poll / download / NotebookLM upload |
-| `notebooklm` | object | No | see below | NotebookLM upload target (auth via env secrets) |
 
 #### Watch Options
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable watch defaults from config (CLI also enables when invoked) |
-| `interval` | string | `"5m"` | Poll interval (30s-24h) |
-| `statePath` | string | `"./.watch-state.json"` | Durable processed-lecture state file |
-| `subjectId` | int | `0` | Subject ID (required when enabled) |
-| `sessionId` | int | `0` | Session ID (required when enabled) |
+| `pollInterval` | string | `"5m"` | Poll interval (`5m`-`24h`; `interval` is an alias) |
+| `stateFile` | string | `"./.watch-state.json"` | Durable lecture state (`statePath` alias) |
+| `maxLecturesPerCycle` | int | `3` | Cap new lectures processed per poll |
+| `maxUploadRetries` | int | `3` | Retries for transient download/upload errors |
+| `deleteAudioAfterUpload` | bool | `false` | Remove local audio after a successful upload |
+| `targets` | array | `[]` | Courses to watch (`subjectId`, `sessionId`, `notebookId`, `label`) |
 | `quality` | string | `"144"` | Forced for watch downloads |
 | `views` | string | `"left"` | Forced for watch downloads (one camera) |
 | `audioFormat` | string | `"mp3"` | Audio format for watch downloads |
 | `upload` | bool | `false` | Upload downloaded audio to NotebookLM |
+| `notebooklm` | object | see below | Nested provider settings |
 
-#### NotebookLM Options
+Legacy single-target fields `subjectId` / `sessionId` (and top-level `notebooklm`) still work and are normalized into `targets`.
+
+#### NotebookLM Options (`watch.notebooklm`)
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `notebookId` | string | `""` | Target notebook ID (required when `watch.upload` is true) |
-| `cliPath` | string | `"notebooklm"` | Path to the notebooklm-py CLI |
-| `authProfile` | string | `""` | Optional notebooklm-py profile name |
+| `provider` | string | `"notebooklm-py"` | `notebooklm-py` or `nlm` |
+| `command` | string | `"notebooklm"` | Provider CLI binary (`cliPath` alias) |
+| `profile` | string | `""` | Optional auth profile (`authProfile` alias) |
+| `uploadTimeout` | string | `"30m"` | Per-upload timeout |
+| `maxSourcesPerNotebook` | int | `300` | Doctor refuses upload when at/over this count |
+| `notebookId` | string | `""` | Default notebook when a target omits `notebookId` |
 
-Authentication for NotebookLM uses `NOTEBOOKLM_*` secrets — see [`docs/notebooklm-auth.md`](docs/notebooklm-auth.md). Install the CLI with `pip install --pre 'notebooklm-py[headless]==0.8.0rc1'`.
+Authentication for NotebookLM uses `NOTEBOOKLM_*` secrets — see [`docs/notebooklm-auth.md`](docs/notebooklm-auth.md). Install with `pip install --pre 'notebooklm-py[headless]==0.8.0rc1'` (or `notebooklm-mcp-cli` for the `nlm` provider).
 
 #### Progress Tracking Options
 
@@ -224,17 +231,23 @@ Only the settings listed below have environment-variable overrides. Settings abs
 | `IMPARTUS_RATE_LIMIT` | `rateLimit` | Number from 0.1-100 |
 | `IMPARTUS_API_RATE_LIMIT` | `apiRateLimit` | Number from 0.1-20 |
 | `IMPARTUS_WATCH_ENABLED` | `watch.enabled` | Boolean |
-| `IMPARTUS_WATCH_INTERVAL` | `watch.interval` | Go duration between 30s and 24h |
-| `IMPARTUS_WATCH_STATE_PATH` | `watch.statePath` | State file path |
-| `IMPARTUS_WATCH_SUBJECT_ID` | `watch.subjectId` | Integer |
-| `IMPARTUS_WATCH_SESSION_ID` | `watch.sessionId` | Integer |
+| `IMPARTUS_WATCH_INTERVAL` / `IMPARTUS_WATCH_POLL_INTERVAL` | `watch.pollInterval` | Go duration between 5m and 24h |
+| `IMPARTUS_WATCH_STATE_PATH` / `IMPARTUS_WATCH_STATE_FILE` | `watch.stateFile` | State file path |
+| `IMPARTUS_WATCH_SUBJECT_ID` | `watch.subjectId` | Legacy single-target subject |
+| `IMPARTUS_WATCH_SESSION_ID` | `watch.sessionId` | Legacy single-target session |
 | `IMPARTUS_WATCH_UPLOAD` | `watch.upload` | Boolean |
+| `IMPARTUS_WATCH_MAX_LECTURES_PER_CYCLE` | `watch.maxLecturesPerCycle` | Integer |
+| `IMPARTUS_WATCH_MAX_UPLOAD_RETRIES` | `watch.maxUploadRetries` | Integer |
+| `IMPARTUS_WATCH_DELETE_AUDIO_AFTER_UPLOAD` | `watch.deleteAudioAfterUpload` | Boolean |
 | `IMPARTUS_WATCH_QUALITY` | `watch.quality` | `144`, `450`, or `720` |
 | `IMPARTUS_WATCH_VIEWS` | `watch.views` | `left`, `right`, `both`, `first`, or `second` |
 | `IMPARTUS_WATCH_AUDIO_FORMAT` | `watch.audioFormat` | `mp3`, `m4a`, `aac`, or `opus` |
-| `IMPARTUS_NOTEBOOKLM_NOTEBOOK_ID` | `notebooklm.notebookId` | Notebook ID |
-| `IMPARTUS_NOTEBOOKLM_CLI_PATH` | `notebooklm.cliPath` | Path to notebooklm CLI |
-| `IMPARTUS_NOTEBOOKLM_AUTH_PROFILE` | `notebooklm.authProfile` | Optional profile name |
+| `IMPARTUS_NOTEBOOKLM_NOTEBOOK_ID` | `watch.notebooklm.notebookId` | Notebook ID |
+| `IMPARTUS_NOTEBOOKLM_COMMAND` / `IMPARTUS_NOTEBOOKLM_CLI_PATH` | `watch.notebooklm.command` | Provider CLI path |
+| `IMPARTUS_NOTEBOOKLM_PROVIDER` | `watch.notebooklm.provider` | `notebooklm-py` or `nlm` |
+| `IMPARTUS_NOTEBOOKLM_PROFILE` / `IMPARTUS_NOTEBOOKLM_AUTH_PROFILE` | `watch.notebooklm.profile` | Optional profile name |
+| `IMPARTUS_NOTEBOOKLM_UPLOAD_TIMEOUT` | `watch.notebooklm.uploadTimeout` | Go duration |
+| `IMPARTUS_NOTEBOOKLM_MAX_SOURCES` | `watch.notebooklm.maxSourcesPerNotebook` | Integer |
 
 #### Validation Rules
 
@@ -361,7 +374,7 @@ multiple paths when multiple views or output forms are requested.
 
 ### Watch (NotebookLM)
 
-Poll Impartus for new lectures, download left-view audio at 144p, and optionally upload each file to a NotebookLM notebook. Processed TTIDs are recorded in a durable state file so restarts do not re-upload.
+Poll Impartus for new lectures across one or more `watch.targets`, download left-view audio at 144p, and optionally upload each file to NotebookLM. State phases are `pending → downloaded → uploaded` (plus `failed`); a crash after download resumes at upload without re-fetching chunks.
 
 ```bash
 # One-shot dry run (list new lectures only)
@@ -373,18 +386,18 @@ Poll Impartus for new lectures, download left-view audio at 144p, and optionally
 # Single poll cycle with upload
 ./impartus watch -s 123 -S 456 --once --upload --notebook NOTEBOOK_ID
 
-# Daemon mode (default interval 5m)
-./impartus watch -s 123 -S 456 --upload --notebook NOTEBOOK_ID --interval 10m
+# Daemon mode (config pollInterval, default 5m; plan sample uses 30m)
+./impartus watch -s 123 -S 456 --upload --notebook NOTEBOOK_ID --interval 30m
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--subject,-s` / `--session,-S` | Course to watch (required) |
-| `--interval` | Poll interval (default `5m`) |
+| `--subject,-s` / `--session,-S` | Single-target course override (or use `watch.targets`) |
+| `--interval` | Poll interval (must be `5m`-`24h`) |
 | `--state` | State file path (default `./.watch-state.json`) |
 | `--notebook` | NotebookLM notebook ID |
 | `--upload` / `--no-upload` | Enable or disable upload |
-| `--once` | One poll cycle then exit |
+| `--once` | One poll cycle then exit (cron-friendly) |
 | `--dry-run` | List new lectures without downloading |
 | `--check` | Validate ffmpeg/auth/config then exit |
 | `--output,-o` | Output directory |

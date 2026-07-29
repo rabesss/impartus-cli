@@ -103,7 +103,7 @@ type recordingUploader struct {
 	lastTitle string
 }
 
-func (r *recordingUploader) UploadFile(_ context.Context, filePath, title string) (notebooklm.UploadResult, error) {
+func (r *recordingUploader) UploadToNotebook(_ context.Context, _, filePath, title string) (notebooklm.UploadResult, error) {
 	r.lastPath = filePath
 	r.lastTitle = title
 	return r.result, nil

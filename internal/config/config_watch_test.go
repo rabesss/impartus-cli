@@ -21,19 +21,46 @@ func TestApplyWatchMediaDefaultsForcesEfficientAudio(t *testing.T) {
 	}
 }
 
-func TestValidateWatchRequiresCourseWhenEnabled(t *testing.T) {
+func TestValidateWatchRequiresTargetsWhenEnabled(t *testing.T) {
 	cfg := minimalValidConfig()
 	cfg.ApplyDefaults()
 	cfg.Watch.Enabled = true
 	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "watch.subjectId") {
-		t.Fatalf("expected subject/session error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "watch.targets") {
+		t.Fatalf("expected targets error, got %v", err)
 	}
 
+	cfg.Watch.Targets = []WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb1"}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected valid watch config, got %v", err)
+	}
+}
+
+func TestValidateWatchLegacySubjectSession(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.ApplyDefaults()
+	cfg.Watch.Enabled = true
 	cfg.Watch.SubjectID = 1
 	cfg.Watch.SessionID = 2
 	if err := cfg.Validate(); err != nil {
-		t.Fatalf("expected valid watch config, got %v", err)
+		t.Fatalf("expected legacy subject/session to synthesize target, got %v", err)
+	}
+	if len(cfg.ResolvedTargets()) != 1 {
+		t.Fatalf("expected 1 target, got %d", len(cfg.ResolvedTargets()))
+	}
+}
+
+func TestValidateWatchRejectsDuplicateTargets(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.ApplyDefaults()
+	cfg.Watch.Enabled = true
+	cfg.Watch.Targets = []WatchTarget{
+		{SubjectID: 1, SessionID: 2, NotebookID: "a"},
+		{SubjectID: 1, SessionID: 2, NotebookID: "b"},
+	}
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("expected duplicate error, got %v", err)
 	}
 }
 
@@ -41,11 +68,12 @@ func TestValidateNotebookLMRequiredWhenUploadEnabled(t *testing.T) {
 	cfg := minimalValidConfig()
 	cfg.ApplyDefaults()
 	cfg.Watch.Upload = true
+	cfg.Watch.Targets = []WatchTarget{{SubjectID: 1, SessionID: 2}}
 	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "notebooklm.notebookId") {
+	if err == nil || !strings.Contains(err.Error(), "notebookId") {
 		t.Fatalf("expected notebook id error, got %v", err)
 	}
-	cfg.NotebookLM.NotebookID = "nb1"
+	cfg.Watch.Targets[0].NotebookID = "nb1"
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected valid config, got %v", err)
 	}
@@ -54,10 +82,21 @@ func TestValidateNotebookLMRequiredWhenUploadEnabled(t *testing.T) {
 func TestValidateWatchIntervalBounds(t *testing.T) {
 	cfg := minimalValidConfig()
 	cfg.ApplyDefaults()
-	cfg.Watch.Interval = "1s"
+	cfg.Watch.PollInterval = "1m"
+	cfg.Watch.Interval = "1m"
 	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "watch.interval") {
+	if err == nil || !strings.Contains(err.Error(), "watch.pollInterval") {
 		t.Fatalf("expected interval error, got %v", err)
+	}
+}
+
+func TestValidateNotebookLMProvider(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.ApplyDefaults()
+	cfg.Watch.NotebookLM.Provider = "other"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "provider") {
+		t.Fatalf("expected provider error, got %v", err)
 	}
 }
 
@@ -70,7 +109,9 @@ func TestWatchEnvOverrides(t *testing.T) {
 	t.Setenv("IMPARTUS_WATCH_SESSION_ID", "8")
 	t.Setenv("IMPARTUS_WATCH_UPLOAD", "true")
 	t.Setenv("IMPARTUS_NOTEBOOKLM_NOTEBOOK_ID", "nb-env")
-	t.Setenv("IMPARTUS_WATCH_INTERVAL", "2m")
+	t.Setenv("IMPARTUS_WATCH_INTERVAL", "10m")
+	t.Setenv("IMPARTUS_NOTEBOOKLM_PROVIDER", "notebooklm-py")
+	t.Setenv("IMPARTUS_NOTEBOOKLM_COMMAND", "notebooklm")
 
 	cfg, err := LoadResolved("")
 	if err != nil {
@@ -79,7 +120,10 @@ func TestWatchEnvOverrides(t *testing.T) {
 	if !cfg.Watch.Enabled || cfg.Watch.SubjectID != 9 || cfg.Watch.SessionID != 8 {
 		t.Fatalf("watch env not applied: %+v", cfg.Watch)
 	}
-	if !cfg.Watch.Upload || cfg.NotebookLM.NotebookID != "nb-env" || cfg.Watch.Interval != "2m" {
-		t.Fatalf("upload/notebook env not applied: watch=%+v nlm=%+v", cfg.Watch, cfg.NotebookLM)
+	if !cfg.Watch.Upload || cfg.Watch.NotebookLM.NotebookID != "nb-env" || cfg.Watch.PollInterval != "10m" {
+		t.Fatalf("upload/notebook env not applied: watch=%+v", cfg.Watch)
+	}
+	if len(cfg.ResolvedTargets()) != 1 || cfg.ResolvedTargets()[0].NotebookID != "nb-env" {
+		t.Fatalf("expected synthesized target with notebook, got %+v", cfg.ResolvedTargets())
 	}
 }

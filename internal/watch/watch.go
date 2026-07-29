@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -27,7 +28,7 @@ type AudioProducer interface {
 
 // SourceUploader uploads a local audio file to NotebookLM.
 type SourceUploader interface {
-	UploadFile(ctx context.Context, filePath, title string) (notebooklm.UploadResult, error)
+	UploadToNotebook(ctx context.Context, notebookID, filePath, title string) (notebooklm.UploadResult, error)
 	Doctor(ctx context.Context) error
 }
 
@@ -47,17 +48,22 @@ func (a downloaderAdapter) DownloadAndJoinPlaylist(ctx context.Context, playlist
 
 // Options controls one watcher run.
 type Options struct {
-	SubjectID  int
-	SessionID  int
-	Once       bool
-	DryRun     bool
-	Upload     bool
-	NotebookID string
-	Interval   time.Duration
-	MaxRetries int
+	Targets                []config.WatchTarget
+	Once                   bool
+	DryRun                 bool
+	Upload                 bool
+	Interval               time.Duration
+	MaxRetries             int
+	MaxLecturesPerCycle    int
+	DeleteAudioAfterUpload bool
 	// RetryBackoff, when set, replaces the default attempt^2 seconds backoff.
 	RetryBackoff func(attempt int) time.Duration
 	Log          io.Writer
+
+	// Legacy single-target fields kept for older call sites/tests.
+	SubjectID  int
+	SessionID  int
+	NotebookID string
 }
 
 // CycleResult summarizes one poll cycle.
@@ -85,15 +91,7 @@ type Watcher struct {
 
 // New constructs a Watcher. audio may be nil when DryRun is true.
 func New(cfg *config.Config, source LectureSource, audio AudioProducer, uploader SourceUploader, store *Store, opts Options) *Watcher {
-	if opts.MaxRetries <= 0 {
-		opts.MaxRetries = 3
-	}
-	if opts.Interval <= 0 {
-		opts.Interval = 5 * time.Minute
-	}
-	if opts.Log == nil {
-		opts.Log = io.Discard
-	}
+	opts = normalizeOptions(opts)
 	return &Watcher{
 		cfg:      cfg,
 		source:   source,
@@ -102,6 +100,29 @@ func New(cfg *config.Config, source LectureSource, audio AudioProducer, uploader
 		store:    store,
 		opts:     opts,
 	}
+}
+
+func normalizeOptions(opts Options) Options {
+	if opts.MaxRetries <= 0 {
+		opts.MaxRetries = 3
+	}
+	if opts.Interval <= 0 {
+		opts.Interval = 5 * time.Minute
+	}
+	if opts.MaxLecturesPerCycle <= 0 {
+		opts.MaxLecturesPerCycle = 3
+	}
+	if opts.Log == nil {
+		opts.Log = io.Discard
+	}
+	if len(opts.Targets) == 0 && opts.SubjectID > 0 && opts.SessionID > 0 {
+		opts.Targets = []config.WatchTarget{{
+			SubjectID:  opts.SubjectID,
+			SessionID:  opts.SessionID,
+			NotebookID: opts.NotebookID,
+		}}
+	}
+	return opts
 }
 
 // NewFromDownloader wraps a real downloader for production use.
@@ -118,15 +139,14 @@ func (w *Watcher) logf(format string, args ...any) {
 func (w *Watcher) Run(ctx context.Context) (CycleResult, error) {
 	var last CycleResult
 	for {
-		result, err := w.RunCycle(ctx)
-		last = result
+		cycle, err := w.RunCycle(ctx)
+		last = cycle
 		if err != nil {
 			return last, err
 		}
 		if w.opts.Once {
 			return last, nil
 		}
-		w.logf("watch: sleeping %s until next poll", w.opts.Interval)
 		timer := time.NewTimer(w.opts.Interval)
 		select {
 		case <-ctx.Done():
@@ -137,47 +157,75 @@ func (w *Watcher) Run(ctx context.Context) (CycleResult, error) {
 	}
 }
 
-// RunCycle performs one poll / download / upload pass.
+// RunCycle performs one poll across all configured targets.
 func (w *Watcher) RunCycle(ctx context.Context) (CycleResult, error) {
 	result := CycleResult{DryRun: w.opts.DryRun}
-	course := client.Course{SubjectID: w.opts.SubjectID, SessionID: w.opts.SessionID}
+	remaining := w.opts.MaxLecturesPerCycle
 
-	lectures, err := w.source.GetLectures(ctx, w.cfg, course)
-	if err != nil {
-		return result, fmt.Errorf("list lectures: %w", err)
-	}
-	lectures = filterEmptyLectures(lectures)
-	selected, _, err := lectures.SelectForDownload(0, 0, true)
-	if err != nil {
-		// Empty after filtering is a successful idle cycle, not a hard failure.
-		if strings.Contains(err.Error(), "no lectures available after filtering") ||
-			strings.Contains(err.Error(), "no lectures found") {
-			w.logf("watch: no lectures to process")
-			return result, nil
+	for _, target := range w.opts.Targets {
+		if remaining <= 0 {
+			break
 		}
-		return result, err
-	}
-	result.Listed = len(selected)
-
-	for _, lecture := range selected {
-		if w.store.Has(w.opts.SubjectID, w.opts.SessionID, lecture.TTID) {
-			result.Skipped++
-			continue
+		if err := ctx.Err(); err != nil {
+			return result, err
 		}
-		result.New++
-		if err := w.processLecture(ctx, lecture, &result); err != nil {
-			result.Failed++
-			result.Errors = append(result.Errors, fmt.Sprintf("ttid=%d: %v", lecture.TTID, err))
-			w.logf("watch: lecture ttid=%d failed: %v", lecture.TTID, err)
-			continue
+		processed, err := w.runTarget(ctx, target, remaining, &result)
+		if err != nil {
+			if notebooklm.IsAuth(err) {
+				return result, fmt.Errorf("notebooklm auth failure; aborting cycle: %w", err)
+			}
+			return result, err
 		}
+		remaining -= processed
 	}
 	return result, nil
 }
 
-func (w *Watcher) processLecture(ctx context.Context, lecture client.Lecture, result *CycleResult) error {
+func (w *Watcher) runTarget(ctx context.Context, target config.WatchTarget, limit int, result *CycleResult) (int, error) {
+	course := client.Course{SubjectID: target.SubjectID, SessionID: target.SessionID}
+	lectures, err := w.source.GetLectures(ctx, w.cfg, course)
+	if err != nil {
+		return 0, fmt.Errorf("list lectures for %s: %w", targetLabel(target), err)
+	}
+	lectures = filterEmptyLectures(lectures)
+	selected, _, err := lectures.SelectForDownload(0, 0, true)
+	if err != nil {
+		if strings.Contains(err.Error(), "no lectures available after filtering") ||
+			strings.Contains(err.Error(), "no lectures found") {
+			w.logf("watch: %s: no lectures to process", targetLabel(target))
+			return 0, nil
+		}
+		return 0, err
+	}
+	result.Listed += len(selected)
+
+	processed := 0
+	for _, lecture := range selected {
+		if processed >= limit {
+			break
+		}
+		if !w.store.NeedsWork(target.SubjectID, target.SessionID, lecture.TTID, w.opts.Upload) {
+			result.Skipped++
+			continue
+		}
+		result.New++
+		processed++
+		if err := w.processLecture(ctx, target, lecture, result); err != nil {
+			if notebooklm.IsAuth(err) {
+				return processed, err
+			}
+			result.Failed++
+			result.Errors = append(result.Errors, fmt.Sprintf("%s ttid=%d: %v", targetLabel(target), lecture.TTID, err))
+			w.logf("watch: %s lecture ttid=%d failed: %v", targetLabel(target), lecture.TTID, err)
+			continue
+		}
+	}
+	return processed, nil
+}
+
+func (w *Watcher) processLecture(ctx context.Context, target config.WatchTarget, lecture client.Lecture, result *CycleResult) error {
 	title := lectureTitle(lecture)
-	w.logf("watch: new lecture seq=%d ttid=%d topic=%q", lecture.SeqNo, lecture.TTID, lecture.Topic)
+	w.logf("watch: %s new lecture seq=%d ttid=%d topic=%q", targetLabel(target), lecture.SeqNo, lecture.TTID, lecture.Topic)
 
 	if w.opts.DryRun {
 		w.logf("watch: dry-run would download+upload %q", title)
@@ -185,6 +233,79 @@ func (w *Watcher) processLecture(ctx context.Context, lecture client.Lecture, re
 	}
 	if w.audio == nil {
 		return fmt.Errorf("audio producer is not configured")
+	}
+
+	existing, _ := w.store.Get(target.SubjectID, target.SessionID, lecture.TTID)
+	seen := SeenLecture{
+		Status:     StatusPending,
+		SeqNo:      lecture.SeqNo,
+		Topic:      lecture.Topic,
+		StartTime:  lecture.StartTime,
+		NotebookID: firstNonEmpty(target.NotebookID, w.opts.NotebookID),
+		Attempts:   existing.Attempts + 1,
+	}
+	if err := w.store.Mark(target.SubjectID, target.SessionID, seen, lecture.TTID); err != nil {
+		return fmt.Errorf("persist pending state: %w", err)
+	}
+
+	output, err := w.ensureAudio(ctx, target, lecture, existing, &seen)
+	if err != nil {
+		seen.Status = StatusFailed
+		seen.Error = err.Error()
+		_ = w.store.Mark(target.SubjectID, target.SessionID, seen, lecture.TTID) //nolint:errcheck // preserve primary error
+		return err
+	}
+	result.Downloaded++
+	result.Outputs = append(result.Outputs, output)
+
+	if !w.opts.Upload {
+		seen.Status = StatusDownloaded
+		seen.Error = ""
+		return w.store.Mark(target.SubjectID, target.SessionID, seen, lecture.TTID)
+	}
+	if w.uploader == nil {
+		return fmt.Errorf("uploader is not configured")
+	}
+
+	upload, uploadErr := w.uploadWithRetries(ctx, seen.NotebookID, output, title)
+	if uploadErr != nil {
+		seen.Status = StatusFailed
+		seen.Error = uploadErr.Error()
+		_ = w.store.Mark(target.SubjectID, target.SessionID, seen, lecture.TTID) //nolint:errcheck
+		return uploadErr
+	}
+	seen.Status = StatusUploaded
+	seen.Uploaded = true
+	seen.SourceID = upload.SourceID
+	seen.NotebookID = firstNonEmpty(upload.NotebookID, seen.NotebookID)
+	seen.Error = ""
+	result.Uploaded++
+	w.logf("watch: uploaded %q as source %s", title, upload.SourceID)
+
+	if err := w.store.Mark(target.SubjectID, target.SessionID, seen, lecture.TTID); err != nil {
+		return fmt.Errorf("persist watch state: %w", err)
+	}
+	if w.opts.DeleteAudioAfterUpload {
+		if rmErr := os.Remove(output); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			w.logf("watch: warning: failed to delete audio %s: %v", output, rmErr)
+		}
+	}
+	return nil
+}
+
+func (w *Watcher) ensureAudio(
+	ctx context.Context,
+	target config.WatchTarget,
+	lecture client.Lecture,
+	existing SeenLecture,
+	seen *SeenLecture,
+) (string, error) {
+	if existing.Status == StatusDownloaded && existing.OutputPath != "" {
+		if _, err := os.Stat(existing.OutputPath); err == nil {
+			seen.OutputPath = existing.OutputPath
+			seen.Status = StatusDownloaded
+			return existing.OutputPath, nil
+		}
 	}
 
 	var join downloader.JoinResult
@@ -201,48 +322,32 @@ func (w *Watcher) processLecture(ctx context.Context, lecture client.Lecture, re
 		return joinErr
 	})
 	if err != nil {
-		// Do not Mark failures: Has() would skip the lecture forever on later polls.
-		return err
+		return "", err
 	}
-
 	output := firstOutput(join)
 	if output == "" {
-		return fmt.Errorf("download produced no audio output for ttid=%d", lecture.TTID)
+		return "", fmt.Errorf("download produced no audio output for ttid=%d", lecture.TTID)
 	}
-	result.Downloaded++
-	result.Outputs = append(result.Outputs, output)
-
-	seen := SeenLecture{
-		SeqNo:      lecture.SeqNo,
-		Topic:      lecture.Topic,
-		StartTime:  lecture.StartTime,
-		OutputPath: output,
+	seen.OutputPath = output
+	seen.Status = StatusDownloaded
+	seen.Error = ""
+	if err := w.store.Mark(target.SubjectID, target.SessionID, *seen, lecture.TTID); err != nil {
+		return "", fmt.Errorf("persist downloaded state: %w", err)
 	}
+	return output, nil
+}
 
-	if w.opts.Upload {
-		if w.uploader == nil {
-			return fmt.Errorf("uploader is not configured")
+func (w *Watcher) uploadWithRetries(ctx context.Context, notebookID, output, title string) (notebooklm.UploadResult, error) {
+	var upload notebooklm.UploadResult
+	err := withRetries(ctx, w.opts.MaxRetries, w.opts.RetryBackoff, w.opts.Log, func() error {
+		var err error
+		upload, err = w.uploader.UploadToNotebook(ctx, notebookID, output, title)
+		if notebooklm.IsAuth(err) {
+			return err // withRetries will stop because auth is not Retryable
 		}
-		var upload notebooklm.UploadResult
-		uploadErr := withRetries(ctx, w.opts.MaxRetries, w.opts.RetryBackoff, w.opts.Log, func() error {
-			var err error
-			upload, err = w.uploader.UploadFile(ctx, output, title)
-			return err
-		})
-		if uploadErr != nil {
-			return uploadErr
-		}
-		seen.Uploaded = true
-		seen.NotebookID = firstNonEmpty(upload.NotebookID, w.opts.NotebookID)
-		seen.SourceID = upload.SourceID
-		result.Uploaded++
-		w.logf("watch: uploaded %q as source %s", title, upload.SourceID)
-	}
-
-	if err := w.store.Mark(w.opts.SubjectID, w.opts.SessionID, seen, lecture.TTID); err != nil {
-		return fmt.Errorf("persist watch state: %w", err)
-	}
-	return nil
+		return err
+	})
+	return upload, err
 }
 
 func withRetries(ctx context.Context, maxRetries int, backoffFn func(int) time.Duration, log io.Writer, fn func() error) error {
@@ -260,7 +365,7 @@ func withRetries(ctx context.Context, maxRetries int, backoffFn func(int) time.D
 		if last == nil {
 			return nil
 		}
-		if !isRetryable(last) || attempt == maxRetries {
+		if notebooklm.IsAuth(last) || !isRetryable(last) || attempt == maxRetries {
 			return last
 		}
 		backoff := backoffFn(attempt)
@@ -323,4 +428,11 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func targetLabel(target config.WatchTarget) string {
+	if strings.TrimSpace(target.Label) != "" {
+		return target.Label
+	}
+	return fmt.Sprintf("%d/%d", target.SubjectID, target.SessionID)
 }

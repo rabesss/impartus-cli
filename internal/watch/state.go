@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,6 +15,20 @@ import (
 )
 
 const stateVersion = 1
+
+// LectureStatus is the durable processing phase for one TTID.
+type LectureStatus string
+
+const (
+	// StatusPending means the lecture was claimed but not yet downloaded.
+	StatusPending LectureStatus = "pending"
+	// StatusDownloaded means audio exists locally and upload may still be needed.
+	StatusDownloaded LectureStatus = "downloaded"
+	// StatusUploaded means the lecture was uploaded successfully.
+	StatusUploaded LectureStatus = "uploaded"
+	// StatusFailed means the last attempt failed and should be retried.
+	StatusFailed LectureStatus = "failed"
+)
 
 // State is the durable record of lectures the watcher has already processed.
 type State struct {
@@ -27,17 +42,22 @@ type CourseState struct {
 	SeenTTIDs map[string]SeenLecture `json:"seenTtids"`
 }
 
-// SeenLecture records one processed lecture.
+// SeenLecture records one processed lecture and its pipeline phase.
 type SeenLecture struct {
-	SeqNo       int    `json:"seqNo"`
-	Topic       string `json:"topic"`
-	StartTime   string `json:"startTime"`
-	OutputPath  string `json:"outputPath,omitempty"`
-	Uploaded    bool   `json:"uploaded"`
-	NotebookID  string `json:"notebookId,omitempty"`
-	SourceID    string `json:"sourceId,omitempty"`
-	ProcessedAt string `json:"processedAt"`
-	Error       string `json:"error,omitempty"`
+	Status      LectureStatus `json:"status"`
+	SubjectID   int           `json:"subjectId,omitempty"`
+	SessionID   int           `json:"sessionId,omitempty"`
+	SeqNo       int           `json:"seqNo"`
+	Topic       string        `json:"topic"`
+	StartTime   string        `json:"startTime"`
+	OutputPath  string        `json:"audioPath,omitempty"`
+	Uploaded    bool          `json:"uploaded"`
+	NotebookID  string        `json:"notebookId,omitempty"`
+	SourceID    string        `json:"sourceId,omitempty"`
+	Attempts    int           `json:"attempts,omitempty"`
+	Error       string        `json:"lastError,omitempty"`
+	FirstSeenAt string        `json:"firstSeenAt,omitempty"`
+	ProcessedAt string        `json:"updatedAt"`
 }
 
 // Store is a file-backed State with atomic writes.
@@ -52,7 +72,13 @@ func CourseKey(subjectID, sessionID int) string {
 	return strconv.Itoa(subjectID) + ":" + strconv.Itoa(sessionID)
 }
 
-// LoadStore reads state from path, or returns an empty store if the file is missing.
+// LectureKey builds the full durable key for one lecture.
+func LectureKey(subjectID, sessionID, ttid int) string {
+	return CourseKey(subjectID, sessionID) + ":" + strconv.Itoa(ttid)
+}
+
+// LoadStore reads state from path, or returns an empty store if the file is missing
+// or corrupt (corrupt files log a warning and start fresh, matching job persistence).
 func LoadStore(path string) (*Store, error) {
 	store := &Store{
 		path: path,
@@ -73,7 +99,8 @@ func LoadStore(path string) (*Store, error) {
 	}
 	var loaded State
 	if err := json.Unmarshal(contents, &loaded); err != nil {
-		return nil, fmt.Errorf("parse watch state: %w", err)
+		log.Printf("watch: corrupt state file %s; starting fresh: %v", path, err)
+		return store, nil
 	}
 	if loaded.Courses == nil {
 		loaded.Courses = map[string]CourseState{}
@@ -81,31 +108,80 @@ func LoadStore(path string) (*Store, error) {
 	if loaded.Version == 0 {
 		loaded.Version = stateVersion
 	}
+	normalizeLoadedState(&loaded)
 	store.data = loaded
 	_ = os.Chmod(path, 0o600) //nolint:errcheck // best-effort privacy hardening
 	return store, nil
 }
 
-// Has reports whether a lecture TTID was already processed successfully for the course.
-// Failed attempts are not treated as seen, so later poll cycles retry them.
+func normalizeLoadedState(state *State) {
+	for courseKey, course := range state.Courses {
+		if course.SeenTTIDs == nil {
+			course.SeenTTIDs = map[string]SeenLecture{}
+		}
+		for ttid, seen := range course.SeenTTIDs {
+			if seen.Status == "" {
+				seen.Status = inferLegacyStatus(seen)
+				course.SeenTTIDs[ttid] = seen
+			}
+		}
+		state.Courses[courseKey] = course
+	}
+}
+
+func inferLegacyStatus(seen SeenLecture) LectureStatus {
+	if seen.Uploaded || seen.SourceID != "" {
+		return StatusUploaded
+	}
+	if seen.Error != "" {
+		return StatusFailed
+	}
+	if seen.OutputPath != "" {
+		return StatusDownloaded
+	}
+	return StatusPending
+}
+
+// NeedsWork reports whether a lecture should be processed (new, failed, or
+// downloaded-but-not-uploaded when upload is enabled). Uploaded lectures are skipped.
+func (s *Store) NeedsWork(subjectID, sessionID, ttid int, uploadEnabled bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	seen, ok := s.getLocked(subjectID, sessionID, ttid)
+	if !ok {
+		return true
+	}
+	switch seen.Status {
+	case StatusUploaded:
+		return false
+	case StatusDownloaded:
+		return uploadEnabled // resume upload without re-download
+	case StatusFailed, StatusPending:
+		return true
+	default:
+		return seen.Error != "" || seen.OutputPath == ""
+	}
+}
+
+// Has reports whether a lecture TTID was already uploaded successfully.
 func (s *Store) Has(subjectID, sessionID, ttid int) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	course, ok := s.data.Courses[CourseKey(subjectID, sessionID)]
+	seen, ok := s.getLocked(subjectID, sessionID, ttid)
 	if !ok {
 		return false
 	}
-	seen, ok := course.SeenTTIDs[strconv.Itoa(ttid)]
-	if !ok {
-		return false
-	}
-	return seen.Error == "" && seen.OutputPath != ""
+	return seen.Status == StatusUploaded || (seen.Error == "" && seen.Uploaded && seen.OutputPath != "")
 }
 
 // Get returns a previously recorded lecture, if present.
 func (s *Store) Get(subjectID, sessionID, ttid int) (SeenLecture, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.getLocked(subjectID, sessionID, ttid)
+}
+
+func (s *Store) getLocked(subjectID, sessionID, ttid int) (SeenLecture, bool) {
 	course, ok := s.data.Courses[CourseKey(subjectID, sessionID)]
 	if !ok {
 		return SeenLecture{}, false
@@ -114,7 +190,7 @@ func (s *Store) Get(subjectID, sessionID, ttid int) (SeenLecture, bool) {
 	return seen, ok
 }
 
-// Mark records a lecture as processed and persists the store.
+// Mark records a lecture phase and persists the store.
 func (s *Store) Mark(subjectID, sessionID int, lecture SeenLecture, ttid int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -127,13 +203,34 @@ func (s *Store) Mark(subjectID, sessionID int, lecture SeenLecture, ttid int) er
 	if course.SeenTTIDs == nil {
 		course.SeenTTIDs = map[string]SeenLecture{}
 	}
-	if lecture.ProcessedAt == "" {
-		lecture.ProcessedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if existing, ok := course.SeenTTIDs[strconv.Itoa(ttid)]; ok {
+		if lecture.FirstSeenAt == "" {
+			lecture.FirstSeenAt = existing.FirstSeenAt
+		}
+		if lecture.Attempts == 0 {
+			lecture.Attempts = existing.Attempts
+		}
+		if lecture.OutputPath == "" {
+			lecture.OutputPath = existing.OutputPath
+		}
 	}
+	if lecture.FirstSeenAt == "" {
+		lecture.FirstSeenAt = now
+	}
+	if lecture.ProcessedAt == "" {
+		lecture.ProcessedAt = now
+	}
+	if lecture.Status == "" {
+		lecture.Status = inferLegacyStatus(lecture)
+	}
+	lecture.SubjectID = subjectID
+	lecture.SessionID = sessionID
+	lecture.Uploaded = lecture.Status == StatusUploaded
 	course.SeenTTIDs[strconv.Itoa(ttid)] = lecture
 	s.data.Courses[key] = course
 	s.data.Version = stateVersion
-	s.data.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	s.data.UpdatedAt = now
 	return s.saveLocked()
 }
 

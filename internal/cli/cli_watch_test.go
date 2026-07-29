@@ -64,8 +64,12 @@ func TestApplyWatchFlagsForcesEnabledAndUpload(t *testing.T) {
 	if !got.Watch.Enabled || got.Watch.SubjectID != 3 || got.Watch.SessionID != 4 {
 		t.Fatalf("watch course not applied: %+v", got.Watch)
 	}
-	if !got.Watch.Upload || got.NotebookLM.NotebookID != "nb" || got.DownloadLocation != "/tmp/out" {
-		t.Fatalf("upload/output not applied: watch=%+v nlm=%+v dl=%s", got.Watch, got.NotebookLM, got.DownloadLocation)
+	if !got.Watch.Upload || got.Watch.NotebookLM.NotebookID != "nb" || got.DownloadLocation != "/tmp/out" {
+		t.Fatalf("upload/output not applied: watch=%+v dl=%s", got.Watch, got.DownloadLocation)
+	}
+	targets := got.ResolvedTargets()
+	if len(targets) != 1 || targets[0].NotebookID != "nb" {
+		t.Fatalf("expected synthesized target, got %+v", targets)
 	}
 
 	got.Watch.Upload = true

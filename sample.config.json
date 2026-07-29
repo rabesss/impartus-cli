@@ -1,7 +1,7 @@
 {
   "username": "your_impartus_email@example.com",
   "password": "your_impartus_password",
-  "baseUrl": "https://a.impartus.com/api",
+  "baseUrl": "[REDACTED]",
   "quality": "720",
   "views": "both",
   "downloadLocation": "./downloads",
@@ -29,18 +29,29 @@
   },
   "watch": {
     "enabled": false,
-    "interval": "5m",
-    "statePath": "./.watch-state.json",
-    "subjectId": 0,
-    "sessionId": 0,
+    "pollInterval": "30m",
+    "stateFile": "./.watch-state.json",
+    "maxLecturesPerCycle": 3,
+    "maxUploadRetries": 3,
+    "deleteAudioAfterUpload": true,
     "quality": "144",
     "views": "left",
     "audioFormat": "mp3",
-    "upload": false
-  },
-  "notebooklm": {
-    "notebookId": "",
-    "cliPath": "notebooklm",
-    "authProfile": ""
+    "upload": true,
+    "targets": [
+      {
+        "subjectId": 1234,
+        "sessionId": 567,
+        "notebookId": "abc-123",
+        "label": "Physics"
+      }
+    ],
+    "notebooklm": {
+      "provider": "notebooklm-py",
+      "command": "notebooklm",
+      "profile": "default",
+      "uploadTimeout": "30m",
+      "maxSourcesPerNotebook": 300
+    }
   }
 }

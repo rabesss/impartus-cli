@@ -49,11 +49,11 @@ func parseWatchFlags(args []string) (watchFlags, error) {
 	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var f watchFlags
-	fs.IntVar(&f.subject, "subject", 0, "Subject ID")
+	fs.IntVar(&f.subject, "subject", 0, "Subject ID (single-target override)")
 	fs.IntVar(&f.subject, "s", 0, "Subject ID")
-	fs.IntVar(&f.session, "session", 0, "Session ID")
+	fs.IntVar(&f.session, "session", 0, "Session ID (single-target override)")
 	fs.IntVar(&f.session, "S", 0, "Session ID")
-	fs.StringVar(&f.interval, "interval", "", "Poll interval (e.g. 5m)")
+	fs.StringVar(&f.interval, "interval", "", "Poll interval (e.g. 30m)")
 	fs.StringVar(&f.statePath, "state", "", "Watch state file path")
 	fs.StringVar(&f.notebookID, "notebook", "", "NotebookLM notebook ID")
 	fs.StringVar(&f.output, "output", "", "Output directory override")
@@ -90,11 +90,7 @@ func executeWatch(args []string, jsonMode bool) (watchResult, error) {
 		return watchResult{}, err
 	}
 
-	uploader := notebooklm.New(notebooklm.Config{
-		NotebookID:  cfg.NotebookLM.NotebookID,
-		CLIPath:     cfg.NotebookLM.CLIPath,
-		AuthProfile: cfg.NotebookLM.AuthProfile,
-	})
+	uploader := newWatchUploader(cfg)
 
 	if f.check {
 		return runWatchCheck(ctx, cfg, cfg.Watch.Upload, uploader, jsonMode)
@@ -105,6 +101,33 @@ func executeWatch(args []string, jsonMode bool) (watchResult, error) {
 	}
 
 	return runWatchLoop(ctx, cfg, apiClient, uploader, f, jsonMode)
+}
+
+func newWatchUploader(cfg *config.Config) *notebooklm.Uploader {
+	nlm := cfg.Watch.NotebookLM
+	timeout := 30 * time.Minute
+	if nlm.UploadTimeout != "" {
+		if parsed, err := time.ParseDuration(nlm.UploadTimeout); err == nil {
+			timeout = parsed
+		}
+	}
+	return notebooklm.New(notebooklm.Config{
+		Provider:              notebooklm.Provider(nlm.Provider),
+		NotebookID:            nlm.NotebookID,
+		CLIPath:               firstNonEmpty(nlm.Command, nlm.CLIPath),
+		AuthProfile:           firstNonEmpty(nlm.Profile, nlm.AuthProfile),
+		UploadTimeout:         timeout,
+		MaxSourcesPerNotebook: nlm.MaxSourcesPerNotebook,
+	})
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func prepareWatchConfig(ctx context.Context, f watchFlags) (*config.Config, *client.Client, error) {
@@ -148,12 +171,14 @@ func runWatchLoop(
 	f watchFlags,
 	jsonMode bool,
 ) (watchResult, error) {
-	store, err := watch.LoadStore(cfg.Watch.StatePath)
+	statePath := firstNonEmpty(cfg.Watch.StateFile, cfg.Watch.StatePath)
+	store, err := watch.LoadStore(statePath)
 	if err != nil {
 		return watchResult{}, err
 	}
 
-	interval, err := time.ParseDuration(cfg.Watch.Interval)
+	intervalStr := firstNonEmpty(cfg.Watch.PollInterval, cfg.Watch.Interval)
+	interval, err := time.ParseDuration(intervalStr)
 	if err != nil {
 		return watchResult{}, fmt.Errorf("invalid watch interval: %w", err)
 	}
@@ -164,14 +189,15 @@ func runWatchLoop(
 	}
 
 	opts := watch.Options{
-		SubjectID:  cfg.Watch.SubjectID,
-		SessionID:  cfg.Watch.SessionID,
-		Once:       f.once || jsonMode,
-		DryRun:     f.dryRun,
-		Upload:     cfg.Watch.Upload,
-		NotebookID: cfg.NotebookLM.NotebookID,
-		Interval:   interval,
-		Log:        logWriter,
+		Targets:                cfg.ResolvedTargets(),
+		Once:                   f.once || jsonMode,
+		DryRun:                 f.dryRun,
+		Upload:                 cfg.Watch.Upload,
+		Interval:               interval,
+		MaxRetries:             cfg.Watch.MaxUploadRetries,
+		MaxLecturesPerCycle:    cfg.Watch.MaxLecturesPerCycle,
+		DeleteAudioAfterUpload: cfg.Watch.DeleteAudioAfterUpload,
+		Log:                    logWriter,
 	}
 
 	var watcher *watch.Watcher
@@ -195,24 +221,8 @@ func runWatchLoop(
 }
 
 func applyWatchFlags(cfg *config.Config, f watchFlags) (*config.Config, error) {
-	if f.subject > 0 {
-		cfg.Watch.SubjectID = f.subject
-	}
-	if f.session > 0 {
-		cfg.Watch.SessionID = f.session
-	}
-	if f.interval != "" {
-		cfg.Watch.Interval = f.interval
-	}
-	if f.statePath != "" {
-		cfg.Watch.StatePath = f.statePath
-	}
-	if f.notebookID != "" {
-		cfg.NotebookLM.NotebookID = f.notebookID
-	}
-	if f.output != "" {
-		cfg.DownloadLocation = f.output
-	}
+	applyWatchCourseFlags(cfg, f)
+	applyWatchIOFlags(cfg, f)
 	cfg.Watch.Enabled = true
 	switch {
 	case f.noUpload:
@@ -220,11 +230,69 @@ func applyWatchFlags(cfg *config.Config, f watchFlags) (*config.Config, error) {
 	case f.upload:
 		cfg.Watch.Upload = true
 	}
-	if cfg.Watch.SubjectID <= 0 || cfg.Watch.SessionID <= 0 {
-		return cfg, errors.New("watch requires --subject/-s and --session/-S (or watch.subjectId/sessionId in config)")
+	synthesizeWatchTargets(cfg, f)
+	return validateWatchFlags(cfg, f)
+}
+
+func applyWatchCourseFlags(cfg *config.Config, f watchFlags) {
+	if f.subject > 0 {
+		cfg.Watch.SubjectID = f.subject
 	}
-	if cfg.Watch.Upload && cfg.NotebookLM.NotebookID == "" && !f.check && !f.dryRun {
-		return cfg, errors.New("watch --upload requires --notebook or notebooklm.notebookId")
+	if f.session > 0 {
+		cfg.Watch.SessionID = f.session
+	}
+	if f.notebookID != "" {
+		cfg.Watch.NotebookLM.NotebookID = f.notebookID
+		cfg.NotebookLM.NotebookID = f.notebookID
+		if len(cfg.Watch.Targets) == 1 {
+			cfg.Watch.Targets[0].NotebookID = f.notebookID
+		}
+	}
+}
+
+func applyWatchIOFlags(cfg *config.Config, f watchFlags) {
+	if f.interval != "" {
+		cfg.Watch.PollInterval = f.interval
+		cfg.Watch.Interval = f.interval
+	}
+	if f.statePath != "" {
+		cfg.Watch.StateFile = f.statePath
+		cfg.Watch.StatePath = f.statePath
+	}
+	if f.output != "" {
+		cfg.DownloadLocation = f.output
+	}
+}
+
+func synthesizeWatchTargets(cfg *config.Config, f watchFlags) {
+	if f.subject > 0 && f.session > 0 {
+		nb := firstNonEmpty(f.notebookID, cfg.Watch.NotebookLM.NotebookID, cfg.NotebookLM.NotebookID)
+		cfg.Watch.Targets = []config.WatchTarget{{
+			SubjectID:  f.subject,
+			SessionID:  f.session,
+			NotebookID: nb,
+		}}
+		return
+	}
+	if len(cfg.Watch.Targets) == 0 && cfg.Watch.SubjectID > 0 && cfg.Watch.SessionID > 0 {
+		cfg.Watch.Targets = []config.WatchTarget{{
+			SubjectID:  cfg.Watch.SubjectID,
+			SessionID:  cfg.Watch.SessionID,
+			NotebookID: firstNonEmpty(cfg.Watch.NotebookLM.NotebookID, cfg.NotebookLM.NotebookID),
+		}}
+	}
+}
+
+func validateWatchFlags(cfg *config.Config, f watchFlags) (*config.Config, error) {
+	if len(cfg.ResolvedTargets()) == 0 {
+		return cfg, errors.New("watch requires --subject/-s and --session/-S, or watch.targets in config")
+	}
+	if cfg.Watch.Upload && !f.check && !f.dryRun {
+		for i, target := range cfg.ResolvedTargets() {
+			if firstNonEmpty(target.NotebookID, cfg.Watch.NotebookLM.NotebookID) == "" {
+				return cfg, fmt.Errorf("watch target[%d] requires notebookId (or --notebook)", i)
+			}
+		}
 	}
 	return cfg, nil
 }
@@ -233,29 +301,29 @@ func runWatchCheck(ctx context.Context, cfg *config.Config, uploadEnabled bool, 
 	if err := ensureFFmpeg(); err != nil {
 		return watchResult{}, err
 	}
+	targets := cfg.ResolvedTargets()
 	checks := map[string]string{
 		"ffmpeg":   "ok",
 		"config":   "ok",
-		"subject":  fmt.Sprintf("%d", cfg.Watch.SubjectID),
-		"session":  fmt.Sprintf("%d", cfg.Watch.SessionID),
-		"state":    cfg.Watch.StatePath,
-		"interval": cfg.Watch.Interval,
+		"targets":  fmt.Sprintf("%d", len(targets)),
+		"state":    firstNonEmpty(cfg.Watch.StateFile, cfg.Watch.StatePath),
+		"interval": firstNonEmpty(cfg.Watch.PollInterval, cfg.Watch.Interval),
 		"quality":  cfg.Quality,
 		"views":    cfg.Views,
 		"upload":   fmt.Sprintf("%v", uploadEnabled),
+		"provider": cfg.Watch.NotebookLM.Provider,
 	}
 	if uploadEnabled {
 		if err := uploader.Doctor(ctx); err != nil {
 			return watchResult{}, err
 		}
 		checks["notebooklm"] = "ok"
-		checks["notebookId"] = cfg.NotebookLM.NotebookID
 	}
 	if jsonMode {
 		return watchResult{Status: "ok", Cycle: watch.CycleResult{}}, nil
 	}
 	fmt.Fprintln(os.Stderr, "watch check passed:")
-	for _, key := range []string{"ffmpeg", "config", "subject", "session", "state", "interval", "quality", "views", "upload", "notebooklm", "notebookId"} {
+	for _, key := range []string{"ffmpeg", "config", "targets", "state", "interval", "quality", "views", "upload", "provider", "notebooklm"} {
 		if val, ok := checks[key]; ok {
 			fmt.Fprintf(os.Stderr, "  %-12s %s\n", key+":", val)
 		}

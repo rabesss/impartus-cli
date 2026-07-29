@@ -14,11 +14,43 @@ type fakeRunner struct {
 	stderr string
 	err    error
 	last   []string
+	calls  int
 }
 
 func (f *fakeRunner) Run(_ context.Context, _ string, args []string, _ []string) (string, string, error) {
+	f.calls++
 	f.last = append([]string{}, args...)
 	return f.stdout, f.stderr, f.err
+}
+
+func TestBuildUploadArgsNotebookLMpy(t *testing.T) {
+	args, err := BuildUploadArgs(Config{NotebookID: "nb1", AuthProfile: "work"}, UploadRequest{
+		FilePath: "/tmp/a.mp3", Title: "LEC 001",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"--profile work", "source add", "--notebook nb1", "--type file", "--json", "--title LEC 001", "/tmp/a.mp3"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing %q in %v", want, args)
+		}
+	}
+}
+
+func TestBuildUploadArgsNLM(t *testing.T) {
+	args, err := BuildUploadArgs(Config{Provider: ProviderNLM, NotebookID: "nb1"}, UploadRequest{
+		FilePath: "/tmp/a.mp3", Title: "LEC 001",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"source add", "nb1", "--file /tmp/a.mp3", "--wait", "--json", "--title LEC 001"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing %q in %v", want, args)
+		}
+	}
 }
 
 func TestUploadFileBuildsExpectedArgs(t *testing.T) {
@@ -54,6 +86,39 @@ func TestDoctorRequiresOKStatus(t *testing.T) {
 	}
 }
 
+func TestDoctorEnforcesSourceCap(t *testing.T) {
+	seq := &seqRunner{responses: []struct {
+		stdout string
+		err    error
+	}{
+		{stdout: `{"status":"ok"}`},
+		{stdout: `{"sources":[1,2,3]}`},
+	}}
+	u := NewWithRunner(Config{
+		NotebookID: "nb1", CLIPath: os.Args[0], MaxSourcesPerNotebook: 3,
+	}, seq)
+	if err := u.Doctor(context.Background()); err == nil || !strings.Contains(err.Error(), "cap") {
+		t.Fatalf("expected source cap error, got %v", err)
+	}
+}
+
+type seqRunner struct {
+	responses []struct {
+		stdout string
+		err    error
+	}
+	i int
+}
+
+func (s *seqRunner) Run(_ context.Context, _ string, _ []string, _ []string) (string, string, error) {
+	if s.i >= len(s.responses) {
+		return "", "", errors.New("unexpected call")
+	}
+	resp := s.responses[s.i]
+	s.i++
+	return resp.stdout, "", resp.err
+}
+
 func TestClassifyErrorKinds(t *testing.T) {
 	cases := []struct {
 		detail string
@@ -85,5 +150,16 @@ func TestUploadFileRequiresNotebookAndFile(t *testing.T) {
 	u.cfg.NotebookID = "nb"
 	if _, err := u.UploadFile(context.Background(), "/no/such/file.mp3", "t"); err == nil {
 		t.Fatalf("expected missing file error")
+	}
+}
+
+func TestParseSourceCount(t *testing.T) {
+	n, err := parseSourceCount(`[{"id":1},{"id":2}]`)
+	if err != nil || n != 2 {
+		t.Fatalf("array count = %d err=%v", n, err)
+	}
+	n, err = parseSourceCount(`{"sources":[1,2,3]}`)
+	if err != nil || n != 3 {
+		t.Fatalf("object count = %d err=%v", n, err)
 	}
 }

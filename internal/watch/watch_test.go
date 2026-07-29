@@ -49,7 +49,7 @@ type fakeUploader struct {
 	calls  int
 }
 
-func (f *fakeUploader) UploadFile(context.Context, string, string) (notebooklm.UploadResult, error) {
+func (f *fakeUploader) UploadToNotebook(_ context.Context, _, _, _ string) (notebooklm.UploadResult, error) {
 	f.calls++
 	return f.result, f.err
 }
@@ -119,6 +119,98 @@ func TestRunCycleDownloadsUploadsAndSkipsSeen(t *testing.T) {
 	}
 	if result.Skipped != 1 || result.New != 0 || uploader.calls != 1 {
 		t.Fatalf("expected skip on second cycle: %+v uploadCalls=%d", result, uploader.calls)
+	}
+}
+
+func TestRunCycleRespectsMaxLecturesPerCycle(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := LoadStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lectures := client.Lectures{
+		{TTID: 10, SeqNo: 1, Topic: "A", StartTime: "2026-01-01"},
+		{TTID: 11, SeqNo: 2, Topic: "B", StartTime: "2026-01-02"},
+		{TTID: 12, SeqNo: 3, Topic: "C", StartTime: "2026-01-03"},
+	}
+	audio := &fakeAudio{join: downloader.JoinResult{LeftOutput: out}}
+	uploader := &fakeUploader{result: notebooklm.UploadResult{SourceID: "src"}}
+	w := New(testCfg(), fakeSource{lectures: lectures}, audio, uploader, store, Options{
+		SubjectID: 1, SessionID: 2, Once: true, Upload: true, NotebookID: "nb",
+		MaxLecturesPerCycle: 2, Log: io.Discard,
+	})
+	result, err := w.RunCycle(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.New != 2 || result.Uploaded != 2 {
+		t.Fatalf("expected cap of 2, got %+v", result)
+	}
+}
+
+func TestRunCycleResumesDownloadedWithoutRedownload(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := LoadStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markErr := store.Mark(1, 2, SeenLecture{
+		Status: StatusDownloaded, SeqNo: 1, Topic: "Intro", OutputPath: out, NotebookID: "nb1",
+	}, 10); markErr != nil {
+		t.Fatal(markErr)
+	}
+	audio := &fakeAudio{join: downloader.JoinResult{LeftOutput: out}}
+	uploader := &fakeUploader{result: notebooklm.UploadResult{SourceID: "src1"}}
+	w := New(testCfg(), fakeSource{lectures: client.Lectures{
+		{TTID: 10, SeqNo: 1, Topic: "Intro", StartTime: "2026-01-01"},
+	}}, audio, uploader, store, Options{
+		SubjectID: 1, SessionID: 2, Once: true, Upload: true, NotebookID: "nb1", Log: io.Discard,
+	})
+	result, err := w.RunCycle(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if audio.calls != 0 {
+		t.Fatalf("expected resume without re-download, audioCalls=%d", audio.calls)
+	}
+	if result.Uploaded != 1 || !store.Has(1, 2, 10) {
+		t.Fatalf("unexpected resume result: %+v", result)
+	}
+}
+
+func TestRunCycleAuthFailureAborts(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := LoadStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	audio := &fakeAudio{join: downloader.JoinResult{LeftOutput: out}}
+	uploader := &fakeUploader{err: &notebooklm.Error{Kind: notebooklm.ErrAuth, Message: "re-authenticate"}}
+	w := New(testCfg(), fakeSource{lectures: client.Lectures{
+		{TTID: 10, SeqNo: 1, Topic: "Intro", StartTime: "2026-01-01"},
+		{TTID: 11, SeqNo: 2, Topic: "Next", StartTime: "2026-01-02"},
+	}}, audio, uploader, store, Options{
+		SubjectID: 1, SessionID: 2, Once: true, Upload: true, NotebookID: "nb1",
+		MaxRetries: 3, Log: io.Discard,
+	})
+	_, err = w.RunCycle(context.Background())
+	if !notebooklm.IsAuth(err) {
+		t.Fatalf("expected auth abort, got %v", err)
+	}
+	if uploader.calls != 1 {
+		t.Fatalf("auth should not burn retries across lectures, calls=%d", uploader.calls)
 	}
 }
 

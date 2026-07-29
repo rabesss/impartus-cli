@@ -90,22 +90,24 @@ Requires **mpv** on `PATH`. Supports the same `--start`/`--end` range flags as d
 
 ## CLI watch command flow
 
-The `watch` command polls Impartus for new lectures, downloads left-view audio at quality `144`, and optionally uploads each file to NotebookLM via the `notebooklm-py` CLI.
+The `watch` command polls one or more Impartus targets, downloads left-view audio at quality `144`, and optionally uploads each file to NotebookLM via a pluggable CLI provider (`notebooklm-py` or `nlm`).
 
 ```mermaid
 flowchart TD
-  A[impartus watch -s ID -S ID] --> B[cli.runWatch]
-  B --> C[Force audio: 144 / left / skip-no-audio]
-  C --> D[Load watch state file]
-  D --> E[client.GetLectures]
-  E --> F{New TTID?}
-  F -- No --> G[Sleep interval / exit if --once]
-  F -- Yes --> H[downloader.DownloadAndJoinPlaylist]
-  H --> I{upload enabled?}
-  I -- Yes --> J[notebooklm source add]
-  I -- No --> K[Mark state]
-  J --> K
-  K --> G
+  Tick["ticker: pollInterval"] --> Loop
+  Loop["watch.Watcher.RunCycle"] --> Fetch["client.GetLectures per target"]
+  Fetch --> Diff{"ttid needs work?"}
+  Diff -->|uploaded| Skip["skip"]
+  Diff -->|downloaded| Up["resume upload"]
+  Diff -->|new/failed| Claim["state: pending"]
+  Claim --> DL["downloader audioOnly views=left quality=144"]
+  DL --> Mark1["state: downloaded"]
+  Mark1 --> Up
+  Up --> Mark2["state: uploaded + sourceId"]
+  Mark2 --> Clean["optional delete local audio"]
+  DL -->|error| Retry["state: failed; retry next cycle"]
+  Up -->|auth error| Abort["abort cycle"]
+  Up -->|transient| Retry
 ```
 
 Auth for NotebookLM is out-of-band: see [`notebooklm-auth.md`](notebooklm-auth.md). State persistence reuses the atomic write/sync pattern from job persistence.

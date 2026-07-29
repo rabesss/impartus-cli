@@ -20,13 +20,17 @@ func TestStoreMarkHasAndPersistsAtomically(t *testing.T) {
 	}
 
 	err = store.Mark(1, 2, SeenLecture{
-		SeqNo: 3, Topic: "Intro", StartTime: "2026-01-01", OutputPath: "/tmp/a.mp3", Uploaded: true, NotebookID: "nb1",
+		Status: StatusUploaded, SeqNo: 3, Topic: "Intro", StartTime: "2026-01-01",
+		OutputPath: "/tmp/a.mp3", NotebookID: "nb1", SourceID: "src1",
 	}, 99)
 	if err != nil {
 		t.Fatalf("Mark: %v", err)
 	}
 	if !store.Has(1, 2, 99) {
 		t.Fatalf("expected marked lecture")
+	}
+	if store.NeedsWork(1, 2, 99, true) {
+		t.Fatalf("uploaded lecture should not need work")
 	}
 
 	info, err := os.Stat(path)
@@ -48,19 +52,40 @@ func TestStoreMarkHasAndPersistsAtomically(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected reloaded lecture")
 	}
-	if seen.Topic != "Intro" || !seen.Uploaded || seen.NotebookID != "nb1" {
+	if seen.Topic != "Intro" || seen.Status != StatusUploaded || seen.NotebookID != "nb1" {
 		t.Fatalf("unexpected seen lecture: %+v", seen)
 	}
 }
 
-func TestLoadStoreRejectsCorruptJSON(t *testing.T) {
+func TestLoadStoreCorruptJSONStartsFresh(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.json")
 	if err := os.WriteFile(path, []byte("{not-json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadStore(path); err == nil {
-		t.Fatalf("expected corrupt JSON error")
+	store, err := LoadStore(path)
+	if err != nil {
+		t.Fatalf("corrupt state should start fresh, got %v", err)
+	}
+	if store.Has(1, 2, 3) {
+		t.Fatalf("expected empty store after corrupt load")
+	}
+}
+
+func TestNeedsWorkResumesDownloaded(t *testing.T) {
+	store, err := LoadStore(filepath.Join(t.TempDir(), "s.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.Mark(1, 2, SeenLecture{Status: StatusDownloaded, OutputPath: "/tmp/a.mp3"}, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !store.NeedsWork(1, 2, 7, true) {
+		t.Fatalf("downloaded lecture should resume upload")
+	}
+	if store.NeedsWork(1, 2, 7, false) {
+		t.Fatalf("download-only mode should treat downloaded as done")
 	}
 }
 
@@ -72,7 +97,7 @@ func TestCourseKeyAndSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = store.Mark(12, 34, SeenLecture{Topic: "T", OutputPath: "/tmp/t.mp3"}, 7)
+	err = store.Mark(12, 34, SeenLecture{Status: StatusDownloaded, Topic: "T", OutputPath: "/tmp/t.mp3"}, 7)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,14 +119,17 @@ func TestHasIgnoresFailedAttempts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = store.Mark(1, 2, SeenLecture{Topic: "fail", Error: "boom"}, 99)
+	err = store.Mark(1, 2, SeenLecture{Status: StatusFailed, Topic: "fail", Error: "boom"}, 99)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if store.Has(1, 2, 99) {
 		t.Fatalf("failed attempt must not count as seen")
 	}
-	err = store.Mark(1, 2, SeenLecture{Topic: "ok", OutputPath: "/tmp/a.mp3"}, 99)
+	if !store.NeedsWork(1, 2, 99, true) {
+		t.Fatalf("failed attempt must be retried")
+	}
+	err = store.Mark(1, 2, SeenLecture{Status: StatusUploaded, Topic: "ok", OutputPath: "/tmp/a.mp3"}, 99)
 	if err != nil {
 		t.Fatal(err)
 	}
