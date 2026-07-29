@@ -69,6 +69,10 @@
   .tag.req { border-color: #2c6b45; color: var(--ok); }
   .secret { margin-top: 10px; }
   .secret textarea { min-height: 92px; font-size: 0.72rem; }
+  .copy-status { font-size: 0.86rem; margin: 9px 0 0; }
+  .copy-status:empty { display: none; }
+  .copy-status.ok { color: var(--ok); }
+  .copy-status.warn { color: var(--warn); }
   .note { font-size: 0.82rem; color: var(--dim); border-left: 2px solid var(--line); padding-left: 10px; margin: 14px 0; }
   .danger { border-left-color: var(--err); }
   hr { border: none; border-top: 1px solid var(--line); margin: 20px 0; }
@@ -300,28 +304,36 @@ function fmtExpiry(sec) {
   return d.toISOString().slice(0, 10);
 }
 
-function copyToClipboard(textarea, button) {
-  var original = button.textContent;
-  var flash = function (label) {
-    button.textContent = label;
-    setTimeout(function () { button.textContent = original; }, 1800);
+/* Reports the outcome in a status line that persists rather than a label that
+   flashes: the next thing the user does is switch apps to paste into a secret
+   store, so the confirmation has to still be there when they come back. Mobile
+   browsers also deny programmatic clipboard writes often enough that a silent
+   failure would be the confusing case. */
+function copyToClipboard(textarea, status) {
+  var report = function (kind, text) {
+    status.className = "copy-status " + kind;
+    status.textContent = text;
   };
 
-  /* Last resort: select the text and say so, rather than leaving the button
-     looking like nothing happened. Mobile browsers deny programmatic clipboard
-     writes often enough that a silent failure would be the confusing case. */
   var manual = function () {
     textarea.focus();
     textarea.select();
     try {
-      if (document.execCommand("copy")) { flash("Copied"); return; }
+      if (document.execCommand("copy")) {
+        report("ok", "Copied to the clipboard. Paste it into the secret now.");
+        return;
+      }
     } catch (e) { /* fall through to the manual instruction */ }
-    flash("Selected \u2014 copy it");
+    report(
+      "warn",
+      "This browser blocked the copy. The value is selected above \u2014 " +
+      "copy it by hand."
+    );
   };
 
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(textarea.value).then(function () {
-      flash("Copied");
+      report("ok", "Copied to the clipboard. Paste it into the secret now.");
     }, manual);
   } else {
     manual();
@@ -348,9 +360,14 @@ function secretBlock(container, envName, payload, hint) {
   var btn = document.createElement("button");
   btn.className = "act";
   btn.textContent = "Copy value";
-  btn.addEventListener("click", function () { copyToClipboard(ta, btn); });
   row.appendChild(btn);
   wrap.appendChild(row);
+
+  var status = document.createElement("p");
+  status.className = "copy-status";
+  status.setAttribute("role", "status");
+  wrap.appendChild(status);
+  btn.addEventListener("click", function () { copyToClipboard(ta, status); });
 
   var p = document.createElement("p");
   p.className = "note";
