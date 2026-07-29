@@ -1,3 +1,5 @@
+# NotebookLM Authentication From a Phone
+
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 **Table of Contents**  *generated automatically*
 
@@ -17,8 +19,6 @@
 
 <!---toc end-->
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
-
-# NotebookLM Authentication From a Phone
 
 How to authenticate a headless environment (a Cursor Cloud agent VM, CI, or a
 server) against Google NotebookLM when the only device you have is a phone.
@@ -46,10 +46,16 @@ piece of setup.
 
 ## Pick a browser that supports extensions
 
-Install one of these alongside your normal browser, plus a cookie-export
-extension (search its store for "Cookie-Editor", "cookies.txt", or
-"Export Cookies"):
+Install one of these alongside your normal browser, then install a single
+cookie-export extension from a known source (do not search the store and pick
+an arbitrary first hit — exporters read full Google session cookies):
 
+- **Recommended extension** &mdash; [Cookie-Editor](https://cookie-editor.com/)
+  (`cookie-editor` by Moustachauve) from the Firefox Add-ons site or Chrome Web
+  Store listing that matches your browser. Prefer a temporary browser profile
+  for the capture, remove the extension after export, and revoke unused sessions
+  at [myaccount.google.com/device-activity](https://myaccount.google.com/device-activity)
+  when using a throwaway Google account.
 - **Android, recommended** &mdash; Firefox for Android. Arbitrary add-ons install
   via the custom add-on collection flow (create a collection on
   addons.mozilla.org, then enable the hidden debug menu by tapping the Firefox
@@ -59,7 +65,7 @@ extension (search its store for "Cookie-Editor", "cookies.txt", or
   frictionless option since Kiwi Browser was discontinued in early 2025.
 - **iOS** &mdash; Orion by Kagi. The only iOS browser implementing WebExtension
   APIs; it installs Chrome and Firefox extensions. Extension support is beta, so
-  confirm your chosen extension can actually list cookies before relying on it.
+  confirm Cookie-Editor can actually list cookies before relying on it.
   Safari's own extensions cannot be side-loaded without a Mac and a developer
   account, so Safari is not an option.
 
@@ -139,7 +145,7 @@ master token wins over a bootstrap token, which wins over raw cookies.
 ## Using the credential in the environment
 
 ```bash
-pip install --pre 'notebooklm-py[headless]>=0.8.0rc1'
+pip install --pre 'notebooklm-py[headless]==0.8.0rc1'
 
 python3 scripts/notebooklm-auth/nlm_auth.py status    # which secrets are visible
 python3 scripts/notebooklm-auth/nlm_auth.py ingest    # activate the best one
@@ -177,17 +183,18 @@ short-lived. Redo the EmbeddedSetup steps and pass the fresh value quickly.
 
 **Cookies work for minutes, then stop** &mdash; Google's Device Bound Session
 Credentials tie some sessions to the originating device's hardware key, which
-makes exported cookies unusable elsewhere. Rollout is partial and does not apply
-to Firefox or mobile-captured sessions today. If it affects your account, Path A
-cannot work and Path B is the only option, since a master token re-mints cookies
-server-side instead of replaying captured ones.
+makes exported cookies unusable elsewhere. Observed as of 2026-07-29: rollout is
+partial and typically does not apply to Firefox or mobile-captured sessions.
+Re-check by exporting again and running `nlm_auth.py verify` after a few minutes.
+If DBSC affects your account, Path A cannot work and Path B is the only option,
+since a master token re-mints cookies server-side instead of replaying captured
+ones.
 
 **Redirected to `?location=unsupported`** &mdash; Google is refusing the request
 based on the server's IP, not the credential. Re-authenticating will not help.
-This affects datacenter and VPN addresses. As of this writing the Cursor Cloud
-egress IP reaches NotebookLM normally, but it is the failure mode most likely to
-break a hosted deployment, so check it early rather than assuming a credential
-problem.
+This affects datacenter and VPN addresses. Observed as of 2026-07-29: Cursor Cloud
+egress reached NotebookLM normally in this project's tests — re-check with
+`nlm_auth.py verify` before assuming a credential problem on a new host.
 
 ## Related
 

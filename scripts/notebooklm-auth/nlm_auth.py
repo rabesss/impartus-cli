@@ -28,6 +28,7 @@ to hand you the credential and says so loudly.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import shutil
@@ -43,7 +44,7 @@ AUTH_JSON_ENV = "NOTEBOOKLM_AUTH_JSON"
 # rejects a jar missing either of these.
 TIER1_COOKIES = ("SID", "__Secure-1PSIDTS")
 
-INSTALL_HINT = "pip install --pre 'notebooklm-py[headless]>=0.8.0rc1'"
+INSTALL_HINT = "pip install --pre 'notebooklm-py[headless]==0.8.0rc1'"
 
 
 class AuthError(Exception):
@@ -99,10 +100,23 @@ def load_secret(name: str, required_keys: tuple[str, ...]) -> dict[str, str]:
         ) from None
     if not isinstance(data, dict):
         raise AuthError(f"{name} must be a JSON object, got {type(data).__name__}.")
-    missing = [k for k in required_keys if not str(data.get(k, "")).strip()]
+    missing = [
+        k
+        for k in required_keys
+        if not isinstance(data.get(k), (str, int, float)) or not str(data[k]).strip()
+    ]
     if missing:
         raise AuthError(f"{name} is missing required field(s): {', '.join(missing)}.")
     return {k: str(v).strip() for k, v in data.items() if isinstance(v, (str, int, float))}
+
+
+def profile_dir_from_payload(payload: dict | None = None) -> Path:
+    """Resolve the active profile directory from an auth-check payload or a CLI probe."""
+    if payload:
+        path = payload.get("storage_path") or (payload.get("details") or {}).get("storage_path")
+        if path:
+            return Path(path).parent
+    return profile_dir()
 
 
 def profile_dir() -> Path:
@@ -162,26 +176,35 @@ def ingest_master_token() -> str:
 
 
 def ingest_bootstrap() -> str:
+    """Exchange oauth_token in-process so the single-use secret never appears in argv."""
     secret = load_secret(BOOTSTRAP_ENV, ("email", "oauth_token", "android_id"))
     log(f"  exchanging single-use oauth_token for {secret['email']}")
-    result = run_cli(
-        [
-            "login",
-            "--master-token",
-            "--account",
-            secret["email"],
-            "--oauth-token",
-            secret["oauth_token"],
-            "--android-id",
-            secret["android_id"],
-            "--force",
-        ]
-    )
-    if result.returncode != 0:
-        raise fail(
-            result,
-            "Master-token bootstrap",
+    try:
+        from notebooklm.auth import MasterTokenError
+        from notebooklm.cli.services.login import master_token as mt_service
+        from notebooklm.paths import get_master_token_path, get_storage_path
+    except ImportError as exc:
+        raise AuthError(
+            f"notebooklm-py[headless] is required for bootstrap ({exc}). Install with: {INSTALL_HINT}"
+        ) from None
+
+    storage_path = get_storage_path()
+    master_token_path = get_master_token_path()
+    try:
+        asyncio.run(
+            mt_service.bootstrap(
+                email=secret["email"],
+                oauth_token=secret["oauth_token"],
+                android_id=secret["android_id"],
+                storage_path=storage_path,
+                master_token_path=master_token_path,
+                force=True,
+            )
         )
+    except MasterTokenError as exc:
+        raise AuthError(f"Master-token bootstrap failed: {exc}") from None
+    except Exception as exc:  # noqa: BLE001 — surface library failures as AuthError
+        raise AuthError(f"Master-token bootstrap failed: {exc}") from None
     log("  bootstrap succeeded; run 'export-master-token' to save the durable credential")
     return "bootstrap exchange"
 
@@ -300,7 +323,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     source = details.get("auth_source") or "profile storage_state.json"
     log(f"status        : {payload.get('status')}")
     log(f"auth source   : {source}")
-    if source == AUTH_JSON_ENV and (profile_dir() / "storage_state.json").exists():
+    if source == AUTH_JSON_ENV and (profile_dir_from_payload(payload) / "storage_state.json").exists():
         log("  (this env var shadows the stored profile; unset it to test the profile)")
     log(f"account       : {account.get('email') or '(not recorded)'}")
     log(f"master token  : {'present' if master.get('present') else 'absent'}")

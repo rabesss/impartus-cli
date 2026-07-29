@@ -69,7 +69,7 @@ func NewWithRunner(cfg Config, runner CommandRunner) *Uploader {
 // Doctor checks that the CLI is present and authentication looks usable.
 func (u *Uploader) Doctor(ctx context.Context) error {
 	if _, err := exec.LookPath(u.cfg.CLIPath); err != nil {
-		return fmt.Errorf("notebooklm CLI %q not found on PATH: %w (install with: pip install --pre 'notebooklm-py[headless]>=0.8.0rc1')", u.cfg.CLIPath, err)
+		return fmt.Errorf("notebooklm CLI %q not found on PATH: %w (install with: pip install --pre 'notebooklm-py[headless]==0.8.0rc1')", u.cfg.CLIPath, err)
 	}
 	if strings.TrimSpace(u.cfg.NotebookID) == "" {
 		return errors.New("notebooklm notebook ID is required")
@@ -78,7 +78,10 @@ func (u *Uploader) Doctor(ctx context.Context) error {
 	if u.cfg.AuthProfile != "" {
 		args = append([]string{"--profile", u.cfg.AuthProfile}, args...)
 	}
-	stdout, stderr, err := u.runner.Run(ctx, u.cfg.CLIPath, args, os.Environ())
+	// Auth check is a short RPC; bound it so a hung CLI cannot block watch forever.
+	doctorCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	stdout, stderr, err := u.runner.Run(doctorCtx, u.cfg.CLIPath, args, os.Environ())
 	if err != nil {
 		detail := firstNonEmpty(stderr, stdout, err.Error())
 		return fmt.Errorf("notebooklm auth check failed: %s", trimForError(detail))
@@ -208,9 +211,13 @@ func ClassifyError(err error, stdout, stderr string) error {
 type ErrorKind int
 
 const (
+	// ErrPermanent is a non-retryable NotebookLM failure (bad args, missing file, etc.).
 	ErrPermanent ErrorKind = iota
+	// ErrTransient is a temporary failure that may succeed on a later attempt.
 	ErrTransient
+	// ErrAuth indicates the NotebookLM session/credential is unusable.
 	ErrAuth
+	// ErrRateLimit indicates quota or HTTP 429 throttling; retryable with backoff.
 	ErrRateLimit
 )
 

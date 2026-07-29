@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/notebooklm"
 	"github.com/rabesss/impartus-cli/internal/watch"
@@ -84,23 +85,11 @@ func executeWatch(args []string, jsonMode bool) (watchResult, error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	cfg, apiClient, err := initClient(ctx)
+	cfg, apiClient, err := prepareWatchConfig(ctx, f)
 	if err != nil {
-		return watchResult{}, err
-	}
-	cfg, err = applyWatchFlags(cfg, f)
-	if err != nil {
-		return watchResult{}, err
-	}
-	cfg.ApplyWatchMediaDefaults()
-	if err := validateFlagOverrides(cfg); err != nil {
-		return watchResult{}, err
-	}
-	if err := cfg.Validate(); err != nil {
 		return watchResult{}, err
 	}
 
-	uploadEnabled := cfg.Watch.Upload
 	uploader := notebooklm.New(notebooklm.Config{
 		NotebookID:  cfg.NotebookLM.NotebookID,
 		CLIPath:     cfg.NotebookLM.CLIPath,
@@ -108,20 +97,57 @@ func executeWatch(args []string, jsonMode bool) (watchResult, error) {
 	})
 
 	if f.check {
-		return runWatchCheck(ctx, cfg, uploadEnabled, uploader, jsonMode)
+		return runWatchCheck(ctx, cfg, cfg.Watch.Upload, uploader, jsonMode)
 	}
 
+	if err = ensureWatchRuntime(ctx, f, cfg.Watch.Upload, uploader); err != nil {
+		return watchResult{}, err
+	}
+
+	return runWatchLoop(ctx, cfg, apiClient, uploader, f, jsonMode)
+}
+
+func prepareWatchConfig(ctx context.Context, f watchFlags) (*config.Config, *client.Client, error) {
+	cfg, apiClient, err := initClient(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	cfg, err = applyWatchFlags(cfg, f)
+	if err != nil {
+		return nil, nil, err
+	}
+	cfg.ApplyWatchMediaDefaults()
+	if err = validateFlagOverrides(cfg); err != nil {
+		return nil, nil, err
+	}
+	if err = cfg.Validate(); err != nil {
+		return nil, nil, err
+	}
+	return cfg, apiClient, nil
+}
+
+func ensureWatchRuntime(ctx context.Context, f watchFlags, uploadEnabled bool, uploader *notebooklm.Uploader) error {
 	if !f.dryRun {
 		if err := ensureFFmpeg(); err != nil {
-			return watchResult{}, err
+			return err
 		}
 	}
 	if uploadEnabled && !f.dryRun {
 		if err := uploader.Doctor(ctx); err != nil {
-			return watchResult{}, err
+			return err
 		}
 	}
+	return nil
+}
 
+func runWatchLoop(
+	ctx context.Context,
+	cfg *config.Config,
+	apiClient *client.Client,
+	uploader *notebooklm.Uploader,
+	f watchFlags,
+	jsonMode bool,
+) (watchResult, error) {
 	store, err := watch.LoadStore(cfg.Watch.StatePath)
 	if err != nil {
 		return watchResult{}, err
@@ -142,7 +168,7 @@ func executeWatch(args []string, jsonMode bool) (watchResult, error) {
 		SessionID:  cfg.Watch.SessionID,
 		Once:       f.once || jsonMode,
 		DryRun:     f.dryRun,
-		Upload:     uploadEnabled,
+		Upload:     cfg.Watch.Upload,
 		NotebookID: cfg.NotebookLM.NotebookID,
 		Interval:   interval,
 		Log:        logWriter,

@@ -86,7 +86,8 @@ func LoadStore(path string) (*Store, error) {
 	return store, nil
 }
 
-// Has reports whether a lecture TTID was already processed for the course.
+// Has reports whether a lecture TTID was already processed successfully for the course.
+// Failed attempts are not treated as seen, so later poll cycles retry them.
 func (s *Store) Has(subjectID, sessionID, ttid int) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -94,8 +95,11 @@ func (s *Store) Has(subjectID, sessionID, ttid int) bool {
 	if !ok {
 		return false
 	}
-	_, ok = course.SeenTTIDs[strconv.Itoa(ttid)]
-	return ok
+	seen, ok := course.SeenTTIDs[strconv.Itoa(ttid)]
+	if !ok {
+		return false
+	}
+	return seen.Error == "" && seen.OutputPath != ""
 }
 
 // Get returns a previously recorded lecture, if present.
@@ -169,16 +173,34 @@ func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
 	backupPath := path + ".bak"
 	_ = os.Remove(tmpPath) //nolint:errcheck // stale temp cleanup is best-effort
 
+	if err := writeAndSyncTemp(tmpPath, data, mode); err != nil {
+		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup after failed write
+		return err
+	}
+
+	_ = os.Remove(backupPath) //nolint:errcheck // stale rollback cleanup is best-effort
+	hadPrevious, err := createRollbackBackup(path, backupPath, mode)
+	if err != nil {
+		_ = os.Remove(tmpPath) //nolint:errcheck // unused temp after rollback failure
+		return err
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(backupPath) //nolint:errcheck // unused rollback
+		return fmt.Errorf("replace watch state file: %w", err)
+	}
+	_ = os.Remove(backupPath) //nolint:errcheck // primary is durable enough for watch state
+	if hadPrevious {
+		_ = os.Chmod(path, mode) //nolint:errcheck // best-effort
+	}
+	return nil
+}
+
+func writeAndSyncTemp(tmpPath string, data []byte, mode os.FileMode) error {
 	tmp, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode) // #nosec G304 -- operator-configured state path
 	if err != nil {
 		return fmt.Errorf("create watch state temp file: %w", err)
 	}
-	cleanupTemp := true
-	defer func() {
-		if cleanupTemp {
-			_ = os.Remove(tmpPath) //nolint:errcheck // deferred temp cleanup is best-effort
-		}
-	}()
 	if chmodErr := tmp.Chmod(mode); chmodErr != nil {
 		_ = tmp.Close() //nolint:errcheck // preserving the primary chmod error
 		return fmt.Errorf("restrict watch state temp file: %w", chmodErr)
@@ -198,33 +220,24 @@ func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close watch state temp file: %w", err)
 	}
-
-	_ = os.Remove(backupPath) //nolint:errcheck // stale rollback cleanup is best-effort
-	hadPrevious := false
-	if _, statErr := os.Stat(path); statErr == nil {
-		hadPrevious = true
-		if linkErr := os.Link(path, backupPath); linkErr != nil {
-			if copyErr := copyFile(path, backupPath, mode); copyErr != nil {
-				return errors.Join(
-					fmt.Errorf("create watch state rollback link: %w", linkErr),
-					fmt.Errorf("copy watch state rollback file: %w", copyErr),
-				)
-			}
-		}
-	} else if !errors.Is(statErr, os.ErrNotExist) {
-		return fmt.Errorf("inspect existing watch state: %w", statErr)
-	}
-
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(backupPath) //nolint:errcheck // unused rollback
-		return fmt.Errorf("replace watch state file: %w", err)
-	}
-	cleanupTemp = false
-	_ = os.Remove(backupPath) //nolint:errcheck // primary is durable enough for watch state
-	if hadPrevious {
-		_ = os.Chmod(path, mode) //nolint:errcheck // best-effort
-	}
 	return nil
+}
+
+func createRollbackBackup(path, backupPath string, mode os.FileMode) (bool, error) {
+	if _, statErr := os.Stat(path); errors.Is(statErr, os.ErrNotExist) {
+		return false, nil
+	} else if statErr != nil {
+		return false, fmt.Errorf("inspect existing watch state: %w", statErr)
+	}
+	if linkErr := os.Link(path, backupPath); linkErr != nil {
+		if copyErr := copyFile(path, backupPath, mode); copyErr != nil {
+			return false, errors.Join(
+				fmt.Errorf("create watch state rollback link: %w", linkErr),
+				fmt.Errorf("copy watch state rollback file: %w", copyErr),
+			)
+		}
+	}
+	return true, nil
 }
 
 func copyFile(src, dst string, mode os.FileMode) error {

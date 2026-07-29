@@ -114,7 +114,7 @@ func (w *Watcher) logf(format string, args ...any) {
 	_, _ = fmt.Fprintf(w.opts.Log, format+"\n", args...) //nolint:errcheck // logging is best-effort
 }
 
-// Run loops until Once is set, the context is cancelled, or an unrecoverable error.
+// Run loops until Once is set, the context is canceled, or an unrecoverable error.
 func (w *Watcher) Run(ctx context.Context) (CycleResult, error) {
 	var last CycleResult
 	for {
@@ -201,9 +201,7 @@ func (w *Watcher) processLecture(ctx context.Context, lecture client.Lecture, re
 		return joinErr
 	})
 	if err != nil {
-		_ = w.store.Mark(w.opts.SubjectID, w.opts.SessionID, SeenLecture{ //nolint:errcheck // best-effort failure record
-			SeqNo: lecture.SeqNo, Topic: lecture.Topic, StartTime: lecture.StartTime, Error: err.Error(),
-		}, lecture.TTID)
+		// Do not Mark failures: Has() would skip the lecture forever on later polls.
 		return err
 	}
 
@@ -232,8 +230,6 @@ func (w *Watcher) processLecture(ctx context.Context, lecture client.Lecture, re
 			return err
 		})
 		if uploadErr != nil {
-			seen.Error = uploadErr.Error()
-			_ = w.store.Mark(w.opts.SubjectID, w.opts.SessionID, seen, lecture.TTID) //nolint:errcheck
 			return uploadErr
 		}
 		seen.Uploaded = true

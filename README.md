@@ -185,7 +185,7 @@ protection manually with `chmod 600 config.json`.
 | `cliPath` | string | `"notebooklm"` | Path to the notebooklm-py CLI |
 | `authProfile` | string | `""` | Optional notebooklm-py profile name |
 
-Authentication for NotebookLM uses `NOTEBOOKLM_*` secrets — see [`docs/notebooklm-auth.md`](docs/notebooklm-auth.md). Install the CLI with `pip install --pre 'notebooklm-py[headless]>=0.8.0rc1'`.
+Authentication for NotebookLM uses `NOTEBOOKLM_*` secrets — see [`docs/notebooklm-auth.md`](docs/notebooklm-auth.md). Install the CLI with `pip install --pre 'notebooklm-py[headless]==0.8.0rc1'`.
 
 #### Progress Tracking Options
 

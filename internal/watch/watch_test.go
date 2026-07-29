@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -154,7 +155,10 @@ func TestWithRetriesDoesNotRetryPermanent(t *testing.T) {
 }
 
 func TestRunRespectsOnce(t *testing.T) {
-	store, _ := LoadStore(filepath.Join(t.TempDir(), "s.json"))
+	store, err := LoadStore(filepath.Join(t.TempDir(), "s.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	w := New(testCfg(), fakeSource{lectures: client.Lectures{}}, nil, nil, store, Options{
 		SubjectID: 1, SessionID: 2, Once: true, DryRun: true, Interval: time.Hour, Log: io.Discard,
 	})
@@ -162,5 +166,40 @@ func TestRunRespectsOnce(t *testing.T) {
 	defer cancel()
 	if _, err := w.Run(ctx); err != nil {
 		t.Fatalf("Run: %v", err)
+	}
+}
+
+func TestRunCycleRetriesPreviouslyFailedLecture(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := LoadStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lectures := client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro", StartTime: "2026-01-01"}}
+	opts := Options{SubjectID: 1, SessionID: 2, Once: true, Upload: true, NotebookID: "nb1", Log: io.Discard, MaxRetries: 1}
+
+	failAudio := &fakeAudio{joinErr: errors.New("download blip")}
+	w := New(testCfg(), fakeSource{lectures: lectures}, failAudio, &fakeUploader{}, store, opts)
+	result, err := w.RunCycle(context.Background())
+	if err != nil {
+		t.Fatalf("failing cycle: %v", err)
+	}
+	if result.Failed != 1 || store.Has(1, 2, 10) {
+		t.Fatalf("expected failed+unseen after blip: %+v has=%v", result, store.Has(1, 2, 10))
+	}
+
+	okAudio := &fakeAudio{join: downloader.JoinResult{LeftOutput: out}}
+	uploader := &fakeUploader{result: notebooklm.UploadResult{SourceID: "src1"}}
+	w = New(testCfg(), fakeSource{lectures: lectures}, okAudio, uploader, store, opts)
+	result, err = w.RunCycle(context.Background())
+	if err != nil {
+		t.Fatalf("retry cycle: %v", err)
+	}
+	if result.Downloaded != 1 || result.Uploaded != 1 || !store.Has(1, 2, 10) {
+		t.Fatalf("expected retry success: %+v", result)
 	}
 }

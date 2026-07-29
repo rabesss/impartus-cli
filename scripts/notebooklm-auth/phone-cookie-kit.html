@@ -194,11 +194,19 @@ var REGIONAL = ("com.sg com.au com.br com.mx com.ar com.hk com.tw com.my com.ph 
    notebooklm-py's _auth/cookie_policy.py. */
 var TIER1 = ["SID", "__Secure-1PSIDTS"];
 
-var state = { cookies: {}, sources: 0 };
+var state = { cookies: Object.create(null), sources: 0 };
 
 /* ------------------------------------------------------------------ helpers */
 
 function el(id) { return document.getElementById(id); }
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+
+var DANGEROUS_COOKIE_NAMES = { "__proto__": 1, "constructor": 1, "prototype": 1 };
 
 function domainAllowed(d) {
   if (!d) return false;
@@ -421,7 +429,7 @@ function renderA() {
       ? "You are not signed in to Google in that browser. Sign in, then export again."
       : "Open notebooklm.google.com in that browser, reload the page so Google refreshes " +
         "the cookie, then export again.";
-    message(out, "err", "<strong>Missing required: " + missing.join(", ") +
+    message(out, "err", "<strong>Missing required: " + escapeHtml(missing.join(", ")) +
       ".</strong> This will not authenticate. " + fix);
   } else if (!hasSecondary) {
     message(out, "warn", "<strong>Missing the secondary binding</strong> (needs OSID, " +
@@ -430,14 +438,38 @@ function renderA() {
   }
 
   var table = document.createElement("table");
-  table.innerHTML = "<tr><th>cookie</th><th>domain</th><th>expires</th></tr>";
+  var header = document.createElement("tr");
+  ["cookie", "domain", "expires"].forEach(function (label) {
+    var th = document.createElement("th");
+    th.textContent = label;
+    header.appendChild(th);
+  });
+  table.appendChild(header);
   ranked.forEach(function (n) {
     var c = state.cookies[n];
     var tr = document.createElement("tr");
-    var required = TIER1.indexOf(n) !== -1;
-    tr.innerHTML = '<td class="n">' + n +
-      (required ? ' <span class="tag req">required</span>' : '') +
-      '</td><td class="d">' + c.domain + '</td><td class="d">' + fmtExpiry(c.expires) + '</td>';
+    var nameCell = document.createElement("td");
+    nameCell.className = "n";
+    nameCell.textContent = n;
+    if (TIER1.indexOf(n) !== -1) {
+      nameCell.appendChild(document.createTextNode(" "));
+      var tag = document.createElement("span");
+      tag.className = "tag req";
+      tag.textContent = "required";
+      nameCell.appendChild(tag);
+    }
+    tr.appendChild(nameCell);
+
+    var domainCell = document.createElement("td");
+    domainCell.className = "d";
+    domainCell.textContent = c.domain;
+    tr.appendChild(domainCell);
+
+    var expiryCell = document.createElement("td");
+    expiryCell.className = "d";
+    expiryCell.textContent = fmtExpiry(c.expires);
+    tr.appendChild(expiryCell);
+
     table.appendChild(tr);
   });
   out.appendChild(table);
@@ -465,7 +497,7 @@ el("btn-add").addEventListener("click", function () {
     rows = parseExport(input.value);
   } catch (e) {
     out.textContent = "";
-    message(out, "err", "<strong>Could not read that.</strong> " + e.message);
+    message(out, "err", "<strong>Could not read that.</strong> " + escapeHtml(e.message));
     return;
   }
 
@@ -473,6 +505,7 @@ el("btn-add").addEventListener("click", function () {
   rows.forEach(function (raw) {
     var c = normalize(raw);
     if (!c) return;
+    if (DANGEROUS_COOKIE_NAMES[c.name]) { dropped++; return; }
     if (!domainAllowed(c.domain)) { dropped++; return; }
     /* On a duplicate name, keep the higher-ranked domain. A tie means a later
        paste is a fresher export of the same cookie, so let it win. */
@@ -497,7 +530,7 @@ el("btn-add").addEventListener("click", function () {
 });
 
 el("btn-reset").addEventListener("click", function () {
-  state = { cookies: {}, sources: 0 };
+  state = { cookies: Object.create(null), sources: 0 };
   el("in-a").value = "";
   el("out-a").textContent = "";
 });

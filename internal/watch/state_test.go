@@ -19,9 +19,10 @@ func TestStoreMarkHasAndPersistsAtomically(t *testing.T) {
 		t.Fatalf("expected empty store")
 	}
 
-	if err := store.Mark(1, 2, SeenLecture{
+	err = store.Mark(1, 2, SeenLecture{
 		SeqNo: 3, Topic: "Intro", StartTime: "2026-01-01", OutputPath: "/tmp/a.mp3", Uploaded: true, NotebookID: "nb1",
-	}, 99); err != nil {
+	}, 99)
+	if err != nil {
 		t.Fatalf("Mark: %v", err)
 	}
 	if !store.Has(1, 2, 99) {
@@ -35,8 +36,8 @@ func TestStoreMarkHasAndPersistsAtomically(t *testing.T) {
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("expected mode 0600, got %v", info.Mode().Perm())
 	}
-	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
-		t.Fatalf("temp file should not remain: %v", err)
+	if _, tmpErr := os.Stat(path + ".tmp"); !os.IsNotExist(tmpErr) {
+		t.Fatalf("temp file should not remain: %v", tmpErr)
 	}
 
 	reloaded, err := LoadStore(path)
@@ -71,13 +72,40 @@ func TestCourseKeyAndSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = store.Mark(12, 34, SeenLecture{Topic: "T"}, 7)
+	err = store.Mark(12, 34, SeenLecture{Topic: "T", OutputPath: "/tmp/t.mp3"}, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
 	snap := store.Snapshot()
-	raw, _ := json.Marshal(snap)
+	raw, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !json.Valid(raw) {
 		t.Fatalf("snapshot not valid JSON")
 	}
 	if _, ok := snap.Courses["12:34"]; !ok {
 		t.Fatalf("snapshot missing course")
+	}
+}
+
+func TestHasIgnoresFailedAttempts(t *testing.T) {
+	store, err := LoadStore(filepath.Join(t.TempDir(), "s.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.Mark(1, 2, SeenLecture{Topic: "fail", Error: "boom"}, 99)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.Has(1, 2, 99) {
+		t.Fatalf("failed attempt must not count as seen")
+	}
+	err = store.Mark(1, 2, SeenLecture{Topic: "ok", OutputPath: "/tmp/a.mp3"}, 99)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !store.Has(1, 2, 99) {
+		t.Fatalf("successful attempt must count as seen")
 	}
 }

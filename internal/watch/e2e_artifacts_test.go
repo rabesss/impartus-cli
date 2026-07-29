@@ -71,10 +71,10 @@ func TestWatchCycleEndToEndArtifacts(t *testing.T) {
 	}
 
 	artifactDir := "/opt/cursor/artifacts"
-	_ = os.MkdirAll(artifactDir, 0o755) //nolint:errcheck
-	_ = os.WriteFile(filepath.Join(artifactDir, "watch_e2e_mp3_path.txt"), []byte(mp3Path+"\n"), 0o600)
-	_ = os.WriteFile(filepath.Join(artifactDir, "watch_e2e_upload_argv.txt"), []byte(uploader.lastPath+"\t"+uploader.lastTitle+"\n"), 0o600)
-	_ = os.WriteFile(filepath.Join(artifactDir, "watch_e2e_state.json"), raw, 0o600)
+	_ = os.MkdirAll(artifactDir, 0o755)                                                                                                      //nolint:errcheck // best-effort artifact capture
+	_ = os.WriteFile(filepath.Join(artifactDir, "watch_e2e_mp3_path.txt"), []byte(mp3Path+"\n"), 0o600)                                      //nolint:errcheck // best-effort artifact capture
+	_ = os.WriteFile(filepath.Join(artifactDir, "watch_e2e_upload_argv.txt"), []byte(uploader.lastPath+"\t"+uploader.lastTitle+"\n"), 0o600) //nolint:errcheck // best-effort artifact capture
+	_ = os.WriteFile(filepath.Join(artifactDir, "watch_e2e_state.json"), raw, 0o600)                                                         //nolint:errcheck // best-effort artifact capture
 }
 
 type fakeLectureSource struct {
