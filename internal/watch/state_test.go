@@ -43,6 +43,9 @@ func TestStoreMarkHasAndPersistsAtomically(t *testing.T) {
 	if _, tmpErr := os.Stat(path + ".tmp"); !os.IsNotExist(tmpErr) {
 		t.Fatalf("temp file should not remain: %v", tmpErr)
 	}
+	if matches, globErr := filepath.Glob(filepath.Join(dir, ".state.json.tmp-*")); globErr != nil || len(matches) != 0 {
+		t.Fatalf("unique temp files should not remain: %v err=%v", matches, globErr)
+	}
 
 	reloaded, err := LoadStore(path)
 	if err != nil {
@@ -57,18 +60,61 @@ func TestStoreMarkHasAndPersistsAtomically(t *testing.T) {
 	}
 }
 
-func TestLoadStoreCorruptJSONStartsFresh(t *testing.T) {
+func TestLoadStoreCorruptJSONFailsClosed(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.json")
 	if err := os.WriteFile(path, []byte("{not-json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := LoadStore(path); err == nil {
+		t.Fatalf("corrupt state must fail closed to protect deduplication")
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "{not-json" {
+		t.Fatalf("corrupt state must remain available for recovery: %q err=%v", got, err)
+	}
+}
+
+func TestLoadStoreAcceptsLegacyOutputPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.json")
+	raw := []byte(`{
+	  "version": 1,
+	  "courses": {
+	    "1:2": {
+	      "seenTtids": {
+	        "7": {"outputPath": "/tmp/legacy.mp3", "uploaded": false}
+	      }
+	    }
+	  }
+	}`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	store, err := LoadStore(path)
 	if err != nil {
-		t.Fatalf("corrupt state should start fresh, got %v", err)
+		t.Fatalf("LoadStore legacy: %v", err)
 	}
-	if store.Has(1, 2, 3) {
-		t.Fatalf("expected empty store after corrupt load")
+	seen, ok := store.Get(1, 2, 7)
+	if !ok || seen.OutputPath != "/tmp/legacy.mp3" || seen.Status != StatusDownloaded {
+		t.Fatalf("legacy output path was not normalized: %+v ok=%v", seen, ok)
+	}
+}
+
+func TestMarkWithoutStatusPreservesUploadedState(t *testing.T) {
+	store, err := LoadStore(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Mark(1, 2, SeenLecture{
+		Status: StatusUploaded, OutputPath: "/tmp/a.mp3", NotebookID: "nb", SourceID: "src",
+	}, 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Mark(1, 2, SeenLecture{Topic: "updated"}, 7); err != nil {
+		t.Fatal(err)
+	}
+	seen, _ := store.Get(1, 2, 7)
+	if seen.Status != StatusUploaded || !seen.Uploaded || seen.SourceID != "src" || seen.NotebookID != "nb" {
+		t.Fatalf("uploaded state regressed: %+v", seen)
 	}
 }
 

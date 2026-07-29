@@ -135,14 +135,18 @@ func (w *Watcher) logf(format string, args ...any) {
 	_, _ = fmt.Fprintf(w.opts.Log, format+"\n", args...) //nolint:errcheck // logging is best-effort
 }
 
-// Run loops until Once is set, the context is canceled, or an unrecoverable error.
+// Run loops until Once is set, the context is canceled, or an unrecoverable
+// authentication error occurs. Poll failures are logged and retried next cycle.
 func (w *Watcher) Run(ctx context.Context) (CycleResult, error) {
 	var last CycleResult
 	for {
 		cycle, err := w.RunCycle(ctx)
 		last = cycle
 		if err != nil {
-			return last, err
+			if w.opts.Once || notebooklm.IsAuth(err) || ctx.Err() != nil {
+				return last, err
+			}
+			w.logf("watch: cycle failed; retrying after %s: %v", w.opts.Interval, err)
 		}
 		if w.opts.Once {
 			return last, nil
@@ -161,6 +165,7 @@ func (w *Watcher) Run(ctx context.Context) (CycleResult, error) {
 func (w *Watcher) RunCycle(ctx context.Context) (CycleResult, error) {
 	result := CycleResult{DryRun: w.opts.DryRun}
 	remaining := w.opts.MaxLecturesPerCycle
+	var targetErrs []error
 
 	for _, target := range w.opts.Targets {
 		if remaining <= 0 {
@@ -174,11 +179,19 @@ func (w *Watcher) RunCycle(ctx context.Context) (CycleResult, error) {
 			if notebooklm.IsAuth(err) {
 				return result, fmt.Errorf("notebooklm auth failure; aborting cycle: %w", err)
 			}
-			return result, err
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return result, ctxErr
+			}
+			result.Failed++
+			result.Errors = append(result.Errors, err.Error())
+			w.logf("watch: target %s failed: %v", targetLabel(target), err)
+			targetErrs = append(targetErrs, err)
+			remaining -= processed
+			continue
 		}
 		remaining -= processed
 	}
-	return result, nil
+	return result, errors.Join(targetErrs...)
 }
 
 func (w *Watcher) runTarget(ctx context.Context, target config.WatchTarget, limit int, result *CycleResult) (int, error) {
@@ -190,8 +203,7 @@ func (w *Watcher) runTarget(ctx context.Context, target config.WatchTarget, limi
 	lectures = filterEmptyLectures(lectures)
 	selected, _, err := lectures.SelectForDownload(0, 0, true)
 	if err != nil {
-		if strings.Contains(err.Error(), "no lectures available after filtering") ||
-			strings.Contains(err.Error(), "no lectures found") {
+		if errors.Is(err, client.ErrNoLectures) || errors.Is(err, client.ErrNoLecturesAfterFiltering) {
 			w.logf("watch: %s: no lectures to process", targetLabel(target))
 			return 0, nil
 		}
@@ -213,6 +225,9 @@ func (w *Watcher) runTarget(ctx context.Context, target config.WatchTarget, limi
 		if err := w.processLecture(ctx, target, lecture, result); err != nil {
 			if notebooklm.IsAuth(err) {
 				return processed, err
+			}
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return processed, ctxErr
 			}
 			result.Failed++
 			result.Errors = append(result.Errors, fmt.Sprintf("%s ttid=%d: %v", targetLabel(target), lecture.TTID, err))
@@ -248,14 +263,19 @@ func (w *Watcher) processLecture(ctx context.Context, target config.WatchTarget,
 		return fmt.Errorf("persist pending state: %w", err)
 	}
 
-	output, err := w.ensureAudio(ctx, target, lecture, existing, &seen)
+	output, downloaded, err := w.ensureAudio(ctx, target, lecture, existing, &seen)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		seen.Status = StatusFailed
 		seen.Error = err.Error()
 		_ = w.store.Mark(target.SubjectID, target.SessionID, seen, lecture.TTID) //nolint:errcheck // preserve primary error
 		return err
 	}
-	result.Downloaded++
+	if downloaded {
+		result.Downloaded++
+	}
 	result.Outputs = append(result.Outputs, output)
 
 	if !w.opts.Upload {
@@ -269,6 +289,9 @@ func (w *Watcher) processLecture(ctx context.Context, target config.WatchTarget,
 
 	upload, uploadErr := w.uploadWithRetries(ctx, seen.NotebookID, output, title)
 	if uploadErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		seen.Status = StatusFailed
 		seen.Error = uploadErr.Error()
 		_ = w.store.Mark(target.SubjectID, target.SessionID, seen, lecture.TTID) //nolint:errcheck
@@ -299,13 +322,21 @@ func (w *Watcher) ensureAudio(
 	lecture client.Lecture,
 	existing SeenLecture,
 	seen *SeenLecture,
-) (string, error) {
-	if existing.Status == StatusDownloaded && existing.OutputPath != "" {
+) (string, bool, error) {
+	if existing.OutputPath != "" {
 		if _, err := os.Stat(existing.OutputPath); err == nil {
 			seen.OutputPath = existing.OutputPath
 			seen.Status = StatusDownloaded
-			return existing.OutputPath, nil
+			seen.Error = ""
+			if err := w.store.Mark(target.SubjectID, target.SessionID, *seen, lecture.TTID); err != nil {
+				return "", false, fmt.Errorf("persist resumed download state: %w", err)
+			}
+			return existing.OutputPath, false, nil
 		}
+	}
+
+	if err := os.MkdirAll(w.cfg.DownloadLocation, 0o755); err != nil { // #nosec G301 -- user-owned download directory
+		return "", false, fmt.Errorf("create watch download directory: %w", err)
 	}
 
 	var join downloader.JoinResult
@@ -322,19 +353,19 @@ func (w *Watcher) ensureAudio(
 		return joinErr
 	})
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	output := firstOutput(join)
 	if output == "" {
-		return "", fmt.Errorf("download produced no audio output for ttid=%d", lecture.TTID)
+		return "", false, fmt.Errorf("download produced no audio output for ttid=%d", lecture.TTID)
 	}
 	seen.OutputPath = output
 	seen.Status = StatusDownloaded
 	seen.Error = ""
 	if err := w.store.Mark(target.SubjectID, target.SessionID, *seen, lecture.TTID); err != nil {
-		return "", fmt.Errorf("persist downloaded state: %w", err)
+		return "", false, fmt.Errorf("persist downloaded state: %w", err)
 	}
-	return output, nil
+	return output, true, nil
 }
 
 func (w *Watcher) uploadWithRetries(ctx context.Context, notebookID, output, title string) (notebooklm.UploadResult, error) {

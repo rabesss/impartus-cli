@@ -14,6 +14,7 @@ import (
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/notebooklm"
+	"github.com/rabesss/impartus-cli/internal/paths"
 	"github.com/rabesss/impartus-cli/internal/watch"
 )
 
@@ -60,7 +61,7 @@ func parseWatchFlags(args []string) (watchFlags, error) {
 	fs.StringVar(&f.output, "o", "", "Output directory override")
 	fs.BoolVar(&f.once, "once", false, "Run a single poll cycle then exit")
 	fs.BoolVar(&f.dryRun, "dry-run", false, "List new lectures without downloading or uploading")
-	fs.BoolVar(&f.check, "check", false, "Validate ffmpeg, NotebookLM auth, and config then exit")
+	fs.BoolVar(&f.check, "check", false, "Validate ffmpeg/config and NotebookLM auth when upload is enabled, then exit")
 	fs.BoolVar(&f.noUpload, "no-upload", false, "Download audio but skip NotebookLM upload")
 	fs.BoolVar(&f.upload, "upload", false, "Upload downloaded audio to NotebookLM")
 
@@ -190,7 +191,7 @@ func runWatchLoop(
 
 	opts := watch.Options{
 		Targets:                cfg.ResolvedTargets(),
-		Once:                   f.once || jsonMode,
+		Once:                   watchRunsOnce(f, jsonMode),
 		DryRun:                 f.dryRun,
 		Upload:                 cfg.Watch.Upload,
 		Interval:               interval,
@@ -220,9 +221,15 @@ func runWatchLoop(
 	return result, nil
 }
 
+func watchRunsOnce(f watchFlags, jsonMode bool) bool {
+	return f.once || f.dryRun || jsonMode
+}
+
 func applyWatchFlags(cfg *config.Config, f watchFlags) (*config.Config, error) {
 	applyWatchCourseFlags(cfg, f)
-	applyWatchIOFlags(cfg, f)
+	if err := applyWatchIOFlags(cfg, f); err != nil {
+		return cfg, err
+	}
 	cfg.Watch.Enabled = true
 	switch {
 	case f.noUpload:
@@ -250,7 +257,7 @@ func applyWatchCourseFlags(cfg *config.Config, f watchFlags) {
 	}
 }
 
-func applyWatchIOFlags(cfg *config.Config, f watchFlags) {
+func applyWatchIOFlags(cfg *config.Config, f watchFlags) error {
 	if f.interval != "" {
 		cfg.Watch.PollInterval = f.interval
 		cfg.Watch.Interval = f.interval
@@ -260,8 +267,13 @@ func applyWatchIOFlags(cfg *config.Config, f watchFlags) {
 		cfg.Watch.StatePath = f.statePath
 	}
 	if f.output != "" {
-		cfg.DownloadLocation = f.output
+		location, err := paths.ValidateDownloadLocation(f.output, true)
+		if err != nil {
+			return err
+		}
+		cfg.DownloadLocation = location
 	}
+	return nil
 }
 
 func synthesizeWatchTargets(cfg *config.Config, f watchFlags) {
@@ -284,10 +296,13 @@ func synthesizeWatchTargets(cfg *config.Config, f watchFlags) {
 }
 
 func validateWatchFlags(cfg *config.Config, f watchFlags) (*config.Config, error) {
+	if (f.subject > 0) != (f.session > 0) {
+		return cfg, errors.New("--subject/-s and --session/-S must be provided together")
+	}
 	if len(cfg.ResolvedTargets()) == 0 {
 		return cfg, errors.New("watch requires --subject/-s and --session/-S, or watch.targets in config")
 	}
-	if cfg.Watch.Upload && !f.check && !f.dryRun {
+	if cfg.Watch.Upload {
 		for i, target := range cfg.ResolvedTargets() {
 			if firstNonEmpty(target.NotebookID, cfg.Watch.NotebookLM.NotebookID) == "" {
 				return cfg, fmt.Errorf("watch target[%d] requires notebookId (or --notebook)", i)

@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
 // Doctor checks that the CLI is present, authentication looks usable, and the
@@ -37,7 +39,7 @@ func (u *Uploader) checkAuth(ctx context.Context) error {
 	args := BuildAuthCheckArgs(u.cfg)
 	stdout, stderr, err := u.runner.Run(doctorCtx, u.cfg.CLIPath, args, os.Environ())
 	if err != nil {
-		detail := firstNonEmpty(stderr, stdout, err.Error())
+		detail := firstNonEmpty(secrets.Scrub(stderr), secrets.Scrub(stdout), secrets.ScrubError(err))
 		return fmt.Errorf("notebooklm auth check failed: %s", trimForError(detail))
 	}
 	status, parseErr := parseAuthStatus(stdout)
@@ -46,16 +48,32 @@ func (u *Uploader) checkAuth(ctx context.Context) error {
 		if strings.TrimSpace(stdout) == "" {
 			return nil
 		}
-		lower := strings.ToLower(stdout + stderr)
-		if strings.Contains(lower, "ok") || strings.Contains(lower, "authenticated") {
+		if authOutputOK(stdout + stderr) {
 			return nil
 		}
 		return fmt.Errorf("notebooklm auth check returned unreadable JSON: %w", parseErr)
 	}
-	if status != "" && status != "ok" {
-		return fmt.Errorf("notebooklm auth status is %q (run scripts/notebooklm-auth/nlm_auth.py verify)", status)
+	if status != "" && !authStatusOK(status) {
+		return fmt.Errorf("notebooklm auth status is %q (run the provider's native login check)", status)
 	}
 	return nil
+}
+
+func authOutputOK(output string) bool {
+	lower := strings.ToLower(output)
+	return strings.Contains(lower, "authentication valid") ||
+		strings.Contains(lower, "successfully authenticated") ||
+		strings.Contains(lower, "authenticated") ||
+		strings.Contains(lower, "status: ok")
+}
+
+func authStatusOK(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "", "ok", "authenticated", "valid", "success":
+		return true
+	default:
+		return false
+	}
 }
 
 func (u *Uploader) checkSourceCap(ctx context.Context, notebookID string) error {
@@ -67,13 +85,12 @@ func (u *Uploader) checkSourceCap(ctx context.Context, notebookID string) error 
 	args := BuildListSourcesArgs(u.cfg, notebookID)
 	stdout, stderr, err := u.runner.Run(listCtx, u.cfg.CLIPath, args, os.Environ())
 	if err != nil {
-		// Listing may be unavailable on older CLIs; do not hard-fail doctor.
-		_ = stderr
-		return nil
+		detail := firstNonEmpty(secrets.Scrub(stderr), secrets.Scrub(stdout), secrets.ScrubError(err))
+		return fmt.Errorf("check notebook source count: %s", trimForError(detail))
 	}
 	count, parseErr := parseSourceCount(stdout)
 	if parseErr != nil {
-		return nil
+		return fmt.Errorf("parse notebook source count: %w", parseErr)
 	}
 	if count >= u.cfg.MaxSourcesPerNotebook {
 		return fmt.Errorf("notebook %s already has %d sources (cap %d)", notebookID, count, u.cfg.MaxSourcesPerNotebook)

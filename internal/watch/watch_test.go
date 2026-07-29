@@ -44,13 +44,17 @@ func (f *fakeAudio) DownloadAndJoinPlaylist(context.Context, client.ParsedPlayli
 }
 
 type fakeUploader struct {
-	result notebooklm.UploadResult
-	err    error
-	calls  int
+	result      notebooklm.UploadResult
+	err         error
+	calls       int
+	notebookIDs []string
+	paths       []string
 }
 
-func (f *fakeUploader) UploadToNotebook(_ context.Context, _, _, _ string) (notebooklm.UploadResult, error) {
+func (f *fakeUploader) UploadToNotebook(_ context.Context, notebookID, path, _ string) (notebooklm.UploadResult, error) {
 	f.calls++
+	f.notebookIDs = append(f.notebookIDs, notebookID)
+	f.paths = append(f.paths, path)
 	return f.result, f.err
 }
 
@@ -181,8 +185,140 @@ func TestRunCycleResumesDownloadedWithoutRedownload(t *testing.T) {
 	if audio.calls != 0 {
 		t.Fatalf("expected resume without re-download, audioCalls=%d", audio.calls)
 	}
-	if result.Uploaded != 1 || !store.Has(1, 2, 10) {
+	if result.Downloaded != 0 || result.Uploaded != 1 || !store.Has(1, 2, 10) {
 		t.Fatalf("unexpected resume result: %+v", result)
+	}
+}
+
+func TestRunCycleUploadFailureResumesExistingAudio(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := LoadStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lectures := client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro"}}
+	opts := Options{
+		SubjectID: 1, SessionID: 2, Once: true, Upload: true, NotebookID: "nb",
+		MaxRetries: 1, Log: io.Discard,
+	}
+	firstAudio := &fakeAudio{join: downloader.JoinResult{LeftOutput: out}}
+	firstUpload := &fakeUploader{err: &notebooklm.Error{Kind: notebooklm.ErrPermanent, Message: "failed"}}
+	first := New(testCfg(), fakeSource{lectures: lectures}, firstAudio, firstUpload, store, opts)
+	result, err := first.RunCycle(context.Background())
+	if err != nil {
+		t.Fatalf("first cycle: %v", err)
+	}
+	if result.Failed != 1 || firstAudio.calls != 1 {
+		t.Fatalf("unexpected failed cycle: %+v downloads=%d", result, firstAudio.calls)
+	}
+
+	secondAudio := &fakeAudio{join: downloader.JoinResult{LeftOutput: out}}
+	secondUpload := &fakeUploader{result: notebooklm.UploadResult{SourceID: "src"}}
+	second := New(testCfg(), fakeSource{lectures: lectures}, secondAudio, secondUpload, store, opts)
+	result, err = second.RunCycle(context.Background())
+	if err != nil {
+		t.Fatalf("retry cycle: %v", err)
+	}
+	if secondAudio.calls != 0 || result.Downloaded != 0 || result.Uploaded != 1 {
+		t.Fatalf("retry re-downloaded audio: result=%+v downloads=%d", result, secondAudio.calls)
+	}
+}
+
+type targetSource struct {
+	lectures map[string]client.Lectures
+	errs     map[string]error
+}
+
+func (s targetSource) GetLectures(_ context.Context, _ *config.Config, course client.Course) (client.Lectures, error) {
+	key := CourseKey(course.SubjectID, course.SessionID)
+	return s.lectures[key], s.errs[key]
+}
+
+func TestRunCycleContinuesAfterTargetFailure(t *testing.T) {
+	store, err := LoadStore(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := targetSource{
+		lectures: map[string]client.Lectures{
+			"3:4": {{TTID: 20, SeqNo: 1, Topic: "healthy"}},
+		},
+		errs: map[string]error{"1:2": errors.New("temporary upstream failure")},
+	}
+	w := New(testCfg(), source, nil, nil, store, Options{
+		Targets: []config.WatchTarget{
+			{SubjectID: 1, SessionID: 2},
+			{SubjectID: 3, SessionID: 4},
+		},
+		Once: true, DryRun: true, Log: io.Discard,
+	})
+	result, err := w.RunCycle(context.Background())
+	if err == nil {
+		t.Fatalf("once mode should report the target error")
+	}
+	if result.New != 1 || result.Failed != 1 || len(result.Errors) != 1 {
+		t.Fatalf("later target was not processed: %+v", result)
+	}
+}
+
+func TestRunCycleUsesPerTargetNotebookAndSharedBudget(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := LoadStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := targetSource{lectures: map[string]client.Lectures{
+		"1:2": {{TTID: 10, SeqNo: 1, Topic: "one"}},
+		"3:4": {{TTID: 20, SeqNo: 1, Topic: "two"}},
+	}}
+	uploader := &fakeUploader{result: notebooklm.UploadResult{SourceID: "src"}}
+	w := New(testCfg(), source, &fakeAudio{join: downloader.JoinResult{LeftOutput: out}}, uploader, store, Options{
+		Targets: []config.WatchTarget{
+			{SubjectID: 1, SessionID: 2, NotebookID: "nb-one"},
+			{SubjectID: 3, SessionID: 4, NotebookID: "nb-two"},
+		},
+		Once: true, Upload: true, MaxLecturesPerCycle: 2, Log: io.Discard,
+	})
+	result, err := w.RunCycle(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Uploaded != 2 || len(uploader.notebookIDs) != 2 ||
+		uploader.notebookIDs[0] != "nb-one" || uploader.notebookIDs[1] != "nb-two" {
+		t.Fatalf("per-target routing failed: result=%+v notebooks=%v", result, uploader.notebookIDs)
+	}
+}
+
+func TestRunCycleDeletesAudioOnlyAfterUpload(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := LoadStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := New(testCfg(), fakeSource{lectures: client.Lectures{{TTID: 10, SeqNo: 1}}},
+		&fakeAudio{join: downloader.JoinResult{LeftOutput: out}},
+		&fakeUploader{result: notebooklm.UploadResult{SourceID: "src"}},
+		store, Options{
+			SubjectID: 1, SessionID: 2, NotebookID: "nb", Once: true, Upload: true,
+			DeleteAudioAfterUpload: true, Log: io.Discard,
+		})
+	if _, err := w.RunCycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(out); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("uploaded audio was not deleted: %v", err)
 	}
 }
 
@@ -258,6 +394,74 @@ func TestRunRespectsOnce(t *testing.T) {
 	defer cancel()
 	if _, err := w.Run(ctx); err != nil {
 		t.Fatalf("Run: %v", err)
+	}
+}
+
+type retryingSource struct {
+	calls  int
+	cancel context.CancelFunc
+}
+
+func (s *retryingSource) GetLectures(context.Context, *config.Config, client.Course) (client.Lectures, error) {
+	s.calls++
+	if s.calls == 1 {
+		return nil, errors.New("temporary poll failure")
+	}
+	s.cancel()
+	return nil, nil
+}
+
+func TestRunRetriesPollFailureInDaemonMode(t *testing.T) {
+	store, err := LoadStore(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	source := &retryingSource{cancel: cancel}
+	w := New(testCfg(), source, nil, nil, store, Options{
+		SubjectID: 1, SessionID: 2, DryRun: true, Interval: time.Millisecond, Log: io.Discard,
+	})
+	if _, err := w.Run(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run error = %v, want context cancellation", err)
+	}
+	if source.calls != 2 {
+		t.Fatalf("daemon exited instead of retrying poll: calls=%d", source.calls)
+	}
+}
+
+type cancelAudio struct {
+	cancel context.CancelFunc
+}
+
+func (a cancelAudio) FetchLecturePlaylists(ctx context.Context, _ []client.Lecture) ([]client.ParsedPlaylist, error) {
+	a.cancel()
+	return nil, ctx.Err()
+}
+
+func (cancelAudio) DownloadAndJoinPlaylist(context.Context, client.ParsedPlaylist, any, any) (downloader.JoinResult, error) {
+	return downloader.JoinResult{}, errors.New("unexpected join")
+}
+
+func TestRunCycleCancellationDoesNotRecordFailure(t *testing.T) {
+	store, err := LoadStore(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	w := New(testCfg(), fakeSource{lectures: client.Lectures{{TTID: 10, SeqNo: 1}}},
+		cancelAudio{cancel: cancel}, nil, store, Options{
+			SubjectID: 1, SessionID: 2, Once: true, MaxRetries: 1, Log: io.Discard,
+		})
+	result, err := w.RunCycle(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunCycle error = %v, want context cancellation", err)
+	}
+	if result.Failed != 0 {
+		t.Fatalf("cancellation was counted as failure: %+v", result)
+	}
+	seen, ok := store.Get(1, 2, 10)
+	if !ok || seen.Status != StatusPending || seen.Error != "" {
+		t.Fatalf("cancellation should leave resumable pending state: %+v ok=%v", seen, ok)
 	}
 }
 

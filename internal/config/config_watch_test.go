@@ -100,6 +100,16 @@ func TestValidateNotebookLMProvider(t *testing.T) {
 	}
 }
 
+func TestWatchNotebookLMCLIPathAliasIsPreserved(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.Watch.NotebookLM.CLIPath = "/opt/tools/notebooklm"
+	cfg.ApplyDefaults()
+	if cfg.Watch.NotebookLM.Command != "/opt/tools/notebooklm" ||
+		cfg.Watch.NotebookLM.CLIPath != "/opt/tools/notebooklm" {
+		t.Fatalf("cliPath alias was overwritten: %+v", cfg.Watch.NotebookLM)
+	}
+}
+
 func TestWatchEnvOverrides(t *testing.T) {
 	t.Setenv("IMPARTUS_USERNAME", "u")
 	t.Setenv("IMPARTUS_PASSWORD", "p")
@@ -125,5 +135,20 @@ func TestWatchEnvOverrides(t *testing.T) {
 	}
 	if len(cfg.ResolvedTargets()) != 1 || cfg.ResolvedTargets()[0].NotebookID != "nb-env" {
 		t.Fatalf("expected synthesized target with notebook, got %+v", cfg.ResolvedTargets())
+	}
+}
+
+func TestWatchCLIPathEnvOverrideIsPreserved(t *testing.T) {
+	t.Setenv("IMPARTUS_USERNAME", "u")
+	t.Setenv("IMPARTUS_PASSWORD", "p")
+	t.Setenv("IMPARTUS_BASE_URL", "https://example.com")
+	t.Setenv("IMPARTUS_NOTEBOOKLM_CLI_PATH", "/opt/tools/notebooklm")
+
+	cfg, err := LoadResolved("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Watch.NotebookLM.Command != "/opt/tools/notebooklm" {
+		t.Fatalf("CLI path env override discarded: %+v", cfg.Watch.NotebookLM)
 	}
 }

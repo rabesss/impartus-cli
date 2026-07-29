@@ -1,7 +1,7 @@
 {
   "username": "your_impartus_email@example.com",
   "password": "your_impartus_password",
-  "baseUrl": "[REDACTED]",
+  "baseUrl": "https://a.impartus.com/api",
   "quality": "720",
   "views": "both",
   "downloadLocation": "./downloads",
@@ -33,7 +33,7 @@
     "stateFile": "./.watch-state.json",
     "maxLecturesPerCycle": 3,
     "maxUploadRetries": 3,
-    "deleteAudioAfterUpload": true,
+    "deleteAudioAfterUpload": false,
     "quality": "144",
     "views": "left",
     "audioFormat": "mp3",

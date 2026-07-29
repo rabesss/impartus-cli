@@ -111,13 +111,13 @@ func buildNLMUploadArgs(cfg Config, req UploadRequest, notebookID string) []stri
 func BuildAuthCheckArgs(cfg Config) []string {
 	cfg.Normalize()
 	if cfg.Provider == ProviderNLM {
-		args := []string{"auth", "status", "--json"}
+		args := []string{"login", "--check"}
 		if cfg.AuthProfile != "" {
-			args = append([]string{"--profile", cfg.AuthProfile}, args...)
+			args = append(args, "--profile", cfg.AuthProfile)
 		}
 		return args
 	}
-	args := []string{"auth", "check", "--json"}
+	args := []string{"auth", "check", "--test", "--json"}
 	if cfg.AuthProfile != "" {
 		args = append([]string{"--profile", cfg.AuthProfile}, args...)
 	}

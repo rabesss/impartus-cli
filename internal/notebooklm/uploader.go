@@ -47,12 +47,15 @@ func NewWithRunner(cfg Config, runner CommandRunner) *Uploader {
 
 // Upload adds a local audio file as a NotebookLM source.
 func (u *Uploader) Upload(ctx context.Context, req UploadRequest) (UploadResult, error) {
-	return u.UploadFile(ctx, req.FilePath, req.Title)
+	return u.upload(ctx, req)
 }
 
 // UploadFile adds a local audio file as a NotebookLM source (legacy helper).
 func (u *Uploader) UploadFile(ctx context.Context, filePath, title string) (UploadResult, error) {
-	req := UploadRequest{FilePath: filePath, Title: title, NotebookID: u.cfg.NotebookID}
+	return u.upload(ctx, UploadRequest{FilePath: filePath, Title: title})
+}
+
+func (u *Uploader) upload(ctx context.Context, req UploadRequest) (UploadResult, error) {
 	args, err := BuildUploadArgs(u.cfg, req)
 	if err != nil {
 		return UploadResult{}, err
@@ -74,17 +77,17 @@ func (u *Uploader) UploadFile(ctx context.Context, filePath, title string) (Uplo
 		return UploadResult{Raw: stdout}, fmt.Errorf("parse notebooklm upload response: %w", parseErr)
 	}
 	result.Raw = stdout
-	if title != "" && result.Title == "" {
-		result.Title = title
+	if req.Title != "" && result.Title == "" {
+		result.Title = req.Title
 	}
 	return result, nil
 }
 
 // UploadToNotebook uploads to an explicit notebook id (multi-target watch).
 func (u *Uploader) UploadToNotebook(ctx context.Context, notebookID, filePath, title string) (UploadResult, error) {
-	cfg := u.cfg
-	cfg.NotebookID = firstNonEmpty(notebookID, cfg.NotebookID)
-	tmp := *u
-	tmp.cfg = cfg
-	return tmp.UploadFile(ctx, filePath, title)
+	return u.upload(ctx, UploadRequest{
+		NotebookID: notebookID,
+		FilePath:   filePath,
+		Title:      title,
+	})
 }

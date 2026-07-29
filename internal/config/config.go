@@ -55,8 +55,7 @@ type WatchConfig struct {
 }
 
 // NotebookLMConfig configures the NotebookLM upload step used by watch.
-// Authentication secrets stay out of this file — use NOTEBOOKLM_* env vars
-// (see docs/notebooklm-auth.md).
+// Authentication stays in the selected provider CLI's profile directory.
 type NotebookLMConfig struct {
 	Provider              string `json:"provider,omitempty"` // notebooklm-py | nlm
 	Command               string `json:"command,omitempty"`
@@ -194,9 +193,17 @@ func (c *Config) applyWatchDefaults() {
 	if c.Watch.AudioFormat == "" {
 		c.Watch.AudioFormat = "mp3"
 	}
+	c.applyNotebookLMDefaults()
+	c.synthesizeLegacyTarget()
+}
+
+func (c *Config) applyNotebookLMDefaults() {
 	nlm := &c.Watch.NotebookLM
 	if nlm.Provider == "" {
 		nlm.Provider = "notebooklm-py"
+	}
+	if nlm.Command == "" {
+		nlm.Command = nlm.CLIPath
 	}
 	if nlm.Command == "" {
 		nlm.Command = "notebooklm"
@@ -216,7 +223,6 @@ func (c *Config) applyWatchDefaults() {
 		nlm.MaxSourcesPerNotebook = 300
 	}
 	c.NotebookLM = *nlm
-	c.synthesizeLegacyTarget()
 }
 
 // normalizeWatchAliases copies legacy/alternate field names onto the plan names.

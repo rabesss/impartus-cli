@@ -5,6 +5,13 @@ import (
 	"fmt"
 )
 
+var (
+	// ErrNoLectures reports that the course has no lecture rows.
+	ErrNoLectures = errors.New("no lectures found")
+	// ErrNoLecturesAfterFiltering reports that all selected lectures were filtered out.
+	ErrNoLecturesAfterFiltering = errors.New("no lectures available after filtering (all lectures have noaudio=1 in the selected range)")
+)
+
 // LoginResponse represents the response from the Impartus authentication endpoint.
 type LoginResponse struct {
 	Message  string `json:"message"`
@@ -127,7 +134,7 @@ func (l Lectures) FilterNoAudio() Lectures {
 func (l Lectures) SelectRange(start, end int) (Lectures, error) {
 	reversed := l.Reverse()
 	if len(reversed) == 0 {
-		return nil, errors.New("no lectures found")
+		return nil, ErrNoLectures
 	}
 	if start <= 0 {
 		start = 1
@@ -158,7 +165,7 @@ func (l Lectures) SelectForDownload(start, end int, skipNoAudio bool) (Lectures,
 		filtered = before - len(selected)
 	}
 	if len(selected) == 0 {
-		return nil, filtered, errors.New("no lectures available after filtering (all lectures have noaudio=1 in the selected range)")
+		return nil, filtered, ErrNoLecturesAfterFiltering
 	}
 	return selected, filtered, nil
 }

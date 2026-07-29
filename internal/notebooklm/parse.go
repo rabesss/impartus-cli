@@ -89,12 +89,14 @@ func stringField(m map[string]any, keys ...string) string {
 
 // ClassifyError turns a CLI failure into a typed error for retry decisions.
 func ClassifyError(err error, stdout, stderr string) error {
-	detail := firstNonEmpty(stderr, stdout, secrets.ScrubError(err))
+	detail := firstNonEmpty(secrets.Scrub(stderr), secrets.Scrub(stdout), secrets.ScrubError(err))
 	lower := strings.ToLower(detail)
 	switch {
 	case strings.Contains(lower, "authentication") || strings.Contains(lower, "re-authenticate") || strings.Contains(lower, "auth status") || strings.Contains(lower, "unauthenticated"):
 		return &Error{Kind: ErrAuth, Message: trimForError(detail), Err: err}
-	case strings.Contains(lower, "rate") || strings.Contains(lower, "429") || strings.Contains(lower, "quota"):
+	case strings.Contains(lower, "rate limit") || strings.Contains(lower, "rate-limit") ||
+		strings.Contains(lower, "rate_limit") || strings.Contains(lower, "429") ||
+		strings.Contains(lower, "quota") || strings.Contains(lower, "throttl"):
 		return &Error{Kind: ErrRateLimit, Message: trimForError(detail), Err: err}
 	case strings.Contains(lower, "timeout") || strings.Contains(lower, "temporar") || strings.Contains(lower, "connection reset"):
 		return &Error{Kind: ErrTransient, Message: trimForError(detail), Err: err}

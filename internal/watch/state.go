@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -60,6 +59,24 @@ type SeenLecture struct {
 	ProcessedAt string        `json:"updatedAt"`
 }
 
+// UnmarshalJSON accepts the original outputPath key as well as audioPath so
+// state written by earlier watch builds can still resume without re-downloading.
+func (s *SeenLecture) UnmarshalJSON(data []byte) error {
+	type seenLectureAlias SeenLecture
+	var wire struct {
+		seenLectureAlias
+		LegacyOutputPath string `json:"outputPath"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*s = SeenLecture(wire.seenLectureAlias)
+	if s.OutputPath == "" {
+		s.OutputPath = wire.LegacyOutputPath
+	}
+	return nil
+}
+
 // Store is a file-backed State with atomic writes.
 type Store struct {
 	mu   sync.Mutex
@@ -77,8 +94,9 @@ func LectureKey(subjectID, sessionID, ttid int) string {
 	return CourseKey(subjectID, sessionID) + ":" + strconv.Itoa(ttid)
 }
 
-// LoadStore reads state from path, or returns an empty store if the file is missing
-// or corrupt (corrupt files log a warning and start fresh, matching job persistence).
+// LoadStore reads state from path, or returns an empty store if the file is
+// missing. Corrupt state is fatal because silently resetting deduplication can
+// upload every previously completed lecture again.
 func LoadStore(path string) (*Store, error) {
 	store := &Store{
 		path: path,
@@ -99,8 +117,7 @@ func LoadStore(path string) (*Store, error) {
 	}
 	var loaded State
 	if err := json.Unmarshal(contents, &loaded); err != nil {
-		log.Printf("watch: corrupt state file %s; starting fresh: %v", path, err)
-		return store, nil
+		return nil, fmt.Errorf("decode watch state %s: %w", path, err)
 	}
 	if loaded.Courses == nil {
 		loaded.Courses = map[string]CourseState{}
@@ -214,6 +231,19 @@ func (s *Store) Mark(subjectID, sessionID int, lecture SeenLecture, ttid int) er
 		if lecture.OutputPath == "" {
 			lecture.OutputPath = existing.OutputPath
 		}
+		if lecture.NotebookID == "" {
+			lecture.NotebookID = existing.NotebookID
+		}
+		if lecture.Status == "" {
+			lecture.Status = existing.Status
+			lecture.Uploaded = existing.Uploaded
+			if lecture.SourceID == "" {
+				lecture.SourceID = existing.SourceID
+			}
+			if lecture.Error == "" {
+				lecture.Error = existing.Error
+			}
+		}
 	}
 	if lecture.FirstSeenAt == "" {
 		lecture.FirstSeenAt = now
@@ -258,46 +288,39 @@ func (s *Store) saveLocked() error {
 	return atomicWriteFile(s.path, data, 0o600)
 }
 
-// atomicWriteFile writes data to path via a synced temp file + rename, with a
-// best-effort rollback link of the previous file. Mirrors the job persistence
-// pattern in internal/server/job_persistence.go.
+// atomicWriteFile writes data through a uniquely-created, synced temporary
+// file, then atomically replaces the live snapshot.
 func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+	parent := filepath.Dir(path)
+	if err := os.MkdirAll(parent, 0o750); err != nil {
 		return fmt.Errorf("create watch state directory: %w", err)
 	}
 
-	tmpPath := path + ".tmp"
-	backupPath := path + ".bak"
-	_ = os.Remove(tmpPath) //nolint:errcheck // stale temp cleanup is best-effort
-
-	if err := writeAndSyncTemp(tmpPath, data, mode); err != nil {
-		_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup after failed write
-		return err
-	}
-
-	_ = os.Remove(backupPath) //nolint:errcheck // stale rollback cleanup is best-effort
-	hadPrevious, err := createRollbackBackup(path, backupPath, mode)
+	tmp, err := os.CreateTemp(parent, "."+filepath.Base(path)+".tmp-*") // #nosec G304 -- operator-configured state directory
 	if err != nil {
-		_ = os.Remove(tmpPath) //nolint:errcheck // unused temp after rollback failure
+		return fmt.Errorf("create watch state temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath) //nolint:errcheck // best-effort cleanup
+		}
+	}()
+	if err := writeAndSyncTemp(tmp, data, mode); err != nil {
 		return err
 	}
-
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(backupPath) //nolint:errcheck // unused rollback
+	if err := replaceStateFile(tmpPath, path); err != nil {
 		return fmt.Errorf("replace watch state file: %w", err)
 	}
-	_ = os.Remove(backupPath) //nolint:errcheck // primary is durable enough for watch state
-	if hadPrevious {
-		_ = os.Chmod(path, mode) //nolint:errcheck // best-effort
+	cleanup = false
+	if err := syncStateDirectory(parent); err != nil {
+		return fmt.Errorf("sync watch state directory: %w", err)
 	}
 	return nil
 }
 
-func writeAndSyncTemp(tmpPath string, data []byte, mode os.FileMode) error {
-	tmp, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode) // #nosec G304 -- operator-configured state path
-	if err != nil {
-		return fmt.Errorf("create watch state temp file: %w", err)
-	}
+func writeAndSyncTemp(tmp *os.File, data []byte, mode os.FileMode) error {
 	if chmodErr := tmp.Chmod(mode); chmodErr != nil {
 		_ = tmp.Close() //nolint:errcheck // preserving the primary chmod error
 		return fmt.Errorf("restrict watch state temp file: %w", chmodErr)
@@ -318,43 +341,4 @@ func writeAndSyncTemp(tmpPath string, data []byte, mode os.FileMode) error {
 		return fmt.Errorf("close watch state temp file: %w", err)
 	}
 	return nil
-}
-
-func createRollbackBackup(path, backupPath string, mode os.FileMode) (bool, error) {
-	if _, statErr := os.Stat(path); errors.Is(statErr, os.ErrNotExist) {
-		return false, nil
-	} else if statErr != nil {
-		return false, fmt.Errorf("inspect existing watch state: %w", statErr)
-	}
-	if linkErr := os.Link(path, backupPath); linkErr != nil {
-		if copyErr := copyFile(path, backupPath, mode); copyErr != nil {
-			return false, errors.Join(
-				fmt.Errorf("create watch state rollback link: %w", linkErr),
-				fmt.Errorf("copy watch state rollback file: %w", copyErr),
-			)
-		}
-	}
-	return true, nil
-}
-
-func copyFile(src, dst string, mode os.FileMode) error {
-	in, err := os.Open(src) // #nosec G304 -- operator-configured state path
-	if err != nil {
-		return err
-	}
-	defer in.Close() //nolint:errcheck // read-only
-
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode) // #nosec G304
-	if err != nil {
-		return err
-	}
-	defer out.Close() //nolint:errcheck // closed explicitly below
-
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-	if err := out.Sync(); err != nil {
-		return err
-	}
-	return out.Close()
 }

@@ -84,6 +84,42 @@ func TestApplyWatchFlagsForcesEnabledAndUpload(t *testing.T) {
 	}
 }
 
+func TestApplyWatchFlagsRejectsPartialCourseOverride(t *testing.T) {
+	cfg := &config.Config{
+		Watch: config.WatchConfig{
+			Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2}},
+		},
+	}
+	cfg.ApplyDefaults()
+	if _, err := applyWatchFlags(cfg, watchFlags{subject: 9}); err == nil ||
+		!strings.Contains(err.Error(), "provided together") {
+		t.Fatalf("expected partial override error, got %v", err)
+	}
+}
+
+func TestApplyWatchFlagsRejectsOutputTraversal(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.ApplyDefaults()
+	_, err := applyWatchFlags(cfg, watchFlags{
+		subject: 1, session: 2, output: "../escape",
+	})
+	if err == nil || !strings.Contains(err.Error(), "must not escape") {
+		t.Fatalf("expected output traversal error, got %v", err)
+	}
+}
+
+func TestDryRunAndJSONRunOnce(t *testing.T) {
+	if !watchRunsOnce(watchFlags{dryRun: true}, false) {
+		t.Fatalf("dry-run must not enter the daemon loop")
+	}
+	if !watchRunsOnce(watchFlags{}, true) {
+		t.Fatalf("JSON mode must run one cycle")
+	}
+	if watchRunsOnce(watchFlags{}, false) {
+		t.Fatalf("plain watch without --once should remain long-running")
+	}
+}
+
 func TestHelpMentionsWatch(t *testing.T) {
 	payload := helpPayload()
 	found := false

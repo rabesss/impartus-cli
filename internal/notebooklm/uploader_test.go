@@ -53,6 +53,21 @@ func TestBuildUploadArgsNLM(t *testing.T) {
 	}
 }
 
+func TestBuildAuthCheckArgsMatchesProviders(t *testing.T) {
+	py := strings.Join(BuildAuthCheckArgs(Config{
+		Provider: ProviderNotebookLMpy, AuthProfile: "work",
+	}), " ")
+	if py != "--profile work auth check --test --json" {
+		t.Fatalf("notebooklm-py auth args = %q", py)
+	}
+	nlm := strings.Join(BuildAuthCheckArgs(Config{
+		Provider: ProviderNLM, AuthProfile: "work",
+	}), " ")
+	if nlm != "login --check --profile work" {
+		t.Fatalf("nlm auth args = %q", nlm)
+	}
+}
+
 func TestUploadFileBuildsExpectedArgs(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "lec.mp3")
@@ -77,12 +92,69 @@ func TestUploadFileBuildsExpectedArgs(t *testing.T) {
 	}
 }
 
+func TestUploadHonorsRequestNotebookID(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{stdout: `{"source_id":"abc"}`}
+	u := NewWithRunner(Config{NotebookID: "default", CLIPath: "notebooklm"}, runner)
+	result, err := u.Upload(context.Background(), UploadRequest{
+		NotebookID: "per-request", FilePath: file, Title: "Lecture",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.NotebookID != "per-request" || !strings.Contains(strings.Join(runner.last, " "), "--notebook per-request") {
+		t.Fatalf("request notebook was discarded: result=%+v args=%v", result, runner.last)
+	}
+}
+
 func TestDoctorRequiresOKStatus(t *testing.T) {
 	u := NewWithRunner(Config{NotebookID: "nb1", CLIPath: os.Args[0]}, &fakeRunner{
 		stdout: `{"status":"error"}`,
 	})
 	if err := u.Doctor(context.Background()); err == nil {
 		t.Fatalf("expected auth failure")
+	}
+}
+
+func TestDoctorAcceptsSuccessfulStatusVocabulary(t *testing.T) {
+	for _, status := range []string{"OK", "authenticated", "valid", "success"} {
+		t.Run(status, func(t *testing.T) {
+			u := NewWithRunner(Config{CLIPath: os.Args[0]}, &fakeRunner{
+				stdout: `{"status":"` + status + `"}`,
+			})
+			if err := u.Doctor(context.Background()); err != nil {
+				t.Fatalf("Doctor rejected %q: %v", status, err)
+			}
+		})
+	}
+}
+
+func TestDoctorAcceptsNLMAuthCheckOutput(t *testing.T) {
+	u := NewWithRunner(Config{Provider: ProviderNLM, CLIPath: os.Args[0]}, &fakeRunner{
+		stdout: "✓ Authentication valid!\n  Profile: work\n",
+	})
+	if err := u.Doctor(context.Background()); err != nil {
+		t.Fatalf("Doctor rejected nlm auth output: %v", err)
+	}
+}
+
+func TestDoctorFailsWhenSourceCapCannotBeChecked(t *testing.T) {
+	seq := &seqRunner{responses: []struct {
+		stdout string
+		err    error
+	}{
+		{stdout: `{"status":"ok"}`},
+		{err: errors.New("list unavailable")},
+	}}
+	u := NewWithRunner(Config{
+		NotebookID: "nb1", CLIPath: os.Args[0], MaxSourcesPerNotebook: 300,
+	}, seq)
+	if err := u.Doctor(context.Background()); err == nil || !strings.Contains(err.Error(), "source count") {
+		t.Fatalf("expected source-count check failure, got %v", err)
 	}
 }
 
@@ -139,6 +211,24 @@ func TestClassifyErrorKinds(t *testing.T) {
 		if typed.Kind != tc.kind || typed.Retryable() != tc.retry {
 			t.Fatalf("%q => kind=%v retry=%v", tc.detail, typed.Kind, typed.Retryable())
 		}
+	}
+}
+
+func TestClassifyErrorScrubsStreamsAndDoesNotMatchGenerate(t *testing.T) {
+	err := ClassifyError(
+		errors.New("boom"),
+		"",
+		"failed to generate source at https://example.com/upload?token=secret",
+	)
+	var typed *Error
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected typed error")
+	}
+	if typed.Kind != ErrPermanent {
+		t.Fatalf("generate was misclassified as rate limit: %v", typed.Kind)
+	}
+	if strings.Contains(typed.Message, "secret") {
+		t.Fatalf("secret leaked in classified error: %q", typed.Message)
 	}
 }
 
