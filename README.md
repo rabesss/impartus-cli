@@ -192,7 +192,10 @@ Legacy single-target fields `subjectId` / `sessionId` (and top-level `notebooklm
 | `maxSourcesPerNotebook` | int | `300` | Doctor refuses upload when at/over this count |
 | `notebookId` | string | `""` | Default notebook when a target omits `notebookId` |
 
-Authentication for NotebookLM uses `NOTEBOOKLM_*` secrets — see [`docs/notebooklm-auth.md`](docs/notebooklm-auth.md). Install with `pip install --pre 'notebooklm-py[headless]==0.8.0rc1'` (or `notebooklm-mcp-cli` for the `nlm` provider).
+Authenticate once with the provider's native desktop login and keep credentials
+in its profile directory; see [`docs/notebooklm-auth.md`](docs/notebooklm-auth.md).
+The container includes `notebooklm-py[headless]==0.8.0rc1`; install
+`notebooklm-mcp-cli` separately when using the optional `nlm` provider.
 
 #### Progress Tracking Options
 
@@ -399,10 +402,10 @@ Poll Impartus for new lectures across one or more `watch.targets`, download left
 | `--upload` / `--no-upload` | Enable or disable upload |
 | `--once` | One poll cycle then exit (cron-friendly) |
 | `--dry-run` | List new lectures without downloading |
-| `--check` | Validate ffmpeg/auth/config then exit |
+| `--check` | Validate ffmpeg/config and, when upload is enabled, NotebookLM auth |
 | `--output,-o` | Output directory |
 
-Phone-based NotebookLM login and secret ingestion: [`docs/notebooklm-auth.md`](docs/notebooklm-auth.md).
+NotebookLM desktop login and profile deployment: [`docs/notebooklm-auth.md`](docs/notebooklm-auth.md).
 
 ### API Server
 

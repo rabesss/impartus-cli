@@ -52,7 +52,6 @@ RUN useradd --create-home --shell /usr/sbin/nologin impartus && \
 WORKDIR /work
 
 COPY --from=build /out/impartus /usr/local/bin/impartus
-COPY scripts/notebooklm-auth /usr/local/share/impartus/notebooklm-auth
 
 EXPOSE 8080
 
