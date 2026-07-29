@@ -301,18 +301,30 @@ function fmtExpiry(sec) {
 }
 
 function copyToClipboard(textarea, button) {
-  var done = function () {
-    var old = button.textContent;
-    button.textContent = "Copied";
-    setTimeout(function () { button.textContent = old; }, 1400);
+  var original = button.textContent;
+  var flash = function (label) {
+    button.textContent = label;
+    setTimeout(function () { button.textContent = original; }, 1800);
   };
+
+  /* Last resort: select the text and say so, rather than leaving the button
+     looking like nothing happened. Mobile browsers deny programmatic clipboard
+     writes often enough that a silent failure would be the confusing case. */
+  var manual = function () {
+    textarea.focus();
+    textarea.select();
+    try {
+      if (document.execCommand("copy")) { flash("Copied"); return; }
+    } catch (e) { /* fall through to the manual instruction */ }
+    flash("Selected \u2014 copy it");
+  };
+
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(textarea.value).then(done, function () {
-      textarea.focus(); textarea.select();
-    });
+    navigator.clipboard.writeText(textarea.value).then(function () {
+      flash("Copied");
+    }, manual);
   } else {
-    textarea.focus(); textarea.select();
-    try { document.execCommand("copy"); done(); } catch (e) { /* user copies manually */ }
+    manual();
   }
 }
 
