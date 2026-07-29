@@ -106,7 +106,7 @@ func TestMarkWithoutStatusPreservesUploadedState(t *testing.T) {
 	}
 	if err := store.Mark(1, 2, SeenLecture{
 		Status: StatusUploaded, OutputPath: "/tmp/a.mp3", NotebookID: "nb", SourceID: "src",
-		UploadKey: "impartus:1:2:7",
+		UploadKey: "impartus:1:2:7", SeqNo: 7, Topic: "original", StartTime: "2026-07-29T10:00:00Z",
 	}, 7); err != nil {
 		t.Fatal(err)
 	}
@@ -115,8 +115,16 @@ func TestMarkWithoutStatusPreservesUploadedState(t *testing.T) {
 	}
 	seen, _ := store.Get(1, 2, 7)
 	if seen.Status != StatusUploaded || !seen.Uploaded || seen.SourceID != "src" ||
-		seen.NotebookID != "nb" || seen.UploadKey != "impartus:1:2:7" {
+		seen.NotebookID != "nb" || seen.UploadKey != "impartus:1:2:7" ||
+		seen.SeqNo != 7 || seen.Topic != "updated" || seen.StartTime != "2026-07-29T10:00:00Z" {
 		t.Fatalf("uploaded state regressed: %+v", seen)
+	}
+	if err := store.Mark(1, 2, SeenLecture{Status: StatusFailed, Error: "retry"}, 7); err != nil {
+		t.Fatal(err)
+	}
+	seen, _ = store.Get(1, 2, 7)
+	if seen.SeqNo != 7 || seen.Topic != "updated" || seen.StartTime != "2026-07-29T10:00:00Z" {
+		t.Fatalf("lecture metadata regressed: %+v", seen)
 	}
 }
 

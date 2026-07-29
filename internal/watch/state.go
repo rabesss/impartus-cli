@@ -257,6 +257,15 @@ func mergeSeenLecture(existing, lecture SeenLecture) SeenLecture {
 	if lecture.FirstSeenAt == "" {
 		lecture.FirstSeenAt = existing.FirstSeenAt
 	}
+	if lecture.SeqNo == 0 {
+		lecture.SeqNo = existing.SeqNo
+	}
+	if lecture.Topic == "" {
+		lecture.Topic = existing.Topic
+	}
+	if lecture.StartTime == "" {
+		lecture.StartTime = existing.StartTime
+	}
 	if lecture.Attempts == 0 {
 		lecture.Attempts = existing.Attempts
 	}
