@@ -249,12 +249,24 @@ func (w *Watcher) processLecture(ctx context.Context, target config.WatchTarget,
 		w.logf("watch: dry-run would download+upload %q", title)
 		return nil
 	}
-	if w.audio == nil {
-		return fmt.Errorf("audio producer is not configured")
-	}
 
 	if err := w.store.Mark(target.SubjectID, target.SessionID, seen, lecture.TTID); err != nil {
 		return fmt.Errorf("persist pending state: %w", err)
+	}
+
+	if reconcileOnly {
+		if w.uploader == nil {
+			return fmt.Errorf("uploader is not configured")
+		}
+		// Reconciliation only needs the durable notebook id, title, and upload
+		// key. Audio may have been pruned or this state may have moved to a new
+		// host; never re-download it merely to list provider sources.
+		return w.processUpload(
+			ctx, target, lecture, existing.OutputPath, title, true, seen, result,
+		)
+	}
+	if w.audio == nil {
+		return fmt.Errorf("audio producer is not configured")
 	}
 
 	output, downloaded, err := w.ensureAudio(ctx, target, lecture, existing, &seen)
@@ -381,15 +393,20 @@ func (w *Watcher) pendingLecture(
 		key = lectureUploadKey(target, lecture)
 	}
 	status := StatusPending
+	notebookID := firstNonEmpty(target.NotebookID, w.opts.NotebookID, existing.NotebookID)
 	if existing.Status == StatusAmbiguous {
 		status = StatusAmbiguous
+		// An in-flight add belongs to the notebook selected when the provider
+		// boundary was crossed. Configuration changes must not redirect its
+		// reconciliation to another notebook.
+		notebookID = firstNonEmpty(existing.NotebookID, target.NotebookID, w.opts.NotebookID)
 	}
 	return lectureTitle(lecture, key), existing, SeenLecture{
 		Status:     status,
 		SeqNo:      lecture.SeqNo,
 		Topic:      lecture.Topic,
 		StartTime:  lecture.StartTime,
-		NotebookID: firstNonEmpty(target.NotebookID, w.opts.NotebookID, existing.NotebookID),
+		NotebookID: notebookID,
 		UploadKey:  key,
 		Attempts:   existing.Attempts + 1,
 	}

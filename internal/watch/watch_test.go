@@ -325,8 +325,11 @@ func TestRunCycleReconcilesAmbiguousUploadWithoutAnotherAdd(t *testing.T) {
 	}
 
 	reconcileOpts := opts
-	reconcileOpts.NotebookID = ""
-	second := New(testCfg(), fakeSource{lectures: lectures}, &fakeAudio{}, uploader, store, reconcileOpts)
+	reconcileOpts.NotebookID = "reconfigured-nb"
+	if removeErr := os.Remove(out); removeErr != nil {
+		t.Fatal(removeErr)
+	}
+	second := New(testCfg(), fakeSource{lectures: lectures}, nil, uploader, store, reconcileOpts)
 	result, err = second.RunCycle(context.Background())
 	if err != nil {
 		t.Fatalf("second cycle: %v", err)
@@ -336,7 +339,7 @@ func TestRunCycleReconcilesAmbiguousUploadWithoutAnotherAdd(t *testing.T) {
 			result, uploader.calls, uploader.reconcileCalls)
 	}
 	if len(uploader.reconcileNbs) != 1 || uploader.reconcileNbs[0] != "nb" {
-		t.Fatalf("reconciliation did not preserve stored notebook id: %v", uploader.reconcileNbs)
+		t.Fatalf("reconfiguration redirected ambiguous reconciliation: %v", uploader.reconcileNbs)
 	}
 	seen, _ = store.Get(1, 2, 10)
 	if seen.Status != StatusAmbiguous {
@@ -345,7 +348,7 @@ func TestRunCycleReconcilesAmbiguousUploadWithoutAnotherAdd(t *testing.T) {
 
 	uploader.reconcileFound = true
 	uploader.reconcileResult = notebooklm.UploadResult{SourceID: "src-late", NotebookID: "nb"}
-	third := New(testCfg(), fakeSource{lectures: lectures}, &fakeAudio{}, uploader, store, reconcileOpts)
+	third := New(testCfg(), fakeSource{lectures: lectures}, nil, uploader, store, reconcileOpts)
 	result, err = third.RunCycle(context.Background())
 	if err != nil {
 		t.Fatalf("third cycle: %v", err)

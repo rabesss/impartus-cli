@@ -174,7 +174,7 @@ flowchart LR
 
   IMP[(Impartus APIs)]
   FS[(Local files + ffmpeg)]
-  NLMCLI[(notebooklm-py CLI)]
+  NLMCLI[(NotebookLM provider CLIs:<br/>notebooklm-py or nlm)]
 
   M1 --> CLI
   M2 --> CLI

@@ -185,11 +185,9 @@ func (u *Uploader) reconcileAmbiguousUpload(
 	notebookID, title, idempotencyKey string,
 	cause error,
 ) (UploadResult, error) {
-	inventory, err := u.listSources(ctx, notebookID)
-	if err == nil {
-		if existing, ok := findSourceByTitle(inventory.Sources, title, idempotencyKey); ok {
-			return existing, nil
-		}
+	existing, found, err := u.ReconcileUpload(ctx, notebookID, title, idempotencyKey)
+	if err == nil && found {
+		return existing, nil
 	}
 	message := "upload outcome is ambiguous; later watch cycles must reconcile without another add"
 	if err != nil {
