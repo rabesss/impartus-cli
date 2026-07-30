@@ -41,7 +41,11 @@ type providerUploadPolicy struct {
 }
 
 var providerUploadPolicies = map[Provider]providerUploadPolicy{
-	ProviderNotebookLMpy: {rateLimitOutcome: UploadRejected},
+	// notebooklm-py registers a source before starting and streaming its
+	// resumable upload. A rate limit can therefore arrive after the provider
+	// has allocated the source, even though this CLI path does not wait for
+	// indexing. Reconcile before any later add.
+	ProviderNotebookLMpy: {rateLimitOutcome: UploadAmbiguous},
 	ProviderNLM:          {rateLimitOutcome: UploadAmbiguous},
 }
 

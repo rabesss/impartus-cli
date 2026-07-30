@@ -250,7 +250,7 @@ func TestUploadReturnsTypedAmbiguousOutcomeWithoutSelfReconciliation(t *testing.
 	}
 }
 
-func TestUploadReturnsRateLimitWithoutAmbiguousReconciliation(t *testing.T) {
+func TestNotebookLMpyRateLimitRemainsAmbiguousAcrossRemoteUploadPhases(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "lec.mp3")
 	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
@@ -267,11 +267,11 @@ func TestUploadReturnsRateLimitWithoutAmbiguousReconciliation(t *testing.T) {
 		NotebookID: "routed", FilePath: file,
 		Title: "LEC 001 Intro [impartus:1:2:10]", IdempotencyKey: "impartus:1:2:10",
 	})
-	if result.Outcome != UploadRejected || !IsRateLimit(err) || IsAmbiguous(err) {
-		t.Fatalf("rate-limit rejection must remain safely retryable: result=%+v err=%v", result, err)
+	if result.Outcome != UploadAmbiguous || !IsAmbiguous(err) {
+		t.Fatalf("notebooklm-py rate limit must remain fail-closed: result=%+v err=%v", result, err)
 	}
 	if len(runner.calls) != 1 {
-		t.Fatalf("rate-limit rejection triggered an extra provider command: %v", runner.calls)
+		t.Fatalf("rate-limit ambiguity triggered hidden reconciliation: %v", runner.calls)
 	}
 }
 
