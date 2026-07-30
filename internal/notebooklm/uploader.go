@@ -129,6 +129,23 @@ func (u *Uploader) UploadToNotebook(ctx context.Context, notebookID, filePath, t
 	})
 }
 
+// ReconcileUpload looks up an idempotent source without issuing another add.
+func (u *Uploader) ReconcileUpload(
+	ctx context.Context,
+	notebookID, title, idempotencyKey string,
+) (UploadResult, bool, error) {
+	token := idempotencyToken(idempotencyKey)
+	if token == "" || !strings.Contains(title, token) {
+		return UploadResult{}, false, fmt.Errorf("upload title must contain idempotency key")
+	}
+	inventory, err := u.listSources(ctx, notebookID)
+	if err != nil {
+		return UploadResult{}, false, fmt.Errorf("reconcile notebook after ambiguous upload: %w", err)
+	}
+	result, found := findSourceByTitle(inventory.Sources, title, idempotencyKey)
+	return result, found, nil
+}
+
 func (u *Uploader) prepareIdempotentUpload(
 	ctx context.Context,
 	notebookID, title, idempotencyKey string,
@@ -166,7 +183,7 @@ func (u *Uploader) reconcileAmbiguousUpload(
 			return existing, nil
 		}
 	}
-	message := "upload outcome is ambiguous; the next watch cycle will reconcile before another add"
+	message := "upload outcome is ambiguous; later watch cycles must reconcile without another add"
 	if err != nil {
 		message += ": " + trimForError(err.Error())
 	}

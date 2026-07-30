@@ -176,6 +176,33 @@ func TestNeedsWorkResumesDownloaded(t *testing.T) {
 	}
 }
 
+func TestNeedsWorkReconcilesAmbiguousOnlyWhenUploadEnabled(t *testing.T) {
+	store, err := LoadStore(filepath.Join(t.TempDir(), "s.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.Mark(1, 2, SeenLecture{
+		Status: StatusAmbiguous, OutputPath: "/tmp/a.mp3", UploadKey: "impartus:1:2:7",
+	}, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !store.NeedsWork(1, 2, 7, true) {
+		t.Fatalf("ambiguous lecture should be reconciled when upload is enabled")
+	}
+	if store.NeedsWork(1, 2, 7, false) {
+		t.Fatalf("download-only mode should not process an ambiguous remote upload")
+	}
+	reloaded, err := LoadStore(filepath.Join(filepath.Dir(store.path), "s.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen, ok := reloaded.Get(1, 2, 7)
+	if !ok || seen.UploadKey != "impartus:1:2:7" {
+		t.Fatalf("ambiguous upload key was not durable: %+v ok=%v", seen, ok)
+	}
+}
+
 func TestCourseKeyAndSnapshot(t *testing.T) {
 	if got := CourseKey(12, 34); got != "12:34" {
 		t.Fatalf("CourseKey = %q", got)

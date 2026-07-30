@@ -25,6 +25,10 @@ const (
 	StatusDownloaded LectureStatus = "downloaded"
 	// StatusUploaded means the lecture was uploaded successfully.
 	StatusUploaded LectureStatus = "uploaded"
+	// StatusAmbiguous means an add is in flight or may have succeeded, and
+	// future cycles must only reconcile the source list, never issue another
+	// add automatically.
+	StatusAmbiguous LectureStatus = "ambiguous"
 	// StatusFailed means the last attempt failed and should be retried.
 	StatusFailed LectureStatus = "failed"
 )
@@ -172,7 +176,7 @@ func (s *Store) NeedsWork(subjectID, sessionID, ttid int, uploadEnabled bool) bo
 	switch seen.Status {
 	case StatusUploaded:
 		return false
-	case StatusDownloaded:
+	case StatusDownloaded, StatusAmbiguous:
 		return uploadEnabled // resume upload without re-download
 	case StatusFailed, StatusPending:
 		return true

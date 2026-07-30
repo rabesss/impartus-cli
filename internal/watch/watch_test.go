@@ -45,22 +45,37 @@ func (f *fakeAudio) DownloadAndJoinPlaylist(context.Context, client.ParsedPlayli
 }
 
 type fakeUploader struct {
-	result      notebooklm.UploadResult
-	err         error
-	calls       int
-	notebookIDs []string
-	paths       []string
-	titles      []string
-	uploadKeys  []string
+	result          notebooklm.UploadResult
+	err             error
+	calls           int
+	notebookIDs     []string
+	paths           []string
+	titles          []string
+	uploadKeys      []string
+	reconcileResult notebooklm.UploadResult
+	reconcileFound  bool
+	reconcileErr    error
+	reconcileCalls  int
+	reconcileNbs    []string
+	beforeUpload    func()
 }
 
 func (f *fakeUploader) UploadToNotebook(_ context.Context, notebookID, path, title, uploadKey string) (notebooklm.UploadResult, error) {
+	if f.beforeUpload != nil {
+		f.beforeUpload()
+	}
 	f.calls++
 	f.notebookIDs = append(f.notebookIDs, notebookID)
 	f.paths = append(f.paths, path)
 	f.titles = append(f.titles, title)
 	f.uploadKeys = append(f.uploadKeys, uploadKey)
 	return f.result, f.err
+}
+
+func (f *fakeUploader) ReconcileUpload(_ context.Context, notebookID, _, _ string) (notebooklm.UploadResult, bool, error) {
+	f.reconcileCalls++
+	f.reconcileNbs = append(f.reconcileNbs, notebookID)
+	return f.reconcileResult, f.reconcileFound, f.reconcileErr
 }
 
 func (f *fakeUploader) Doctor(context.Context) error { return nil }
@@ -105,14 +120,16 @@ func TestFilterEmptyLecturesHandlesBoundedPlaceholderVariants(t *testing.T) {
 		{TTID: 3, Topic: "There will be no class."},
 		{TTID: 4, Topic: "No lecture—holiday"},
 		{TTID: 5, Topic: "No class — holiday"},
-		{TTID: 6, Topic: "Discussion: why there was no class"},
-		{TTID: 7, Topic: "No classroom available: remote lecture"},
+		{TTID: 6, Topic: "No class! - Holiday"},
+		{TTID: 7, Topic: "No class:Holiday"},
+		{TTID: 8, Topic: "Discussion: why there was no class"},
+		{TTID: 9, Topic: "No classroom available: remote lecture"},
 	}
 	filtered := filterEmptyLectures(lectures)
 	if len(filtered) != 2 {
 		t.Fatalf("expected only legitimate lecture titles to remain, got %+v", filtered)
 	}
-	if filtered[0].TTID != 6 || filtered[1].TTID != 7 {
+	if filtered[0].TTID != 8 || filtered[1].TTID != 9 {
 		t.Fatalf("bounded placeholder matching removed legitimate lectures: %+v", filtered)
 	}
 }
@@ -256,6 +273,125 @@ func TestRunCycleUploadFailureResumesExistingAudio(t *testing.T) {
 	}
 	if secondAudio.calls != 0 || result.Downloaded != 0 || result.Uploaded != 1 {
 		t.Fatalf("retry re-downloaded audio: result=%+v downloads=%d", result, secondAudio.calls)
+	}
+}
+
+func TestRunCycleReconcilesAmbiguousUploadWithoutAnotherAdd(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := LoadStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lectures := client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro"}}
+	uploader := &fakeUploader{
+		err: &notebooklm.Error{Kind: notebooklm.ErrAmbiguous, Message: "outcome unknown"},
+	}
+	opts := Options{
+		SubjectID: 1, SessionID: 2, Once: true, Upload: true, NotebookID: "nb",
+		MaxRetries: 1, Log: io.Discard,
+	}
+	first := New(testCfg(), fakeSource{lectures: lectures},
+		&fakeAudio{join: downloader.JoinResult{LeftOutput: out}}, uploader, store, opts)
+	result, err := first.RunCycle(context.Background())
+	if err != nil {
+		t.Fatalf("first cycle: %v", err)
+	}
+	if result.Failed != 1 || uploader.calls != 1 {
+		t.Fatalf("expected one ambiguous add: result=%+v uploadCalls=%d", result, uploader.calls)
+	}
+	seen, ok := store.Get(1, 2, 10)
+	if !ok || seen.Status != StatusAmbiguous {
+		t.Fatalf("ambiguous outcome was not durable: %+v ok=%v", seen, ok)
+	}
+
+	downloadOnlyOpts := opts
+	downloadOnlyOpts.Upload = false
+	downloadOnly := New(testCfg(), fakeSource{lectures: lectures}, &fakeAudio{}, uploader, store, downloadOnlyOpts)
+	result, err = downloadOnly.RunCycle(context.Background())
+	if err != nil {
+		t.Fatalf("download-only cycle: %v", err)
+	}
+	if result.Skipped != 1 || uploader.calls != 1 || uploader.reconcileCalls != 0 {
+		t.Fatalf("download-only cycle disturbed ambiguous upload: result=%+v uploadCalls=%d reconcileCalls=%d",
+			result, uploader.calls, uploader.reconcileCalls)
+	}
+	seen, _ = store.Get(1, 2, 10)
+	if seen.Status != StatusAmbiguous {
+		t.Fatalf("download-only cycle cleared ambiguous state: %+v", seen)
+	}
+
+	reconcileOpts := opts
+	reconcileOpts.NotebookID = ""
+	second := New(testCfg(), fakeSource{lectures: lectures}, &fakeAudio{}, uploader, store, reconcileOpts)
+	result, err = second.RunCycle(context.Background())
+	if err != nil {
+		t.Fatalf("second cycle: %v", err)
+	}
+	if result.Failed != 1 || uploader.calls != 1 || uploader.reconcileCalls != 1 {
+		t.Fatalf("missing source triggered another add: result=%+v uploadCalls=%d reconcileCalls=%d",
+			result, uploader.calls, uploader.reconcileCalls)
+	}
+	if len(uploader.reconcileNbs) != 1 || uploader.reconcileNbs[0] != "nb" {
+		t.Fatalf("reconciliation did not preserve stored notebook id: %v", uploader.reconcileNbs)
+	}
+	seen, _ = store.Get(1, 2, 10)
+	if seen.Status != StatusAmbiguous {
+		t.Fatalf("unresolved ambiguity was not preserved: %+v", seen)
+	}
+
+	uploader.reconcileFound = true
+	uploader.reconcileResult = notebooklm.UploadResult{SourceID: "src-late", NotebookID: "nb"}
+	third := New(testCfg(), fakeSource{lectures: lectures}, &fakeAudio{}, uploader, store, reconcileOpts)
+	result, err = third.RunCycle(context.Background())
+	if err != nil {
+		t.Fatalf("third cycle: %v", err)
+	}
+	if result.Uploaded != 1 || uploader.calls != 1 || uploader.reconcileCalls != 2 {
+		t.Fatalf("late source was not reconciled: result=%+v uploadCalls=%d reconcileCalls=%d",
+			result, uploader.calls, uploader.reconcileCalls)
+	}
+	seen, _ = store.Get(1, 2, 10)
+	if seen.Status != StatusUploaded || seen.SourceID != "src-late" {
+		t.Fatalf("late source did not complete durable state: %+v", seen)
+	}
+}
+
+func TestRunCyclePersistsReconciliationOnlyIntentBeforeAdd(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := LoadStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var statusAtProviderCall LectureStatus
+	uploader := &fakeUploader{
+		result: notebooklm.UploadResult{SourceID: "src"},
+		beforeUpload: func() {
+			seen, _ := store.Get(1, 2, 10)
+			statusAtProviderCall = seen.Status
+		},
+	}
+	w := New(testCfg(), fakeSource{lectures: client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro"}}},
+		&fakeAudio{join: downloader.JoinResult{LeftOutput: out}}, uploader, store, Options{
+			SubjectID: 1, SessionID: 2, Once: true, Upload: true, NotebookID: "nb",
+			MaxRetries: 1, Log: io.Discard,
+		})
+	result, err := w.RunCycle(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if statusAtProviderCall != StatusAmbiguous {
+		t.Fatalf("provider add began before reconciliation-only intent was durable: status=%q", statusAtProviderCall)
+	}
+	if result.Uploaded != 1 {
+		t.Fatalf("successful upload did not complete after intent persistence: %+v", result)
 	}
 }
 

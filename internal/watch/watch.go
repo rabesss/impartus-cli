@@ -30,6 +30,7 @@ type AudioProducer interface {
 // SourceUploader uploads a local audio file to NotebookLM.
 type SourceUploader interface {
 	UploadToNotebook(ctx context.Context, notebookID, filePath, title, idempotencyKey string) (notebooklm.UploadResult, error)
+	ReconcileUpload(ctx context.Context, notebookID, title, idempotencyKey string) (notebooklm.UploadResult, bool, error)
 	Doctor(ctx context.Context) error
 }
 
@@ -241,6 +242,7 @@ func (w *Watcher) runTarget(ctx context.Context, target config.WatchTarget, limi
 
 func (w *Watcher) processLecture(ctx context.Context, target config.WatchTarget, lecture client.Lecture, result *CycleResult) error {
 	title, existing, seen := w.pendingLecture(target, lecture)
+	reconcileOnly := existing.Status == StatusAmbiguous
 	w.logf("watch: %s new lecture seq=%d ttid=%d topic=%q", targetLabel(target), lecture.SeqNo, lecture.TTID, lecture.Topic)
 
 	if w.opts.DryRun {
@@ -278,16 +280,21 @@ func (w *Watcher) processLecture(ctx context.Context, target config.WatchTarget,
 	if w.uploader == nil {
 		return fmt.Errorf("uploader is not configured")
 	}
+	return w.processUpload(ctx, target, lecture, output, title, reconcileOnly, seen, result)
+}
 
-	upload, uploadErr := w.uploadWithRetries(ctx, seen.NotebookID, output, title, seen.UploadKey)
+func (w *Watcher) processUpload(
+	ctx context.Context,
+	target config.WatchTarget,
+	lecture client.Lecture,
+	output, title string,
+	reconcileOnly bool,
+	seen SeenLecture,
+	result *CycleResult,
+) error {
+	upload, uploadErr := w.uploadOrReconcile(ctx, target, lecture, output, title, reconcileOnly, &seen)
 	if uploadErr != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
-		}
-		seen.Status = StatusFailed
-		seen.Error = uploadErr.Error()
-		_ = w.store.Mark(target.SubjectID, target.SessionID, seen, lecture.TTID) //nolint:errcheck
-		return uploadErr
+		return w.persistUploadError(ctx, target, lecture, reconcileOnly, seen, uploadErr)
 	}
 	seen.Status = StatusUploaded
 	seen.Uploaded = true
@@ -308,6 +315,62 @@ func (w *Watcher) processLecture(ctx context.Context, target config.WatchTarget,
 	return nil
 }
 
+func (w *Watcher) uploadOrReconcile(
+	ctx context.Context,
+	target config.WatchTarget,
+	lecture client.Lecture,
+	output, title string,
+	reconcileOnly bool,
+	seen *SeenLecture,
+) (notebooklm.UploadResult, error) {
+	var upload notebooklm.UploadResult
+	var uploadErr error
+	if reconcileOnly {
+		var found bool
+		upload, found, uploadErr = w.uploader.ReconcileUpload(
+			ctx, seen.NotebookID, title, seen.UploadKey,
+		)
+		if uploadErr == nil && !found {
+			uploadErr = &notebooklm.Error{
+				Kind:    notebooklm.ErrAmbiguous,
+				Message: "ambiguous NotebookLM upload is not visible yet; refusing automatic re-add",
+			}
+		}
+	} else {
+		// Persist the uncertain/in-flight phase before crossing the provider
+		// boundary. A process crash during source add must resume by listing,
+		// never by issuing a second add.
+		seen.Status = StatusAmbiguous
+		seen.Error = "NotebookLM upload is in flight; reconcile before another add"
+		if err := w.store.Mark(target.SubjectID, target.SessionID, *seen, lecture.TTID); err != nil {
+			return notebooklm.UploadResult{}, fmt.Errorf("persist watch state before NotebookLM upload: %w", err)
+		}
+		upload, uploadErr = w.uploadWithRetries(ctx, seen.NotebookID, output, title, seen.UploadKey)
+	}
+	return upload, uploadErr
+}
+
+func (w *Watcher) persistUploadError(
+	ctx context.Context,
+	target config.WatchTarget,
+	lecture client.Lecture,
+	reconcileOnly bool,
+	seen SeenLecture,
+	uploadErr error,
+) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	if reconcileOnly || notebooklm.IsAmbiguous(uploadErr) {
+		seen.Status = StatusAmbiguous
+	} else {
+		seen.Status = StatusFailed
+	}
+	seen.Error = uploadErr.Error()
+	_ = w.store.Mark(target.SubjectID, target.SessionID, seen, lecture.TTID) //nolint:errcheck
+	return uploadErr
+}
+
 func (w *Watcher) pendingLecture(
 	target config.WatchTarget,
 	lecture client.Lecture,
@@ -317,12 +380,16 @@ func (w *Watcher) pendingLecture(
 	if key == "" {
 		key = lectureUploadKey(target, lecture)
 	}
+	status := StatusPending
+	if existing.Status == StatusAmbiguous {
+		status = StatusAmbiguous
+	}
 	return lectureTitle(lecture, key), existing, SeenLecture{
-		Status:     StatusPending,
+		Status:     status,
 		SeqNo:      lecture.SeqNo,
 		Topic:      lecture.Topic,
 		StartTime:  lecture.StartTime,
-		NotebookID: firstNonEmpty(target.NotebookID, w.opts.NotebookID),
+		NotebookID: firstNonEmpty(target.NotebookID, w.opts.NotebookID, existing.NotebookID),
 		UploadKey:  key,
 		Attempts:   existing.Attempts + 1,
 	}
@@ -338,8 +405,10 @@ func (w *Watcher) ensureAudio(
 	if existing.OutputPath != "" {
 		if _, err := os.Stat(existing.OutputPath); err == nil {
 			seen.OutputPath = existing.OutputPath
-			seen.Status = StatusDownloaded
-			seen.Error = ""
+			if seen.Status != StatusAmbiguous {
+				seen.Status = StatusDownloaded
+				seen.Error = ""
+			}
 			if err := w.store.Mark(target.SubjectID, target.SessionID, *seen, lecture.TTID); err != nil {
 				return "", false, fmt.Errorf("persist resumed download state: %w", err)
 			}
@@ -372,8 +441,10 @@ func (w *Watcher) ensureAudio(
 		return "", false, fmt.Errorf("download produced no audio output for ttid=%d", lecture.TTID)
 	}
 	seen.OutputPath = output
-	seen.Status = StatusDownloaded
-	seen.Error = ""
+	if seen.Status != StatusAmbiguous {
+		seen.Status = StatusDownloaded
+		seen.Error = ""
+	}
 	if err := w.store.Mark(target.SubjectID, target.SessionID, *seen, lecture.TTID); err != nil {
 		return "", false, fmt.Errorf("persist downloaded state: %w", err)
 	}
@@ -448,6 +519,7 @@ func filterEmptyLectures(lectures client.Lectures) client.Lectures {
 	for _, lecture := range lectures {
 		topic := strings.Trim(strings.ToLower(strings.TrimSpace(lecture.Topic)), " \t\r\n.!?:;,_-–—")
 		topic = strings.NewReplacer("–", "-", "—", "-").Replace(topic)
+		topic = strings.NewReplacer("!", " ", ":", " ", ";", " ", ",", " ").Replace(topic)
 		topic = strings.Join(strings.Fields(topic), " ")
 		topic = strings.NewReplacer(" - ", "-", " -", "-", "- ", "-").Replace(topic)
 		switch topic {

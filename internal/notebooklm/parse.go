@@ -214,6 +214,13 @@ func IsAuth(err error) bool {
 	return errors.As(err, &nlmErr) && nlmErr.Kind == ErrAuth
 }
 
+// IsAmbiguous reports whether an add may have succeeded remotely and must be
+// reconciled without issuing another write.
+func IsAmbiguous(err error) bool {
+	var nlmErr *Error
+	return errors.As(err, &nlmErr) && nlmErr.Kind == ErrAmbiguous
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, v := range values {
 		if strings.TrimSpace(v) != "" {

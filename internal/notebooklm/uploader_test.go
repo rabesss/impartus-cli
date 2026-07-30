@@ -324,6 +324,31 @@ func TestUploadDefersAmbiguousWriteWhenReconciliationFindsNothing(t *testing.T) 
 	}
 }
 
+func TestReconcileUploadDoesNotAddWhenSourceIsStillMissing(t *testing.T) {
+	runner := &seqRunner{responses: []struct {
+		stdout string
+		err    error
+	}{
+		{stdout: `[]`},
+	}}
+	u := NewWithRunner(Config{CLIPath: "notebooklm"}, runner)
+	result, found, err := u.ReconcileUpload(
+		context.Background(),
+		"routed",
+		"[impartus:1:2:10] LEC 001 Intro",
+		"impartus:1:2:10",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found || result.SourceID != "" {
+		t.Fatalf("missing source reported as reconciled: result=%+v found=%v", result, found)
+	}
+	if len(runner.calls) != 1 || !strings.Contains(strings.Join(runner.calls[0], " "), "source list") {
+		t.Fatalf("reconciliation issued an unexpected provider command: %v", runner.calls)
+	}
+}
+
 func TestUploadChecksCapOnRoutedNotebook(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "lec.mp3")

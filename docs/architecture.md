@@ -109,7 +109,10 @@ flowchart TD
   Add -->|success| Mark2["state: uploaded + sourceId"]
   Add -->|ambiguous| Recheck["reconcile exact upload key token"]
   Recheck -->|found| Mark2
-  Recheck -->|not found or unreadable| Retry
+  Recheck -->|not found or unreadable| Hold["state: ambiguous; reconcile-only"]
+  Hold --> SafeRecon["list routed notebook sources; no add allowed"]
+  SafeRecon -->|found| Mark2
+  SafeRecon -->|absent or unreadable| Hold
   Mark2 --> Clean["optional delete local audio"]
   DL -->|error| Retry["state: failed; retry next cycle"]
   Recon -->|auth error| Abort["abort cycle"]
