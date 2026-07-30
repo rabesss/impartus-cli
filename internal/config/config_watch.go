@@ -119,11 +119,11 @@ func (c *Config) ApplyWatchMediaDefaults() {
 }
 
 func (c *Config) validateWatch() error {
-	if err := c.validateWatchShape(); err != nil {
-		return err
-	}
 	if !c.Watch.Enabled {
 		return nil
+	}
+	if err := c.validateWatchShape(); err != nil {
+		return err
 	}
 	targets := c.ResolvedTargets()
 	if len(targets) == 0 {
@@ -172,6 +172,9 @@ func (c *Config) validateWatchShape() error {
 }
 
 func (c *Config) validateNotebookLM() error {
+	if !c.Watch.Enabled {
+		return nil
+	}
 	nlm := c.Watch.NotebookLM
 	if !OneOf(nlm.Provider, "notebooklm-py", "nlm") {
 		return fmt.Errorf("watch.notebooklm.provider must be one of: notebooklm-py, nlm")

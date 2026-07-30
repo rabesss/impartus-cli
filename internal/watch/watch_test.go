@@ -386,6 +386,80 @@ func TestRunCycleReconcilesAmbiguousUploadWithoutAnotherAdd(t *testing.T) {
 	}
 }
 
+func TestRunCycleKeepsAmbiguousStateWhenReconciliationFails(t *testing.T) {
+	store, err := LoadStore(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markErr := store.Mark(1, 2, SeenLecture{
+		Status:     StatusAmbiguous,
+		SeqNo:      1,
+		Topic:      "Intro",
+		NotebookID: "nb",
+		UploadKey:  "impartus:1:2:10",
+	}, 10); markErr != nil {
+		t.Fatal(markErr)
+	}
+	uploader := &fakeUploader{
+		reconcileErr: &notebooklm.Error{Kind: notebooklm.ErrTransient, Message: "source list timed out"},
+	}
+	w := New(testCfg(), fakeSource{lectures: client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro"}}},
+		nil, uploader, store, Options{
+			Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb"}},
+			Once:    true, Upload: true, Log: io.Discard,
+		})
+
+	result, err := w.RunCycle(context.Background())
+	if err != nil {
+		t.Fatalf("reconciliation cycle: %v", err)
+	}
+	seen, ok := store.Get(1, 2, 10)
+	if result.Failed != 1 || !ok || seen.Status != StatusAmbiguous {
+		t.Fatalf("reconcile error lost fail-closed state: result=%+v seen=%+v ok=%v", result, seen, ok)
+	}
+	if uploader.calls != 0 || uploader.reconcileCalls != 1 {
+		t.Fatalf("reconcile error issued an add: uploadCalls=%d reconcileCalls=%d",
+			uploader.calls, uploader.reconcileCalls)
+	}
+}
+
+func TestPersistUploadErrorReportsStateWriteFailure(t *testing.T) {
+	store, err := LoadStore(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := SeenLecture{
+		Status:     StatusAmbiguous,
+		SeqNo:      1,
+		Topic:      "Intro",
+		NotebookID: "nb",
+		UploadKey:  "impartus:1:2:10",
+	}
+	if markErr := store.Mark(1, 2, initial, 10); markErr != nil {
+		t.Fatal(markErr)
+	}
+	persistErr := errors.New("state filesystem is read-only")
+	store.writeFile = func(string, []byte, os.FileMode) error { return persistErr }
+	uploadErr := errors.New("provider rejected upload")
+	w := &Watcher{store: store}
+
+	err = w.persistUploadError(
+		context.Background(),
+		config.WatchTarget{SubjectID: 1, SessionID: 2},
+		client.Lecture{TTID: 10},
+		notebooklm.UploadRejected,
+		initial,
+		uploadErr,
+	)
+	if !errors.Is(err, uploadErr) || !errors.Is(err, persistErr) {
+		t.Fatalf("expected upload and persistence failures, got %v", err)
+	}
+	seen, ok := store.Get(1, 2, 10)
+	if !ok || seen.Status != StatusAmbiguous {
+		t.Fatalf("failed state write must preserve fail-closed state: %+v ok=%v", seen, ok)
+	}
+}
+
 func TestRunCycleRetriesConfirmedRateLimitInsteadOfReconciling(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "lec.mp3")

@@ -64,6 +64,7 @@ func TestValidateWatchRejectsDuplicateTargets(t *testing.T) {
 func TestValidateNotebookLMRequiredWhenUploadEnabled(t *testing.T) {
 	cfg := minimalValidConfig()
 	cfg.ApplyDefaults()
+	cfg.Watch.Enabled = true
 	cfg.Watch.Upload = true
 	cfg.Watch.Targets = []WatchTarget{{SubjectID: 1, SessionID: 2}}
 	err := cfg.Validate()
@@ -79,6 +80,7 @@ func TestValidateNotebookLMRequiredWhenUploadEnabled(t *testing.T) {
 func TestValidateWatchIntervalBounds(t *testing.T) {
 	cfg := minimalValidConfig()
 	cfg.ApplyDefaults()
+	cfg.Watch.Enabled = true
 	cfg.Watch.PollInterval = "1m"
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "watch.pollInterval") {
@@ -94,6 +96,8 @@ func TestWatchCountDefaultsAndNegativeValidationAgree(t *testing.T) {
 		t.Fatalf("watch count defaults changed: %+v", cfg.Watch)
 	}
 
+	cfg.Watch.Enabled = true
+	cfg.Watch.Targets = []WatchTarget{{SubjectID: 1, SessionID: 2}}
 	cfg.Watch.MaxLecturesPerCycle = -1
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "maxLecturesPerCycle") {
 		t.Fatalf("expected negative lecture limit rejection, got %v", err)
@@ -113,10 +117,29 @@ func TestWatchCountDefaultsAndNegativeValidationAgree(t *testing.T) {
 func TestValidateNotebookLMProvider(t *testing.T) {
 	cfg := minimalValidConfig()
 	cfg.ApplyDefaults()
+	cfg.Watch.Enabled = true
+	cfg.Watch.Targets = []WatchTarget{{SubjectID: 1, SessionID: 2}}
 	cfg.Watch.NotebookLM.Provider = "other"
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "provider") {
 		t.Fatalf("expected provider error, got %v", err)
+	}
+}
+
+func TestValidateIgnoresDisabledWatchSettings(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.ApplyDefaults()
+	cfg.Watch.Enabled = false
+	cfg.Watch.Upload = true
+	cfg.Watch.PollInterval = "not-a-duration"
+	cfg.Watch.MaxLecturesPerCycle = -1
+	cfg.Watch.MaxUploadRetries = -1
+	cfg.Watch.NotebookLM.Provider = "unsupported"
+	cfg.Watch.NotebookLM.UploadTimeout = "not-a-duration"
+	cfg.Watch.NotebookLM.MaxSourcesPerNotebook = -1
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("disabled watch settings broke unrelated config validation: %v", err)
 	}
 }
 

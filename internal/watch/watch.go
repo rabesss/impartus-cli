@@ -339,7 +339,9 @@ func (w *Watcher) uploadOrReconcile(
 		upload, found, uploadErr = w.uploader.ReconcileUpload(
 			ctx, seen.NotebookID, title, seen.UploadKey,
 		)
-		if uploadErr == nil && !found {
+		if uploadErr != nil {
+			upload.Outcome = notebooklm.UploadAmbiguous
+		} else if !found {
 			upload.Outcome = notebooklm.UploadAmbiguous
 			uploadErr = &notebooklm.Error{
 				Kind:    notebooklm.ErrAmbiguous,
@@ -377,7 +379,12 @@ func (w *Watcher) persistUploadError(
 		seen.Status = StatusFailed
 	}
 	seen.Error = uploadErr.Error()
-	_ = w.store.Mark(target.SubjectID, target.SessionID, seen, lecture.TTID) //nolint:errcheck
+	if persistErr := w.store.Mark(target.SubjectID, target.SessionID, seen, lecture.TTID); persistErr != nil {
+		return errors.Join(
+			uploadErr,
+			fmt.Errorf("persist watch state after upload failure: %w", persistErr),
+		)
+	}
 	return uploadErr
 }
 
