@@ -324,6 +324,59 @@ func TestUploadDefersAmbiguousWriteWhenReconciliationFindsNothing(t *testing.T) 
 	}
 }
 
+func TestUploadReturnsRateLimitWithoutAmbiguousReconciliation(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &seqRunner{responses: []struct {
+		stdout string
+		err    error
+	}{
+		{stdout: `[]`},
+		{err: errors.New("HTTP 429 rate limit")},
+	}}
+	u := NewWithRunner(Config{CLIPath: "notebooklm"}, runner)
+	_, err := u.Upload(context.Background(), UploadRequest{
+		NotebookID: "routed", FilePath: file,
+		Title: "LEC 001 Intro [impartus:1:2:10]", IdempotencyKey: "impartus:1:2:10",
+	})
+	if !IsRateLimit(err) || IsAmbiguous(err) {
+		t.Fatalf("rate-limit rejection must remain safely retryable: %v", err)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("rate-limit rejection triggered ambiguous reconciliation: %v", runner.calls)
+	}
+}
+
+func TestNLMRateLimitRemainsAmbiguousBecauseWaitMayFollowCreation(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &seqRunner{responses: []struct {
+		stdout string
+		err    error
+	}{
+		{stdout: `[]`},
+		{err: errors.New("HTTP 429 rate limit")},
+		{stdout: `[]`},
+	}}
+	u := NewWithRunner(Config{Provider: ProviderNLM, CLIPath: "nlm"}, runner)
+	_, err := u.Upload(context.Background(), UploadRequest{
+		NotebookID: "routed", FilePath: file,
+		Title: "LEC 001 Intro [impartus:1:2:10]", IdempotencyKey: "impartus:1:2:10",
+	})
+	if !IsAmbiguous(err) {
+		t.Fatalf("nlm rate limit during --wait must remain ambiguous: %v", err)
+	}
+	if len(runner.calls) != 3 {
+		t.Fatalf("nlm rate limit did not reconcile possible creation: %v", runner.calls)
+	}
+}
+
 func TestReconcileUploadDoesNotAddWhenSourceIsStillMissing(t *testing.T) {
 	runner := &seqRunner{responses: []struct {
 		stdout string

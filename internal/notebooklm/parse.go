@@ -214,6 +214,13 @@ func IsAuth(err error) bool {
 	return errors.As(err, &nlmErr) && nlmErr.Kind == ErrAuth
 }
 
+// IsRateLimit reports whether an operation failed because of a rate or quota
+// limit.
+func IsRateLimit(err error) bool {
+	var nlmErr *Error
+	return errors.As(err, &nlmErr) && nlmErr.Kind == ErrRateLimit
+}
+
 // IsAmbiguous reports whether an add may have succeeded remotely and must be
 // reconciled without issuing another write.
 func IsAmbiguous(err error) bool {

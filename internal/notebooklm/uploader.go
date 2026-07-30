@@ -94,7 +94,15 @@ func (u *Uploader) executeUpload(
 			classifyErr = uploadCtx.Err()
 		}
 		classified := ClassifyError(classifyErr, stdout, stderr)
-		if req.IdempotencyKey == "" || IsAuth(classified) || !isTypedRetryable(classified) {
+		// A provider timeout or broken connection can happen after NotebookLM
+		// accepted the add, so those outcomes require reconciliation. The
+		// notebooklm-py add command has no post-add wait phase, which makes an
+		// explicit rate/quota response a pre-creation rejection that is safe to
+		// retry. nlm uses --wait, so its rate limit may instead come from polling
+		// a source that was already created and remains ambiguous.
+		if req.IdempotencyKey == "" || IsAuth(classified) ||
+			(u.cfg.Provider == ProviderNotebookLMpy && IsRateLimit(classified)) ||
+			!isTypedRetryable(classified) {
 			return UploadResult{}, classified
 		}
 		return u.reconcileAmbiguousUpload(ctx, notebookID, req.Title, req.IdempotencyKey, classified)

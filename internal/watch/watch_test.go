@@ -360,6 +360,48 @@ func TestRunCycleReconcilesAmbiguousUploadWithoutAnotherAdd(t *testing.T) {
 	}
 }
 
+func TestRunCycleRetriesConfirmedRateLimitInsteadOfReconciling(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := LoadStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lectures := client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro"}}
+	uploader := &fakeUploader{
+		err: &notebooklm.Error{Kind: notebooklm.ErrRateLimit, Message: "HTTP 429 rate limit"},
+	}
+	opts := Options{
+		SubjectID: 1, SessionID: 2, Once: true, Upload: true, NotebookID: "nb",
+		MaxRetries: 1, Log: io.Discard,
+	}
+	first := New(testCfg(), fakeSource{lectures: lectures},
+		&fakeAudio{join: downloader.JoinResult{LeftOutput: out}}, uploader, store, opts)
+	result, err := first.RunCycle(context.Background())
+	if err != nil {
+		t.Fatalf("rate-limited cycle: %v", err)
+	}
+	seen, ok := store.Get(1, 2, 10)
+	if result.Failed != 1 || !ok || seen.Status != StatusFailed {
+		t.Fatalf("rate limit was persisted as ambiguous: result=%+v seen=%+v ok=%v", result, seen, ok)
+	}
+
+	uploader.err = nil
+	uploader.result = notebooklm.UploadResult{SourceID: "src-retried", NotebookID: "nb"}
+	second := New(testCfg(), fakeSource{lectures: lectures}, &fakeAudio{}, uploader, store, opts)
+	result, err = second.RunCycle(context.Background())
+	if err != nil {
+		t.Fatalf("retry cycle: %v", err)
+	}
+	if result.Uploaded != 1 || uploader.calls != 2 || uploader.reconcileCalls != 0 {
+		t.Fatalf("confirmed rejection did not retry add: result=%+v uploadCalls=%d reconcileCalls=%d",
+			result, uploader.calls, uploader.reconcileCalls)
+	}
+}
+
 func TestRunCyclePersistsReconciliationOnlyIntentBeforeAdd(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "lec.mp3")
