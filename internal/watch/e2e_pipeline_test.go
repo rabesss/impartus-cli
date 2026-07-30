@@ -111,7 +111,7 @@ printf '%%s\n' '{"source_id":"src-e2e","title":"from-fake"}'
 		"--notebook\nnb-e2e",
 		"--type\nfile",
 		first.Outputs[0],
-		"LEC 001 Integration lecture [impartus:1:2:101]",
+		"[impartus:1:2:101] LEC 001 Integration lecture",
 	} {
 		if !strings.Contains(string(argv), want) {
 			t.Fatalf("NotebookLM argv missing %q:\n%s", want, argv)

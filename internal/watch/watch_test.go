@@ -98,6 +98,32 @@ func TestRunCycleDryRunDoesNotDownload(t *testing.T) {
 	}
 }
 
+func TestFilterEmptyLecturesHandlesBoundedPlaceholderVariants(t *testing.T) {
+	lectures := client.Lectures{
+		{TTID: 1, Topic: "No class!"},
+		{TTID: 2, Topic: "No Class - Holiday"},
+		{TTID: 3, Topic: "There will be no class."},
+		{TTID: 4, Topic: "No lecture—holiday"},
+		{TTID: 5, Topic: "No class — holiday"},
+		{TTID: 6, Topic: "Discussion: why there was no class"},
+		{TTID: 7, Topic: "No classroom available: remote lecture"},
+	}
+	filtered := filterEmptyLectures(lectures)
+	if len(filtered) != 2 {
+		t.Fatalf("expected only legitimate lecture titles to remain, got %+v", filtered)
+	}
+	if filtered[0].TTID != 6 || filtered[1].TTID != 7 {
+		t.Fatalf("bounded placeholder matching removed legitimate lectures: %+v", filtered)
+	}
+}
+
+func TestLectureTitlePrefixesStableUploadToken(t *testing.T) {
+	title := lectureTitle(client.Lecture{SeqNo: 7, Topic: "Distributed Systems"}, "impartus:1:2:10")
+	if title != "[impartus:1:2:10] LEC 007 Distributed Systems" {
+		t.Fatalf("lecture title = %q", title)
+	}
+}
+
 func TestRunCycleDownloadsUploadsAndSkipsSeen(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "lec.mp3")

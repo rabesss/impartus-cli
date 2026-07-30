@@ -2,6 +2,7 @@ package notebooklm
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -92,11 +93,15 @@ func buildNotebookLMpyUploadArgs(cfg Config, req UploadRequest, notebookID strin
 }
 
 func buildNLMUploadArgs(cfg Config, req UploadRequest, notebookID string) []string {
+	waitTimeout := (cfg.UploadTimeout + time.Second - 1) / time.Second
+	if waitTimeout < 1 {
+		waitTimeout = 1
+	}
 	args := []string{
 		"source", "add", notebookID,
 		"--file", req.FilePath,
 		"--wait",
-		"--wait-timeout", "1800",
+		"--wait-timeout", strconv.FormatInt(int64(waitTimeout), 10),
 		"--json",
 	}
 	if req.Title != "" {

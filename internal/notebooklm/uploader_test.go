@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeRunner struct {
@@ -90,6 +91,29 @@ func TestBuildUploadArgsNLM(t *testing.T) {
 			t.Fatalf("missing %q in %v", want, args)
 		}
 	}
+}
+
+func TestBuildUploadArgsNLMUsesConfiguredWaitTimeout(t *testing.T) {
+	args, err := BuildUploadArgs(Config{
+		Provider: ProviderNLM, NotebookID: "nb1", UploadTimeout: 45 * time.Minute,
+	}, UploadRequest{
+		FilePath: "/tmp/a.mp3", Title: "LEC 001",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, arg := range args {
+		if arg == "--wait-timeout" {
+			if i+1 >= len(args) {
+				t.Fatalf("nlm wait timeout value missing: args=%v", args)
+			}
+			if args[i+1] != "2700" {
+				t.Fatalf("nlm wait timeout = %q, want 2700; args=%v", args[i+1], args)
+			}
+			return
+		}
+	}
+	t.Fatalf("configured upload timeout missing from nlm args: %v", args)
 }
 
 func TestBuildAuthCheckArgsMatchesProviders(t *testing.T) {
@@ -184,6 +208,67 @@ func TestUploadReusesSourceWithMatchingIdempotentTitle(t *testing.T) {
 	if joined := strings.Join(runner.calls[0], " "); !strings.Contains(joined, "--notebook routed") ||
 		!strings.Contains(joined, "source list") {
 		t.Fatalf("wrong reconciliation target: %v", runner.calls[0])
+	}
+}
+
+func TestUploadReusesSourceByExactIdempotencyToken(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	title := "[impartus:1:2:10] LEC 001 A very long lecture topic"
+	runner := &seqRunner{responses: []struct {
+		stdout string
+		err    error
+	}{
+		{stdout: `[{"id":"existing","title":"[impartus:1:2:10] LEC 001 A very"}]`},
+	}}
+	u := NewWithRunner(Config{CLIPath: "notebooklm"}, runner)
+	result, err := u.Upload(context.Background(), UploadRequest{
+		NotebookID: "routed", FilePath: file, Title: title, IdempotencyKey: "impartus:1:2:10",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SourceID != "existing" || len(runner.calls) != 1 {
+		t.Fatalf("token-matched source was not reused: result=%+v calls=%v", result, runner.calls)
+	}
+}
+
+func TestUploadReusesLegacySuffixTitleByExactIdempotencyToken(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &seqRunner{responses: []struct {
+		stdout string
+		err    error
+	}{
+		{stdout: `[{"id":"existing","title":"LEC 001 Intro [impartus:1:2:10]"}]`},
+	}}
+	u := NewWithRunner(Config{CLIPath: "notebooklm"}, runner)
+	result, err := u.Upload(context.Background(), UploadRequest{
+		NotebookID: "routed", FilePath: file,
+		Title: "[impartus:1:2:10] LEC 001 Intro", IdempotencyKey: "impartus:1:2:10",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SourceID != "existing" || len(runner.calls) != 1 {
+		t.Fatalf("legacy token-matched source was not reused: result=%+v calls=%v", result, runner.calls)
+	}
+}
+
+func TestFindSourceByTitleDoesNotMatchPartialIdempotencyToken(t *testing.T) {
+	sources := []UploadResult{{SourceID: "wrong", Title: "[impartus:1:2:100] LEC 001 Intro"}}
+	if result, ok := findSourceByTitle(
+		sources,
+		"[impartus:1:2:10] LEC 001 Intro",
+		"impartus:1:2:10",
+	); ok {
+		t.Fatalf("partial idempotency token matched wrong source: %+v", result)
 	}
 }
 

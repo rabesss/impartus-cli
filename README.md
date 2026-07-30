@@ -379,7 +379,7 @@ multiple paths when multiple views or output forms are requested.
 
 Poll Impartus for new lectures across one or more `watch.targets`, download left-view audio at 144p, and optionally upload each file to NotebookLM. State phases are `pending → downloaded → uploaded` (plus `failed`); a crash after download resumes at upload without re-fetching chunks.
 
-Each watched lecture gets a deterministic upload key that is persisted before upload. The watcher lists the routed notebook before every source add and reuses an exact matching source, so an ambiguous provider response is reconciled on the next cycle instead of immediately issuing a duplicate add. The configured source cap is enforced against the actual target notebook.
+Each watched lecture gets a deterministic upload key that is persisted before upload and prefixed to the source title. The watcher lists the routed notebook before every source add and reuses a source containing that exact bracketed key token (including titles produced by older suffix-format releases), so an ambiguous provider response is reconciled on the next cycle instead of immediately issuing a duplicate add. The configured source cap is enforced against the actual target notebook.
 
 ```bash
 # One-shot dry run (list new lectures only)

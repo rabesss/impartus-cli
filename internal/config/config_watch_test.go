@@ -124,6 +124,29 @@ func TestValidateNotebookLMProvider(t *testing.T) {
 	}
 }
 
+func TestValidateLegacyNotebookLMUploadTimeout(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.ApplyDefaults()
+	cfg.Watch.NotebookLM.UploadTimeout = ""
+	cfg.NotebookLM.UploadTimeout = "not-a-duration"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "uploadTimeout") {
+		t.Fatalf("expected legacy upload timeout validation error, got %v", err)
+	}
+}
+
+func TestApplyDefaultsPreservesLegacyNotebookLMUploadTimeout(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.NotebookLM.UploadTimeout = "45m"
+	cfg.ApplyDefaults()
+	if cfg.Watch.NotebookLM.UploadTimeout != "45m" || cfg.NotebookLM.UploadTimeout != "45m" {
+		t.Fatalf("legacy upload timeout was not normalized before defaults: %+v", cfg.Watch.NotebookLM)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("preserved legacy upload timeout did not validate: %v", err)
+	}
+}
+
 func TestWatchNotebookLMCLIPathAliasIsPreserved(t *testing.T) {
 	cfg := minimalValidConfig()
 	cfg.Watch.NotebookLM.CLIPath = "/opt/tools/notebooklm"

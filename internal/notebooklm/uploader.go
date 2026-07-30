@@ -97,7 +97,7 @@ func (u *Uploader) executeUpload(
 		if req.IdempotencyKey == "" || IsAuth(classified) || !isTypedRetryable(classified) {
 			return UploadResult{}, classified
 		}
-		return u.reconcileAmbiguousUpload(ctx, notebookID, req.Title, classified)
+		return u.reconcileAmbiguousUpload(ctx, notebookID, req.Title, req.IdempotencyKey, classified)
 	}
 	result, parseErr := parseUploadResult(stdout, notebookID)
 	if parseErr != nil {
@@ -106,6 +106,7 @@ func (u *Uploader) executeUpload(
 				ctx,
 				notebookID,
 				req.Title,
+				req.IdempotencyKey,
 				fmt.Errorf("parse notebooklm upload response: %w", parseErr),
 			)
 		}
@@ -132,14 +133,15 @@ func (u *Uploader) prepareIdempotentUpload(
 	ctx context.Context,
 	notebookID, title, idempotencyKey string,
 ) (UploadResult, bool, error) {
-	if !strings.Contains(title, idempotencyKey) {
+	token := idempotencyToken(idempotencyKey)
+	if token == "" || !strings.Contains(title, token) {
 		return UploadResult{}, false, fmt.Errorf("upload title must contain idempotency key")
 	}
 	inventory, err := u.listSources(ctx, notebookID)
 	if err != nil {
 		return UploadResult{}, false, fmt.Errorf("reconcile notebook before upload: %w", err)
 	}
-	if existing, ok := findSourceByTitle(inventory.Sources, title); ok {
+	if existing, ok := findSourceByTitle(inventory.Sources, title, idempotencyKey); ok {
 		return existing, true, nil
 	}
 	if u.cfg.MaxSourcesPerNotebook > 0 && inventory.Count >= u.cfg.MaxSourcesPerNotebook {
@@ -153,10 +155,14 @@ func (u *Uploader) prepareIdempotentUpload(
 	return UploadResult{}, false, nil
 }
 
-func (u *Uploader) reconcileAmbiguousUpload(ctx context.Context, notebookID, title string, cause error) (UploadResult, error) {
+func (u *Uploader) reconcileAmbiguousUpload(
+	ctx context.Context,
+	notebookID, title, idempotencyKey string,
+	cause error,
+) (UploadResult, error) {
 	inventory, err := u.listSources(ctx, notebookID)
 	if err == nil {
-		if existing, ok := findSourceByTitle(inventory.Sources, title); ok {
+		if existing, ok := findSourceByTitle(inventory.Sources, title, idempotencyKey); ok {
 			return existing, nil
 		}
 	}
@@ -167,17 +173,28 @@ func (u *Uploader) reconcileAmbiguousUpload(ctx context.Context, notebookID, tit
 	return UploadResult{}, &Error{Kind: ErrAmbiguous, Message: message, Err: cause}
 }
 
-func findSourceByTitle(sources []UploadResult, title string) (UploadResult, bool) {
+func findSourceByTitle(sources []UploadResult, title, idempotencyKey string) (UploadResult, bool) {
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return UploadResult{}, false
 	}
+	token := idempotencyToken(idempotencyKey)
 	for _, source := range sources {
-		if strings.TrimSpace(source.Title) == title && strings.TrimSpace(source.SourceID) != "" {
+		sourceTitle := strings.TrimSpace(source.Title)
+		if strings.TrimSpace(source.SourceID) != "" &&
+			(sourceTitle == title || (token != "" && strings.Contains(sourceTitle, token))) {
 			return source, true
 		}
 	}
 	return UploadResult{}, false
+}
+
+func idempotencyToken(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ""
+	}
+	return "[" + key + "]"
 }
 
 func isTypedRetryable(err error) bool {

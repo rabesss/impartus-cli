@@ -446,10 +446,17 @@ func isRetryable(err error) bool {
 func filterEmptyLectures(lectures client.Lectures) client.Lectures {
 	filtered := make(client.Lectures, 0, len(lectures))
 	for _, lecture := range lectures {
-		topic := strings.Trim(strings.ToLower(strings.TrimSpace(lecture.Topic)), " .:-_")
+		topic := strings.Trim(strings.ToLower(strings.TrimSpace(lecture.Topic)), " \t\r\n.!?:;,_-–—")
+		topic = strings.NewReplacer("–", "-", "—", "-").Replace(topic)
+		topic = strings.Join(strings.Fields(topic), " ")
+		topic = strings.NewReplacer(" - ", "-", " -", "-", "- ", "-").Replace(topic)
 		switch topic {
 		case "no class", "no class today", "no class scheduled",
-			"no lecture", "no lecture today", "no lecture scheduled":
+			"no class-holiday", "no class holiday",
+			"there will be no class",
+			"no lecture", "no lecture today", "no lecture scheduled",
+			"no lecture-holiday", "no lecture holiday",
+			"there will be no lecture":
 			continue
 		}
 		filtered = append(filtered, lecture)
@@ -462,7 +469,7 @@ func lectureTitle(lecture client.Lecture, uploadKey string) string {
 	if topic == "" {
 		topic = "Lecture"
 	}
-	return fmt.Sprintf("LEC %03d %s [%s]", lecture.SeqNo, topic, uploadKey)
+	return fmt.Sprintf("[%s] LEC %03d %s", uploadKey, lecture.SeqNo, topic)
 }
 
 func lectureUploadKey(target config.WatchTarget, lecture client.Lecture) string {

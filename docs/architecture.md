@@ -104,10 +104,10 @@ flowchart TD
   DL --> Mark1["state: downloaded"]
   Mark1 --> Up
   Up --> Recon["list routed notebook sources"]
-  Recon -->|exact upload key exists| Mark2
+  Recon -->|exact upload key token exists| Mark2
   Recon -->|absent and below source cap| Add["add source"]
   Add -->|success| Mark2["state: uploaded + sourceId"]
-  Add -->|ambiguous| Recheck["reconcile exact upload key"]
+  Add -->|ambiguous| Recheck["reconcile exact upload key token"]
   Recheck -->|found| Mark2
   Recheck -->|not found or unreadable| Retry
   Mark2 --> Clean["optional delete local audio"]

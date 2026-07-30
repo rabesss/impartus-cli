@@ -509,7 +509,7 @@ func (c *Config) validateNotebookLM() error {
 	if provider != "" && !OneOf(provider, "notebooklm-py", "nlm") {
 		return fmt.Errorf("watch.notebooklm.provider must be one of: notebooklm-py, nlm")
 	}
-	if timeout := firstNonEmpty(nlm.UploadTimeout, c.Watch.NotebookLM.UploadTimeout); timeout != "" {
+	if timeout := firstNonEmpty(nlm.UploadTimeout, c.NotebookLM.UploadTimeout); timeout != "" {
 		d, err := time.ParseDuration(timeout)
 		if err != nil {
 			return fmt.Errorf("invalid watch.notebooklm.uploadTimeout: %w", err)
