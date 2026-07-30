@@ -69,13 +69,28 @@ func (f *fakeUploader) UploadToNotebook(_ context.Context, notebookID, path, tit
 	f.paths = append(f.paths, path)
 	f.titles = append(f.titles, title)
 	f.uploadKeys = append(f.uploadKeys, uploadKey)
-	return f.result, f.err
+	result := f.result
+	if result.Outcome == "" {
+		switch {
+		case f.err == nil:
+			result.Outcome = notebooklm.UploadCreated
+		case notebooklm.IsAmbiguous(f.err):
+			result.Outcome = notebooklm.UploadAmbiguous
+		default:
+			result.Outcome = notebooklm.UploadRejected
+		}
+	}
+	return result, f.err
 }
 
 func (f *fakeUploader) ReconcileUpload(_ context.Context, notebookID, _, _ string) (notebooklm.UploadResult, bool, error) {
 	f.reconcileCalls++
 	f.reconcileNbs = append(f.reconcileNbs, notebookID)
-	return f.reconcileResult, f.reconcileFound, f.reconcileErr
+	result := f.reconcileResult
+	if f.reconcileFound {
+		result.Outcome = notebooklm.UploadFound
+	}
+	return result, f.reconcileFound, f.reconcileErr
 }
 
 func (f *fakeUploader) Doctor(context.Context) error { return nil }
@@ -101,7 +116,8 @@ func TestRunCycleDryRunDoesNotDownload(t *testing.T) {
 		{TTID: 10, SeqNo: 1, Topic: "Intro", StartTime: "2026-01-01"},
 		{TTID: 11, SeqNo: 2, Topic: "No Class Today"},
 	}}, audio, uploader, store, Options{
-		SubjectID: 1, SessionID: 2, Once: true, DryRun: true, Log: io.Discard,
+		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2}},
+		Once:    true, DryRun: true, Log: io.Discard,
 	})
 
 	result, err := w.RunCycle(context.Background())
@@ -154,7 +170,10 @@ func TestRunCycleDownloadsUploadsAndSkipsSeen(t *testing.T) {
 	audio := &fakeAudio{join: downloader.JoinResult{LeftOutput: out}}
 	uploader := &fakeUploader{result: notebooklm.UploadResult{SourceID: "src1", NotebookID: "nb1"}}
 	lectures := client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro", StartTime: "2026-01-01"}}
-	opts := Options{SubjectID: 1, SessionID: 2, Once: true, Upload: true, NotebookID: "nb1", Log: io.Discard}
+	opts := Options{
+		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb1"}},
+		Once:    true, Upload: true, Log: io.Discard,
+	}
 
 	w := New(testCfg(), fakeSource{lectures: lectures}, audio, uploader, store, opts)
 	result, err := w.RunCycle(context.Background())
@@ -192,7 +211,8 @@ func TestRunCycleRespectsMaxLecturesPerCycle(t *testing.T) {
 	audio := &fakeAudio{join: downloader.JoinResult{LeftOutput: out}}
 	uploader := &fakeUploader{result: notebooklm.UploadResult{SourceID: "src"}}
 	w := New(testCfg(), fakeSource{lectures: lectures}, audio, uploader, store, Options{
-		SubjectID: 1, SessionID: 2, Once: true, Upload: true, NotebookID: "nb",
+		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb"}},
+		Once:    true, Upload: true,
 		MaxLecturesPerCycle: 2, Log: io.Discard,
 	})
 	result, err := w.RunCycle(context.Background())
@@ -224,7 +244,8 @@ func TestRunCycleResumesDownloadedWithoutRedownload(t *testing.T) {
 	w := New(testCfg(), fakeSource{lectures: client.Lectures{
 		{TTID: 10, SeqNo: 1, Topic: "Intro", StartTime: "2026-01-01"},
 	}}, audio, uploader, store, Options{
-		SubjectID: 1, SessionID: 2, Once: true, Upload: true, NotebookID: "nb1", Log: io.Discard,
+		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb1"}},
+		Once:    true, Upload: true, Log: io.Discard,
 	})
 	result, err := w.RunCycle(context.Background())
 	if err != nil {
@@ -250,7 +271,8 @@ func TestRunCycleUploadFailureResumesExistingAudio(t *testing.T) {
 	}
 	lectures := client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro"}}
 	opts := Options{
-		SubjectID: 1, SessionID: 2, Once: true, Upload: true, NotebookID: "nb",
+		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb"}},
+		Once:    true, Upload: true,
 		MaxRetries: 1, Log: io.Discard,
 	}
 	firstAudio := &fakeAudio{join: downloader.JoinResult{LeftOutput: out}}
@@ -291,7 +313,8 @@ func TestRunCycleReconcilesAmbiguousUploadWithoutAnotherAdd(t *testing.T) {
 		err: &notebooklm.Error{Kind: notebooklm.ErrAmbiguous, Message: "outcome unknown"},
 	}
 	opts := Options{
-		SubjectID: 1, SessionID: 2, Once: true, Upload: true, NotebookID: "nb",
+		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb"}},
+		Once:    true, Upload: true,
 		MaxRetries: 1, Log: io.Discard,
 	}
 	first := New(testCfg(), fakeSource{lectures: lectures},
@@ -325,7 +348,7 @@ func TestRunCycleReconcilesAmbiguousUploadWithoutAnotherAdd(t *testing.T) {
 	}
 
 	reconcileOpts := opts
-	reconcileOpts.NotebookID = "reconfigured-nb"
+	reconcileOpts.Targets = []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "reconfigured-nb"}}
 	if removeErr := os.Remove(out); removeErr != nil {
 		t.Fatal(removeErr)
 	}
@@ -378,7 +401,8 @@ func TestRunCycleRetriesConfirmedRateLimitInsteadOfReconciling(t *testing.T) {
 		err: &notebooklm.Error{Kind: notebooklm.ErrRateLimit, Message: "HTTP 429 rate limit"},
 	}
 	opts := Options{
-		SubjectID: 1, SessionID: 2, Once: true, Upload: true, NotebookID: "nb",
+		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb"}},
+		Once:    true, Upload: true,
 		MaxRetries: 1, Log: io.Discard,
 	}
 	first := New(testCfg(), fakeSource{lectures: lectures},
@@ -425,7 +449,8 @@ func TestRunCyclePersistsReconciliationOnlyIntentBeforeAdd(t *testing.T) {
 	}
 	w := New(testCfg(), fakeSource{lectures: client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro"}}},
 		&fakeAudio{join: downloader.JoinResult{LeftOutput: out}}, uploader, store, Options{
-			SubjectID: 1, SessionID: 2, Once: true, Upload: true, NotebookID: "nb",
+			Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb"}},
+			Once:    true, Upload: true,
 			MaxRetries: 1, Log: io.Discard,
 		})
 	result, err := w.RunCycle(context.Background())
@@ -528,7 +553,8 @@ func TestRunCycleDeletesAudioOnlyAfterUpload(t *testing.T) {
 		&fakeAudio{join: downloader.JoinResult{LeftOutput: out}},
 		&fakeUploader{result: notebooklm.UploadResult{SourceID: "src"}},
 		store, Options{
-			SubjectID: 1, SessionID: 2, NotebookID: "nb", Once: true, Upload: true,
+			Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb"}},
+			Once:    true, Upload: true,
 			DeleteAudioAfterUpload: true, Log: io.Discard,
 		})
 	if _, err := w.RunCycle(context.Background()); err != nil {
@@ -555,7 +581,8 @@ func TestRunCycleAuthFailureAborts(t *testing.T) {
 		{TTID: 10, SeqNo: 1, Topic: "Intro", StartTime: "2026-01-01"},
 		{TTID: 11, SeqNo: 2, Topic: "Next", StartTime: "2026-01-02"},
 	}}, audio, uploader, store, Options{
-		SubjectID: 1, SessionID: 2, Once: true, Upload: true, NotebookID: "nb1",
+		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb1"}},
+		Once:    true, Upload: true,
 		MaxRetries: 3, Log: io.Discard,
 	})
 	_, err = w.RunCycle(context.Background())
@@ -605,7 +632,8 @@ func TestRunRespectsOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := New(testCfg(), fakeSource{lectures: client.Lectures{}}, nil, nil, store, Options{
-		SubjectID: 1, SessionID: 2, Once: true, DryRun: true, Interval: time.Hour, Log: io.Discard,
+		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2}},
+		Once:    true, DryRun: true, Interval: time.Hour, Log: io.Discard,
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -636,7 +664,8 @@ func TestRunRetriesPollFailureInDaemonMode(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	source := &retryingSource{cancel: cancel}
 	w := New(testCfg(), source, nil, nil, store, Options{
-		SubjectID: 1, SessionID: 2, DryRun: true, Interval: time.Millisecond, Log: io.Discard,
+		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2}},
+		DryRun:  true, Interval: time.Millisecond, Log: io.Discard,
 	})
 	if _, err := w.Run(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run error = %v, want context cancellation", err)
@@ -667,7 +696,8 @@ func TestRunCycleCancellationDoesNotRecordFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	w := New(testCfg(), fakeSource{lectures: client.Lectures{{TTID: 10, SeqNo: 1}}},
 		cancelAudio{cancel: cancel}, nil, store, Options{
-			SubjectID: 1, SessionID: 2, Once: true, MaxRetries: 1, Log: io.Discard,
+			Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2}},
+			Once:    true, MaxRetries: 1, Log: io.Discard,
 		})
 	result, err := w.RunCycle(ctx)
 	if !errors.Is(err, context.Canceled) {
@@ -693,7 +723,10 @@ func TestRunCycleRetriesPreviouslyFailedLecture(t *testing.T) {
 		t.Fatal(err)
 	}
 	lectures := client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro", StartTime: "2026-01-01"}}
-	opts := Options{SubjectID: 1, SessionID: 2, Once: true, Upload: true, NotebookID: "nb1", Log: io.Discard, MaxRetries: 1}
+	opts := Options{
+		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb1"}},
+		Once:    true, Upload: true, Log: io.Discard, MaxRetries: 1,
+	}
 
 	failAudio := &fakeAudio{joinErr: errors.New("download blip")}
 	w := New(testCfg(), fakeSource{lectures: lectures}, failAudio, &fakeUploader{}, store, opts)

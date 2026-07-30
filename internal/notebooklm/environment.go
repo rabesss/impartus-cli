@@ -19,6 +19,8 @@ var providerEnvironmentNames = map[string]struct{}{
 	"LOCALAPPDATA":       {},
 	"LOGNAME":            {},
 	"NO_PROXY":           {},
+	"NOTEBOOKLM_HOME":    {},
+	"NOTEBOOKLM_PROFILE": {},
 	"PATH":               {},
 	"PATHEXT":            {},
 	"PROGRAMDATA":        {},

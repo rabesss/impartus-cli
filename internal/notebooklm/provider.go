@@ -1,6 +1,7 @@
 package notebooklm
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -33,6 +34,29 @@ type Config struct {
 	AuthProfile           string
 	UploadTimeout         time.Duration
 	MaxSourcesPerNotebook int
+}
+
+type providerUploadPolicy struct {
+	rateLimitOutcome UploadOutcome
+}
+
+var providerUploadPolicies = map[Provider]providerUploadPolicy{
+	ProviderNotebookLMpy: {rateLimitOutcome: UploadRejected},
+	ProviderNLM:          {rateLimitOutcome: UploadAmbiguous},
+}
+
+func classifyUploadOutcome(provider Provider, err error) UploadOutcome {
+	var typed *Error
+	if !errors.As(err, &typed) || typed.Kind == ErrAuth || !typed.Retryable() {
+		return UploadRejected
+	}
+	if typed.Kind == ErrRateLimit {
+		if policy, ok := providerUploadPolicies[provider]; ok {
+			return policy.rateLimitOutcome
+		}
+		return UploadRejected
+	}
+	return UploadAmbiguous
 }
 
 // Normalize fills defaults and aliases.

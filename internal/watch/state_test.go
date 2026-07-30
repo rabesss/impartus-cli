@@ -2,8 +2,10 @@ package watch
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -37,7 +39,7 @@ func TestStoreMarkHasAndPersistsAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("expected mode 0600, got %v", info.Mode().Perm())
 	}
 	if _, tmpErr := os.Stat(path + ".tmp"); !os.IsNotExist(tmpErr) {
@@ -74,14 +76,24 @@ func TestLoadStoreCorruptJSONFailsClosed(t *testing.T) {
 	}
 }
 
-func TestLoadStoreAcceptsLegacyOutputPath(t *testing.T) {
+func TestLoadStoreRejectsUnsupportedVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "future.json")
+	if err := os.WriteFile(path, []byte(`{"version":2,"courses":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadStore(path); err == nil {
+		t.Fatal("unsupported state version must fail closed")
+	}
+}
+
+func TestLoadStoreRejectsStateWithoutStatus(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy.json")
 	raw := []byte(`{
 	  "version": 1,
 	  "courses": {
 	    "1:2": {
 	      "seenTtids": {
-	        "7": {"outputPath": "/tmp/legacy.mp3", "uploaded": false}
+	        "7": {"outputPath": "/tmp/legacy.mp3"}
 	      }
 	    }
 	  }
@@ -89,17 +101,12 @@ func TestLoadStoreAcceptsLegacyOutputPath(t *testing.T) {
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	store, err := LoadStore(path)
-	if err != nil {
-		t.Fatalf("LoadStore legacy: %v", err)
-	}
-	seen, ok := store.Get(1, 2, 7)
-	if !ok || seen.OutputPath != "/tmp/legacy.mp3" || seen.Status != StatusDownloaded {
-		t.Fatalf("legacy output path was not normalized: %+v ok=%v", seen, ok)
+	if _, err := LoadStore(path); err == nil {
+		t.Fatalf("state without an explicit status must fail closed")
 	}
 }
 
-func TestMarkWithoutStatusPreservesUploadedState(t *testing.T) {
+func TestMarkRequiresStatusAndPreservesUploadedMetadata(t *testing.T) {
 	store, err := LoadStore(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -110,11 +117,14 @@ func TestMarkWithoutStatusPreservesUploadedState(t *testing.T) {
 	}, 7); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Mark(1, 2, SeenLecture{Topic: "updated"}, 7); err != nil {
+	if err := store.Mark(1, 2, SeenLecture{Topic: "updated"}, 7); err == nil {
+		t.Fatal("Mark accepted a lecture without status")
+	}
+	if err := store.Mark(1, 2, SeenLecture{Status: StatusUploaded, Topic: "updated"}, 7); err != nil {
 		t.Fatal(err)
 	}
 	seen, _ := store.Get(1, 2, 7)
-	if seen.Status != StatusUploaded || !seen.Uploaded || seen.SourceID != "src" ||
+	if seen.Status != StatusUploaded || seen.SourceID != "src" ||
 		seen.NotebookID != "nb" || seen.UploadKey != "impartus:1:2:7" ||
 		seen.SeqNo != 7 || seen.Topic != "updated" || seen.StartTime != "2026-07-29T10:00:00Z" {
 		t.Fatalf("uploaded state regressed: %+v", seen)
@@ -156,6 +166,29 @@ func TestMarkRollsBackMemoryWhenPersistenceFails(t *testing.T) {
 	}
 	if store.Has(1, 2, 7) {
 		t.Fatalf("failed uploaded Mark must not affect deduplication")
+	}
+}
+
+func TestMarkKeepsCommittedStateWhenDirectorySyncFails(t *testing.T) {
+	store, err := LoadStore(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markErr := store.Mark(1, 2, SeenLecture{Status: StatusDownloaded, OutputPath: "/tmp/a.mp3"}, 7); markErr != nil {
+		t.Fatal(markErr)
+	}
+	store.writeFile = func(string, []byte, os.FileMode) error {
+		return &stateWriteError{err: errors.New("directory sync failed"), committed: true}
+	}
+	err = store.Mark(1, 2, SeenLecture{
+		Status: StatusUploaded, OutputPath: "/tmp/a.mp3", SourceID: "src",
+	}, 7)
+	if err == nil {
+		t.Fatal("expected committed durability warning")
+	}
+	seen, ok := store.Get(1, 2, 7)
+	if !ok || seen.Status != StatusUploaded || seen.SourceID != "src" {
+		t.Fatalf("committed state was rolled back in memory: %+v ok=%v", seen, ok)
 	}
 }
 

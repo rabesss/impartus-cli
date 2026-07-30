@@ -23,50 +23,6 @@ type ProgressConfig struct {
 	SpeedWindowSize int    `json:"speedWindowSize"`
 }
 
-// WatchTarget is one Impartus course that maps to a NotebookLM notebook.
-type WatchTarget struct {
-	SubjectID  int    `json:"subjectId"`
-	SessionID  int    `json:"sessionId"`
-	NotebookID string `json:"notebookId"`
-	Label      string `json:"label,omitempty"`
-}
-
-// WatchConfig controls the automated lecture poll / download / upload loop.
-// Media fields default to bandwidth-efficient audio (quality 144, left view)
-// when watch runs; leave them empty to keep those defaults.
-type WatchConfig struct {
-	Enabled                bool             `json:"enabled"`
-	PollInterval           string           `json:"pollInterval,omitempty"`
-	Interval               string           `json:"interval,omitempty"` // alias for pollInterval
-	StateFile              string           `json:"stateFile,omitempty"`
-	StatePath              string           `json:"statePath,omitempty"` // alias for stateFile
-	MaxLecturesPerCycle    int              `json:"maxLecturesPerCycle,omitempty"`
-	MaxUploadRetries       int              `json:"maxUploadRetries,omitempty"`
-	DeleteAudioAfterUpload bool             `json:"deleteAudioAfterUpload"`
-	Targets                []WatchTarget    `json:"targets,omitempty"`
-	NotebookLM             NotebookLMConfig `json:"notebooklm,omitempty"`
-	// Legacy single-target fields — normalized into Targets during ApplyDefaults.
-	SubjectID   int    `json:"subjectId,omitempty"`
-	SessionID   int    `json:"sessionId,omitempty"`
-	Quality     string `json:"quality,omitempty"`
-	Views       string `json:"views,omitempty"`
-	AudioFormat string `json:"audioFormat,omitempty"`
-	Upload      bool   `json:"upload"`
-}
-
-// NotebookLMConfig configures the NotebookLM upload step used by watch.
-// Authentication stays in the selected provider CLI's profile directory.
-type NotebookLMConfig struct {
-	Provider              string `json:"provider,omitempty"` // notebooklm-py | nlm
-	Command               string `json:"command,omitempty"`
-	CLIPath               string `json:"cliPath,omitempty"` // alias for command
-	Profile               string `json:"profile,omitempty"`
-	AuthProfile           string `json:"authProfile,omitempty"` // alias for profile
-	UploadTimeout         string `json:"uploadTimeout,omitempty"`
-	MaxSourcesPerNotebook int    `json:"maxSourcesPerNotebook,omitempty"`
-	NotebookID            string `json:"notebookId,omitempty"` // legacy single-notebook default
-}
-
 // Config holds all application configuration values.
 type Config struct {
 	Username         string  `json:"username"`
@@ -91,10 +47,8 @@ type Config struct {
 	DecryptWorkersPerLecture  int            `json:"decryptWorkersPerLecture"`
 	ProgressTracking          ProgressConfig `json:"progressTracking"`
 	Watch                     WatchConfig    `json:"watch,omitempty"`
-	// NotebookLM is a legacy top-level alias merged into Watch.NotebookLM.
-	NotebookLM  NotebookLMConfig `json:"notebooklm,omitempty"`
-	HTTPTimeout string           `json:"httpTimeout"`
-	ListenAddr  string           `json:"listenAddr,omitempty"`
+	HTTPTimeout               string         `json:"httpTimeout"`
+	ListenAddr                string         `json:"listenAddr,omitempty"`
 	// AllowRemoteAccess must be explicitly enabled to bind a non-loopback
 	// ListenAddr (e.g. 0.0.0.0). Defaults to false for safety.
 	AllowRemoteAccess bool `json:"allowRemoteAccess,omitempty"`
@@ -164,157 +118,6 @@ func (c *Config) applyProgressDefaults() {
 		c.Views = NormalizeViews(c.Views)
 	}
 	c.applyWatchDefaults()
-}
-
-func (c *Config) applyWatchDefaults() {
-	c.normalizeWatchAliases()
-	if c.Watch.PollInterval == "" {
-		c.Watch.PollInterval = "5m"
-	}
-	c.Watch.Interval = c.Watch.PollInterval
-	if c.Watch.StateFile == "" {
-		c.Watch.StateFile = "./.watch-state.json"
-	}
-	c.Watch.StatePath = c.Watch.StateFile
-	if c.Watch.MaxLecturesPerCycle == 0 {
-		c.Watch.MaxLecturesPerCycle = 3
-	}
-	if c.Watch.MaxUploadRetries == 0 {
-		c.Watch.MaxUploadRetries = 3
-	}
-	if c.Watch.Quality == "" {
-		c.Watch.Quality = "144"
-	}
-	if c.Watch.Views == "" {
-		c.Watch.Views = "left"
-	} else {
-		c.Watch.Views = NormalizeViews(c.Watch.Views)
-	}
-	if c.Watch.AudioFormat == "" {
-		c.Watch.AudioFormat = "mp3"
-	}
-	c.applyNotebookLMDefaults()
-	c.synthesizeLegacyTarget()
-}
-
-func (c *Config) applyNotebookLMDefaults() {
-	nlm := &c.Watch.NotebookLM
-	if nlm.Provider == "" {
-		nlm.Provider = "notebooklm-py"
-	}
-	if nlm.Command == "" {
-		nlm.Command = nlm.CLIPath
-	}
-	if nlm.Command == "" {
-		nlm.Command = "notebooklm"
-		if nlm.Provider == "nlm" {
-			nlm.Command = "nlm"
-		}
-	}
-	nlm.CLIPath = nlm.Command
-	if nlm.Profile == "" && nlm.AuthProfile != "" {
-		nlm.Profile = nlm.AuthProfile
-	}
-	nlm.AuthProfile = nlm.Profile
-	if nlm.UploadTimeout == "" {
-		nlm.UploadTimeout = "30m"
-	}
-	if nlm.MaxSourcesPerNotebook == 0 {
-		nlm.MaxSourcesPerNotebook = 300
-	}
-	c.NotebookLM = *nlm
-}
-
-// normalizeWatchAliases copies legacy/alternate field names onto the plan names.
-func (c *Config) normalizeWatchAliases() {
-	if c.Watch.PollInterval == "" && c.Watch.Interval != "" {
-		c.Watch.PollInterval = c.Watch.Interval
-	}
-	if c.Watch.StateFile == "" && c.Watch.StatePath != "" {
-		c.Watch.StateFile = c.Watch.StatePath
-	}
-	// Top-level notebooklm merges into watch.notebooklm when nested fields are empty.
-	if c.Watch.NotebookLM.NotebookID == "" {
-		c.Watch.NotebookLM.NotebookID = c.NotebookLM.NotebookID
-	}
-	if c.Watch.NotebookLM.Command == "" {
-		c.Watch.NotebookLM.Command = firstNonEmpty(c.NotebookLM.Command, c.NotebookLM.CLIPath)
-	}
-	if c.Watch.NotebookLM.CLIPath == "" {
-		c.Watch.NotebookLM.CLIPath = c.NotebookLM.CLIPath
-	}
-	if c.Watch.NotebookLM.Profile == "" {
-		c.Watch.NotebookLM.Profile = firstNonEmpty(c.NotebookLM.Profile, c.NotebookLM.AuthProfile)
-	}
-	if c.Watch.NotebookLM.AuthProfile == "" {
-		c.Watch.NotebookLM.AuthProfile = c.NotebookLM.AuthProfile
-	}
-	if c.Watch.NotebookLM.Provider == "" {
-		c.Watch.NotebookLM.Provider = c.NotebookLM.Provider
-	}
-	if c.Watch.NotebookLM.UploadTimeout == "" {
-		c.Watch.NotebookLM.UploadTimeout = c.NotebookLM.UploadTimeout
-	}
-	if c.Watch.NotebookLM.MaxSourcesPerNotebook == 0 {
-		c.Watch.NotebookLM.MaxSourcesPerNotebook = c.NotebookLM.MaxSourcesPerNotebook
-	}
-}
-
-func (c *Config) synthesizeLegacyTarget() {
-	if len(c.Watch.Targets) > 0 {
-		return
-	}
-	if c.Watch.SubjectID <= 0 || c.Watch.SessionID <= 0 {
-		return
-	}
-	c.Watch.Targets = []WatchTarget{{
-		SubjectID:  c.Watch.SubjectID,
-		SessionID:  c.Watch.SessionID,
-		NotebookID: c.Watch.NotebookLM.NotebookID,
-	}}
-}
-
-// ResolvedTargets returns watch targets after legacy single-target synthesis.
-func (c *Config) ResolvedTargets() []WatchTarget {
-	if len(c.Watch.Targets) > 0 {
-		return c.Watch.Targets
-	}
-	if c.Watch.SubjectID > 0 && c.Watch.SessionID > 0 {
-		return []WatchTarget{{
-			SubjectID:  c.Watch.SubjectID,
-			SessionID:  c.Watch.SessionID,
-			NotebookID: firstNonEmpty(c.Watch.NotebookLM.NotebookID, c.NotebookLM.NotebookID),
-		}}
-	}
-	return nil
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
-		}
-	}
-	return ""
-}
-
-// ApplyWatchMediaDefaults forces the bandwidth-efficient audio settings used by
-// the watch loop onto the top-level media fields the downloader reads.
-func (c *Config) ApplyWatchMediaDefaults() {
-	c.AudioOnly = true
-	c.SkipNoAudio = true
-	c.Quality = c.Watch.Quality
-	if c.Quality == "" {
-		c.Quality = "144"
-	}
-	c.Views = NormalizeViews(c.Watch.Views)
-	if c.Views == "" {
-		c.Views = "left"
-	}
-	c.AudioFormat = c.Watch.AudioFormat
-	if c.AudioFormat == "" {
-		c.AudioFormat = "mp3"
-	}
 }
 
 func (c *Config) applyListenDefaults() {
@@ -449,100 +252,6 @@ func (c *Config) validatePipeline() error {
 	return nil
 }
 
-func (c *Config) validateWatch() error {
-	targets := c.ResolvedTargets()
-	if err := c.validateWatchShape(); err != nil {
-		return err
-	}
-	if !c.Watch.Enabled {
-		return nil
-	}
-	if len(targets) == 0 {
-		return fmt.Errorf("watch.targets is required when watch.enabled is true (or set watch.subjectId/sessionId)")
-	}
-	seen := map[string]struct{}{}
-	for i, target := range targets {
-		if target.SubjectID <= 0 || target.SessionID <= 0 {
-			return fmt.Errorf("watch.targets[%d]: subjectId and sessionId are required", i)
-		}
-		key := fmt.Sprintf("%d:%d", target.SubjectID, target.SessionID)
-		if _, ok := seen[key]; ok {
-			return fmt.Errorf("watch.targets: duplicate subjectId/sessionId %s", key)
-		}
-		seen[key] = struct{}{}
-	}
-	return nil
-}
-
-func (c *Config) validateWatchShape() error {
-	intervalStr := firstNonEmpty(c.Watch.PollInterval, c.Watch.Interval)
-	if intervalStr != "" {
-		interval, err := time.ParseDuration(intervalStr)
-		if err != nil {
-			return fmt.Errorf("invalid watch.pollInterval: %w", err)
-		}
-		if interval < 5*time.Minute || interval > 24*time.Hour {
-			return fmt.Errorf("watch.pollInterval must be between 5m and 24h, got %v", interval)
-		}
-	}
-	if c.Watch.MaxLecturesPerCycle < 1 {
-		return fmt.Errorf("watch.maxLecturesPerCycle must be >= 1")
-	}
-	if c.Watch.MaxUploadRetries < 1 {
-		return fmt.Errorf("watch.maxUploadRetries must be >= 1")
-	}
-	if c.Watch.Quality != "" && !OneOf(c.Watch.Quality, "144", "450", "720") {
-		return fmt.Errorf("watch.quality must be one of: 144, 450, 720")
-	}
-	if c.Watch.Views != "" && !OneOf(c.Watch.Views, "first", "second", "both", "left", "right") {
-		return fmt.Errorf("watch.views must be one of: first, second, both, left, right")
-	}
-	if c.Watch.AudioFormat != "" && !OneOf(c.Watch.AudioFormat, "mp3", "m4a", "aac", "opus") {
-		return fmt.Errorf("watch.audioFormat must be one of: mp3, m4a, aac, opus")
-	}
-	return nil
-}
-
-func (c *Config) validateNotebookLM() error {
-	nlm := c.Watch.NotebookLM
-	provider := firstNonEmpty(nlm.Provider, "notebooklm-py")
-	if provider != "" && !OneOf(provider, "notebooklm-py", "nlm") {
-		return fmt.Errorf("watch.notebooklm.provider must be one of: notebooklm-py, nlm")
-	}
-	if timeout := firstNonEmpty(nlm.UploadTimeout, c.NotebookLM.UploadTimeout); timeout != "" {
-		d, err := time.ParseDuration(timeout)
-		if err != nil {
-			return fmt.Errorf("invalid watch.notebooklm.uploadTimeout: %w", err)
-		}
-		if d < time.Minute || d > 2*time.Hour {
-			return fmt.Errorf("watch.notebooklm.uploadTimeout must be between 1m and 2h, got %v", d)
-		}
-	}
-	if nlm.MaxSourcesPerNotebook < 1 {
-		return fmt.Errorf("watch.notebooklm.maxSourcesPerNotebook must be >= 1")
-	}
-	if !c.Watch.Upload {
-		return nil
-	}
-	targets := c.ResolvedTargets()
-	for i, target := range targets {
-		nb := c.resolveNotebookID(target)
-		if nb == "" {
-			return fmt.Errorf("watch.targets[%d].notebookId (or watch.notebooklm.notebookId) is required when watch.upload is true", i)
-		}
-	}
-	if len(targets) == 0 {
-		if strings.TrimSpace(firstNonEmpty(c.Watch.NotebookLM.NotebookID, c.NotebookLM.NotebookID)) == "" {
-			return fmt.Errorf("watch.notebooklm.notebookId is required when watch.upload is true")
-		}
-	}
-	return nil
-}
-
-func (c *Config) resolveNotebookID(target WatchTarget) string {
-	return firstNonEmpty(target.NotebookID, c.Watch.NotebookLM.NotebookID, c.NotebookLM.NotebookID)
-}
-
 func (c *Config) validateTimeout() error {
 	if c.HTTPTimeout == "" {
 		return nil
@@ -638,20 +347,9 @@ func applyEnvOverrides(cfg *Config) error {
 	applyStringEnv("IMPARTUS_AUDIO_FORMAT", &cfg.AudioFormat)
 	applyStringEnv("IMPARTUS_HTTP_TIMEOUT", &cfg.HTTPTimeout)
 	applyStringEnv("IMPARTUS_LISTEN_ADDR", &cfg.ListenAddr)
-	applyStringEnv("IMPARTUS_WATCH_INTERVAL", &cfg.Watch.Interval)
-	applyStringEnv("IMPARTUS_WATCH_POLL_INTERVAL", &cfg.Watch.PollInterval)
-	applyStringEnv("IMPARTUS_WATCH_STATE_PATH", &cfg.Watch.StatePath)
-	applyStringEnv("IMPARTUS_WATCH_STATE_FILE", &cfg.Watch.StateFile)
-	applyStringEnv("IMPARTUS_WATCH_QUALITY", &cfg.Watch.Quality)
-	applyStringEnv("IMPARTUS_WATCH_VIEWS", &cfg.Watch.Views)
-	applyStringEnv("IMPARTUS_WATCH_AUDIO_FORMAT", &cfg.Watch.AudioFormat)
-	applyStringEnv("IMPARTUS_NOTEBOOKLM_NOTEBOOK_ID", &cfg.Watch.NotebookLM.NotebookID)
-	applyStringEnv("IMPARTUS_NOTEBOOKLM_CLI_PATH", &cfg.Watch.NotebookLM.CLIPath)
-	applyStringEnv("IMPARTUS_NOTEBOOKLM_COMMAND", &cfg.Watch.NotebookLM.Command)
-	applyStringEnv("IMPARTUS_NOTEBOOKLM_AUTH_PROFILE", &cfg.Watch.NotebookLM.AuthProfile)
-	applyStringEnv("IMPARTUS_NOTEBOOKLM_PROFILE", &cfg.Watch.NotebookLM.Profile)
-	applyStringEnv("IMPARTUS_NOTEBOOKLM_PROVIDER", &cfg.Watch.NotebookLM.Provider)
-	applyStringEnv("IMPARTUS_NOTEBOOKLM_UPLOAD_TIMEOUT", &cfg.Watch.NotebookLM.UploadTimeout)
+	if err := applyWatchEnvOverrides(cfg); err != nil {
+		return err
+	}
 	for _, apply := range []func() error{
 		func() error { return applyBoolEnv("IMPARTUS_AUDIO_ONLY", &cfg.AudioOnly) },
 		func() error { return applyBoolEnv("IMPARTUS_SLIDES", &cfg.Slides) },
@@ -659,21 +357,7 @@ func applyEnvOverrides(cfg *Config) error {
 		func() error { return applyBoolEnv("IMPARTUS_ALLOW_REMOTE_ACCESS", &cfg.AllowRemoteAccess) },
 		func() error { return applyBoolEnv("IMPARTUS_ENABLE_JITTER", &cfg.EnableJitter) },
 		func() error { return applyBoolEnv("IMPARTUS_PROGRESS_TRACKING_ENABLED", &cfg.ProgressTracking.Enabled) },
-		func() error { return applyBoolEnv("IMPARTUS_WATCH_ENABLED", &cfg.Watch.Enabled) },
-		func() error { return applyBoolEnv("IMPARTUS_WATCH_UPLOAD", &cfg.Watch.Upload) },
-		func() error {
-			return applyBoolEnv("IMPARTUS_WATCH_DELETE_AUDIO_AFTER_UPLOAD", &cfg.Watch.DeleteAudioAfterUpload)
-		},
 		func() error { return applyIntEnv("IMPARTUS_NUM_WORKERS", &cfg.NumWorkers) },
-		func() error { return applyIntEnv("IMPARTUS_WATCH_SUBJECT_ID", &cfg.Watch.SubjectID) },
-		func() error { return applyIntEnv("IMPARTUS_WATCH_SESSION_ID", &cfg.Watch.SessionID) },
-		func() error {
-			return applyIntEnv("IMPARTUS_WATCH_MAX_LECTURES_PER_CYCLE", &cfg.Watch.MaxLecturesPerCycle)
-		},
-		func() error { return applyIntEnv("IMPARTUS_WATCH_MAX_UPLOAD_RETRIES", &cfg.Watch.MaxUploadRetries) },
-		func() error {
-			return applyIntEnv("IMPARTUS_NOTEBOOKLM_MAX_SOURCES", &cfg.Watch.NotebookLM.MaxSourcesPerNotebook)
-		},
 		func() error { return applyFloatEnv("IMPARTUS_RATE_LIMIT", &cfg.RateLimit) },
 		func() error { return applyFloatEnv("IMPARTUS_API_RATE_LIMIT", &cfg.APIRateLimit) },
 	} {

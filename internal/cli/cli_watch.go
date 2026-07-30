@@ -116,8 +116,8 @@ func newWatchUploader(cfg *config.Config) *notebooklm.Uploader {
 	return notebooklm.New(notebooklm.Config{
 		Provider:              notebooklm.Provider(nlm.Provider),
 		NotebookID:            nlm.NotebookID,
-		CLIPath:               firstNonEmpty(nlm.Command, nlm.CLIPath),
-		AuthProfile:           firstNonEmpty(nlm.Profile, nlm.AuthProfile),
+		CLIPath:               nlm.Command,
+		AuthProfile:           nlm.Profile,
 		UploadTimeout:         timeout,
 		MaxSourcesPerNotebook: nlm.MaxSourcesPerNotebook,
 	})
@@ -173,14 +173,12 @@ func runWatchLoop(
 	f watchFlags,
 	jsonMode bool,
 ) (watchResult, error) {
-	statePath := firstNonEmpty(cfg.Watch.StateFile, cfg.Watch.StatePath)
-	store, err := watch.LoadStore(statePath)
+	store, err := watch.LoadStore(cfg.Watch.StateFile)
 	if err != nil {
 		return watchResult{}, err
 	}
 
-	intervalStr := firstNonEmpty(cfg.Watch.PollInterval, cfg.Watch.Interval)
-	interval, err := time.ParseDuration(intervalStr)
+	interval, err := time.ParseDuration(cfg.Watch.PollInterval)
 	if err != nil {
 		return watchResult{}, fmt.Errorf("invalid watch interval: %w", err)
 	}
@@ -227,6 +225,9 @@ func watchRunsOnce(f watchFlags, jsonMode bool) bool {
 }
 
 func applyWatchFlags(cfg *config.Config, f watchFlags) (*config.Config, error) {
+	if (f.subject > 0) != (f.session > 0) {
+		return cfg, errors.New("--subject/-s and --session/-S must be provided together")
+	}
 	applyWatchCourseFlags(cfg, f)
 	if err := applyWatchIOFlags(cfg, f); err != nil {
 		return cfg, err
@@ -238,34 +239,31 @@ func applyWatchFlags(cfg *config.Config, f watchFlags) (*config.Config, error) {
 	case f.upload:
 		cfg.Watch.Upload = true
 	}
-	synthesizeWatchTargets(cfg, f)
-	return validateWatchFlags(cfg, f)
+	return validateWatchFlags(cfg)
 }
 
 func applyWatchCourseFlags(cfg *config.Config, f watchFlags) {
-	if f.subject > 0 {
-		cfg.Watch.SubjectID = f.subject
-	}
-	if f.session > 0 {
-		cfg.Watch.SessionID = f.session
-	}
 	if f.notebookID != "" {
 		cfg.Watch.NotebookLM.NotebookID = f.notebookID
-		cfg.NotebookLM.NotebookID = f.notebookID
 		if len(cfg.Watch.Targets) == 1 {
 			cfg.Watch.Targets[0].NotebookID = f.notebookID
 		}
+	}
+	if f.subject > 0 && f.session > 0 {
+		cfg.Watch.Targets = []config.WatchTarget{{
+			SubjectID:  f.subject,
+			SessionID:  f.session,
+			NotebookID: firstNonEmpty(f.notebookID, cfg.Watch.NotebookLM.NotebookID),
+		}}
 	}
 }
 
 func applyWatchIOFlags(cfg *config.Config, f watchFlags) error {
 	if f.interval != "" {
 		cfg.Watch.PollInterval = f.interval
-		cfg.Watch.Interval = f.interval
 	}
 	if f.statePath != "" {
 		cfg.Watch.StateFile = f.statePath
-		cfg.Watch.StatePath = f.statePath
 	}
 	if f.output != "" {
 		location, err := paths.ValidateDownloadLocation(f.output, true)
@@ -277,35 +275,13 @@ func applyWatchIOFlags(cfg *config.Config, f watchFlags) error {
 	return nil
 }
 
-func synthesizeWatchTargets(cfg *config.Config, f watchFlags) {
-	if f.subject > 0 && f.session > 0 {
-		nb := firstNonEmpty(f.notebookID, cfg.Watch.NotebookLM.NotebookID, cfg.NotebookLM.NotebookID)
-		cfg.Watch.Targets = []config.WatchTarget{{
-			SubjectID:  f.subject,
-			SessionID:  f.session,
-			NotebookID: nb,
-		}}
-		return
-	}
-	if len(cfg.Watch.Targets) == 0 && cfg.Watch.SubjectID > 0 && cfg.Watch.SessionID > 0 {
-		cfg.Watch.Targets = []config.WatchTarget{{
-			SubjectID:  cfg.Watch.SubjectID,
-			SessionID:  cfg.Watch.SessionID,
-			NotebookID: firstNonEmpty(cfg.Watch.NotebookLM.NotebookID, cfg.NotebookLM.NotebookID),
-		}}
-	}
-}
-
-func validateWatchFlags(cfg *config.Config, f watchFlags) (*config.Config, error) {
-	if (f.subject > 0) != (f.session > 0) {
-		return cfg, errors.New("--subject/-s and --session/-S must be provided together")
-	}
+func validateWatchFlags(cfg *config.Config) (*config.Config, error) {
 	if len(cfg.ResolvedTargets()) == 0 {
 		return cfg, errors.New("watch requires --subject/-s and --session/-S, or watch.targets in config")
 	}
 	if cfg.Watch.Upload {
 		for i, target := range cfg.ResolvedTargets() {
-			if firstNonEmpty(target.NotebookID, cfg.Watch.NotebookLM.NotebookID) == "" {
+			if target.NotebookID == "" {
 				return cfg, fmt.Errorf("watch target[%d] requires notebookId (or --notebook)", i)
 			}
 		}
@@ -322,8 +298,8 @@ func runWatchCheck(ctx context.Context, cfg *config.Config, uploadEnabled bool, 
 		"ffmpeg":   "ok",
 		"config":   "ok",
 		"targets":  fmt.Sprintf("%d", len(targets)),
-		"state":    firstNonEmpty(cfg.Watch.StateFile, cfg.Watch.StatePath),
-		"interval": firstNonEmpty(cfg.Watch.PollInterval, cfg.Watch.Interval),
+		"state":    cfg.Watch.StateFile,
+		"interval": cfg.Watch.PollInterval,
 		"quality":  cfg.Quality,
 		"views":    cfg.Views,
 		"upload":   fmt.Sprintf("%v", uploadEnabled),
@@ -351,15 +327,13 @@ func watchNotebookIDs(cfg *config.Config) []string {
 	targets := cfg.ResolvedTargets()
 	notebookIDs := make([]string, 0, len(targets))
 	for _, target := range targets {
-		notebookID := firstNonEmpty(target.NotebookID, cfg.Watch.NotebookLM.NotebookID, cfg.NotebookLM.NotebookID)
-		if notebookID != "" {
-			notebookIDs = append(notebookIDs, notebookID)
+		if target.NotebookID != "" {
+			notebookIDs = append(notebookIDs, target.NotebookID)
 		}
 	}
 	if len(notebookIDs) == 0 {
-		notebookID := firstNonEmpty(cfg.Watch.NotebookLM.NotebookID, cfg.NotebookLM.NotebookID)
-		if notebookID != "" {
-			notebookIDs = append(notebookIDs, notebookID)
+		if cfg.Watch.NotebookLM.NotebookID != "" {
+			notebookIDs = append(notebookIDs, cfg.Watch.NotebookLM.NotebookID)
 		}
 	}
 	return notebookIDs

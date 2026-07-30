@@ -10,12 +10,27 @@ import (
 	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
-// UploadResult is the successful outcome of adding a source.
+// UploadOutcome describes what happened at the provider boundary.
+type UploadOutcome string
+
+const (
+	// UploadCreated means this call created a source.
+	UploadCreated UploadOutcome = "created"
+	// UploadFound means reconciliation found a previously created source.
+	UploadFound UploadOutcome = "found"
+	// UploadAmbiguous means an add may have succeeded and must be reconciled.
+	UploadAmbiguous UploadOutcome = "ambiguous"
+	// UploadRejected means the provider definitely rejected the add.
+	UploadRejected UploadOutcome = "rejected"
+)
+
+// UploadResult is the typed outcome of adding or reconciling a source.
 type UploadResult struct {
-	SourceID   string `json:"sourceId,omitempty"`
-	Title      string `json:"title,omitempty"`
-	NotebookID string `json:"notebookId,omitempty"`
-	Raw        string `json:"-"`
+	Outcome    UploadOutcome `json:"outcome,omitempty"`
+	SourceID   string        `json:"sourceId,omitempty"`
+	Title      string        `json:"title,omitempty"`
+	NotebookID string        `json:"notebookId,omitempty"`
+	Raw        string        `json:"-"`
 }
 
 type sourceInventory struct {
@@ -44,7 +59,7 @@ func parseUploadResult(stdout, notebookID string) (UploadResult, error) {
 		return UploadResult{}, err
 	}
 
-	result := UploadResult{NotebookID: notebookID}
+	result := UploadResult{Outcome: UploadCreated, NotebookID: notebookID}
 	result.SourceID = stringField(payload, "source_id", "sourceId", "id")
 	result.Title = stringField(payload, "title", "name")
 	if nested, ok := payload["source"].(map[string]any); ok {
@@ -93,6 +108,7 @@ func parseSourceInventory(stdout, notebookID string) (sourceInventory, error) {
 			entry = nested
 		}
 		inventory.Sources = append(inventory.Sources, UploadResult{
+			Outcome:    UploadFound,
 			SourceID:   stringField(entry, "source_id", "sourceId", "id"),
 			Title:      stringField(entry, "title", "name", "display_name", "displayName"),
 			NotebookID: notebookID,

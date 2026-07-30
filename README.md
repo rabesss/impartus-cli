@@ -167,8 +167,8 @@ protection manually with `chmod 600 config.json`.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable watch defaults from config (CLI also enables when invoked) |
-| `pollInterval` | string | `"5m"` | Poll interval (`5m`-`24h`; `interval` is an alias) |
-| `stateFile` | string | `"./.watch-state.json"` | Durable lecture state (`statePath` alias) |
+| `pollInterval` | string | `"5m"` | Poll interval (`5m`-`24h`) |
+| `stateFile` | string | `"./.watch-state.json"` | Durable lecture state |
 | `maxLecturesPerCycle` | int | `3` | Cap new lectures processed per poll |
 | `maxUploadRetries` | int | `3` | Retries for transient download/upload errors |
 | `deleteAudioAfterUpload` | bool | `false` | Remove local audio after a successful upload |
@@ -179,15 +179,13 @@ protection manually with `chmod 600 config.json`.
 | `upload` | bool | `false` | Upload downloaded audio to NotebookLM |
 | `notebooklm` | object | see below | Nested provider settings |
 
-Legacy single-target fields `subjectId` / `sessionId` (and top-level `notebooklm`) still work and are normalized into `targets`.
-
 #### NotebookLM Options (`watch.notebooklm`)
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `provider` | string | `"notebooklm-py"` | `notebooklm-py` or `nlm` |
-| `command` | string | `"notebooklm"` | Provider CLI binary (`cliPath` alias) |
-| `profile` | string | `""` | Optional auth profile (`authProfile` alias) |
+| `command` | string | `"notebooklm"` | Provider CLI binary |
+| `profile` | string | `""` | Optional auth profile |
 | `uploadTimeout` | string | `"30m"` | Per-upload timeout |
 | `maxSourcesPerNotebook` | int | `300` | Doctor refuses upload when at/over this count |
 | `notebookId` | string | `""` | Default notebook when a target omits `notebookId` |
@@ -234,10 +232,8 @@ Only the settings listed below have environment-variable overrides. Settings abs
 | `IMPARTUS_RATE_LIMIT` | `rateLimit` | Number from 0.1-100 |
 | `IMPARTUS_API_RATE_LIMIT` | `apiRateLimit` | Number from 0.1-20 |
 | `IMPARTUS_WATCH_ENABLED` | `watch.enabled` | Boolean |
-| `IMPARTUS_WATCH_INTERVAL` / `IMPARTUS_WATCH_POLL_INTERVAL` | `watch.pollInterval` | Go duration between 5m and 24h |
-| `IMPARTUS_WATCH_STATE_PATH` / `IMPARTUS_WATCH_STATE_FILE` | `watch.stateFile` | State file path |
-| `IMPARTUS_WATCH_SUBJECT_ID` | `watch.subjectId` | Legacy single-target subject |
-| `IMPARTUS_WATCH_SESSION_ID` | `watch.sessionId` | Legacy single-target session |
+| `IMPARTUS_WATCH_POLL_INTERVAL` | `watch.pollInterval` | Go duration between 5m and 24h |
+| `IMPARTUS_WATCH_STATE_FILE` | `watch.stateFile` | State file path |
 | `IMPARTUS_WATCH_UPLOAD` | `watch.upload` | Boolean |
 | `IMPARTUS_WATCH_MAX_LECTURES_PER_CYCLE` | `watch.maxLecturesPerCycle` | Integer |
 | `IMPARTUS_WATCH_MAX_UPLOAD_RETRIES` | `watch.maxUploadRetries` | Integer |
@@ -246,9 +242,9 @@ Only the settings listed below have environment-variable overrides. Settings abs
 | `IMPARTUS_WATCH_VIEWS` | `watch.views` | `left`, `right`, `both`, `first`, or `second` |
 | `IMPARTUS_WATCH_AUDIO_FORMAT` | `watch.audioFormat` | `mp3`, `m4a`, `aac`, or `opus` |
 | `IMPARTUS_NOTEBOOKLM_NOTEBOOK_ID` | `watch.notebooklm.notebookId` | Notebook ID |
-| `IMPARTUS_NOTEBOOKLM_COMMAND` / `IMPARTUS_NOTEBOOKLM_CLI_PATH` | `watch.notebooklm.command` | Provider CLI path |
+| `IMPARTUS_NOTEBOOKLM_COMMAND` | `watch.notebooklm.command` | Provider CLI path |
 | `IMPARTUS_NOTEBOOKLM_PROVIDER` | `watch.notebooklm.provider` | `notebooklm-py` or `nlm` |
-| `IMPARTUS_NOTEBOOKLM_PROFILE` / `IMPARTUS_NOTEBOOKLM_AUTH_PROFILE` | `watch.notebooklm.profile` | Optional profile name |
+| `IMPARTUS_NOTEBOOKLM_PROFILE` | `watch.notebooklm.profile` | Optional profile name |
 | `IMPARTUS_NOTEBOOKLM_UPLOAD_TIMEOUT` | `watch.notebooklm.uploadTimeout` | Go duration |
 | `IMPARTUS_NOTEBOOKLM_MAX_SOURCES` | `watch.notebooklm.maxSourcesPerNotebook` | Integer |
 

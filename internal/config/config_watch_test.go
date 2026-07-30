@@ -1,9 +1,20 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func writeConfigFile(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
 
 func TestApplyWatchMediaDefaultsForcesEfficientAudio(t *testing.T) {
 	cfg := minimalValidConfig()
@@ -33,20 +44,6 @@ func TestValidateWatchRequiresTargetsWhenEnabled(t *testing.T) {
 	cfg.Watch.Targets = []WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb1"}}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected valid watch config, got %v", err)
-	}
-}
-
-func TestValidateWatchLegacySubjectSession(t *testing.T) {
-	cfg := minimalValidConfig()
-	cfg.ApplyDefaults()
-	cfg.Watch.Enabled = true
-	cfg.Watch.SubjectID = 1
-	cfg.Watch.SessionID = 2
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("expected legacy subject/session to synthesize target, got %v", err)
-	}
-	if len(cfg.ResolvedTargets()) != 1 {
-		t.Fatalf("expected 1 target, got %d", len(cfg.ResolvedTargets()))
 	}
 }
 
@@ -83,7 +80,6 @@ func TestValidateWatchIntervalBounds(t *testing.T) {
 	cfg := minimalValidConfig()
 	cfg.ApplyDefaults()
 	cfg.Watch.PollInterval = "1m"
-	cfg.Watch.Interval = "1m"
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "watch.pollInterval") {
 		t.Fatalf("expected interval error, got %v", err)
@@ -124,57 +120,27 @@ func TestValidateNotebookLMProvider(t *testing.T) {
 	}
 }
 
-func TestValidateLegacyNotebookLMUploadTimeout(t *testing.T) {
-	cfg := minimalValidConfig()
-	cfg.ApplyDefaults()
-	cfg.Watch.NotebookLM.UploadTimeout = ""
-	cfg.NotebookLM.UploadTimeout = "not-a-duration"
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "uploadTimeout") {
-		t.Fatalf("expected legacy upload timeout validation error, got %v", err)
-	}
-}
-
-func TestApplyDefaultsPreservesLegacyNotebookLMUploadTimeout(t *testing.T) {
-	cfg := minimalValidConfig()
-	cfg.NotebookLM.UploadTimeout = "45m"
-	cfg.ApplyDefaults()
-	if cfg.Watch.NotebookLM.UploadTimeout != "45m" || cfg.NotebookLM.UploadTimeout != "45m" {
-		t.Fatalf("legacy upload timeout was not normalized before defaults: %+v", cfg.Watch.NotebookLM)
-	}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("preserved legacy upload timeout did not validate: %v", err)
-	}
-}
-
-func TestWatchNotebookLMCLIPathAliasIsPreserved(t *testing.T) {
-	cfg := minimalValidConfig()
-	cfg.Watch.NotebookLM.CLIPath = "/opt/tools/notebooklm"
-	cfg.ApplyDefaults()
-	if cfg.Watch.NotebookLM.Command != "/opt/tools/notebooklm" ||
-		cfg.Watch.NotebookLM.CLIPath != "/opt/tools/notebooklm" {
-		t.Fatalf("cliPath alias was overwritten: %+v", cfg.Watch.NotebookLM)
-	}
-}
-
 func TestWatchEnvOverrides(t *testing.T) {
-	t.Setenv("IMPARTUS_USERNAME", "u")
-	t.Setenv("IMPARTUS_PASSWORD", "p")
-	t.Setenv("IMPARTUS_BASE_URL", "https://example.com")
+	path := writeConfigFile(t, `{
+	  "username": "u",
+	  "password": "p",
+	  "baseUrl": "https://example.com",
+	  "watch": {
+	    "targets": [{"subjectId": 9, "sessionId": 8}]
+	  }
+	}`)
 	t.Setenv("IMPARTUS_WATCH_ENABLED", "true")
-	t.Setenv("IMPARTUS_WATCH_SUBJECT_ID", "9")
-	t.Setenv("IMPARTUS_WATCH_SESSION_ID", "8")
 	t.Setenv("IMPARTUS_WATCH_UPLOAD", "true")
 	t.Setenv("IMPARTUS_NOTEBOOKLM_NOTEBOOK_ID", "nb-env")
-	t.Setenv("IMPARTUS_WATCH_INTERVAL", "10m")
+	t.Setenv("IMPARTUS_WATCH_POLL_INTERVAL", "10m")
 	t.Setenv("IMPARTUS_NOTEBOOKLM_PROVIDER", "notebooklm-py")
 	t.Setenv("IMPARTUS_NOTEBOOKLM_COMMAND", "notebooklm")
 
-	cfg, err := LoadResolved("")
+	cfg, err := LoadResolved(path)
 	if err != nil {
 		t.Fatalf("LoadResolved: %v", err)
 	}
-	if !cfg.Watch.Enabled || cfg.Watch.SubjectID != 9 || cfg.Watch.SessionID != 8 {
+	if !cfg.Watch.Enabled || len(cfg.Watch.Targets) != 1 {
 		t.Fatalf("watch env not applied: %+v", cfg.Watch)
 	}
 	if !cfg.Watch.Upload || cfg.Watch.NotebookLM.NotebookID != "nb-env" || cfg.Watch.PollInterval != "10m" {
@@ -185,11 +151,11 @@ func TestWatchEnvOverrides(t *testing.T) {
 	}
 }
 
-func TestWatchCLIPathEnvOverrideIsPreserved(t *testing.T) {
+func TestWatchCommandEnvOverrideIsPreserved(t *testing.T) {
 	t.Setenv("IMPARTUS_USERNAME", "u")
 	t.Setenv("IMPARTUS_PASSWORD", "p")
 	t.Setenv("IMPARTUS_BASE_URL", "https://example.com")
-	t.Setenv("IMPARTUS_NOTEBOOKLM_CLI_PATH", "/opt/tools/notebooklm")
+	t.Setenv("IMPARTUS_NOTEBOOKLM_COMMAND", "/opt/tools/notebooklm")
 
 	cfg, err := LoadResolved("")
 	if err != nil {

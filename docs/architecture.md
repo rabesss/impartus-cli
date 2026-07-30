@@ -103,23 +103,20 @@ flowchart TD
   Claim --> DL["downloader audioOnly views=left quality=144"]
   DL --> Mark1["state: downloaded"]
   Mark1 --> Up
-  Up --> Recon["list routed notebook sources"]
-  Recon -->|exact upload key token exists| Mark2
-  Recon -->|absent and below source cap| Add["add source"]
-  Add -->|success| Mark2["state: uploaded + sourceId"]
-  Add -->|ambiguous| Recheck["reconcile exact upload key token"]
-  Recheck -->|found| Mark2
-  Recheck -->|not found or unreadable| Hold["state: ambiguous; reconcile-only"]
+  Up --> Intent["persist state: ambiguous before provider add"]
+  Intent --> Add["add source"]
+  Add -->|created| Mark2["state: uploaded + sourceId"]
+  Add -->|rejected| Retry["state: failed; retry next cycle"]
+  Add -->|ambiguous| Hold["state: ambiguous; reconcile-only"]
   Hold --> SafeRecon["list routed notebook sources; no add allowed"]
   SafeRecon -->|found| Mark2
   SafeRecon -->|absent or unreadable| Hold
   Mark2 --> Clean["optional delete local audio"]
-  DL -->|error| Retry["state: failed; retry next cycle"]
-  Recon -->|auth error| Abort["abort cycle"]
+  DL -->|error| Retry
   Add -->|auth error| Abort
 ```
 
-Auth for NotebookLM is out-of-band: see [`notebooklm-auth.md`](notebooklm-auth.md). Provider subprocesses receive an allowlisted operating-system environment rather than Impartus credentials or unrelated application tokens. The deterministic key is stored with the lecture state before upload, so retries and crash recovery can reconcile the same provider source. State persistence reuses the atomic write/sync pattern from job persistence.
+Auth for NotebookLM is out-of-band: see [`notebooklm-auth.md`](notebooklm-auth.md). Provider subprocesses receive an allowlisted operating-system environment rather than Impartus credentials or unrelated application tokens. Watch owns the durable idempotency phase: it stores the deterministic key and `ambiguous` state before crossing the provider boundary, while the provider adapter returns a typed `created`, `ambiguous`, or `rejected` outcome. Later cycles reconcile ambiguous sources without issuing another add. State persistence reuses the atomic write/sync pattern from job persistence.
 
 ## API authenticated job lifecycle flow
 

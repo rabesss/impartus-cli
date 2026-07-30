@@ -54,7 +54,6 @@ type SeenLecture struct {
 	Topic       string        `json:"topic"`
 	StartTime   string        `json:"startTime"`
 	OutputPath  string        `json:"audioPath,omitempty"`
-	Uploaded    bool          `json:"uploaded"`
 	NotebookID  string        `json:"notebookId,omitempty"`
 	SourceID    string        `json:"sourceId,omitempty"`
 	UploadKey   string        `json:"uploadKey,omitempty"`
@@ -84,9 +83,10 @@ func (s *SeenLecture) UnmarshalJSON(data []byte) error {
 
 // Store is a file-backed State with atomic writes.
 type Store struct {
-	mu   sync.Mutex
-	path string
-	data State
+	mu        sync.Mutex
+	path      string
+	data      State
+	writeFile func(path string, data []byte, mode os.FileMode) error
 }
 
 // CourseKey builds the map key for a subject/session pair.
@@ -109,6 +109,7 @@ func LoadStore(path string) (*Store, error) {
 			Version: stateVersion,
 			Courses: map[string]CourseState{},
 		},
+		writeFile: atomicWriteFile,
 	}
 	if path == "" {
 		return nil, errors.New("watch state path is required")
@@ -127,41 +128,39 @@ func LoadStore(path string) (*Store, error) {
 	if loaded.Courses == nil {
 		loaded.Courses = map[string]CourseState{}
 	}
-	if loaded.Version == 0 {
-		loaded.Version = stateVersion
+	if loaded.Version != stateVersion {
+		return nil, fmt.Errorf("decode watch state %s: unsupported version %d", path, loaded.Version)
 	}
-	normalizeLoadedState(&loaded)
+	if err := validateLoadedState(&loaded); err != nil {
+		return nil, fmt.Errorf("decode watch state %s: %w", path, err)
+	}
 	store.data = loaded
 	_ = os.Chmod(path, 0o600) //nolint:errcheck // best-effort privacy hardening
 	return store, nil
 }
 
-func normalizeLoadedState(state *State) {
+func validateLoadedState(state *State) error {
 	for courseKey, course := range state.Courses {
 		if course.SeenTTIDs == nil {
 			course.SeenTTIDs = map[string]SeenLecture{}
 		}
 		for ttid, seen := range course.SeenTTIDs {
-			if seen.Status == "" {
-				seen.Status = inferLegacyStatus(seen)
-				course.SeenTTIDs[ttid] = seen
+			if !validLectureStatus(seen.Status) {
+				return fmt.Errorf("course %s lecture %s has invalid status %q", courseKey, ttid, seen.Status)
 			}
 		}
 		state.Courses[courseKey] = course
 	}
+	return nil
 }
 
-func inferLegacyStatus(seen SeenLecture) LectureStatus {
-	if seen.Uploaded || seen.SourceID != "" {
-		return StatusUploaded
+func validLectureStatus(status LectureStatus) bool {
+	switch status {
+	case StatusPending, StatusDownloaded, StatusUploaded, StatusAmbiguous, StatusFailed:
+		return true
+	default:
+		return false
 	}
-	if seen.Error != "" {
-		return StatusFailed
-	}
-	if seen.OutputPath != "" {
-		return StatusDownloaded
-	}
-	return StatusPending
 }
 
 // NeedsWork reports whether a lecture should be processed (new, failed, or
@@ -181,7 +180,7 @@ func (s *Store) NeedsWork(subjectID, sessionID, ttid int, uploadEnabled bool) bo
 	case StatusFailed, StatusPending:
 		return true
 	default:
-		return seen.Error != "" || seen.OutputPath == ""
+		return false
 	}
 }
 
@@ -193,7 +192,7 @@ func (s *Store) Has(subjectID, sessionID, ttid int) bool {
 	if !ok {
 		return false
 	}
-	return seen.Status == StatusUploaded || (seen.Error == "" && seen.Uploaded && seen.OutputPath != "")
+	return seen.Status == StatusUploaded
 }
 
 // Get returns a previously recorded lecture, if present.
@@ -217,6 +216,9 @@ func (s *Store) Mark(subjectID, sessionID int, lecture SeenLecture, ttid int) er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if !validLectureStatus(lecture.Status) {
+		return fmt.Errorf("watch lecture status is required and must be valid, got %q", lecture.Status)
+	}
 	key := CourseKey(subjectID, sessionID)
 	previousCourse, hadCourse := s.data.Courses[key]
 	course := CourseState{SeenTTIDs: make(map[string]SeenLecture, len(previousCourse.SeenTTIDs)+1)}
@@ -233,25 +235,23 @@ func (s *Store) Mark(subjectID, sessionID int, lecture SeenLecture, ttid int) er
 	if lecture.ProcessedAt == "" {
 		lecture.ProcessedAt = now
 	}
-	if lecture.Status == "" {
-		lecture.Status = inferLegacyStatus(lecture)
-	}
 	lecture.SubjectID = subjectID
 	lecture.SessionID = sessionID
-	lecture.Uploaded = lecture.Status == StatusUploaded
 	course.SeenTTIDs[strconv.Itoa(ttid)] = lecture
 	previousVersion, previousUpdatedAt := s.data.Version, s.data.UpdatedAt
 	s.data.Courses[key] = course
 	s.data.Version = stateVersion
 	s.data.UpdatedAt = now
 	if err := s.saveLocked(); err != nil {
-		if hadCourse {
-			s.data.Courses[key] = previousCourse
-		} else {
-			delete(s.data.Courses, key)
+		if !stateWriteCommitted(err) {
+			if hadCourse {
+				s.data.Courses[key] = previousCourse
+			} else {
+				delete(s.data.Courses, key)
+			}
+			s.data.Version = previousVersion
+			s.data.UpdatedAt = previousUpdatedAt
 		}
-		s.data.Version = previousVersion
-		s.data.UpdatedAt = previousUpdatedAt
 		return err
 	}
 	return nil
@@ -282,15 +282,8 @@ func mergeSeenLecture(existing, lecture SeenLecture) SeenLecture {
 	if lecture.UploadKey == "" {
 		lecture.UploadKey = existing.UploadKey
 	}
-	if lecture.Status == "" {
-		lecture.Status = existing.Status
-		lecture.Uploaded = existing.Uploaded
-		if lecture.SourceID == "" {
-			lecture.SourceID = existing.SourceID
-		}
-		if lecture.Error == "" {
-			lecture.Error = existing.Error
-		}
+	if lecture.SourceID == "" {
+		lecture.SourceID = existing.SourceID
 	}
 	return lecture
 }
@@ -316,7 +309,24 @@ func (s *Store) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	return atomicWriteFile(s.path, data, 0o600)
+	writeFile := s.writeFile
+	if writeFile == nil {
+		writeFile = atomicWriteFile
+	}
+	return writeFile(s.path, data, 0o600)
+}
+
+type stateWriteError struct {
+	err       error
+	committed bool
+}
+
+func (e *stateWriteError) Error() string { return e.err.Error() }
+func (e *stateWriteError) Unwrap() error { return e.err }
+
+func stateWriteCommitted(err error) bool {
+	var writeErr *stateWriteError
+	return errors.As(err, &writeErr) && writeErr.committed
 }
 
 // atomicWriteFile writes data through a uniquely-created, synced temporary
@@ -346,7 +356,10 @@ func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
 	}
 	cleanup = false
 	if err := syncStateDirectory(parent); err != nil {
-		return fmt.Errorf("sync watch state directory: %w", err)
+		return &stateWriteError{
+			err:       fmt.Errorf("sync watch state directory: %w", err),
+			committed: true,
+		}
 	}
 	return nil
 }

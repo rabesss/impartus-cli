@@ -61,11 +61,6 @@ type Options struct {
 	// RetryBackoff, when set, replaces the default attempt^2 seconds backoff.
 	RetryBackoff func(attempt int) time.Duration
 	Log          io.Writer
-
-	// Legacy single-target fields kept for older call sites/tests.
-	SubjectID  int
-	SessionID  int
-	NotebookID string
 }
 
 // CycleResult summarizes one poll cycle.
@@ -116,13 +111,6 @@ func normalizeOptions(opts Options) Options {
 	}
 	if opts.Log == nil {
 		opts.Log = io.Discard
-	}
-	if len(opts.Targets) == 0 && opts.SubjectID > 0 && opts.SessionID > 0 {
-		opts.Targets = []config.WatchTarget{{
-			SubjectID:  opts.SubjectID,
-			SessionID:  opts.SessionID,
-			NotebookID: opts.NotebookID,
-		}}
 	}
 	return opts
 }
@@ -306,10 +294,19 @@ func (w *Watcher) processUpload(
 ) error {
 	upload, uploadErr := w.uploadOrReconcile(ctx, target, lecture, output, title, reconcileOnly, &seen)
 	if uploadErr != nil {
-		return w.persistUploadError(ctx, target, lecture, reconcileOnly, seen, uploadErr)
+		return w.persistUploadError(ctx, target, lecture, upload.Outcome, seen, uploadErr)
+	}
+	if upload.Outcome != notebooklm.UploadCreated && upload.Outcome != notebooklm.UploadFound {
+		return w.persistUploadError(
+			ctx,
+			target,
+			lecture,
+			notebooklm.UploadRejected,
+			seen,
+			fmt.Errorf("notebooklm provider returned invalid successful outcome %q", upload.Outcome),
+		)
 	}
 	seen.Status = StatusUploaded
-	seen.Uploaded = true
 	seen.SourceID = upload.SourceID
 	seen.NotebookID = firstNonEmpty(upload.NotebookID, seen.NotebookID)
 	seen.Error = ""
@@ -343,6 +340,7 @@ func (w *Watcher) uploadOrReconcile(
 			ctx, seen.NotebookID, title, seen.UploadKey,
 		)
 		if uploadErr == nil && !found {
+			upload.Outcome = notebooklm.UploadAmbiguous
 			uploadErr = &notebooklm.Error{
 				Kind:    notebooklm.ErrAmbiguous,
 				Message: "ambiguous NotebookLM upload is not visible yet; refusing automatic re-add",
@@ -366,14 +364,14 @@ func (w *Watcher) persistUploadError(
 	ctx context.Context,
 	target config.WatchTarget,
 	lecture client.Lecture,
-	reconcileOnly bool,
+	outcome notebooklm.UploadOutcome,
 	seen SeenLecture,
 	uploadErr error,
 ) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}
-	if reconcileOnly || notebooklm.IsAmbiguous(uploadErr) {
+	if outcome == notebooklm.UploadAmbiguous {
 		seen.Status = StatusAmbiguous
 	} else {
 		seen.Status = StatusFailed
@@ -393,13 +391,13 @@ func (w *Watcher) pendingLecture(
 		key = lectureUploadKey(target, lecture)
 	}
 	status := StatusPending
-	notebookID := firstNonEmpty(target.NotebookID, w.opts.NotebookID, existing.NotebookID)
+	notebookID := firstNonEmpty(target.NotebookID, existing.NotebookID)
 	if existing.Status == StatusAmbiguous {
 		status = StatusAmbiguous
 		// An in-flight add belongs to the notebook selected when the provider
 		// boundary was crossed. Configuration changes must not redirect its
 		// reconciliation to another notebook.
-		notebookID = firstNonEmpty(existing.NotebookID, target.NotebookID, w.opts.NotebookID)
+		notebookID = firstNonEmpty(existing.NotebookID, target.NotebookID)
 	}
 	return lectureTitle(lecture, key), existing, SeenLecture{
 		Status:     status,

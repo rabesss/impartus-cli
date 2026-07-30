@@ -4,7 +4,6 @@ package notebooklm
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -67,12 +66,9 @@ func (u *Uploader) upload(ctx context.Context, req UploadRequest) (UploadResult,
 	}
 	notebookID := firstNonEmpty(req.NotebookID, u.cfg.NotebookID)
 	if req.IdempotencyKey != "" {
-		existing, found, prepErr := u.prepareIdempotentUpload(ctx, notebookID, req.Title, req.IdempotencyKey)
-		if prepErr != nil {
-			return UploadResult{}, prepErr
-		}
-		if found {
-			return existing, nil
+		token := idempotencyToken(req.IdempotencyKey)
+		if token == "" || !strings.Contains(req.Title, token) {
+			return UploadResult{Outcome: UploadRejected}, fmt.Errorf("upload title must contain idempotency key")
 		}
 	}
 	return u.executeUpload(ctx, args, req, notebookID)
@@ -94,31 +90,26 @@ func (u *Uploader) executeUpload(
 			classifyErr = uploadCtx.Err()
 		}
 		classified := ClassifyError(classifyErr, stdout, stderr)
-		// A provider timeout or broken connection can happen after NotebookLM
-		// accepted the add, so those outcomes require reconciliation. The
-		// notebooklm-py add command has no post-add wait phase, which makes an
-		// explicit rate/quota response a pre-creation rejection that is safe to
-		// retry. nlm uses --wait, so its rate limit may instead come from polling
-		// a source that was already created and remains ambiguous.
-		if req.IdempotencyKey == "" || IsAuth(classified) ||
-			(u.cfg.Provider == ProviderNotebookLMpy && IsRateLimit(classified)) ||
-			!isTypedRetryable(classified) {
-			return UploadResult{}, classified
+		outcome := classifyUploadOutcome(u.cfg.Provider, classified)
+		if req.IdempotencyKey == "" || outcome == UploadRejected {
+			return UploadResult{Outcome: UploadRejected}, classified
 		}
-		return u.reconcileAmbiguousUpload(ctx, notebookID, req.Title, req.IdempotencyKey, classified)
+		return UploadResult{Outcome: UploadAmbiguous}, &Error{
+			Kind:    ErrAmbiguous,
+			Message: "upload outcome is ambiguous; later watch cycles must reconcile without another add",
+			Err:     classified,
+		}
 	}
 	result, parseErr := parseUploadResult(stdout, notebookID)
 	if parseErr != nil {
 		if req.IdempotencyKey != "" {
-			return u.reconcileAmbiguousUpload(
-				ctx,
-				notebookID,
-				req.Title,
-				req.IdempotencyKey,
-				fmt.Errorf("parse notebooklm upload response: %w", parseErr),
-			)
+			return UploadResult{Outcome: UploadAmbiguous}, &Error{
+				Kind:    ErrAmbiguous,
+				Message: "upload response was ambiguous; later watch cycles must reconcile without another add",
+				Err:     fmt.Errorf("parse notebooklm upload response: %w", parseErr),
+			}
 		}
-		return UploadResult{Raw: stdout}, fmt.Errorf("parse notebooklm upload response: %w", parseErr)
+		return UploadResult{Outcome: UploadRejected, Raw: stdout}, fmt.Errorf("parse notebooklm upload response: %w", parseErr)
 	}
 	result.Raw = stdout
 	if req.Title != "" && result.Title == "" {
@@ -151,49 +142,10 @@ func (u *Uploader) ReconcileUpload(
 		return UploadResult{}, false, fmt.Errorf("reconcile notebook after ambiguous upload: %w", err)
 	}
 	result, found := findSourceByTitle(inventory.Sources, title, idempotencyKey)
+	if found {
+		result.Outcome = UploadFound
+	}
 	return result, found, nil
-}
-
-func (u *Uploader) prepareIdempotentUpload(
-	ctx context.Context,
-	notebookID, title, idempotencyKey string,
-) (UploadResult, bool, error) {
-	token := idempotencyToken(idempotencyKey)
-	if token == "" || !strings.Contains(title, token) {
-		return UploadResult{}, false, fmt.Errorf("upload title must contain idempotency key")
-	}
-	inventory, err := u.listSources(ctx, notebookID)
-	if err != nil {
-		return UploadResult{}, false, fmt.Errorf("reconcile notebook before upload: %w", err)
-	}
-	if existing, ok := findSourceByTitle(inventory.Sources, title, idempotencyKey); ok {
-		return existing, true, nil
-	}
-	if u.cfg.MaxSourcesPerNotebook > 0 && inventory.Count >= u.cfg.MaxSourcesPerNotebook {
-		return UploadResult{}, false, fmt.Errorf(
-			"notebook %s already has %d sources (cap %d)",
-			notebookID,
-			inventory.Count,
-			u.cfg.MaxSourcesPerNotebook,
-		)
-	}
-	return UploadResult{}, false, nil
-}
-
-func (u *Uploader) reconcileAmbiguousUpload(
-	ctx context.Context,
-	notebookID, title, idempotencyKey string,
-	cause error,
-) (UploadResult, error) {
-	existing, found, err := u.ReconcileUpload(ctx, notebookID, title, idempotencyKey)
-	if err == nil && found {
-		return existing, nil
-	}
-	message := "upload outcome is ambiguous; later watch cycles must reconcile without another add"
-	if err != nil {
-		message += ": " + trimForError(err.Error())
-	}
-	return UploadResult{}, &Error{Kind: ErrAmbiguous, Message: message, Err: cause}
 }
 
 func findSourceByTitle(sources []UploadResult, title, idempotencyKey string) (UploadResult, bool) {
@@ -218,9 +170,4 @@ func idempotencyToken(key string) string {
 		return ""
 	}
 	return "[" + key + "]"
-}
-
-func isTypedRetryable(err error) bool {
-	var typed *Error
-	return errors.As(err, &typed) && typed.Retryable()
 }

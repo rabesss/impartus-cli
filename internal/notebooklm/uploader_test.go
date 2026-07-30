@@ -32,6 +32,8 @@ func TestProviderEnvironmentDropsApplicationSecrets(t *testing.T) {
 		"PATH=/usr/bin",
 		"LC_ALL=C.UTF-8",
 		"HTTPS_PROXY=http://proxy.example",
+		"NOTEBOOKLM_HOME=/srv/notebooklm",
+		"NOTEBOOKLM_PROFILE=work",
 		"IMPARTUS_USERNAME=student",
 		"IMPARTUS_PASSWORD=secret",
 		"GITHUB_TOKEN=secret",
@@ -45,6 +47,8 @@ func TestProviderEnvironmentDropsApplicationSecrets(t *testing.T) {
 		"\nPATH=/usr/bin\n",
 		"\nLC_ALL=C.UTF-8\n",
 		"\nHTTPS_PROXY=http://proxy.example\n",
+		"\nNOTEBOOKLM_HOME=/srv/notebooklm\n",
+		"\nNOTEBOOKLM_PROFILE=work\n",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("safe provider environment variable %q was dropped: %v", want, filtered)
@@ -182,7 +186,7 @@ func TestUploadHonorsRequestNotebookID(t *testing.T) {
 	}
 }
 
-func TestUploadReusesSourceWithMatchingIdempotentTitle(t *testing.T) {
+func TestUploadDoesNotListBeforeCrossingProviderBoundary(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "lec.mp3")
 	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
@@ -193,7 +197,7 @@ func TestUploadReusesSourceWithMatchingIdempotentTitle(t *testing.T) {
 		stdout string
 		err    error
 	}{
-		{stdout: `[{"id":"existing","title":"` + title + `"}]`},
+		{stdout: `{"source_id":"created","title":"` + title + `"}`},
 	}}
 	u := NewWithRunner(Config{CLIPath: "notebooklm"}, runner)
 	result, err := u.Upload(context.Background(), UploadRequest{
@@ -202,62 +206,12 @@ func TestUploadReusesSourceWithMatchingIdempotentTitle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.SourceID != "existing" || len(runner.calls) != 1 {
-		t.Fatalf("existing source was not reused: result=%+v calls=%v", result, runner.calls)
+	if result.SourceID != "created" || result.Outcome != UploadCreated || len(runner.calls) != 1 {
+		t.Fatalf("unexpected add outcome: result=%+v calls=%v", result, runner.calls)
 	}
-	if joined := strings.Join(runner.calls[0], " "); !strings.Contains(joined, "--notebook routed") ||
-		!strings.Contains(joined, "source list") {
-		t.Fatalf("wrong reconciliation target: %v", runner.calls[0])
-	}
-}
-
-func TestUploadReusesSourceByExactIdempotencyToken(t *testing.T) {
-	dir := t.TempDir()
-	file := filepath.Join(dir, "lec.mp3")
-	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	title := "[impartus:1:2:10] LEC 001 A very long lecture topic"
-	runner := &seqRunner{responses: []struct {
-		stdout string
-		err    error
-	}{
-		{stdout: `[{"id":"existing","title":"[impartus:1:2:10] LEC 001 A very"}]`},
-	}}
-	u := NewWithRunner(Config{CLIPath: "notebooklm"}, runner)
-	result, err := u.Upload(context.Background(), UploadRequest{
-		NotebookID: "routed", FilePath: file, Title: title, IdempotencyKey: "impartus:1:2:10",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.SourceID != "existing" || len(runner.calls) != 1 {
-		t.Fatalf("token-matched source was not reused: result=%+v calls=%v", result, runner.calls)
-	}
-}
-
-func TestUploadReusesLegacySuffixTitleByExactIdempotencyToken(t *testing.T) {
-	dir := t.TempDir()
-	file := filepath.Join(dir, "lec.mp3")
-	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runner := &seqRunner{responses: []struct {
-		stdout string
-		err    error
-	}{
-		{stdout: `[{"id":"existing","title":"LEC 001 Intro [impartus:1:2:10]"}]`},
-	}}
-	u := NewWithRunner(Config{CLIPath: "notebooklm"}, runner)
-	result, err := u.Upload(context.Background(), UploadRequest{
-		NotebookID: "routed", FilePath: file,
-		Title: "[impartus:1:2:10] LEC 001 Intro", IdempotencyKey: "impartus:1:2:10",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.SourceID != "existing" || len(runner.calls) != 1 {
-		t.Fatalf("legacy token-matched source was not reused: result=%+v calls=%v", result, runner.calls)
+	if joined := strings.Join(runner.calls[0], " "); !strings.Contains(joined, "source add") ||
+		strings.Contains(joined, "source list") {
+		t.Fatalf("upload command crossed an unexpected list path: %v", runner.calls[0])
 	}
 }
 
@@ -272,55 +226,27 @@ func TestFindSourceByTitleDoesNotMatchPartialIdempotencyToken(t *testing.T) {
 	}
 }
 
-func TestUploadReconcilesSourceAfterAmbiguousTimeout(t *testing.T) {
+func TestUploadReturnsTypedAmbiguousOutcomeWithoutSelfReconciliation(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "lec.mp3")
 	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	title := "LEC 001 Intro [impartus:1:2:10]"
 	runner := &seqRunner{responses: []struct {
 		stdout string
 		err    error
 	}{
-		{stdout: `[]`},
 		{err: context.DeadlineExceeded},
-		{stdout: `[{"source_id":"created","title":"` + title + `"}]`},
 	}}
 	u := NewWithRunner(Config{CLIPath: "notebooklm"}, runner)
 	result, err := u.Upload(context.Background(), UploadRequest{
-		NotebookID: "routed", FilePath: file, Title: title, IdempotencyKey: "impartus:1:2:10",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.SourceID != "created" || len(runner.calls) != 3 {
-		t.Fatalf("ambiguous upload was not reconciled: result=%+v calls=%v", result, runner.calls)
-	}
-}
-
-func TestUploadDefersAmbiguousWriteWhenReconciliationFindsNothing(t *testing.T) {
-	dir := t.TempDir()
-	file := filepath.Join(dir, "lec.mp3")
-	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runner := &seqRunner{responses: []struct {
-		stdout string
-		err    error
-	}{
-		{stdout: `[]`},
-		{err: context.DeadlineExceeded},
-		{stdout: `[]`},
-	}}
-	u := NewWithRunner(Config{CLIPath: "notebooklm"}, runner)
-	_, err := u.Upload(context.Background(), UploadRequest{
 		NotebookID: "routed", FilePath: file,
-		Title: "LEC 001 Intro [impartus:1:2:10]", IdempotencyKey: "impartus:1:2:10",
+		Title: "[impartus:1:2:10] LEC 001 Intro", IdempotencyKey: "impartus:1:2:10",
 	})
 	var typed *Error
-	if !errors.As(err, &typed) || typed.Kind != ErrAmbiguous || typed.Retryable() {
-		t.Fatalf("ambiguous add must defer instead of retrying immediately: %v", err)
+	if result.Outcome != UploadAmbiguous || !errors.As(err, &typed) ||
+		typed.Kind != ErrAmbiguous || typed.Retryable() || len(runner.calls) != 1 {
+		t.Fatalf("ambiguous add was not returned directly: result=%+v err=%v calls=%v", result, err, runner.calls)
 	}
 }
 
@@ -334,19 +260,18 @@ func TestUploadReturnsRateLimitWithoutAmbiguousReconciliation(t *testing.T) {
 		stdout string
 		err    error
 	}{
-		{stdout: `[]`},
 		{err: errors.New("HTTP 429 rate limit")},
 	}}
 	u := NewWithRunner(Config{CLIPath: "notebooklm"}, runner)
-	_, err := u.Upload(context.Background(), UploadRequest{
+	result, err := u.Upload(context.Background(), UploadRequest{
 		NotebookID: "routed", FilePath: file,
 		Title: "LEC 001 Intro [impartus:1:2:10]", IdempotencyKey: "impartus:1:2:10",
 	})
-	if !IsRateLimit(err) || IsAmbiguous(err) {
-		t.Fatalf("rate-limit rejection must remain safely retryable: %v", err)
+	if result.Outcome != UploadRejected || !IsRateLimit(err) || IsAmbiguous(err) {
+		t.Fatalf("rate-limit rejection must remain safely retryable: result=%+v err=%v", result, err)
 	}
-	if len(runner.calls) != 2 {
-		t.Fatalf("rate-limit rejection triggered ambiguous reconciliation: %v", runner.calls)
+	if len(runner.calls) != 1 {
+		t.Fatalf("rate-limit rejection triggered an extra provider command: %v", runner.calls)
 	}
 }
 
@@ -360,20 +285,18 @@ func TestNLMRateLimitRemainsAmbiguousBecauseWaitMayFollowCreation(t *testing.T) 
 		stdout string
 		err    error
 	}{
-		{stdout: `[]`},
 		{err: errors.New("HTTP 429 rate limit")},
-		{stdout: `[]`},
 	}}
 	u := NewWithRunner(Config{Provider: ProviderNLM, CLIPath: "nlm"}, runner)
-	_, err := u.Upload(context.Background(), UploadRequest{
+	result, err := u.Upload(context.Background(), UploadRequest{
 		NotebookID: "routed", FilePath: file,
 		Title: "LEC 001 Intro [impartus:1:2:10]", IdempotencyKey: "impartus:1:2:10",
 	})
-	if !IsAmbiguous(err) {
-		t.Fatalf("nlm rate limit during --wait must remain ambiguous: %v", err)
+	if result.Outcome != UploadAmbiguous || !IsAmbiguous(err) {
+		t.Fatalf("nlm rate limit during --wait must remain ambiguous: result=%+v err=%v", result, err)
 	}
-	if len(runner.calls) != 3 {
-		t.Fatalf("nlm rate limit did not reconcile possible creation: %v", runner.calls)
+	if len(runner.calls) != 1 {
+		t.Fatalf("nlm rate limit triggered hidden reconciliation: %v", runner.calls)
 	}
 }
 
@@ -399,28 +322,6 @@ func TestReconcileUploadDoesNotAddWhenSourceIsStillMissing(t *testing.T) {
 	}
 	if len(runner.calls) != 1 || !strings.Contains(strings.Join(runner.calls[0], " "), "source list") {
 		t.Fatalf("reconciliation issued an unexpected provider command: %v", runner.calls)
-	}
-}
-
-func TestUploadChecksCapOnRoutedNotebook(t *testing.T) {
-	dir := t.TempDir()
-	file := filepath.Join(dir, "lec.mp3")
-	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runner := &seqRunner{responses: []struct {
-		stdout string
-		err    error
-	}{
-		{stdout: `[{"id":"1","title":"a"},{"id":"2","title":"b"}]`},
-	}}
-	u := NewWithRunner(Config{CLIPath: "notebooklm", MaxSourcesPerNotebook: 2}, runner)
-	_, err := u.Upload(context.Background(), UploadRequest{
-		NotebookID: "routed", FilePath: file,
-		Title: "LEC 001 Intro [impartus:1:2:10]", IdempotencyKey: "impartus:1:2:10",
-	})
-	if err == nil || !strings.Contains(err.Error(), "cap") || len(runner.calls) != 1 {
-		t.Fatalf("routed notebook cap was not enforced: err=%v calls=%v", err, runner.calls)
 	}
 }
 

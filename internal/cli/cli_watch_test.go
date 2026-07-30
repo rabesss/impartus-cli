@@ -66,7 +66,8 @@ func TestApplyWatchFlagsForcesEnabledAndUpload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("applyWatchFlags: %v", err)
 	}
-	if !got.Watch.Enabled || got.Watch.SubjectID != 3 || got.Watch.SessionID != 4 {
+	if !got.Watch.Enabled || len(got.Watch.Targets) != 1 ||
+		got.Watch.Targets[0].SubjectID != 3 || got.Watch.Targets[0].SessionID != 4 {
 		t.Fatalf("watch course not applied: %+v", got.Watch)
 	}
 	if !got.Watch.Upload || got.Watch.NotebookLM.NotebookID != "nb" || got.DownloadLocation != "/tmp/out" {
