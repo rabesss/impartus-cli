@@ -112,7 +112,7 @@ printf '%%s\n' '{"source_id":"src-e2e","title":"from-fake"}'
 		"source\nadd",
 		"--notebook\nnb-e2e",
 		"--type\nfile",
-		first.Outputs[0],
+		"[impartus-fd8f44330d2e30ff]",
 		"[impartus:1:2:101] LEC 001 Integration lecture",
 	} {
 		if !strings.Contains(string(argv), want) {

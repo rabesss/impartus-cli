@@ -16,6 +16,10 @@ import (
 	"github.com/rabesss/impartus-cli/internal/notebooklm"
 )
 
+const maxAmbiguousReconcileAttempts = 3
+
+var errSafetyStop = errors.New("watch stopped to preserve upload safety")
+
 // LectureSource lists lectures for a course.
 type LectureSource interface {
 	GetLectures(ctx context.Context, cfg *config.Config, course client.Course) (client.Lectures, error)
@@ -126,14 +130,15 @@ func (w *Watcher) logf(format string, args ...any) {
 }
 
 // Run loops until Once is set, the context is canceled, or an unrecoverable
-// authentication error occurs. Poll failures are logged and retried next cycle.
+// authentication or state-safety error occurs. Poll failures are logged and
+// retried next cycle.
 func (w *Watcher) Run(ctx context.Context) (CycleResult, error) {
 	var last CycleResult
 	for {
 		cycle, err := w.RunCycle(ctx)
 		last = cycle
 		if err != nil {
-			if w.opts.Once || notebooklm.IsAuth(err) || ctx.Err() != nil {
+			if w.opts.Once || notebooklm.IsAuth(err) || errors.Is(err, errSafetyStop) || ctx.Err() != nil {
 				return last, err
 			}
 			w.logf("watch: cycle failed; retrying after %s: %v", w.opts.Interval, err)
@@ -168,6 +173,9 @@ func (w *Watcher) RunCycle(ctx context.Context) (CycleResult, error) {
 		if err != nil {
 			if notebooklm.IsAuth(err) {
 				return result, fmt.Errorf("notebooklm auth failure; aborting cycle: %w", err)
+			}
+			if errors.Is(err, errSafetyStop) {
+				return result, err
 			}
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return result, ctxErr
@@ -222,6 +230,9 @@ func (w *Watcher) runTarget(ctx context.Context, target config.WatchTarget, limi
 			result.Failed++
 			result.Errors = append(result.Errors, fmt.Sprintf("%s ttid=%d: %v", targetLabel(target), lecture.TTID, err))
 			w.logf("watch: %s lecture ttid=%d failed: %v", targetLabel(target), lecture.TTID, err)
+			if errors.Is(err, errSafetyStop) {
+				return processed, err
+			}
 			continue
 		}
 	}
@@ -309,6 +320,7 @@ func (w *Watcher) processUpload(
 	seen.Status = StatusUploaded
 	seen.SourceID = upload.SourceID
 	seen.NotebookID = firstNonEmpty(upload.NotebookID, seen.NotebookID)
+	seen.ReconcileAttempts = 0
 	seen.Error = ""
 
 	if err := w.store.Mark(target.SubjectID, target.SessionID, seen, lecture.TTID); err != nil {
@@ -339,13 +351,24 @@ func (w *Watcher) uploadOrReconcile(
 		upload, found, uploadErr = w.uploader.ReconcileUpload(
 			ctx, seen.NotebookID, title, seen.UploadKey,
 		)
-		if uploadErr != nil {
-			upload.Outcome = notebooklm.UploadAmbiguous
-		} else if !found {
+		if uploadErr == nil && !found {
 			upload.Outcome = notebooklm.UploadAmbiguous
 			uploadErr = &notebooklm.Error{
 				Kind:    notebooklm.ErrAmbiguous,
 				Message: "ambiguous NotebookLM upload is not visible yet; refusing automatic re-add",
+			}
+		}
+		if uploadErr != nil {
+			upload.Outcome = notebooklm.UploadAmbiguous
+			if seen.ReconcileAttempts >= maxAmbiguousReconcileAttempts {
+				uploadErr = errors.Join(
+					errSafetyStop,
+					fmt.Errorf(
+						"ambiguous NotebookLM upload remained unresolved after %d reconciliation attempts; manual verification required before clearing its state: %w",
+						seen.ReconcileAttempts,
+						uploadErr,
+					),
+				)
 			}
 		}
 	} else {
@@ -377,9 +400,22 @@ func (w *Watcher) persistUploadError(
 		seen.Status = StatusAmbiguous
 	} else {
 		seen.Status = StatusFailed
+		seen.ReconcileAttempts = 0
 	}
 	seen.Error = uploadErr.Error()
 	if persistErr := w.store.Mark(target.SubjectID, target.SessionID, seen, lecture.TTID); persistErr != nil {
+		if outcome == notebooklm.UploadRejected {
+			retryErr := w.store.Mark(target.SubjectID, target.SessionID, seen, lecture.TTID)
+			if retryErr == nil {
+				return uploadErr
+			}
+			return errors.Join(
+				errSafetyStop,
+				uploadErr,
+				fmt.Errorf("persist failed watch state: %w", persistErr),
+				fmt.Errorf("persist failed watch state after retry: %w", retryErr),
+			)
+		}
 		return errors.Join(
 			uploadErr,
 			fmt.Errorf("persist watch state after upload failure: %w", persistErr),
@@ -406,14 +442,19 @@ func (w *Watcher) pendingLecture(
 		// reconciliation to another notebook.
 		notebookID = firstNonEmpty(existing.NotebookID, target.NotebookID)
 	}
+	reconcileAttempts := 0
+	if existing.Status == StatusAmbiguous {
+		reconcileAttempts = existing.ReconcileAttempts + 1
+	}
 	return lectureTitle(lecture, key), existing, SeenLecture{
-		Status:     status,
-		SeqNo:      lecture.SeqNo,
-		Topic:      lecture.Topic,
-		StartTime:  lecture.StartTime,
-		NotebookID: notebookID,
-		UploadKey:  key,
-		Attempts:   existing.Attempts + 1,
+		Status:            status,
+		SeqNo:             lecture.SeqNo,
+		Topic:             lecture.Topic,
+		StartTime:         lecture.StartTime,
+		NotebookID:        notebookID,
+		UploadKey:         key,
+		Attempts:          existing.Attempts + 1,
+		ReconcileAttempts: reconcileAttempts,
 	}
 }
 

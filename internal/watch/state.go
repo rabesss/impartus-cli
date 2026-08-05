@@ -47,20 +47,21 @@ type CourseState struct {
 
 // SeenLecture records one processed lecture and its pipeline phase.
 type SeenLecture struct {
-	Status      LectureStatus `json:"status"`
-	SubjectID   int           `json:"subjectId,omitempty"`
-	SessionID   int           `json:"sessionId,omitempty"`
-	SeqNo       int           `json:"seqNo"`
-	Topic       string        `json:"topic"`
-	StartTime   string        `json:"startTime"`
-	OutputPath  string        `json:"audioPath,omitempty"`
-	NotebookID  string        `json:"notebookId,omitempty"`
-	SourceID    string        `json:"sourceId,omitempty"`
-	UploadKey   string        `json:"uploadKey,omitempty"`
-	Attempts    int           `json:"attempts,omitempty"`
-	Error       string        `json:"lastError,omitempty"`
-	FirstSeenAt string        `json:"firstSeenAt,omitempty"`
-	ProcessedAt string        `json:"updatedAt"`
+	Status            LectureStatus `json:"status"`
+	SubjectID         int           `json:"subjectId,omitempty"`
+	SessionID         int           `json:"sessionId,omitempty"`
+	SeqNo             int           `json:"seqNo"`
+	Topic             string        `json:"topic"`
+	StartTime         string        `json:"startTime"`
+	OutputPath        string        `json:"audioPath,omitempty"`
+	NotebookID        string        `json:"notebookId,omitempty"`
+	SourceID          string        `json:"sourceId,omitempty"`
+	UploadKey         string        `json:"uploadKey,omitempty"`
+	Attempts          int           `json:"attempts,omitempty"`
+	ReconcileAttempts int           `json:"reconcileAttempts,omitempty"`
+	Error             string        `json:"lastError,omitempty"`
+	FirstSeenAt       string        `json:"firstSeenAt,omitempty"`
+	ProcessedAt       string        `json:"updatedAt"`
 }
 
 // UnmarshalJSON accepts the original outputPath key as well as audioPath so

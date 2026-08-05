@@ -234,6 +234,9 @@ func applyWatchFlags(cfg *config.Config, f watchFlags) (*config.Config, error) {
 	}
 	cfg.Watch.Enabled = true
 	switch {
+	case f.dryRun:
+		// Dry-run is list-only regardless of persisted upload settings or flags.
+		cfg.Watch.Upload = false
 	case f.noUpload:
 		cfg.Watch.Upload = false
 	case f.upload:

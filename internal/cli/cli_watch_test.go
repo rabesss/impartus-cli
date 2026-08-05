@@ -126,6 +126,39 @@ func TestDryRunAndJSONRunOnce(t *testing.T) {
 	}
 }
 
+func TestApplyWatchFlagsMakesDryRunEffectivelyDownloadAndUploadFree(t *testing.T) {
+	cfg := &config.Config{
+		Watch: config.WatchConfig{
+			Upload:  true,
+			Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2}},
+		},
+	}
+	cfg.ApplyDefaults()
+
+	got, err := applyWatchFlags(cfg, watchFlags{dryRun: true})
+	if err != nil {
+		t.Fatalf("dry-run rejected upload-enabled config without notebook id: %v", err)
+	}
+	if got.Watch.Upload {
+		t.Fatalf("dry-run retained effective upload state: %+v", got.Watch)
+	}
+}
+
+func TestApplyWatchFlagsCheckStillRequiresNotebookWhenUploadEnabled(t *testing.T) {
+	cfg := &config.Config{
+		Watch: config.WatchConfig{
+			Upload:  true,
+			Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2}},
+		},
+	}
+	cfg.ApplyDefaults()
+
+	if _, err := applyWatchFlags(cfg, watchFlags{check: true}); err == nil ||
+		!strings.Contains(err.Error(), "requires notebookId") {
+		t.Fatalf("upload-enabled check accepted missing notebook id: %v", err)
+	}
+}
+
 func TestHelpMentionsWatch(t *testing.T) {
 	payload := helpPayload()
 	found := false

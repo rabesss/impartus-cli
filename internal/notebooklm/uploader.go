@@ -4,9 +4,12 @@ package notebooklm
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -61,14 +64,24 @@ func (u *Uploader) upload(ctx context.Context, req UploadRequest) (UploadResult,
 	if err != nil {
 		return UploadResult{}, err
 	}
-	if _, err := os.Stat(req.FilePath); err != nil {
-		return UploadResult{}, fmt.Errorf("upload file: %w", err)
+	if _, statErr := os.Stat(req.FilePath); statErr != nil {
+		return UploadResult{}, fmt.Errorf("upload file: %w", statErr)
 	}
 	notebookID := firstNonEmpty(req.NotebookID, u.cfg.NotebookID)
 	if req.IdempotencyKey != "" {
 		token := idempotencyToken(req.IdempotencyKey)
 		if token == "" || !strings.Contains(req.Title, token) {
 			return UploadResult{Outcome: UploadRejected}, fmt.Errorf("upload title must contain idempotency key")
+		}
+		prepared, cleanup, prepareErr := prepareIdempotentUploadFile(req)
+		if prepareErr != nil {
+			return UploadResult{Outcome: UploadRejected}, prepareErr
+		}
+		defer cleanup()
+		req = prepared
+		args, err = BuildUploadArgs(u.cfg, req)
+		if err != nil {
+			return UploadResult{Outcome: UploadRejected}, err
 		}
 	}
 	return u.executeUpload(ctx, args, req, notebookID)
@@ -153,11 +166,10 @@ func findSourceByTitle(sources []UploadResult, title, idempotencyKey string) (Up
 	if title == "" {
 		return UploadResult{}, false
 	}
-	token := idempotencyToken(idempotencyKey)
+	tokens := idempotencyMatchTokens(idempotencyKey)
 	for _, source := range sources {
 		sourceTitle := strings.TrimSpace(source.Title)
-		if strings.TrimSpace(source.SourceID) != "" &&
-			(sourceTitle == title || (token != "" && strings.Contains(sourceTitle, token))) {
+		if strings.TrimSpace(source.SourceID) != "" && (sourceTitle == title || containsToken(sourceTitle, tokens)) {
 			return source, true
 		}
 	}
@@ -170,4 +182,68 @@ func idempotencyToken(key string) string {
 		return ""
 	}
 	return "[" + key + "]"
+}
+
+func idempotencyFilenameToken(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(key))
+	return fmt.Sprintf("[impartus-%x]", sum[:8])
+}
+
+func idempotencyMatchTokens(key string) []string {
+	if strings.TrimSpace(key) == "" {
+		return nil
+	}
+	return []string{idempotencyToken(key), idempotencyFilenameToken(key)}
+}
+
+func containsToken(title string, tokens []string) bool {
+	for _, token := range tokens {
+		if token != "" && strings.Contains(title, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func prepareIdempotentUploadFile(req UploadRequest) (UploadRequest, func(), error) {
+	token := idempotencyFilenameToken(req.IdempotencyKey)
+	if token == "" || strings.Contains(filepath.Base(req.FilePath), token) {
+		return req, func() {}, nil
+	}
+
+	source, err := os.Open(req.FilePath) // #nosec G304 -- caller-selected upload path
+	if err != nil {
+		return req, nil, fmt.Errorf("open upload file for stable naming: %w", err)
+	}
+	extension := filepath.Ext(req.FilePath)
+	alias, err := os.CreateTemp(filepath.Dir(req.FilePath), token+"-*"+extension) // #nosec G304 -- same directory as validated upload file
+	if err != nil {
+		_ = source.Close() //nolint:errcheck // preserving the primary create error
+		return req, nil, fmt.Errorf("create stable upload filename: %w", err)
+	}
+	aliasPath := alias.Name()
+	cleanup := func() {
+		_ = os.Remove(aliasPath) //nolint:errcheck // best-effort cleanup after provider consumed the file
+	}
+	if _, err := io.Copy(alias, source); err != nil {
+		_ = source.Close() //nolint:errcheck // preserving the primary copy error
+		_ = alias.Close()  //nolint:errcheck // preserving the primary copy error
+		cleanup()
+		return req, nil, fmt.Errorf("copy upload file for stable naming: %w", err)
+	}
+	if err := source.Close(); err != nil {
+		_ = alias.Close() //nolint:errcheck // preserving the primary close error
+		cleanup()
+		return req, nil, fmt.Errorf("close source upload file: %w", err)
+	}
+	if err := alias.Close(); err != nil {
+		cleanup()
+		return req, nil, fmt.Errorf("close stable upload file: %w", err)
+	}
+	req.FilePath = aliasPath
+	return req, cleanup, nil
 }

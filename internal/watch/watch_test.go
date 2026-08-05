@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -423,6 +424,101 @@ func TestRunCycleKeepsAmbiguousStateWhenReconciliationFails(t *testing.T) {
 	}
 }
 
+func TestRunCycleHardStopsAfterBoundedAmbiguousReconciliation(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	store, err := LoadStore(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markErr := store.Mark(1, 2, SeenLecture{
+		Status:     StatusAmbiguous,
+		SeqNo:      1,
+		Topic:      "Intro",
+		NotebookID: "nb",
+		UploadKey:  "impartus:1:2:10",
+	}, 10); markErr != nil {
+		t.Fatal(markErr)
+	}
+	uploader := &fakeUploader{}
+	opts := Options{
+		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb"}},
+		Once:    true, Upload: true, Log: io.Discard,
+	}
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		w := New(testCfg(), fakeSource{lectures: client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro"}}},
+			nil, uploader, store, opts)
+		result, cycleErr := w.RunCycle(context.Background())
+		if attempt < 3 {
+			if cycleErr != nil {
+				t.Fatalf("reconcile attempt %d stopped early: %v", attempt, cycleErr)
+			}
+			if result.Failed != 1 {
+				t.Fatalf("reconcile attempt %d result = %+v, want one soft failure", attempt, result)
+			}
+			store, err = LoadStore(statePath)
+			if err != nil {
+				t.Fatalf("reload state after reconcile attempt %d: %v", attempt, err)
+			}
+			continue
+		}
+		if cycleErr == nil || !strings.Contains(cycleErr.Error(), "manual verification required") {
+			t.Fatalf("final reconcile error = %v, want operator-visible hard stop", cycleErr)
+		}
+		if result.Failed != 1 {
+			t.Fatalf("final reconcile result = %+v, want one recorded failure", result)
+		}
+	}
+
+	seen, ok := store.Get(1, 2, 10)
+	if !ok || seen.Status != StatusAmbiguous {
+		t.Fatalf("hard stop must preserve fail-closed state: %+v ok=%v", seen, ok)
+	}
+	if uploader.calls != 0 || uploader.reconcileCalls != 3 {
+		t.Fatalf("bounded reconciliation issued an add or wrong probe count: uploadCalls=%d reconcileCalls=%d",
+			uploader.calls, uploader.reconcileCalls)
+	}
+}
+
+func TestRunStopsDaemonOnAmbiguousReconciliationSafetyError(t *testing.T) {
+	store, err := LoadStore(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markErr := store.Mark(1, 2, SeenLecture{
+		Status:            StatusAmbiguous,
+		SeqNo:             1,
+		Topic:             "Intro",
+		NotebookID:        "nb",
+		UploadKey:         "impartus:1:2:10",
+		ReconcileAttempts: 2,
+	}, 10); markErr != nil {
+		t.Fatal(markErr)
+	}
+	uploader := &fakeUploader{}
+	w := New(testCfg(), fakeSource{lectures: client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro"}}},
+		nil, uploader, store, Options{
+			Targets:  []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb"}},
+			Upload:   true,
+			Interval: time.Hour,
+			Log:      io.Discard,
+		})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	result, runErr := w.Run(ctx)
+	if runErr == nil || !strings.Contains(runErr.Error(), "manual verification required") {
+		t.Fatalf("Run error = %v, want immediate safety stop", runErr)
+	}
+	if errors.Is(runErr, context.DeadlineExceeded) {
+		t.Fatalf("Run waited for another daemon cycle instead of stopping: %v", runErr)
+	}
+	if result.Failed != 1 || uploader.calls != 0 || uploader.reconcileCalls != 1 {
+		t.Fatalf("unexpected daemon stop result: %+v uploadCalls=%d reconcileCalls=%d",
+			result, uploader.calls, uploader.reconcileCalls)
+	}
+}
+
 func TestPersistUploadErrorReportsStateWriteFailure(t *testing.T) {
 	store, err := LoadStore(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
@@ -457,6 +553,126 @@ func TestPersistUploadErrorReportsStateWriteFailure(t *testing.T) {
 	seen, ok := store.Get(1, 2, 10)
 	if !ok || seen.Status != StatusAmbiguous {
 		t.Fatalf("failed state write must preserve fail-closed state: %+v ok=%v", seen, ok)
+	}
+}
+
+func TestRunCycleHardStopsWhenRejectedUploadCannotPersistFailedState(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := LoadStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markErr := store.Mark(1, 2, SeenLecture{
+		Status:     StatusDownloaded,
+		SeqNo:      1,
+		Topic:      "Intro",
+		OutputPath: out,
+		NotebookID: "nb",
+		UploadKey:  "impartus:1:2:10",
+	}, 10); markErr != nil {
+		t.Fatal(markErr)
+	}
+
+	persistErr := errors.New("state filesystem is read-only")
+	failedWrites := 0
+	store.writeFile = func(path string, data []byte, mode os.FileMode) error {
+		var snapshot State
+		if err := json.Unmarshal(data, &snapshot); err != nil {
+			t.Fatalf("decode attempted state write: %v", err)
+		}
+		seen := snapshot.Courses[CourseKey(1, 2)].SeenTTIDs["10"]
+		if seen.Status == StatusFailed {
+			failedWrites++
+			return persistErr
+		}
+		return atomicWriteFile(path, data, mode)
+	}
+	uploadErr := &notebooklm.Error{Kind: notebooklm.ErrPermanent, Message: "provider rejected upload"}
+	uploader := &fakeUploader{err: uploadErr}
+	w := New(testCfg(), fakeSource{lectures: client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro"}}},
+		&fakeAudio{}, uploader, store, Options{
+			Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb"}},
+			Once:    true, Upload: true, MaxRetries: 1, Log: io.Discard,
+		})
+
+	result, cycleErr := w.RunCycle(context.Background())
+	if cycleErr == nil || !strings.Contains(cycleErr.Error(), "watch stopped to preserve upload safety") {
+		t.Fatalf("RunCycle error = %v, want fatal state-safety error", cycleErr)
+	}
+	if !errors.Is(cycleErr, uploadErr) || !errors.Is(cycleErr, persistErr) {
+		t.Fatalf("fatal error must retain upload and persistence causes: %v", cycleErr)
+	}
+	if failedWrites != 2 {
+		t.Fatalf("failed-state writes = %d, want initial attempt plus one retry", failedWrites)
+	}
+	if result.Failed != 1 || uploader.calls != 1 {
+		t.Fatalf("unexpected fatal cycle result: %+v uploadCalls=%d", result, uploader.calls)
+	}
+	seen, ok := store.Get(1, 2, 10)
+	if !ok || seen.Status != StatusAmbiguous {
+		t.Fatalf("failed demotion must preserve fail-closed state: %+v ok=%v", seen, ok)
+	}
+}
+
+func TestRunCycleRetriesFailedStatePersistenceOnce(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := LoadStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markErr := store.Mark(1, 2, SeenLecture{
+		Status:     StatusDownloaded,
+		SeqNo:      1,
+		Topic:      "Intro",
+		OutputPath: out,
+		NotebookID: "nb",
+		UploadKey:  "impartus:1:2:10",
+	}, 10); markErr != nil {
+		t.Fatal(markErr)
+	}
+
+	failedWrites := 0
+	store.writeFile = func(path string, data []byte, mode os.FileMode) error {
+		var snapshot State
+		if err := json.Unmarshal(data, &snapshot); err != nil {
+			t.Fatalf("decode attempted state write: %v", err)
+		}
+		seen := snapshot.Courses[CourseKey(1, 2)].SeenTTIDs["10"]
+		if seen.Status == StatusFailed {
+			failedWrites++
+			if failedWrites == 1 {
+				return errors.New("transient state write failure")
+			}
+		}
+		return atomicWriteFile(path, data, mode)
+	}
+	uploader := &fakeUploader{
+		err: &notebooklm.Error{Kind: notebooklm.ErrPermanent, Message: "provider rejected upload"},
+	}
+	w := New(testCfg(), fakeSource{lectures: client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro"}}},
+		&fakeAudio{}, uploader, store, Options{
+			Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb"}},
+			Once:    true, Upload: true, MaxRetries: 1, Log: io.Discard,
+		})
+
+	result, cycleErr := w.RunCycle(context.Background())
+	if cycleErr != nil {
+		t.Fatalf("retryable state write failure aborted cycle: %v", cycleErr)
+	}
+	if failedWrites != 2 || result.Failed != 1 {
+		t.Fatalf("unexpected persistence retry result: writes=%d result=%+v", failedWrites, result)
+	}
+	seen, ok := store.Get(1, 2, 10)
+	if !ok || seen.Status != StatusFailed {
+		t.Fatalf("retry did not persist failed state: %+v ok=%v", seen, ok)
 	}
 }
 

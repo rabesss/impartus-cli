@@ -19,6 +19,12 @@ type fakeRunner struct {
 	calls  int
 }
 
+type runnerFunc func(context.Context, string, []string, []string) (string, string, error)
+
+func (f runnerFunc) Run(ctx context.Context, name string, args []string, env []string) (string, string, error) {
+	return f(ctx, name, args, env)
+}
+
 func (f *fakeRunner) Run(_ context.Context, _ string, args []string, env []string) (string, string, error) {
 	f.calls++
 	f.last = append([]string{}, args...)
@@ -212,6 +218,76 @@ func TestUploadDoesNotListBeforeCrossingProviderBoundary(t *testing.T) {
 	if joined := strings.Join(runner.calls[0], " "); !strings.Contains(joined, "source add") ||
 		strings.Contains(joined, "source list") {
 		t.Fatalf("upload command crossed an unexpected list path: %v", runner.calls[0])
+	}
+}
+
+func TestUploadUsesStableIdempotencyTokenInProviderFilename(t *testing.T) {
+	dir := t.TempDir()
+	original := filepath.Join(dir, "lecture.mp3")
+	wantBody := []byte("audio")
+	if err := os.WriteFile(original, wantBody, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var providerPath string
+	runner := runnerFunc(func(_ context.Context, _ string, args []string, _ []string) (string, string, error) {
+		for i, arg := range args {
+			if arg == "--json" && i+1 < len(args) {
+				providerPath = args[i+1]
+				break
+			}
+		}
+		if providerPath == "" {
+			t.Fatalf("provider upload path missing from args: %v", args)
+		}
+		if got := filepath.Base(providerPath); !strings.Contains(got, "[impartus-1c3e3ccb7a54c965]") {
+			t.Fatalf("provider filename %q lacks stable idempotency token", got)
+		}
+		body, err := os.ReadFile(providerPath)
+		if err != nil {
+			t.Fatalf("read provider upload file: %v", err)
+		}
+		if string(body) != string(wantBody) {
+			t.Fatalf("provider upload file body = %q, want %q", body, wantBody)
+		}
+		return `{"source_id":"created"}`, "", nil
+	})
+	u := NewWithRunner(Config{CLIPath: "notebooklm"}, runner)
+
+	_, err := u.Upload(context.Background(), UploadRequest{
+		NotebookID:     "routed",
+		FilePath:       original,
+		Title:          "[impartus:1:2:10] LEC 001 Intro",
+		IdempotencyKey: "impartus:1:2:10",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if providerPath == original {
+		t.Fatalf("provider received original filename without durable token")
+	}
+	if _, err := os.Stat(providerPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("temporary provider upload file was not removed: %v", err)
+	}
+	if _, err := os.Stat(original); err != nil {
+		t.Fatalf("original audio file was disturbed: %v", err)
+	}
+}
+
+func TestReconcileUploadMatchesPostIndexProviderFilename(t *testing.T) {
+	runner := &fakeRunner{stdout: `{"sources":[{"id":"existing","title":"[impartus-1c3e3ccb7a54c965] LEC 001 Intro.mp3"}]}`}
+	u := NewWithRunner(Config{CLIPath: "notebooklm"}, runner)
+
+	result, found, err := u.ReconcileUpload(
+		context.Background(),
+		"routed",
+		"[impartus:1:2:10] LEC 001 Intro",
+		"impartus:1:2:10",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || result.SourceID != "existing" || result.Outcome != UploadFound {
+		t.Fatalf("post-index filename was not reconciled: result=%+v found=%v", result, found)
 	}
 }
 
