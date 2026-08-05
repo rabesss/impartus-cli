@@ -273,6 +273,38 @@ func TestUploadUsesStableIdempotencyTokenInProviderFilename(t *testing.T) {
 	}
 }
 
+func TestUploadStopsStableFilenamePreparationWhenContextCanceled(t *testing.T) {
+	dir := t.TempDir()
+	original := filepath.Join(dir, "lecture.mp3")
+	if err := os.WriteFile(original, []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{stdout: `{"source_id":"unexpected"}`}
+	u := NewWithRunner(Config{CLIPath: "notebooklm"}, runner)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := u.Upload(ctx, UploadRequest{
+		NotebookID:     "routed",
+		FilePath:       original,
+		Title:          "[impartus:1:2:10] LEC 001 Intro",
+		IdempotencyKey: "impartus:1:2:10",
+	})
+	if !errors.Is(err, context.Canceled) || result.Outcome != UploadRejected {
+		t.Fatalf("canceled preparation result=%+v err=%v", result, err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("canceled preparation crossed provider boundary: calls=%d", runner.calls)
+	}
+	entries, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(original) {
+		t.Fatalf("canceled preparation left temporary files: %v", entries)
+	}
+}
+
 func TestReconcileUploadMatchesPostIndexProviderFilename(t *testing.T) {
 	runner := &fakeRunner{stdout: `{"sources":[{"id":"existing","title":"[impartus-1c3e3ccb7a54c965] LEC 001 Intro.mp3"}]}`}
 	u := NewWithRunner(Config{CLIPath: "notebooklm"}, runner)

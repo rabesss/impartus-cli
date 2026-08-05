@@ -73,7 +73,7 @@ func (u *Uploader) upload(ctx context.Context, req UploadRequest) (UploadResult,
 		if token == "" || !strings.Contains(req.Title, token) {
 			return UploadResult{Outcome: UploadRejected}, fmt.Errorf("upload title must contain idempotency key")
 		}
-		prepared, cleanup, prepareErr := prepareIdempotentUploadFile(req)
+		prepared, cleanup, prepareErr := prepareIdempotentUploadFile(ctx, req)
 		if prepareErr != nil {
 			return UploadResult{Outcome: UploadRejected}, prepareErr
 		}
@@ -209,10 +209,27 @@ func containsToken(title string, tokens []string) bool {
 	return false
 }
 
-func prepareIdempotentUploadFile(req UploadRequest) (UploadRequest, func(), error) {
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	select {
+	case <-r.ctx.Done():
+		return 0, r.ctx.Err()
+	default:
+		return r.reader.Read(p)
+	}
+}
+
+func prepareIdempotentUploadFile(ctx context.Context, req UploadRequest) (UploadRequest, func(), error) {
 	token := idempotencyFilenameToken(req.IdempotencyKey)
 	if token == "" || strings.Contains(filepath.Base(req.FilePath), token) {
 		return req, func() {}, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return req, nil, fmt.Errorf("prepare stable upload filename: %w", err)
 	}
 
 	source, err := os.Open(req.FilePath) // #nosec G304 -- caller-selected upload path
@@ -229,7 +246,7 @@ func prepareIdempotentUploadFile(req UploadRequest) (UploadRequest, func(), erro
 	cleanup := func() {
 		_ = os.Remove(aliasPath) //nolint:errcheck // best-effort cleanup after provider consumed the file
 	}
-	if _, err := io.Copy(alias, source); err != nil {
+	if _, err := io.Copy(alias, contextReader{ctx: ctx, reader: source}); err != nil {
 		_ = source.Close() //nolint:errcheck // preserving the primary copy error
 		_ = alias.Close()  //nolint:errcheck // preserving the primary copy error
 		cleanup()
