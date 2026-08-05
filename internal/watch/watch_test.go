@@ -113,12 +113,13 @@ func TestRunCycleDryRunDoesNotDownload(t *testing.T) {
 	}
 	audio := &fakeAudio{join: downloader.JoinResult{LeftOutput: "/tmp/x.mp3"}}
 	uploader := &fakeUploader{}
+	var log strings.Builder
 	w := New(testCfg(), fakeSource{lectures: client.Lectures{
 		{TTID: 10, SeqNo: 1, Topic: "Intro", StartTime: "2026-01-01"},
 		{TTID: 11, SeqNo: 2, Topic: "No Class Today"},
 	}}, audio, uploader, store, Options{
 		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2}},
-		Once:    true, DryRun: true, Log: io.Discard,
+		Once:    true, DryRun: true, Log: &log,
 	})
 
 	result, err := w.RunCycle(context.Background())
@@ -127,6 +128,9 @@ func TestRunCycleDryRunDoesNotDownload(t *testing.T) {
 	}
 	if result.New != 1 || result.Downloaded != 0 || audio.calls != 0 || uploader.calls != 0 {
 		t.Fatalf("unexpected dry-run result: %+v audioCalls=%d uploadCalls=%d", result, audio.calls, uploader.calls)
+	}
+	if got := log.String(); !strings.Contains(got, "dry-run new lecture") || strings.Contains(got, "upload") {
+		t.Fatalf("dry-run log misstates side effects: %q", got)
 	}
 }
 

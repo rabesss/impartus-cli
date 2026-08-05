@@ -245,7 +245,7 @@ func (w *Watcher) processLecture(ctx context.Context, target config.WatchTarget,
 	w.logf("watch: %s new lecture seq=%d ttid=%d topic=%q", targetLabel(target), lecture.SeqNo, lecture.TTID, lecture.Topic)
 
 	if w.opts.DryRun {
-		w.logf("watch: dry-run would download+upload %q", title)
+		w.logf("watch: dry-run new lecture %q", title)
 		return nil
 	}
 
