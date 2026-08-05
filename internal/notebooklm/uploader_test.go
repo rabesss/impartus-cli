@@ -3,6 +3,7 @@ package notebooklm
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +21,10 @@ type fakeRunner struct {
 }
 
 type runnerFunc func(context.Context, string, []string, []string) (string, string, error)
+
+type readerFunc func([]byte) (int, error)
+
+func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
 
 func (f runnerFunc) Run(ctx context.Context, name string, args []string, env []string) (string, string, error) {
 	return f(ctx, name, args, env)
@@ -302,6 +307,28 @@ func TestUploadStopsStableFilenamePreparationWhenContextCanceled(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Name() != filepath.Base(original) {
 		t.Fatalf("canceled preparation left temporary files: %v", entries)
+	}
+}
+
+func TestContextReaderStopsBetweenCopyChunks(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	reads := 0
+	source := readerFunc(func(p []byte) (int, error) {
+		reads++
+		if reads > 1 {
+			t.Fatal("source was read again after cancellation")
+		}
+		p[0] = 'x'
+		cancel()
+		return 1, nil
+	})
+
+	written, err := io.Copy(io.Discard, contextReader{ctx: ctx, reader: source})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("copy error = %v, want context cancellation", err)
+	}
+	if written != 1 || reads != 1 {
+		t.Fatalf("copy continued after cancellation: written=%d reads=%d", written, reads)
 	}
 }
 
