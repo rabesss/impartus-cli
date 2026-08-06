@@ -707,8 +707,11 @@ func TestParseSourceInventoryCount(t *testing.T) {
 		{name: "string declared total", payload: `{"items":[1],"count":"305"}`, count: 305},
 		{name: "declared total cannot undercount items", payload: `{"data":[1,2,3],"count":1}`, count: 3},
 		{name: "non-numeric count only", payload: `{"count":"many"}`, wantErr: true},
+		{name: "numeric count only", payload: `{"count":305}`, wantErr: true},
 		{name: "non-numeric count with items", payload: `{"sources":[1],"count":false}`, wantErr: true},
 		{name: "negative count", payload: `{"sources":[1],"count":-1}`, wantErr: true},
+		{name: "fractional count", payload: `{"sources":[1],"count":305.5}`, wantErr: true},
+		{name: "out of range count", payload: `{"sources":[1],"count":1e100}`, wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

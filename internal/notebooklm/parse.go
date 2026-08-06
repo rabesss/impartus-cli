@@ -183,9 +183,6 @@ func sourceItems(payload providerJSONValue) (providerJSONArray, int, bool) {
 				return items, count, true
 			}
 		}
-		if hasDeclaredCount {
-			return nil, declaredCount, true
-		}
 	}
 	return nil, 0, false
 }
@@ -214,7 +211,12 @@ func intFieldOK(m providerJSONObject, keys ...string) (int, bool) {
 		}
 		switch typed := value.(type) {
 		case float64:
-			return int(typed), true
+			parsed, err := strconv.ParseInt(
+				strconv.FormatFloat(typed, 'f', -1, 64), 10, strconv.IntSize,
+			)
+			if err == nil {
+				return int(parsed), true
+			}
 		case int:
 			return typed, true
 		case json.Number:
