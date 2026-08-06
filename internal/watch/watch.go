@@ -16,8 +16,6 @@ import (
 	"github.com/rabesss/impartus-cli/internal/notebooklm"
 )
 
-const maxAmbiguousReconcileAttempts = 3
-
 var errSafetyStop = errors.New("watch stopped to preserve upload safety")
 
 // LectureSource lists lectures for a course.
@@ -162,13 +160,14 @@ func (w *Watcher) RunCycle(ctx context.Context) (CycleResult, error) {
 	var targetErrs []error
 
 	for _, target := range w.opts.Targets {
-		if remaining <= 0 {
-			break
-		}
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		processed, err := w.runTarget(ctx, target, remaining, &result)
+		limit := remaining
+		if limit < 0 {
+			limit = 0
+		}
+		processed, err := w.runTarget(ctx, target, limit, &result)
 		if err != nil {
 			if notebooklm.IsAuth(err) {
 				return result, fmt.Errorf("notebooklm auth failure; aborting cycle: %w", err)
@@ -210,15 +209,19 @@ func (w *Watcher) runTarget(ctx context.Context, target config.WatchTarget, limi
 
 	processed := 0
 	for _, lecture := range selected {
-		if processed >= limit {
-			break
-		}
+		existing, exists := w.store.Get(target.SubjectID, target.SessionID, lecture.TTID)
+		reconcileOnly := exists && existing.Status == StatusAmbiguous
 		if !w.store.NeedsWork(target.SubjectID, target.SessionID, lecture.TTID, w.opts.Upload) {
 			result.Skipped++
 			continue
 		}
-		result.New++
-		processed++
+		if !reconcileOnly {
+			if processed >= limit {
+				continue
+			}
+			result.New++
+			processed++
+		}
 		if err := w.processLecture(ctx, target, lecture, result); err != nil {
 			if notebooklm.IsAuth(err) {
 				return processed, err
@@ -355,13 +358,6 @@ func (w *Watcher) uploadOrReconcile(
 		if uploadErr != nil {
 			seen.ReconcileAttempts++
 			upload.Outcome = notebooklm.UploadAmbiguous
-			if seen.ReconcileAttempts >= maxAmbiguousReconcileAttempts {
-				uploadErr = fmt.Errorf(
-					"ambiguous NotebookLM upload remained unresolved after %d reconciliation attempts; automatic reconciliation is paused for this lecture and manual verification is required before clearing its state: %w",
-					seen.ReconcileAttempts,
-					uploadErr,
-				)
-			}
 		}
 	} else {
 		// Persist the uncertain/in-flight phase before crossing the provider

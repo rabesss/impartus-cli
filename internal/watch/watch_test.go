@@ -416,7 +416,7 @@ func TestRunCycleFailsClosedOnInvalidSuccessfulOutcome(t *testing.T) {
 	}
 }
 
-func TestRunCyclePausesAfterBoundedAmbiguousReconciliation(t *testing.T) {
+func TestRunCycleRetriesAmbiguousReconciliationWithoutReAdd(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "state.json")
 	store, err := LoadStore(statePath)
 	if err != nil {
@@ -440,18 +440,15 @@ func TestRunCyclePausesAfterBoundedAmbiguousReconciliation(t *testing.T) {
 		Once:    true, Upload: true, Log: io.Discard,
 	}
 
-	for attempt := 1; attempt <= 3; attempt++ {
+	for attempt := 1; attempt <= 4; attempt++ {
 		w := New(testCfg(), fakeSource{lectures: client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro"}}},
 			nil, uploader, store, opts)
 		result, cycleErr := w.RunCycle(context.Background())
 		if cycleErr != nil {
 			t.Fatalf("reconcile attempt %d stopped the cycle: %v", attempt, cycleErr)
 		}
-		if result.Failed != 1 {
+		if result.Failed != 1 || result.New != 0 {
 			t.Fatalf("reconcile attempt %d result = %+v, want one recorded failure", attempt, result)
-		}
-		if attempt == 3 && (len(result.Errors) != 1 || !strings.Contains(result.Errors[0], "manual verification")) {
-			t.Fatalf("final reconcile result did not report the manual-verification pause: %+v", result)
 		}
 		store, err = LoadStore(statePath)
 		if err != nil {
@@ -460,25 +457,19 @@ func TestRunCyclePausesAfterBoundedAmbiguousReconciliation(t *testing.T) {
 	}
 
 	seen, ok := store.Get(1, 2, 10)
-	if !ok || seen.Status != StatusAmbiguous || seen.ReconcileAttempts != 3 {
-		t.Fatalf("pause must preserve fail-closed state: %+v ok=%v", seen, ok)
+	if !ok || seen.Status != StatusAmbiguous || seen.ReconcileAttempts != 4 {
+		t.Fatalf("retries must preserve fail-closed state: %+v ok=%v", seen, ok)
 	}
-	if store.NeedsWork(1, 2, 10, true) {
-		t.Fatalf("exhausted ambiguous lecture should remain paused")
+	if !store.NeedsWork(1, 2, 10, true) {
+		t.Fatalf("ambiguous lecture should remain eligible for safe reconciliation")
 	}
-	w := New(testCfg(), fakeSource{lectures: client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro"}}},
-		nil, uploader, store, opts)
-	result, cycleErr := w.RunCycle(context.Background())
-	if cycleErr != nil || result.Skipped != 1 || result.Failed != 0 {
-		t.Fatalf("paused lecture was not skipped cleanly: result=%+v err=%v", result, cycleErr)
-	}
-	if uploader.calls != 0 || uploader.reconcileCalls != 3 {
-		t.Fatalf("bounded reconciliation issued an add or wrong probe count: uploadCalls=%d reconcileCalls=%d",
+	if uploader.calls != 0 || uploader.reconcileCalls != 4 {
+		t.Fatalf("reconciliation issued an add or wrong probe count: uploadCalls=%d reconcileCalls=%d",
 			uploader.calls, uploader.reconcileCalls)
 	}
 }
 
-func TestRunContinuesDaemonAfterAmbiguousLectureIsPaused(t *testing.T) {
+func TestRunContinuesDaemonDuringRepeatedAmbiguousReconciliation(t *testing.T) {
 	dir := t.TempDir()
 	output := filepath.Join(dir, "lec.mp3")
 	if writeErr := os.WriteFile(output, []byte("audio"), 0o600); writeErr != nil {
@@ -516,24 +507,71 @@ func TestRunContinuesDaemonAfterAmbiguousLectureIsPaused(t *testing.T) {
 				{SubjectID: 1, SessionID: 2, NotebookID: "nb"},
 				{SubjectID: 3, SessionID: 4, NotebookID: "nb-two"},
 			},
-			Upload: true,
-			Log:    io.Discard,
+			Upload:              true,
+			MaxLecturesPerCycle: 1,
+			Log:                 io.Discard,
 		})
 
 	result, runErr := w.Run(ctx)
 	if !errors.Is(runErr, context.Canceled) {
 		t.Fatalf("Run error = %v, want daemon to continue until context cancellation", runErr)
 	}
-	paused, pausedOK := store.Get(1, 2, 10)
+	ambiguous, ambiguousOK := store.Get(1, 2, 10)
 	healthy, healthyOK := store.Get(3, 4, 20)
-	if !pausedOK || paused.Status != StatusAmbiguous || paused.ReconcileAttempts != 3 ||
+	if !ambiguousOK || ambiguous.Status != StatusAmbiguous || ambiguous.ReconcileAttempts != 3 ||
 		!healthyOK || healthy.Status != StatusUploaded {
-		t.Fatalf("daemon did not preserve the pause and process the healthy target: paused=%+v ok=%v healthy=%+v ok=%v",
-			paused, pausedOK, healthy, healthyOK)
+		t.Fatalf("daemon did not preserve ambiguity and process the healthy target: ambiguous=%+v ok=%v healthy=%+v ok=%v",
+			ambiguous, ambiguousOK, healthy, healthyOK)
 	}
 	if result.Failed != 1 || result.Uploaded != 1 || uploader.calls != 1 || uploader.reconcileCalls != 1 {
 		t.Fatalf("unexpected continuing daemon result: %+v uploadCalls=%d reconcileCalls=%d",
 			result, uploader.calls, uploader.reconcileCalls)
+	}
+}
+
+func TestRunCycleReconcilesLaterTargetAfterNewLectureBudgetIsExhausted(t *testing.T) {
+	dir := t.TempDir()
+	output := filepath.Join(dir, "lec.mp3")
+	if writeErr := os.WriteFile(output, []byte("audio"), 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	store, err := LoadStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markErr := store.Mark(3, 4, SeenLecture{
+		Status: StatusAmbiguous, SeqNo: 1, Topic: "ambiguous",
+		NotebookID: "nb-two", UploadKey: "impartus:3:4:20",
+	}, 20); markErr != nil {
+		t.Fatal(markErr)
+	}
+	uploader := &fakeUploader{
+		result:          notebooklm.UploadResult{SourceID: "src"},
+		reconcileResult: notebooklm.UploadResult{Outcome: notebooklm.UploadAmbiguous},
+		reconcileErr:    &notebooklm.Error{Kind: notebooklm.ErrAmbiguous, Message: "source is not ready"},
+	}
+	source := targetSource{lectures: map[string]client.Lectures{
+		"1:2": {{TTID: 10, SeqNo: 1, Topic: "new"}},
+		"3:4": {{TTID: 20, SeqNo: 1, Topic: "ambiguous"}},
+	}}
+	w := New(testCfg(), source, &fakeAudio{join: downloader.JoinResult{LeftOutput: output}},
+		uploader, store, Options{
+			Targets: []config.WatchTarget{
+				{SubjectID: 1, SessionID: 2, NotebookID: "nb-one"},
+				{SubjectID: 3, SessionID: 4, NotebookID: "nb-two"},
+			},
+			Once: true, Upload: true, MaxLecturesPerCycle: 1, Log: io.Discard,
+		})
+
+	result, cycleErr := w.RunCycle(context.Background())
+	if cycleErr != nil {
+		t.Fatal(cycleErr)
+	}
+	seen, ok := store.Get(3, 4, 20)
+	if result.Uploaded != 1 || result.Failed != 1 || uploader.calls != 1 || uploader.reconcileCalls != 1 ||
+		!ok || seen.Status != StatusAmbiguous || seen.ReconcileAttempts != 1 {
+		t.Fatalf("later reconciliation was starved after budget exhaustion: result=%+v seen=%+v ok=%v uploadCalls=%d reconcileCalls=%d",
+			result, seen, ok, uploader.calls, uploader.reconcileCalls)
 	}
 }
 

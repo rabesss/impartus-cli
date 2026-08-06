@@ -114,8 +114,7 @@ flowchart TD
   Wait -->|READY| Mark2
   Wait -->|timeout/error| Hold
   SafeRecon -->|nlm non-READY, absent, or unreadable| Hold
-  SafeRecon -->|third unresolved attempt| Pause["pause this lecture; manual verification required"]
-  Pause --> Continue["continue other lectures and targets"]
+  SafeRecon -->|unresolved| Hold
   Mark2 --> Clean["optional delete local audio"]
   DL -->|error| Retry
   Add -->|auth error| Abort
@@ -123,7 +122,7 @@ flowchart TD
 
 Authentication is out-of-band; see [`notebooklm-auth.md`](notebooklm-auth.md). Provider subprocesses receive an allowlisted environment, never Impartus credentials or unrelated application tokens. Before an idempotent add, watch persists `ambiguous` plus a deterministic title/filename token. A failed or interrupted add can therefore only list and reconcile that token, never add again.
 
-READY is required only during ambiguous recovery. `notebooklm-py` delegates non-READY polling to its native `source wait`; `nlm` remains ambiguous until a later list reports READY. Normal exit-0 adds do not wait because the provider has already finalized the uploaded bytes. Three unresolved recovery attempts pause that lecture for manual verification while preserving the local audio and ambiguous state; other lectures and targets continue normally. Definite pre-provider failures become `failed`; persistence failures still stop rather than weakening the duplicate-prevention guarantee.
+READY is required only during ambiguous recovery. `notebooklm-py` delegates non-READY polling to its native `source wait`; `nlm` remains ambiguous until a later list reports READY. Normal exit-0 adds do not wait because the provider has already finalized the uploaded bytes. Unresolved uploads remain reconciliation-only on later polls until READY is observed; these read-only probes do not consume the new-lecture budget, prevent later targets from running after the probe completes, or issue another add. The local audio and ambiguous state remain durable throughout. Definite pre-provider failures become `failed`; persistence failures still stop rather than weakening the duplicate-prevention guarantee.
 
 ## API authenticated job lifecycle flow
 
