@@ -167,17 +167,21 @@ func sourceItems(payload providerJSONValue) (providerJSONArray, int, bool) {
 	case providerJSONArray:
 		return typed, len(typed), true
 	case providerJSONObject:
+		declaredCount := intField(typed, "count")
 		for _, key := range []string{"sources", "items", "data"} {
 			value, exists := typed[key]
 			if !exists {
 				continue
 			}
 			if items, count, ok := sourceItems(value); ok {
+				if declaredCount > count {
+					count = declaredCount
+				}
 				return items, count, true
 			}
 		}
-		if n, ok := typed["count"].(float64); ok {
-			return nil, int(n), true
+		if _, exists := typed["count"]; exists {
+			return nil, declaredCount, true
 		}
 	}
 	return nil, 0, false

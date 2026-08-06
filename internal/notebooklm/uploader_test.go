@@ -695,12 +695,23 @@ func TestUploadToNotebookRequiresNotebookAndFile(t *testing.T) {
 }
 
 func TestParseSourceInventoryCount(t *testing.T) {
-	inventory, err := parseSourceInventory(`[{"id":1},{"id":2}]`, "")
-	if err != nil || inventory.Count != 2 {
-		t.Fatalf("array count = %d err=%v", inventory.Count, err)
+	tests := []struct {
+		name    string
+		payload string
+		count   int
+	}{
+		{name: "array length", payload: `[{"id":1},{"id":2}]`, count: 2},
+		{name: "object array length", payload: `{"sources":[1,2,3]}`, count: 3},
+		{name: "declared total exceeds page", payload: `{"sources":[1,2],"count":305}`, count: 305},
+		{name: "string declared total", payload: `{"items":[1],"count":"305"}`, count: 305},
+		{name: "declared total cannot undercount items", payload: `{"data":[1,2,3],"count":1}`, count: 3},
 	}
-	inventory, err = parseSourceInventory(`{"sources":[1,2,3]}`, "")
-	if err != nil || inventory.Count != 3 {
-		t.Fatalf("object count = %d err=%v", inventory.Count, err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			inventory, err := parseSourceInventory(tc.payload, "")
+			if err != nil || inventory.Count != tc.count {
+				t.Fatalf("count = %d err=%v, want %d", inventory.Count, err, tc.count)
+			}
+		})
 	}
 }
