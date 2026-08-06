@@ -14,7 +14,7 @@ Install the browser-enabled CLI in an isolated environment and complete its
 native Google sign-in:
 
 ```bash
-uv tool install "notebooklm-py[browser]"
+uv tool install "notebooklm-py[browser]==0.8.0"
 notebooklm login
 notebooklm auth check --test --json
 ```
@@ -33,7 +33,7 @@ For unattended master-token refresh, install both extras on the desktop and run
 the provider's native bootstrap:
 
 ```bash
-uv tool install --force "notebooklm-py[browser,headless]==0.8.0rc1"
+uv tool install --force "notebooklm-py[browser,headless]==0.8.0"
 notebooklm --profile work login --master-token --account you@example.com
 notebooklm --profile work login --master-token-refresh
 ```
@@ -41,7 +41,7 @@ notebooklm --profile work login --master-token-refresh
 The headless runtime or container only needs the pinned headless extra:
 
 ```bash
-uv tool install "notebooklm-py[headless]==0.8.0rc1"
+uv tool install "notebooklm-py[headless]==0.8.0"
 ```
 
 Bootstrap the provider profile on the desktop first. If the runtime is on a
@@ -73,19 +73,8 @@ nlm login --profile work
 nlm login --check --profile work
 ```
 
-Configure the provider and profile together:
-
-```json
-{
-  "watch": {
-    "notebooklm": {
-      "provider": "nlm",
-      "command": "nlm",
-      "profile": "work"
-    }
-  }
-}
-```
+Configure `provider`, `command`, and `profile` together; see the complete
+[`sample.config.json`](../sample.config.json).
 
 ## Verify Impartus
 
@@ -100,13 +89,6 @@ The check verifies ffmpeg, the configured targets, provider binary,
 authentication, and NotebookLM source-count guard. Authentication is skipped
 when uploads are disabled.
 
-For scheduled operation, prefer a single-cycle invocation under a systemd
-timer or cron:
-
-```bash
-impartus watch --once --upload
-```
-
-Long-running container deployments may instead run `impartus watch --upload`.
 If authentication expires, rerun the provider's native login or refresh command
-on the machine that owns the profile.
+on the machine that owns the profile. Watch scheduling and flags are documented
+in the [README](../README.md#watch-notebooklm).

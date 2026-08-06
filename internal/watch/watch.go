@@ -34,8 +34,7 @@ type AudioProducer interface {
 // SourceUploader uploads a local audio file to NotebookLM.
 type SourceUploader interface {
 	UploadToNotebook(ctx context.Context, notebookID, filePath, title, idempotencyKey string) (notebooklm.UploadResult, error)
-	ReconcileUpload(ctx context.Context, notebookID, title, idempotencyKey string) (notebooklm.UploadResult, bool, error)
-	Doctor(ctx context.Context) error
+	ReconcileUpload(ctx context.Context, notebookID, title, idempotencyKey string) (notebooklm.UploadResult, error)
 }
 
 // downloaderAdapter adapts *downloader.Downloader to AudioProducer without
@@ -312,7 +311,7 @@ func (w *Watcher) processUpload(
 			ctx,
 			target,
 			lecture,
-			notebooklm.UploadRejected,
+			notebooklm.UploadAmbiguous,
 			seen,
 			fmt.Errorf("notebooklm provider returned invalid successful outcome %q", upload.Outcome),
 		)
@@ -347,17 +346,9 @@ func (w *Watcher) uploadOrReconcile(
 	var upload notebooklm.UploadResult
 	var uploadErr error
 	if reconcileOnly {
-		var found bool
-		upload, found, uploadErr = w.uploader.ReconcileUpload(
+		upload, uploadErr = w.uploader.ReconcileUpload(
 			ctx, seen.NotebookID, title, seen.UploadKey,
 		)
-		if uploadErr == nil && !found {
-			upload.Outcome = notebooklm.UploadAmbiguous
-			uploadErr = &notebooklm.Error{
-				Kind:    notebooklm.ErrAmbiguous,
-				Message: "ambiguous NotebookLM upload is not visible yet; refusing automatic re-add",
-			}
-		}
 		if uploadErr != nil {
 			upload.Outcome = notebooklm.UploadAmbiguous
 			if seen.ReconcileAttempts >= maxAmbiguousReconcileAttempts {

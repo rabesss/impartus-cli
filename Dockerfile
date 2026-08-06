@@ -43,7 +43,7 @@ LABEL org.opencontainers.image.revision="${COMMIT}"
 RUN apt-get update && \
     apt-get install --no-install-recommends -y ca-certificates ffmpeg python3 python3-pip && \
     rm -rf /var/lib/apt/lists/* && \
-    pip3 install --break-system-packages --no-cache-dir --pre 'notebooklm-py[headless]==0.8.0rc1'
+    pip3 install --break-system-packages --no-cache-dir 'notebooklm-py[headless]==0.8.0'
 
 RUN useradd --create-home --shell /usr/sbin/nologin impartus && \
     install -d -o impartus -g impartus -m 0750 \

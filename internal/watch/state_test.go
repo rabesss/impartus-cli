@@ -1,7 +1,6 @@
 package watch
 
 import (
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -17,7 +16,7 @@ func TestStoreMarkHasAndPersistsAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadStore empty: %v", err)
 	}
-	if store.Has(1, 2, 99) {
+	if _, ok := store.Get(1, 2, 99); ok {
 		t.Fatalf("expected empty store")
 	}
 
@@ -28,8 +27,9 @@ func TestStoreMarkHasAndPersistsAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Mark: %v", err)
 	}
-	if !store.Has(1, 2, 99) {
-		t.Fatalf("expected marked lecture")
+	marked, ok := store.Get(1, 2, 99)
+	if !ok || marked.Status != StatusUploaded {
+		t.Fatalf("expected uploaded lecture, got %+v ok=%v", marked, ok)
 	}
 	if store.NeedsWork(1, 2, 99, true) {
 		t.Fatalf("uploaded lecture should not need work")
@@ -164,9 +164,6 @@ func TestMarkRollsBackMemoryWhenPersistenceFails(t *testing.T) {
 	if !ok || seen.Status != StatusDownloaded || seen.SourceID != "before" {
 		t.Fatalf("failed Mark leaked into memory: %+v ok=%v", seen, ok)
 	}
-	if store.Has(1, 2, 7) {
-		t.Fatalf("failed uploaded Mark must not affect deduplication")
-	}
 }
 
 func TestMarkKeepsCommittedStateWhenDirectorySyncFails(t *testing.T) {
@@ -236,32 +233,7 @@ func TestNeedsWorkReconcilesAmbiguousOnlyWhenUploadEnabled(t *testing.T) {
 	}
 }
 
-func TestCourseKeyAndSnapshot(t *testing.T) {
-	if got := CourseKey(12, 34); got != "12:34" {
-		t.Fatalf("CourseKey = %q", got)
-	}
-	store, err := LoadStore(filepath.Join(t.TempDir(), "s.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = store.Mark(12, 34, SeenLecture{Status: StatusDownloaded, Topic: "T", OutputPath: "/tmp/t.mp3"}, 7)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snap := store.Snapshot()
-	raw, err := json.Marshal(snap)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !json.Valid(raw) {
-		t.Fatalf("snapshot not valid JSON")
-	}
-	if _, ok := snap.Courses["12:34"]; !ok {
-		t.Fatalf("snapshot missing course")
-	}
-}
-
-func TestHasIgnoresFailedAttempts(t *testing.T) {
+func TestUploadedStatusControlsDeduplication(t *testing.T) {
 	store, err := LoadStore(filepath.Join(t.TempDir(), "s.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -270,8 +242,9 @@ func TestHasIgnoresFailedAttempts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if store.Has(1, 2, 99) {
-		t.Fatalf("failed attempt must not count as seen")
+	seen, ok := store.Get(1, 2, 99)
+	if !ok || seen.Status != StatusFailed {
+		t.Fatalf("failed attempt status = %+v ok=%v", seen, ok)
 	}
 	if !store.NeedsWork(1, 2, 99, true) {
 		t.Fatalf("failed attempt must be retried")
@@ -280,7 +253,8 @@ func TestHasIgnoresFailedAttempts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !store.Has(1, 2, 99) {
-		t.Fatalf("successful attempt must count as seen")
+	seen, ok = store.Get(1, 2, 99)
+	if !ok || seen.Status != StatusUploaded {
+		t.Fatalf("successful attempt status = %+v ok=%v", seen, ok)
 	}
 }

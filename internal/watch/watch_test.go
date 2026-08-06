@@ -54,7 +54,6 @@ type fakeUploader struct {
 	titles          []string
 	uploadKeys      []string
 	reconcileResult notebooklm.UploadResult
-	reconcileFound  bool
 	reconcileErr    error
 	reconcileCalls  int
 	reconcileNbs    []string
@@ -72,29 +71,16 @@ func (f *fakeUploader) UploadToNotebook(_ context.Context, notebookID, path, tit
 	f.uploadKeys = append(f.uploadKeys, uploadKey)
 	result := f.result
 	if result.Outcome == "" {
-		switch {
-		case f.err == nil:
-			result.Outcome = notebooklm.UploadCreated
-		case notebooklm.IsAmbiguous(f.err), notebooklm.IsRateLimit(f.err):
-			result.Outcome = notebooklm.UploadAmbiguous
-		default:
-			result.Outcome = notebooklm.UploadRejected
-		}
+		result.Outcome = notebooklm.UploadCreated
 	}
 	return result, f.err
 }
 
-func (f *fakeUploader) ReconcileUpload(_ context.Context, notebookID, _, _ string) (notebooklm.UploadResult, bool, error) {
+func (f *fakeUploader) ReconcileUpload(_ context.Context, notebookID, _, _ string) (notebooklm.UploadResult, error) {
 	f.reconcileCalls++
 	f.reconcileNbs = append(f.reconcileNbs, notebookID)
-	result := f.reconcileResult
-	if f.reconcileFound {
-		result.Outcome = notebooklm.UploadFound
-	}
-	return result, f.reconcileFound, f.reconcileErr
+	return f.reconcileResult, f.reconcileErr
 }
-
-func (f *fakeUploader) Doctor(context.Context) error { return nil }
 
 func testCfg() *config.Config {
 	cfg := &config.Config{
@@ -104,6 +90,35 @@ func testCfg() *config.Config {
 	cfg.ApplyDefaults()
 	cfg.ApplyWatchMediaDefaults()
 	return cfg
+}
+
+type uploadScenario struct {
+	output   string
+	store    *Store
+	lectures client.Lectures
+	opts     Options
+}
+
+func newUploadScenario(t *testing.T) uploadScenario {
+	t.Helper()
+	dir := t.TempDir()
+	output := filepath.Join(dir, "lec.mp3")
+	if err := os.WriteFile(output, []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := LoadStore(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return uploadScenario{
+		output:   output,
+		store:    store,
+		lectures: client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro", StartTime: "2026-01-01"}},
+		opts: Options{
+			Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb1"}},
+			Once:    true, Upload: true, MaxRetries: 1, Log: io.Discard,
+		},
+	}
 }
 
 func TestRunCycleDryRunDoesNotDownload(t *testing.T) {
@@ -163,30 +178,18 @@ func TestLectureTitlePrefixesStableUploadToken(t *testing.T) {
 }
 
 func TestRunCycleDownloadsUploadsAndSkipsSeen(t *testing.T) {
-	dir := t.TempDir()
-	out := filepath.Join(dir, "lec.mp3")
-	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	store, err := LoadStore(filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	audio := &fakeAudio{join: downloader.JoinResult{LeftOutput: out}}
+	scenario := newUploadScenario(t)
+	audio := &fakeAudio{join: downloader.JoinResult{LeftOutput: scenario.output}}
 	uploader := &fakeUploader{result: notebooklm.UploadResult{SourceID: "src1", NotebookID: "nb1"}}
-	lectures := client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro", StartTime: "2026-01-01"}}
-	opts := Options{
-		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb1"}},
-		Once:    true, Upload: true, Log: io.Discard,
-	}
 
-	w := New(testCfg(), fakeSource{lectures: lectures}, audio, uploader, store, opts)
+	w := New(testCfg(), fakeSource{lectures: scenario.lectures}, audio, uploader, scenario.store, scenario.opts)
 	result, err := w.RunCycle(context.Background())
 	if err != nil {
 		t.Fatalf("first cycle: %v", err)
 	}
-	if result.Downloaded != 1 || result.Uploaded != 1 || !store.Has(1, 2, 10) {
-		t.Fatalf("unexpected first cycle: %+v", result)
+	seen, ok := scenario.store.Get(1, 2, 10)
+	if result.Downloaded != 1 || result.Uploaded != 1 || !ok || seen.Status != StatusUploaded {
+		t.Fatalf("unexpected first cycle: %+v seen=%+v ok=%v", result, seen, ok)
 	}
 
 	result, err = w.RunCycle(context.Background())
@@ -199,27 +202,16 @@ func TestRunCycleDownloadsUploadsAndSkipsSeen(t *testing.T) {
 }
 
 func TestRunCycleRespectsMaxLecturesPerCycle(t *testing.T) {
-	dir := t.TempDir()
-	out := filepath.Join(dir, "lec.mp3")
-	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	store, err := LoadStore(filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	lectures := client.Lectures{
+	scenario := newUploadScenario(t)
+	scenario.lectures = client.Lectures{
 		{TTID: 10, SeqNo: 1, Topic: "A", StartTime: "2026-01-01"},
 		{TTID: 11, SeqNo: 2, Topic: "B", StartTime: "2026-01-02"},
 		{TTID: 12, SeqNo: 3, Topic: "C", StartTime: "2026-01-03"},
 	}
-	audio := &fakeAudio{join: downloader.JoinResult{LeftOutput: out}}
+	scenario.opts.MaxLecturesPerCycle = 2
+	audio := &fakeAudio{join: downloader.JoinResult{LeftOutput: scenario.output}}
 	uploader := &fakeUploader{result: notebooklm.UploadResult{SourceID: "src"}}
-	w := New(testCfg(), fakeSource{lectures: lectures}, audio, uploader, store, Options{
-		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb"}},
-		Once:    true, Upload: true,
-		MaxLecturesPerCycle: 2, Log: io.Discard,
-	})
+	w := New(testCfg(), fakeSource{lectures: scenario.lectures}, audio, uploader, scenario.store, scenario.opts)
 	result, err := w.RunCycle(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -230,28 +222,15 @@ func TestRunCycleRespectsMaxLecturesPerCycle(t *testing.T) {
 }
 
 func TestRunCycleResumesDownloadedWithoutRedownload(t *testing.T) {
-	dir := t.TempDir()
-	out := filepath.Join(dir, "lec.mp3")
-	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	store, err := LoadStore(filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if markErr := store.Mark(1, 2, SeenLecture{
-		Status: StatusDownloaded, SeqNo: 1, Topic: "Intro", OutputPath: out, NotebookID: "nb1",
+	scenario := newUploadScenario(t)
+	if markErr := scenario.store.Mark(1, 2, SeenLecture{
+		Status: StatusDownloaded, SeqNo: 1, Topic: "Intro", OutputPath: scenario.output, NotebookID: "nb1",
 	}, 10); markErr != nil {
 		t.Fatal(markErr)
 	}
-	audio := &fakeAudio{join: downloader.JoinResult{LeftOutput: out}}
+	audio := &fakeAudio{join: downloader.JoinResult{LeftOutput: scenario.output}}
 	uploader := &fakeUploader{result: notebooklm.UploadResult{SourceID: "src1"}}
-	w := New(testCfg(), fakeSource{lectures: client.Lectures{
-		{TTID: 10, SeqNo: 1, Topic: "Intro", StartTime: "2026-01-01"},
-	}}, audio, uploader, store, Options{
-		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb1"}},
-		Once:    true, Upload: true, Log: io.Discard,
-	})
+	w := New(testCfg(), fakeSource{lectures: scenario.lectures}, audio, uploader, scenario.store, scenario.opts)
 	result, err := w.RunCycle(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -259,30 +238,20 @@ func TestRunCycleResumesDownloadedWithoutRedownload(t *testing.T) {
 	if audio.calls != 0 {
 		t.Fatalf("expected resume without re-download, audioCalls=%d", audio.calls)
 	}
-	if result.Downloaded != 0 || result.Uploaded != 1 || !store.Has(1, 2, 10) {
-		t.Fatalf("unexpected resume result: %+v", result)
+	seen, ok := scenario.store.Get(1, 2, 10)
+	if result.Downloaded != 0 || result.Uploaded != 1 || !ok || seen.Status != StatusUploaded {
+		t.Fatalf("unexpected resume result: %+v seen=%+v ok=%v", result, seen, ok)
 	}
 }
 
 func TestRunCycleUploadFailureResumesExistingAudio(t *testing.T) {
-	dir := t.TempDir()
-	out := filepath.Join(dir, "lec.mp3")
-	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
-		t.Fatal(err)
+	scenario := newUploadScenario(t)
+	firstAudio := &fakeAudio{join: downloader.JoinResult{LeftOutput: scenario.output}}
+	firstUpload := &fakeUploader{
+		result: notebooklm.UploadResult{Outcome: notebooklm.UploadRejected},
+		err:    &notebooklm.Error{Kind: notebooklm.ErrPermanent, Message: "failed"},
 	}
-	store, err := LoadStore(filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	lectures := client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro"}}
-	opts := Options{
-		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb"}},
-		Once:    true, Upload: true,
-		MaxRetries: 1, Log: io.Discard,
-	}
-	firstAudio := &fakeAudio{join: downloader.JoinResult{LeftOutput: out}}
-	firstUpload := &fakeUploader{err: &notebooklm.Error{Kind: notebooklm.ErrPermanent, Message: "failed"}}
-	first := New(testCfg(), fakeSource{lectures: lectures}, firstAudio, firstUpload, store, opts)
+	first := New(testCfg(), fakeSource{lectures: scenario.lectures}, firstAudio, firstUpload, scenario.store, scenario.opts)
 	result, err := first.RunCycle(context.Background())
 	if err != nil {
 		t.Fatalf("first cycle: %v", err)
@@ -291,9 +260,9 @@ func TestRunCycleUploadFailureResumesExistingAudio(t *testing.T) {
 		t.Fatalf("unexpected failed cycle: %+v downloads=%d", result, firstAudio.calls)
 	}
 
-	secondAudio := &fakeAudio{join: downloader.JoinResult{LeftOutput: out}}
+	secondAudio := &fakeAudio{join: downloader.JoinResult{LeftOutput: scenario.output}}
 	secondUpload := &fakeUploader{result: notebooklm.UploadResult{SourceID: "src"}}
-	second := New(testCfg(), fakeSource{lectures: lectures}, secondAudio, secondUpload, store, opts)
+	second := New(testCfg(), fakeSource{lectures: scenario.lectures}, secondAudio, secondUpload, scenario.store, scenario.opts)
 	result, err = second.RunCycle(context.Background())
 	if err != nil {
 		t.Fatalf("retry cycle: %v", err)
@@ -304,26 +273,15 @@ func TestRunCycleUploadFailureResumesExistingAudio(t *testing.T) {
 }
 
 func TestRunCycleReconcilesAmbiguousUploadWithoutAnotherAdd(t *testing.T) {
-	dir := t.TempDir()
-	out := filepath.Join(dir, "lec.mp3")
-	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	store, err := LoadStore(filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	lectures := client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro"}}
+	scenario := newUploadScenario(t)
+	scenario.opts.MaxRetries = 3
+	scenario.opts.Targets[0].NotebookID = "nb"
 	uploader := &fakeUploader{
-		err: &notebooklm.Error{Kind: notebooklm.ErrAmbiguous, Message: "outcome unknown"},
+		result: notebooklm.UploadResult{Outcome: notebooklm.UploadAmbiguous},
+		err:    &notebooklm.Error{Kind: notebooklm.ErrAmbiguous, Message: "outcome unknown"},
 	}
-	opts := Options{
-		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb"}},
-		Once:    true, Upload: true,
-		MaxRetries: 1, Log: io.Discard,
-	}
-	first := New(testCfg(), fakeSource{lectures: lectures},
-		&fakeAudio{join: downloader.JoinResult{LeftOutput: out}}, uploader, store, opts)
+	first := New(testCfg(), fakeSource{lectures: scenario.lectures},
+		&fakeAudio{join: downloader.JoinResult{LeftOutput: scenario.output}}, uploader, scenario.store, scenario.opts)
 	result, err := first.RunCycle(context.Background())
 	if err != nil {
 		t.Fatalf("first cycle: %v", err)
@@ -331,14 +289,14 @@ func TestRunCycleReconcilesAmbiguousUploadWithoutAnotherAdd(t *testing.T) {
 	if result.Failed != 1 || uploader.calls != 1 {
 		t.Fatalf("expected one ambiguous add: result=%+v uploadCalls=%d", result, uploader.calls)
 	}
-	seen, ok := store.Get(1, 2, 10)
+	seen, ok := scenario.store.Get(1, 2, 10)
 	if !ok || seen.Status != StatusAmbiguous {
 		t.Fatalf("ambiguous outcome was not durable: %+v ok=%v", seen, ok)
 	}
 
-	downloadOnlyOpts := opts
+	downloadOnlyOpts := scenario.opts
 	downloadOnlyOpts.Upload = false
-	downloadOnly := New(testCfg(), fakeSource{lectures: lectures}, &fakeAudio{}, uploader, store, downloadOnlyOpts)
+	downloadOnly := New(testCfg(), fakeSource{lectures: scenario.lectures}, &fakeAudio{}, uploader, scenario.store, downloadOnlyOpts)
 	result, err = downloadOnly.RunCycle(context.Background())
 	if err != nil {
 		t.Fatalf("download-only cycle: %v", err)
@@ -347,17 +305,19 @@ func TestRunCycleReconcilesAmbiguousUploadWithoutAnotherAdd(t *testing.T) {
 		t.Fatalf("download-only cycle disturbed ambiguous upload: result=%+v uploadCalls=%d reconcileCalls=%d",
 			result, uploader.calls, uploader.reconcileCalls)
 	}
-	seen, _ = store.Get(1, 2, 10)
+	seen, _ = scenario.store.Get(1, 2, 10)
 	if seen.Status != StatusAmbiguous {
 		t.Fatalf("download-only cycle cleared ambiguous state: %+v", seen)
 	}
 
-	reconcileOpts := opts
+	reconcileOpts := scenario.opts
 	reconcileOpts.Targets = []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "reconfigured-nb"}}
-	if removeErr := os.Remove(out); removeErr != nil {
+	uploader.reconcileResult = notebooklm.UploadResult{Outcome: notebooklm.UploadAmbiguous}
+	uploader.reconcileErr = &notebooklm.Error{Kind: notebooklm.ErrAmbiguous, Message: "source is not ready"}
+	if removeErr := os.Remove(scenario.output); removeErr != nil {
 		t.Fatal(removeErr)
 	}
-	second := New(testCfg(), fakeSource{lectures: lectures}, nil, uploader, store, reconcileOpts)
+	second := New(testCfg(), fakeSource{lectures: scenario.lectures}, nil, uploader, scenario.store, reconcileOpts)
 	result, err = second.RunCycle(context.Background())
 	if err != nil {
 		t.Fatalf("second cycle: %v", err)
@@ -369,14 +329,16 @@ func TestRunCycleReconcilesAmbiguousUploadWithoutAnotherAdd(t *testing.T) {
 	if len(uploader.reconcileNbs) != 1 || uploader.reconcileNbs[0] != "nb" {
 		t.Fatalf("reconfiguration redirected ambiguous reconciliation: %v", uploader.reconcileNbs)
 	}
-	seen, _ = store.Get(1, 2, 10)
+	seen, _ = scenario.store.Get(1, 2, 10)
 	if seen.Status != StatusAmbiguous {
 		t.Fatalf("unresolved ambiguity was not preserved: %+v", seen)
 	}
 
-	uploader.reconcileFound = true
-	uploader.reconcileResult = notebooklm.UploadResult{SourceID: "src-late", NotebookID: "nb"}
-	third := New(testCfg(), fakeSource{lectures: lectures}, nil, uploader, store, reconcileOpts)
+	uploader.reconcileResult = notebooklm.UploadResult{
+		Outcome: notebooklm.UploadFound, SourceID: "src-late", NotebookID: "nb",
+	}
+	uploader.reconcileErr = nil
+	third := New(testCfg(), fakeSource{lectures: scenario.lectures}, nil, uploader, scenario.store, reconcileOpts)
 	result, err = third.RunCycle(context.Background())
 	if err != nil {
 		t.Fatalf("third cycle: %v", err)
@@ -385,46 +347,71 @@ func TestRunCycleReconcilesAmbiguousUploadWithoutAnotherAdd(t *testing.T) {
 		t.Fatalf("late source was not reconciled: result=%+v uploadCalls=%d reconcileCalls=%d",
 			result, uploader.calls, uploader.reconcileCalls)
 	}
-	seen, _ = store.Get(1, 2, 10)
+	seen, _ = scenario.store.Get(1, 2, 10)
 	if seen.Status != StatusUploaded || seen.SourceID != "src-late" {
 		t.Fatalf("late source did not complete durable state: %+v", seen)
 	}
 }
 
 func TestRunCycleKeepsAmbiguousStateWhenReconciliationFails(t *testing.T) {
-	store, err := LoadStore(filepath.Join(t.TempDir(), "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if markErr := store.Mark(1, 2, SeenLecture{
+	scenario := newUploadScenario(t)
+	scenario.opts.Targets[0].NotebookID = "nb"
+	scenario.opts.DeleteAudioAfterUpload = true
+	if markErr := scenario.store.Mark(1, 2, SeenLecture{
 		Status:     StatusAmbiguous,
 		SeqNo:      1,
 		Topic:      "Intro",
+		OutputPath: scenario.output,
 		NotebookID: "nb",
 		UploadKey:  "impartus:1:2:10",
 	}, 10); markErr != nil {
 		t.Fatal(markErr)
 	}
 	uploader := &fakeUploader{
-		reconcileErr: &notebooklm.Error{Kind: notebooklm.ErrTransient, Message: "source list timed out"},
+		reconcileResult: notebooklm.UploadResult{Outcome: notebooklm.UploadAmbiguous},
+		reconcileErr:    &notebooklm.Error{Kind: notebooklm.ErrTransient, Message: "source list timed out"},
 	}
-	w := New(testCfg(), fakeSource{lectures: client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro"}}},
-		nil, uploader, store, Options{
-			Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb"}},
-			Once:    true, Upload: true, Log: io.Discard,
-		})
+	w := New(testCfg(), fakeSource{lectures: scenario.lectures}, nil, uploader, scenario.store, scenario.opts)
 
 	result, err := w.RunCycle(context.Background())
 	if err != nil {
 		t.Fatalf("reconciliation cycle: %v", err)
 	}
-	seen, ok := store.Get(1, 2, 10)
-	if result.Failed != 1 || !ok || seen.Status != StatusAmbiguous {
+	seen, ok := scenario.store.Get(1, 2, 10)
+	if result.Failed != 1 || !ok || seen.Status != StatusAmbiguous || seen.NotebookID != "nb" {
 		t.Fatalf("reconcile error lost fail-closed state: result=%+v seen=%+v ok=%v", result, seen, ok)
 	}
 	if uploader.calls != 0 || uploader.reconcileCalls != 1 {
 		t.Fatalf("reconcile error issued an add: uploadCalls=%d reconcileCalls=%d",
 			uploader.calls, uploader.reconcileCalls)
+	}
+	if _, statErr := os.Stat(scenario.output); statErr != nil {
+		t.Fatalf("ambiguous reconciliation deleted the only local audio: %v", statErr)
+	}
+}
+
+func TestRunCycleFailsClosedOnInvalidSuccessfulOutcome(t *testing.T) {
+	scenario := newUploadScenario(t)
+	uploader := &fakeUploader{
+		result:          notebooklm.UploadResult{Outcome: notebooklm.UploadOutcome("invalid")},
+		reconcileResult: notebooklm.UploadResult{Outcome: notebooklm.UploadAmbiguous},
+		reconcileErr:    &notebooklm.Error{Kind: notebooklm.ErrAmbiguous, Message: "unresolved"},
+	}
+	w := New(testCfg(), fakeSource{lectures: scenario.lectures},
+		&fakeAudio{join: downloader.JoinResult{LeftOutput: scenario.output}},
+		uploader, scenario.store, scenario.opts)
+	if _, err := w.RunCycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	seen, ok := scenario.store.Get(1, 2, 10)
+	if !ok || seen.Status != StatusAmbiguous || uploader.calls != 1 {
+		t.Fatalf("invalid success did not fail closed: seen=%+v ok=%v addCalls=%d", seen, ok, uploader.calls)
+	}
+	if _, err := w.RunCycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if uploader.calls != 1 || uploader.reconcileCalls != 1 {
+		t.Fatalf("invalid success allowed another add: addCalls=%d reconcileCalls=%d", uploader.calls, uploader.reconcileCalls)
 	}
 }
 
@@ -443,7 +430,10 @@ func TestRunCycleHardStopsAfterBoundedAmbiguousReconciliation(t *testing.T) {
 	}, 10); markErr != nil {
 		t.Fatal(markErr)
 	}
-	uploader := &fakeUploader{}
+	uploader := &fakeUploader{
+		reconcileResult: notebooklm.UploadResult{Outcome: notebooklm.UploadAmbiguous},
+		reconcileErr:    &notebooklm.Error{Kind: notebooklm.ErrAmbiguous, Message: "source is not ready"},
+	}
 	opts := Options{
 		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb"}},
 		Once:    true, Upload: true, Log: io.Discard,
@@ -499,7 +489,10 @@ func TestRunStopsDaemonOnAmbiguousReconciliationSafetyError(t *testing.T) {
 	}, 10); markErr != nil {
 		t.Fatal(markErr)
 	}
-	uploader := &fakeUploader{}
+	uploader := &fakeUploader{
+		reconcileResult: notebooklm.UploadResult{Outcome: notebooklm.UploadAmbiguous},
+		reconcileErr:    &notebooklm.Error{Kind: notebooklm.ErrAmbiguous, Message: "source is not ready"},
+	}
 	w := New(testCfg(), fakeSource{lectures: client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro"}}},
 		nil, uploader, store, Options{
 			Targets:  []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb"}},
@@ -596,7 +589,10 @@ func TestRunCycleHardStopsWhenRejectedUploadCannotPersistFailedState(t *testing.
 		return atomicWriteFile(path, data, mode)
 	}
 	uploadErr := &notebooklm.Error{Kind: notebooklm.ErrPermanent, Message: "provider rejected upload"}
-	uploader := &fakeUploader{err: uploadErr}
+	uploader := &fakeUploader{
+		result: notebooklm.UploadResult{Outcome: notebooklm.UploadRejected},
+		err:    uploadErr,
+	}
 	w := New(testCfg(), fakeSource{lectures: client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro"}}},
 		&fakeAudio{}, uploader, store, Options{
 			Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb"}},
@@ -659,7 +655,8 @@ func TestRunCycleRetriesFailedStatePersistenceOnce(t *testing.T) {
 		return atomicWriteFile(path, data, mode)
 	}
 	uploader := &fakeUploader{
-		err: &notebooklm.Error{Kind: notebooklm.ErrPermanent, Message: "provider rejected upload"},
+		result: notebooklm.UploadResult{Outcome: notebooklm.UploadRejected},
+		err:    &notebooklm.Error{Kind: notebooklm.ErrPermanent, Message: "provider rejected upload"},
 	}
 	w := New(testCfg(), fakeSource{lectures: client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro"}}},
 		&fakeAudio{}, uploader, store, Options{
@@ -680,74 +677,19 @@ func TestRunCycleRetriesFailedStatePersistenceOnce(t *testing.T) {
 	}
 }
 
-func TestRunCycleReconcilesRateLimitWithoutAnotherAdd(t *testing.T) {
-	dir := t.TempDir()
-	out := filepath.Join(dir, "lec.mp3")
-	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	store, err := LoadStore(filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	lectures := client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro"}}
-	uploader := &fakeUploader{
-		err: &notebooklm.Error{Kind: notebooklm.ErrRateLimit, Message: "HTTP 429 rate limit"},
-	}
-	opts := Options{
-		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb"}},
-		Once:    true, Upload: true,
-		MaxRetries: 1, Log: io.Discard,
-	}
-	first := New(testCfg(), fakeSource{lectures: lectures},
-		&fakeAudio{join: downloader.JoinResult{LeftOutput: out}}, uploader, store, opts)
-	result, err := first.RunCycle(context.Background())
-	if err != nil {
-		t.Fatalf("rate-limited cycle: %v", err)
-	}
-	seen, ok := store.Get(1, 2, 10)
-	if result.Failed != 1 || !ok || seen.Status != StatusAmbiguous {
-		t.Fatalf("rate-limit ambiguity was not durable: result=%+v seen=%+v ok=%v", result, seen, ok)
-	}
-
-	uploader.err = nil
-	uploader.reconcileFound = true
-	uploader.reconcileResult = notebooklm.UploadResult{SourceID: "src-existing", NotebookID: "nb"}
-	second := New(testCfg(), fakeSource{lectures: lectures}, nil, uploader, store, opts)
-	result, err = second.RunCycle(context.Background())
-	if err != nil {
-		t.Fatalf("reconcile cycle: %v", err)
-	}
-	if result.Uploaded != 1 || uploader.calls != 1 || uploader.reconcileCalls != 1 {
-		t.Fatalf("rate-limit ambiguity issued another add: result=%+v uploadCalls=%d reconcileCalls=%d",
-			result, uploader.calls, uploader.reconcileCalls)
-	}
-}
-
 func TestRunCyclePersistsReconciliationOnlyIntentBeforeAdd(t *testing.T) {
-	dir := t.TempDir()
-	out := filepath.Join(dir, "lec.mp3")
-	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	store, err := LoadStore(filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	scenario := newUploadScenario(t)
 	var statusAtProviderCall LectureStatus
 	uploader := &fakeUploader{
 		result: notebooklm.UploadResult{SourceID: "src"},
 		beforeUpload: func() {
-			seen, _ := store.Get(1, 2, 10)
+			seen, _ := scenario.store.Get(1, 2, 10)
 			statusAtProviderCall = seen.Status
 		},
 	}
-	w := New(testCfg(), fakeSource{lectures: client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro"}}},
-		&fakeAudio{join: downloader.JoinResult{LeftOutput: out}}, uploader, store, Options{
-			Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb"}},
-			Once:    true, Upload: true,
-			MaxRetries: 1, Log: io.Discard,
-		})
+	w := New(testCfg(), fakeSource{lectures: scenario.lectures},
+		&fakeAudio{join: downloader.JoinResult{LeftOutput: scenario.output}},
+		uploader, scenario.store, scenario.opts)
 	result, err := w.RunCycle(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -798,27 +740,19 @@ func TestRunCycleContinuesAfterTargetFailure(t *testing.T) {
 }
 
 func TestRunCycleUsesPerTargetNotebookAndSharedBudget(t *testing.T) {
-	dir := t.TempDir()
-	out := filepath.Join(dir, "lec.mp3")
-	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	store, err := LoadStore(filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	scenario := newUploadScenario(t)
 	source := targetSource{lectures: map[string]client.Lectures{
 		"1:2": {{TTID: 10, SeqNo: 1, Topic: "one"}},
 		"3:4": {{TTID: 20, SeqNo: 1, Topic: "two"}},
 	}}
 	uploader := &fakeUploader{result: notebooklm.UploadResult{SourceID: "src"}}
-	w := New(testCfg(), source, &fakeAudio{join: downloader.JoinResult{LeftOutput: out}}, uploader, store, Options{
-		Targets: []config.WatchTarget{
-			{SubjectID: 1, SessionID: 2, NotebookID: "nb-one"},
-			{SubjectID: 3, SessionID: 4, NotebookID: "nb-two"},
-		},
-		Once: true, Upload: true, MaxLecturesPerCycle: 2, Log: io.Discard,
-	})
+	scenario.opts.Targets = []config.WatchTarget{
+		{SubjectID: 1, SessionID: 2, NotebookID: "nb-one"},
+		{SubjectID: 3, SessionID: 4, NotebookID: "nb-two"},
+	}
+	scenario.opts.MaxLecturesPerCycle = 2
+	w := New(testCfg(), source, &fakeAudio{join: downloader.JoinResult{LeftOutput: scenario.output}},
+		uploader, scenario.store, scenario.opts)
 	result, err := w.RunCycle(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -835,52 +769,35 @@ func TestRunCycleUsesPerTargetNotebookAndSharedBudget(t *testing.T) {
 }
 
 func TestRunCycleDeletesAudioOnlyAfterUpload(t *testing.T) {
-	dir := t.TempDir()
-	out := filepath.Join(dir, "lec.mp3")
-	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	store, err := LoadStore(filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	w := New(testCfg(), fakeSource{lectures: client.Lectures{{TTID: 10, SeqNo: 1}}},
-		&fakeAudio{join: downloader.JoinResult{LeftOutput: out}},
+	scenario := newUploadScenario(t)
+	scenario.opts.DeleteAudioAfterUpload = true
+	w := New(testCfg(), fakeSource{lectures: scenario.lectures},
+		&fakeAudio{join: downloader.JoinResult{LeftOutput: scenario.output}},
 		&fakeUploader{result: notebooklm.UploadResult{SourceID: "src"}},
-		store, Options{
-			Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb"}},
-			Once:    true, Upload: true,
-			DeleteAudioAfterUpload: true, Log: io.Discard,
-		})
+		scenario.store, scenario.opts)
 	if _, err := w.RunCycle(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(out); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(scenario.output); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("uploaded audio was not deleted: %v", err)
 	}
 }
 
 func TestRunCycleAuthFailureAborts(t *testing.T) {
-	dir := t.TempDir()
-	out := filepath.Join(dir, "lec.mp3")
-	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
-		t.Fatal(err)
+	scenario := newUploadScenario(t)
+	scenario.lectures = append(scenario.lectures,
+		client.Lecture{TTID: 11, SeqNo: 2, Topic: "Next", StartTime: "2026-01-02"})
+	scenario.opts.MaxRetries = 3
+	audio := &fakeAudio{join: downloader.JoinResult{LeftOutput: scenario.output}}
+	authErr := &notebooklm.Error{Kind: notebooklm.ErrAuth, Message: "re-authenticate"}
+	uploader := &fakeUploader{
+		result: notebooklm.UploadResult{Outcome: notebooklm.UploadAmbiguous},
+		err: &notebooklm.Error{
+			Kind: notebooklm.ErrAmbiguous, Message: "upload outcome is ambiguous", Err: authErr,
+		},
 	}
-	store, err := LoadStore(filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	audio := &fakeAudio{join: downloader.JoinResult{LeftOutput: out}}
-	uploader := &fakeUploader{err: &notebooklm.Error{Kind: notebooklm.ErrAuth, Message: "re-authenticate"}}
-	w := New(testCfg(), fakeSource{lectures: client.Lectures{
-		{TTID: 10, SeqNo: 1, Topic: "Intro", StartTime: "2026-01-01"},
-		{TTID: 11, SeqNo: 2, Topic: "Next", StartTime: "2026-01-02"},
-	}}, audio, uploader, store, Options{
-		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb1"}},
-		Once:    true, Upload: true,
-		MaxRetries: 3, Log: io.Discard,
-	})
-	_, err = w.RunCycle(context.Background())
+	w := New(testCfg(), fakeSource{lectures: scenario.lectures}, audio, uploader, scenario.store, scenario.opts)
+	_, err := w.RunCycle(context.Background())
 	if !notebooklm.IsAuth(err) {
 		t.Fatalf("expected auth abort, got %v", err)
 	}
@@ -1008,39 +925,30 @@ func TestRunCycleCancellationDoesNotRecordFailure(t *testing.T) {
 }
 
 func TestRunCycleRetriesPreviouslyFailedLecture(t *testing.T) {
-	dir := t.TempDir()
-	out := filepath.Join(dir, "lec.mp3")
-	if err := os.WriteFile(out, []byte("audio"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	store, err := LoadStore(filepath.Join(dir, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	lectures := client.Lectures{{TTID: 10, SeqNo: 1, Topic: "Intro", StartTime: "2026-01-01"}}
-	opts := Options{
-		Targets: []config.WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb1"}},
-		Once:    true, Upload: true, Log: io.Discard, MaxRetries: 1,
-	}
+	scenario := newUploadScenario(t)
 
 	failAudio := &fakeAudio{joinErr: errors.New("download blip")}
-	w := New(testCfg(), fakeSource{lectures: lectures}, failAudio, &fakeUploader{}, store, opts)
+	w := New(testCfg(), fakeSource{lectures: scenario.lectures}, failAudio,
+		&fakeUploader{}, scenario.store, scenario.opts)
 	result, err := w.RunCycle(context.Background())
 	if err != nil {
 		t.Fatalf("failing cycle: %v", err)
 	}
-	if result.Failed != 1 || store.Has(1, 2, 10) {
-		t.Fatalf("expected failed+unseen after blip: %+v has=%v", result, store.Has(1, 2, 10))
+	seen, ok := scenario.store.Get(1, 2, 10)
+	if result.Failed != 1 || !ok || seen.Status != StatusFailed {
+		t.Fatalf("expected failed state after blip: %+v seen=%+v ok=%v", result, seen, ok)
 	}
 
-	okAudio := &fakeAudio{join: downloader.JoinResult{LeftOutput: out}}
+	okAudio := &fakeAudio{join: downloader.JoinResult{LeftOutput: scenario.output}}
 	uploader := &fakeUploader{result: notebooklm.UploadResult{SourceID: "src1"}}
-	w = New(testCfg(), fakeSource{lectures: lectures}, okAudio, uploader, store, opts)
+	w = New(testCfg(), fakeSource{lectures: scenario.lectures}, okAudio,
+		uploader, scenario.store, scenario.opts)
 	result, err = w.RunCycle(context.Background())
 	if err != nil {
 		t.Fatalf("retry cycle: %v", err)
 	}
-	if result.Downloaded != 1 || result.Uploaded != 1 || !store.Has(1, 2, 10) {
-		t.Fatalf("expected retry success: %+v", result)
+	seen, ok = scenario.store.Get(1, 2, 10)
+	if result.Downloaded != 1 || result.Uploaded != 1 || !ok || seen.Status != StatusUploaded {
+		t.Fatalf("expected retry success: %+v seen=%+v ok=%v", result, seen, ok)
 	}
 }

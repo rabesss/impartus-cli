@@ -109,15 +109,20 @@ flowchart TD
   Add -->|rejected| Retry["state: failed; retry next cycle"]
   Add -->|ambiguous| Hold["state: ambiguous; reconcile-only"]
   Hold --> SafeRecon["list routed notebook sources; no add allowed"]
-  SafeRecon -->|found| Mark2
-  SafeRecon -->|absent or unreadable; fewer than 3 attempts| Hold
+  SafeRecon -->|READY| Mark2
+  SafeRecon -->|notebooklm-py non-READY| Wait["provider-native source wait"]
+  Wait -->|READY| Mark2
+  Wait -->|timeout/error| Hold
+  SafeRecon -->|nlm non-READY, absent, or unreadable| Hold
   SafeRecon -->|third unresolved attempt| Stop["hard stop; manual verification required"]
   Mark2 --> Clean["optional delete local audio"]
   DL -->|error| Retry
   Add -->|auth error| Abort
 ```
 
-Auth for NotebookLM is out-of-band: see [`notebooklm-auth.md`](notebooklm-auth.md). Provider subprocesses receive an allowlisted operating-system environment rather than Impartus credentials or unrelated application tokens. Watch owns the durable idempotency phase: it stores the deterministic key and `ambiguous` state before crossing the provider boundary, while the provider adapter returns a typed `created`, `ambiguous`, or `rejected` outcome. Idempotent uploads use a temporary, Windows-safe filename token in addition to the legacy custom-title token because a provider may replace the requested title with the uploaded filename after indexing. Later cycles reconcile ambiguous sources against either token without issuing another add. After three unresolved reconciliation attempts, the watcher stops with an operator-visible safety error while leaving the lecture `ambiguous`; an operator must verify the remote notebook before clearing that lecture's state. A rejected upload is demoted to `failed`, but failure to persist that demotion is retried once and then stops the watcher rather than continuing with uncertain durable state. State persistence reuses the atomic write/sync pattern from job persistence.
+Authentication is out-of-band; see [`notebooklm-auth.md`](notebooklm-auth.md). Provider subprocesses receive an allowlisted environment, never Impartus credentials or unrelated application tokens. Before an idempotent add, watch persists `ambiguous` plus a deterministic title/filename token. A failed or interrupted add can therefore only list and reconcile that token, never add again.
+
+READY is required only during ambiguous recovery. `notebooklm-py` delegates non-READY polling to its native `source wait`; `nlm` remains ambiguous until a later list reports READY. Normal exit-0 adds do not wait because the provider has already finalized the uploaded bytes. Three unresolved recovery attempts stop the watcher for manual verification while preserving the local audio and ambiguous state. Definite pre-provider failures become `failed`; persistence failures stop rather than weakening the duplicate-prevention guarantee.
 
 ## API authenticated job lifecycle flow
 

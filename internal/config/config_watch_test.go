@@ -32,97 +32,55 @@ func TestApplyWatchMediaDefaultsForcesEfficientAudio(t *testing.T) {
 	}
 }
 
-func TestValidateWatchRequiresTargetsWhenEnabled(t *testing.T) {
+func validWatchConfig() *Config {
 	cfg := minimalValidConfig()
 	cfg.ApplyDefaults()
 	cfg.Watch.Enabled = true
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "watch.targets") {
-		t.Fatalf("expected targets error, got %v", err)
-	}
-
 	cfg.Watch.Targets = []WatchTarget{{SubjectID: 1, SessionID: 2, NotebookID: "nb1"}}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("expected valid watch config, got %v", err)
-	}
+	return cfg
 }
 
-func TestValidateWatchRejectsDuplicateTargets(t *testing.T) {
-	cfg := minimalValidConfig()
-	cfg.ApplyDefaults()
-	cfg.Watch.Enabled = true
-	cfg.Watch.Targets = []WatchTarget{
-		{SubjectID: 1, SessionID: 2, NotebookID: "a"},
-		{SubjectID: 1, SessionID: 2, NotebookID: "b"},
+func TestValidateWatchRejectsInvalidFields(t *testing.T) {
+	valid := validWatchConfig()
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid watch fixture: %v", err)
 	}
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "duplicate") {
-		t.Fatalf("expected duplicate error, got %v", err)
-	}
-}
-
-func TestValidateNotebookLMRequiredWhenUploadEnabled(t *testing.T) {
-	cfg := minimalValidConfig()
-	cfg.ApplyDefaults()
-	cfg.Watch.Enabled = true
-	cfg.Watch.Upload = true
-	cfg.Watch.Targets = []WatchTarget{{SubjectID: 1, SessionID: 2}}
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "notebookId") {
-		t.Fatalf("expected notebook id error, got %v", err)
-	}
-	cfg.Watch.Targets[0].NotebookID = "nb1"
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("expected valid config, got %v", err)
-	}
-}
-
-func TestValidateWatchIntervalBounds(t *testing.T) {
-	cfg := minimalValidConfig()
-	cfg.ApplyDefaults()
-	cfg.Watch.Enabled = true
-	cfg.Watch.PollInterval = "1m"
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "watch.pollInterval") {
-		t.Fatalf("expected interval error, got %v", err)
-	}
-}
-
-func TestWatchCountDefaultsAndNegativeValidationAgree(t *testing.T) {
-	cfg := minimalValidConfig()
-	cfg.ApplyDefaults()
-	if cfg.Watch.MaxLecturesPerCycle != 3 || cfg.Watch.MaxUploadRetries != 3 ||
-		cfg.Watch.NotebookLM.MaxSourcesPerNotebook != 300 {
-		t.Fatalf("watch count defaults changed: %+v", cfg.Watch)
+	if valid.Watch.MaxLecturesPerCycle != 3 || valid.Watch.MaxUploadRetries != 3 ||
+		valid.Watch.NotebookLM.MaxSourcesPerNotebook != 300 {
+		t.Fatalf("watch count defaults changed: %+v", valid.Watch)
 	}
 
-	cfg.Watch.Enabled = true
-	cfg.Watch.Targets = []WatchTarget{{SubjectID: 1, SessionID: 2}}
-	cfg.Watch.MaxLecturesPerCycle = -1
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "maxLecturesPerCycle") {
-		t.Fatalf("expected negative lecture limit rejection, got %v", err)
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+		want   string
+	}{
+		{name: "missing targets", mutate: func(c *Config) { c.Watch.Targets = nil }, want: "watch.targets"},
+		{name: "duplicate targets", mutate: func(c *Config) {
+			c.Watch.Targets = []WatchTarget{
+				{SubjectID: 1, SessionID: 2, NotebookID: "a"},
+				{SubjectID: 1, SessionID: 2, NotebookID: "b"},
+			}
+		}, want: "duplicate"},
+		{name: "missing notebook", mutate: func(c *Config) {
+			c.Watch.Upload = true
+			c.Watch.Targets[0].NotebookID = ""
+		}, want: "notebookId"},
+		{name: "short interval", mutate: func(c *Config) { c.Watch.PollInterval = "1m" }, want: "watch.pollInterval"},
+		{name: "negative lecture limit", mutate: func(c *Config) { c.Watch.MaxLecturesPerCycle = -1 }, want: "maxLecturesPerCycle"},
+		{name: "negative retry limit", mutate: func(c *Config) { c.Watch.MaxUploadRetries = -1 }, want: "maxUploadRetries"},
+		{name: "negative source cap", mutate: func(c *Config) { c.Watch.NotebookLM.MaxSourcesPerNotebook = -1 }, want: "maxSourcesPerNotebook"},
+		{name: "unknown provider", mutate: func(c *Config) { c.Watch.NotebookLM.Provider = "other" }, want: "provider"},
 	}
-	cfg.Watch.MaxLecturesPerCycle = 3
-	cfg.Watch.MaxUploadRetries = -1
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "maxUploadRetries") {
-		t.Fatalf("expected negative retry rejection, got %v", err)
-	}
-	cfg.Watch.MaxUploadRetries = 3
-	cfg.Watch.NotebookLM.MaxSourcesPerNotebook = -1
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "maxSourcesPerNotebook") {
-		t.Fatalf("expected negative source cap rejection, got %v", err)
-	}
-}
-
-func TestValidateNotebookLMProvider(t *testing.T) {
-	cfg := minimalValidConfig()
-	cfg.ApplyDefaults()
-	cfg.Watch.Enabled = true
-	cfg.Watch.Targets = []WatchTarget{{SubjectID: 1, SessionID: 2}}
-	cfg.Watch.NotebookLM.Provider = "other"
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "provider") {
-		t.Fatalf("expected provider error, got %v", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validWatchConfig()
+			tc.mutate(cfg)
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 

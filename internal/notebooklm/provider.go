@@ -1,7 +1,6 @@
 package notebooklm
 
 import (
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -18,7 +17,7 @@ const (
 	ProviderNLM Provider = "nlm"
 )
 
-// UploadRequest is the input to Upload.
+// UploadRequest is the internal input to a provider upload.
 type UploadRequest struct {
 	FilePath       string
 	Title          string
@@ -34,33 +33,6 @@ type Config struct {
 	AuthProfile           string
 	UploadTimeout         time.Duration
 	MaxSourcesPerNotebook int
-}
-
-type providerUploadPolicy struct {
-	rateLimitOutcome UploadOutcome
-}
-
-var providerUploadPolicies = map[Provider]providerUploadPolicy{
-	// notebooklm-py registers a source before starting and streaming its
-	// resumable upload. A rate limit can therefore arrive after the provider
-	// has allocated the source, even though this CLI path does not wait for
-	// indexing. Reconcile before any later add.
-	ProviderNotebookLMpy: {rateLimitOutcome: UploadAmbiguous},
-	ProviderNLM:          {rateLimitOutcome: UploadAmbiguous},
-}
-
-func classifyUploadOutcome(provider Provider, err error) UploadOutcome {
-	var typed *Error
-	if !errors.As(err, &typed) || typed.Kind == ErrAuth || !typed.Retryable() {
-		return UploadRejected
-	}
-	if typed.Kind == ErrRateLimit {
-		if policy, ok := providerUploadPolicies[provider]; ok {
-			return policy.rateLimitOutcome
-		}
-		return UploadRejected
-	}
-	return UploadAmbiguous
 }
 
 // Normalize fills defaults and aliases.
@@ -121,15 +93,11 @@ func buildNotebookLMpyUploadArgs(cfg Config, req UploadRequest, notebookID strin
 }
 
 func buildNLMUploadArgs(cfg Config, req UploadRequest, notebookID string) []string {
-	waitTimeout := (cfg.UploadTimeout + time.Second - 1) / time.Second
-	if waitTimeout < 1 {
-		waitTimeout = 1
-	}
 	args := []string{
 		"source", "add", notebookID,
 		"--file", req.FilePath,
 		"--wait",
-		"--wait-timeout", strconv.FormatInt(int64(waitTimeout), 10),
+		"--wait-timeout", strconv.FormatInt(timeoutSeconds(cfg.UploadTimeout), 10),
 		"--json",
 	}
 	if req.Title != "" {
@@ -139,6 +107,28 @@ func buildNLMUploadArgs(cfg Config, req UploadRequest, notebookID string) []stri
 		args = append([]string{"--profile", cfg.AuthProfile}, args...)
 	}
 	return args
+}
+
+func buildNotebookLMpyWaitArgs(cfg Config, notebookID, sourceID string) []string {
+	args := []string{
+		"source", "wait", sourceID,
+		"--notebook", notebookID,
+		"--timeout", strconv.FormatInt(timeoutSeconds(cfg.UploadTimeout), 10),
+		"--interval", "1",
+		"--json",
+	}
+	if cfg.AuthProfile != "" {
+		args = append([]string{"--profile", cfg.AuthProfile}, args...)
+	}
+	return args
+}
+
+func timeoutSeconds(timeout time.Duration) int64 {
+	seconds := int64((timeout + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
 }
 
 // BuildAuthCheckArgs returns argv for an auth health check.

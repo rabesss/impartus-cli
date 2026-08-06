@@ -95,11 +95,6 @@ func CourseKey(subjectID, sessionID int) string {
 	return strconv.Itoa(subjectID) + ":" + strconv.Itoa(sessionID)
 }
 
-// LectureKey builds the full durable key for one lecture.
-func LectureKey(subjectID, sessionID, ttid int) string {
-	return CourseKey(subjectID, sessionID) + ":" + strconv.Itoa(ttid)
-}
-
 // LoadStore reads state from path, or returns an empty store if the file is
 // missing. Corrupt state is fatal because silently resetting deduplication can
 // upload every previously completed lecture again.
@@ -183,17 +178,6 @@ func (s *Store) NeedsWork(subjectID, sessionID, ttid int, uploadEnabled bool) bo
 	default:
 		return false
 	}
-}
-
-// Has reports whether a lecture TTID was already uploaded successfully.
-func (s *Store) Has(subjectID, sessionID, ttid int) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	seen, ok := s.getLocked(subjectID, sessionID, ttid)
-	if !ok {
-		return false
-	}
-	return seen.Status == StatusUploaded
 }
 
 // Get returns a previously recorded lecture, if present.
@@ -287,22 +271,6 @@ func mergeSeenLecture(existing, lecture SeenLecture) SeenLecture {
 		lecture.SourceID = existing.SourceID
 	}
 	return lecture
-}
-
-// Snapshot returns a deep-enough copy for inspection / JSON output.
-func (s *Store) Snapshot() State {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	raw, err := json.Marshal(s.data)
-	if err != nil {
-		return State{Version: stateVersion, Courses: map[string]CourseState{}}
-	}
-	var copy State
-	_ = json.Unmarshal(raw, &copy) //nolint:errcheck // round-trip of our own data
-	if copy.Courses == nil {
-		copy.Courses = map[string]CourseState{}
-	}
-	return copy
 }
 
 func (s *Store) saveLocked() error {

@@ -47,11 +47,15 @@ printf 'ID3fakeaudio' > "$last"
 	writeExecutable(t, notebooklmCLI, fmt.Sprintf(`#!/bin/sh
 set -eu
 if [ "$1" = "source" ] && [ "$2" = "list" ]; then
-  printf '%%s\n' '[]'
+  printf '%%s\n' '{"sources":[{"id":"src-e2e","title":"[impartus:1:2:101] LEC 001 Integration lecture","status":"ready","status_id":2}]}'
+  exit 0
+fi
+if [ "$1" = "source" ] && [ "$2" = "wait" ]; then
+  printf '%%s\n' '{"source_id":"src-e2e","status":"ready","status_code":2}'
   exit 0
 fi
 printf '%%s\n' "$@" > %[1]s
-printf '%%s\n' '{"source_id":"src-e2e","title":"from-fake"}'
+printf '%%s\n' '{"source":{"source_id":"src-e2e","title":"from-fake"}}'
 `, uploadLogQuoted))
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 

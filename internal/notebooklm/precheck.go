@@ -10,21 +10,11 @@ import (
 	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
-// Doctor checks that the CLI is present, authentication looks usable, and the
-// notebook is under the configured source-count cap when a notebook id is set.
-func (u *Uploader) Doctor(ctx context.Context) error {
-	notebooks := []string{}
-	if strings.TrimSpace(u.cfg.NotebookID) != "" {
-		notebooks = append(notebooks, u.cfg.NotebookID)
-	}
-	return u.DoctorNotebooks(ctx, notebooks)
-}
-
 // DoctorNotebooks checks the provider once and validates every routed notebook.
 func (u *Uploader) DoctorNotebooks(ctx context.Context, notebookIDs []string) error {
 	u.cfg.Normalize()
 	if _, err := exec.LookPath(u.cfg.CLIPath); err != nil {
-		hint := "pip install --pre 'notebooklm-py[headless]==0.8.0rc1'"
+		hint := "pip install 'notebooklm-py[headless]==0.8.0'"
 		if u.cfg.Provider == ProviderNLM {
 			hint = "pip install notebooklm-mcp-cli"
 		}
@@ -114,8 +104,14 @@ func (u *Uploader) listSources(ctx context.Context, notebookID string) (sourceIn
 	args := BuildListSourcesArgs(u.cfg, notebookID)
 	stdout, stderr, err := u.runner.Run(listCtx, u.cfg.CLIPath, args, providerEnvironment())
 	if err != nil {
-		detail := firstNonEmpty(secrets.Scrub(stderr), secrets.Scrub(stdout), secrets.ScrubError(err))
-		return sourceInventory{}, fmt.Errorf("check notebook sources: %s", trimForError(detail))
+		classifyErr := err
+		if listCtx.Err() != nil {
+			classifyErr = listCtx.Err()
+		}
+		return sourceInventory{}, fmt.Errorf(
+			"check notebook sources: %w",
+			classifyProviderError(u.cfg.Provider, classifyErr, stdout, stderr),
+		)
 	}
 	inventory, parseErr := parseSourceInventory(stdout, notebookID)
 	if parseErr != nil {

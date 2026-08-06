@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/rabesss/impartus-cli/internal/secrets"
@@ -30,12 +31,20 @@ type UploadResult struct {
 	SourceID   string        `json:"sourceId,omitempty"`
 	Title      string        `json:"title,omitempty"`
 	NotebookID string        `json:"notebookId,omitempty"`
-	Raw        string        `json:"-"`
+	Status     string        `json:"-"`
+	StatusID   int           `json:"-"`
 }
 
 type sourceInventory struct {
 	Sources []UploadResult
 	Count   int
+}
+
+type providerErrorEnvelope struct {
+	Error      bool    `json:"error"`
+	Code       string  `json:"code"`
+	Message    string  `json:"message"`
+	RetryAfter float64 `json:"retry_after,omitempty"`
 }
 
 func parseAuthStatus(stdout string) (string, error) {
@@ -76,14 +85,6 @@ func parseUploadResult(stdout, notebookID string) (UploadResult, error) {
 	return result, nil
 }
 
-func parseSourceCount(stdout string) (int, error) {
-	inventory, err := parseSourceInventory(stdout, "")
-	if err != nil {
-		return 0, err
-	}
-	return inventory.Count, nil
-}
-
 func parseSourceInventory(stdout, notebookID string) (sourceInventory, error) {
 	trimmed := strings.TrimSpace(stdout)
 	if trimmed == "" {
@@ -104,17 +105,45 @@ func parseSourceInventory(stdout, notebookID string) (sourceInventory, error) {
 		if !ok {
 			continue
 		}
-		if nested, nestedOK := entry["source"].(map[string]any); nestedOK {
-			entry = nested
-		}
-		inventory.Sources = append(inventory.Sources, UploadResult{
-			Outcome:    UploadFound,
-			SourceID:   stringField(entry, "source_id", "sourceId", "id"),
-			Title:      stringField(entry, "title", "name", "display_name", "displayName"),
-			NotebookID: notebookID,
-		})
+		inventory.Sources = append(inventory.Sources, sourceResult(entry, notebookID))
 	}
 	return inventory, nil
+}
+
+func sourceResult(entry map[string]any, notebookID string) UploadResult {
+	var nested map[string]any
+	if value, ok := entry["source"].(map[string]any); ok {
+		nested = value
+	}
+	result := UploadResult{
+		Outcome:    UploadFound,
+		SourceID:   firstNonEmpty(stringField(nested, "source_id", "sourceId", "id"), stringField(entry, "source_id", "sourceId", "id")),
+		Title:      firstNonEmpty(stringField(nested, "title", "name", "display_name", "displayName"), stringField(entry, "title", "name", "display_name", "displayName")),
+		NotebookID: notebookID,
+		Status:     normalizeSourceStatus(firstNonEmpty(stringField(nested, "status"), stringField(entry, "status"))),
+		StatusID:   firstNonZero(intField(nested, "status_id", "statusId", "status"), intField(entry, "status_id", "statusId", "status")),
+	}
+	return result
+}
+
+func parseSourceWaitStatus(stdout string) (string, error) {
+	trimmed := strings.TrimSpace(stdout)
+	if trimmed == "" {
+		return "", fmt.Errorf("empty source wait response")
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		return "", err
+	}
+	var nested map[string]any
+	if value, ok := payload["source"].(map[string]any); ok {
+		nested = value
+	}
+	status := normalizeSourceStatus(firstNonEmpty(stringField(nested, "status"), stringField(payload, "status")))
+	if status == "" {
+		return "", fmt.Errorf("source wait response did not include status")
+	}
+	return status, nil
 }
 
 func sourceItems(payload any) ([]any, int, bool) {
@@ -149,8 +178,56 @@ func stringField(m map[string]any, keys ...string) string {
 	return ""
 }
 
-// ClassifyError turns a CLI failure into a typed error for retry decisions.
+func intField(m map[string]any, keys ...string) int {
+	for _, key := range keys {
+		value, ok := m[key]
+		if !ok {
+			continue
+		}
+		switch typed := value.(type) {
+		case float64:
+			return int(typed)
+		case int:
+			return typed
+		case json.Number:
+			if parsed, err := strconv.Atoi(typed.String()); err == nil {
+				return parsed
+			}
+		case string:
+			if parsed, err := strconv.Atoi(strings.TrimSpace(typed)); err == nil {
+				return parsed
+			}
+		}
+	}
+	return 0
+}
+
+func firstNonZero(values ...int) int {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func normalizeSourceStatus(status string) string {
+	return strings.ToLower(strings.TrimSpace(status))
+}
+
+// ClassifyError turns a notebooklm-py CLI failure into a typed error for retry
+// decisions. Provider calls use classifyProviderError so optional nlm installs
+// retain their legacy text contract.
 func ClassifyError(err error, stdout, stderr string) error {
+	return classifyProviderError(ProviderNotebookLMpy, err, stdout, stderr)
+}
+
+func classifyProviderError(provider Provider, err error, stdout, stderr string) error {
+	if provider == ProviderNotebookLMpy {
+		if envelope, ok := parseProviderErrorEnvelope(stdout); ok {
+			return classifyProviderErrorEnvelope(envelope, err)
+		}
+	}
 	detail := firstNonEmpty(secrets.Scrub(stderr), secrets.Scrub(stdout), secrets.ScrubError(err))
 	if errors.Is(err, context.DeadlineExceeded) {
 		return &Error{Kind: ErrTransient, Message: trimForError(detail), Err: err}
@@ -169,6 +246,45 @@ func ClassifyError(err error, stdout, stderr string) error {
 	default:
 		return &Error{Kind: ErrPermanent, Message: trimForError(detail), Err: err}
 	}
+}
+
+func parseProviderErrorEnvelope(stdout string) (providerErrorEnvelope, bool) {
+	var envelope providerErrorEnvelope
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &envelope); err != nil {
+		return providerErrorEnvelope{}, false
+	}
+	if !envelope.Error || strings.TrimSpace(envelope.Code) == "" {
+		return providerErrorEnvelope{}, false
+	}
+	return envelope, true
+}
+
+func classifyProviderErrorEnvelope(envelope providerErrorEnvelope, err error) error {
+	detail := trimForError(secrets.Scrub(firstNonEmpty(envelope.Message, envelope.Code)))
+	var kind ErrorKind
+	switch strings.ToUpper(strings.TrimSpace(envelope.Code)) {
+	case "AUTH_ERROR":
+		kind = ErrAuth
+	case "RATE_LIMITED":
+		kind = ErrRateLimit
+	case "NETWORK_ERROR", "TIMEOUT", "POLL_TIMEOUT":
+		kind = ErrTransient
+	case "CANCELLED": //nolint:misspell // Exact notebooklm-py v0.8.0 error code.
+		kind = ErrCancelled
+	case "VALIDATION_ERROR", "CONFIG_ERROR", "NOTEBOOK_LIMIT", "NOT_FOUND":
+		kind = ErrPermanent
+	case "NOTEBOOKLM_ERROR", "UNEXPECTED_ERROR":
+		kind = ErrPermanent
+		// v0.8.0 can wrap an RPC code 16 response in the generic envelope
+		// while retaining the only auth signal in its message.
+		if containsAny(strings.ToLower(envelope.Message),
+			"unauthenticated", "not authenticated", "authentication failed", "unauthorized") {
+			kind = ErrAuth
+		}
+	default:
+		kind = ErrPermanent
+	}
+	return &Error{Kind: kind, Message: detail, Err: err}
 }
 
 func containsAny(value string, fragments ...string) bool {
@@ -192,6 +308,9 @@ const (
 	ErrAuth
 	// ErrRateLimit indicates quota or HTTP 429 throttling; retryable with backoff.
 	ErrRateLimit
+	// ErrCancelled indicates that the provider canceled the operation. It is
+	// non-retryable because an idempotent add may already have mutated remotely.
+	ErrCancelled
 	// ErrAmbiguous means an add may have succeeded remotely and must be
 	// reconciled before another write is attempted.
 	ErrAmbiguous
@@ -226,22 +345,25 @@ func (e *Error) Retryable() bool {
 
 // IsAuth reports whether err is an authentication failure.
 func IsAuth(err error) bool {
-	var nlmErr *Error
-	return errors.As(err, &nlmErr) && nlmErr.Kind == ErrAuth
+	return hasErrorKind(err, ErrAuth)
 }
 
-// IsRateLimit reports whether an operation failed because of a rate or quota
-// limit.
-func IsRateLimit(err error) bool {
-	var nlmErr *Error
-	return errors.As(err, &nlmErr) && nlmErr.Kind == ErrRateLimit
-}
-
-// IsAmbiguous reports whether an add may have succeeded remotely and must be
-// reconciled without issuing another write.
-func IsAmbiguous(err error) bool {
-	var nlmErr *Error
-	return errors.As(err, &nlmErr) && nlmErr.Kind == ErrAmbiguous
+func hasErrorKind(err error, kind ErrorKind) bool {
+	if err == nil {
+		return false
+	}
+	if typed, ok := err.(*Error); ok && typed.Kind == kind {
+		return true
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, nested := range joined.Unwrap() {
+			if hasErrorKind(nested, kind) {
+				return true
+			}
+		}
+		return false
+	}
+	return hasErrorKind(errors.Unwrap(err), kind)
 }
 
 func firstNonEmpty(values ...string) string {

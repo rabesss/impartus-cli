@@ -192,7 +192,7 @@ protection manually with `chmod 600 config.json`.
 
 Authenticate once with the provider's native desktop login and keep credentials
 in its profile directory; see [`docs/notebooklm-auth.md`](docs/notebooklm-auth.md).
-The container includes `notebooklm-py[headless]==0.8.0rc1`; install
+The container includes `notebooklm-py[headless]==0.8.0`; install
 `notebooklm-mcp-cli` separately when using the optional `nlm` provider.
 
 #### Progress Tracking Options
@@ -373,9 +373,7 @@ multiple paths when multiple views or output forms are requested.
 
 ### Watch (NotebookLM)
 
-Poll Impartus for new lectures across one or more `watch.targets`, download left-view audio at 144p, and optionally upload each file to NotebookLM. State phases are `pending → downloaded → uploaded` (plus `failed` and fail-closed `ambiguous`); a crash after download resumes at upload without re-fetching chunks.
-
-Each watched lecture gets a deterministic upload key that is persisted before upload. The key is represented in the custom source title and in a Windows-safe temporary upload filename, so reconciliation survives providers replacing the requested title with the uploaded filename after indexing. The watcher reuses a source containing either the current filename token or the legacy bracketed title token. An ambiguous provider response enters a durable reconciliation-only state: later cycles keep listing for those tokens but never issue another add automatically. If the source never becomes visible, verify the notebook manually before clearing that lecture's state entry and retrying. The configured source cap is enforced against the actual target notebook.
+Poll one or more `watch.targets`, download left-view audio at 144p, and optionally upload it to NotebookLM. Durable state resumes interrupted work without re-downloading and prevents an uncertain provider result from issuing a second add. See the [watch lifecycle and crash-safety design](docs/architecture.md#cli-watch-command-flow).
 
 ```bash
 # One-shot dry run (list new lectures only)
@@ -403,7 +401,7 @@ Each watched lecture gets a deterministic upload key that is persisted before up
 | `--check` | Validate ffmpeg/config and, when upload is enabled, NotebookLM auth |
 | `--output,-o` | Output directory |
 
-NotebookLM desktop login and profile deployment: [`docs/notebooklm-auth.md`](docs/notebooklm-auth.md).
+Provider installation, desktop login, and profile deployment: [`docs/notebooklm-auth.md`](docs/notebooklm-auth.md).
 
 ### API Server
 
