@@ -223,12 +223,28 @@ func TestNeedsWorkReconcilesAmbiguousOnlyWhenUploadEnabled(t *testing.T) {
 	if store.NeedsWork(1, 2, 7, false) {
 		t.Fatalf("download-only mode should not process an ambiguous remote upload")
 	}
+	err = store.Mark(1, 2, SeenLecture{
+		Status: StatusAmbiguous, ReconcileAttempts: maxAmbiguousReconcileAttempts,
+	}, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.NeedsWork(1, 2, 7, true) {
+		t.Fatalf("ambiguous lecture should pause after its reconciliation budget is exhausted")
+	}
+	err = store.Mark(1, 2, SeenLecture{Status: StatusAmbiguous, Error: "still unresolved"}, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.NeedsWork(1, 2, 7, true) {
+		t.Fatalf("an ambiguous state update must not re-arm an exhausted reconciliation budget")
+	}
 	reloaded, err := LoadStore(filepath.Join(filepath.Dir(store.path), "s.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	seen, ok := reloaded.Get(1, 2, 7)
-	if !ok || seen.UploadKey != "impartus:1:2:7" {
+	if !ok || seen.UploadKey != "impartus:1:2:7" || seen.ReconcileAttempts != maxAmbiguousReconcileAttempts {
 		t.Fatalf("ambiguous upload key was not durable: %+v ok=%v", seen, ok)
 	}
 }

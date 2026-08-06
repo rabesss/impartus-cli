@@ -160,7 +160,9 @@ func validLectureStatus(status LectureStatus) bool {
 }
 
 // NeedsWork reports whether a lecture should be processed (new, failed, or
-// downloaded-but-not-uploaded when upload is enabled). Uploaded lectures are skipped.
+// downloaded-but-not-uploaded when upload is enabled). Uploaded lectures and
+// ambiguous uploads whose bounded reconciliation budget is exhausted are
+// skipped; the latter remain durable for manual verification.
 func (s *Store) NeedsWork(subjectID, sessionID, ttid int, uploadEnabled bool) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -171,8 +173,10 @@ func (s *Store) NeedsWork(subjectID, sessionID, ttid int, uploadEnabled bool) bo
 	switch seen.Status {
 	case StatusUploaded:
 		return false
-	case StatusDownloaded, StatusAmbiguous:
+	case StatusDownloaded:
 		return uploadEnabled // resume upload without re-download
+	case StatusAmbiguous:
+		return uploadEnabled && seen.ReconcileAttempts < maxAmbiguousReconcileAttempts
 	case StatusFailed, StatusPending:
 		return true
 	default:
@@ -269,6 +273,9 @@ func mergeSeenLecture(existing, lecture SeenLecture) SeenLecture {
 	}
 	if lecture.SourceID == "" {
 		lecture.SourceID = existing.SourceID
+	}
+	if lecture.Status == StatusAmbiguous && lecture.ReconcileAttempts == 0 {
+		lecture.ReconcileAttempts = existing.ReconcileAttempts
 	}
 	return lecture
 }

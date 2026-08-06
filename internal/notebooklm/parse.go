@@ -40,11 +40,18 @@ type sourceInventory struct {
 	Count   int
 }
 
+// providerJSONValue is the single dynamic escape hatch for provider-owned JSON
+// envelopes. Both supported CLIs have changed nesting and field aliases across
+// releases, so decoding the small boundary here is safer than exposing an
+// implicit map contract to the rest of the package.
+type providerJSONValue = any
+type providerJSONObject = map[string]providerJSONValue
+type providerJSONArray = []providerJSONValue
+
 type providerErrorEnvelope struct {
-	Error      bool    `json:"error"`
-	Code       string  `json:"code"`
-	Message    string  `json:"message"`
-	RetryAfter float64 `json:"retry_after,omitempty"`
+	Error   bool   `json:"error"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 func parseAuthStatus(stdout string) (string, error) {
@@ -63,7 +70,7 @@ func parseUploadResult(stdout, notebookID string) (UploadResult, error) {
 		return UploadResult{}, fmt.Errorf("empty response")
 	}
 
-	var payload map[string]any
+	var payload providerJSONObject
 	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
 		return UploadResult{}, err
 	}
@@ -71,7 +78,7 @@ func parseUploadResult(stdout, notebookID string) (UploadResult, error) {
 	result := UploadResult{Outcome: UploadCreated, NotebookID: notebookID}
 	result.SourceID = stringField(payload, "source_id", "sourceId", "id")
 	result.Title = stringField(payload, "title", "name")
-	if nested, ok := payload["source"].(map[string]any); ok {
+	if nested, ok := payload["source"].(providerJSONObject); ok {
 		if result.SourceID == "" {
 			result.SourceID = stringField(nested, "source_id", "sourceId", "id")
 		}
@@ -90,7 +97,7 @@ func parseSourceInventory(stdout, notebookID string) (sourceInventory, error) {
 	if trimmed == "" {
 		return sourceInventory{}, fmt.Errorf("empty source list response")
 	}
-	var payload any
+	var payload providerJSONValue
 	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
 		return sourceInventory{}, err
 	}
@@ -101,7 +108,7 @@ func parseSourceInventory(stdout, notebookID string) (sourceInventory, error) {
 	}
 	inventory := sourceInventory{Count: count}
 	for _, item := range items {
-		entry, ok := item.(map[string]any)
+		entry, ok := item.(providerJSONObject)
 		if !ok {
 			continue
 		}
@@ -110,9 +117,9 @@ func parseSourceInventory(stdout, notebookID string) (sourceInventory, error) {
 	return inventory, nil
 }
 
-func sourceResult(entry map[string]any, notebookID string) UploadResult {
-	var nested map[string]any
-	if value, ok := entry["source"].(map[string]any); ok {
+func sourceResult(entry providerJSONObject, notebookID string) UploadResult {
+	var nested providerJSONObject
+	if value, ok := entry["source"].(providerJSONObject); ok {
 		nested = value
 	}
 	result := UploadResult{
@@ -121,7 +128,10 @@ func sourceResult(entry map[string]any, notebookID string) UploadResult {
 		Title:      firstNonEmpty(stringField(nested, "title", "name", "display_name", "displayName"), stringField(entry, "title", "name", "display_name", "displayName")),
 		NotebookID: notebookID,
 		Status:     normalizeSourceStatus(firstNonEmpty(stringField(nested, "status"), stringField(entry, "status"))),
-		StatusID:   firstNonZero(intField(nested, "status_id", "statusId", "status"), intField(entry, "status_id", "statusId", "status")),
+		StatusID: firstNonZero(
+			intField(nested, "status_id", "statusId", "status_code", "statusCode", "status"),
+			intField(entry, "status_id", "statusId", "status_code", "statusCode", "status"),
+		),
 	}
 	return result
 }
@@ -131,26 +141,32 @@ func parseSourceWaitStatus(stdout string) (string, error) {
 	if trimmed == "" {
 		return "", fmt.Errorf("empty source wait response")
 	}
-	var payload map[string]any
+	var payload providerJSONObject
 	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
 		return "", err
 	}
-	var nested map[string]any
-	if value, ok := payload["source"].(map[string]any); ok {
+	var nested providerJSONObject
+	if value, ok := payload["source"].(providerJSONObject); ok {
 		nested = value
 	}
 	status := normalizeSourceStatus(firstNonEmpty(stringField(nested, "status"), stringField(payload, "status")))
+	if status == "" && firstNonZero(
+		intField(nested, "status_code", "statusCode", "status_id", "statusId", "status"),
+		intField(payload, "status_code", "statusCode", "status_id", "statusId", "status"),
+	) == 2 {
+		status = "ready"
+	}
 	if status == "" {
 		return "", fmt.Errorf("source wait response did not include status")
 	}
 	return status, nil
 }
 
-func sourceItems(payload any) ([]any, int, bool) {
+func sourceItems(payload providerJSONValue) (providerJSONArray, int, bool) {
 	switch typed := payload.(type) {
-	case []any:
+	case providerJSONArray:
 		return typed, len(typed), true
-	case map[string]any:
+	case providerJSONObject:
 		for _, key := range []string{"sources", "items", "data"} {
 			value, exists := typed[key]
 			if !exists {
@@ -167,7 +183,7 @@ func sourceItems(payload any) ([]any, int, bool) {
 	return nil, 0, false
 }
 
-func stringField(m map[string]any, keys ...string) string {
+func stringField(m providerJSONObject, keys ...string) string {
 	for _, key := range keys {
 		if v, ok := m[key]; ok {
 			if typed, ok := v.(string); ok && typed != "" {
@@ -178,7 +194,7 @@ func stringField(m map[string]any, keys ...string) string {
 	return ""
 }
 
-func intField(m map[string]any, keys ...string) int {
+func intField(m providerJSONObject, keys ...string) int {
 	for _, key := range keys {
 		value, ok := m[key]
 		if !ok {

@@ -262,7 +262,7 @@ func TestReconcileUploadMatchesPostIndexProviderFilename(t *testing.T) {
 func TestReconcileUploadWaitsForNotebookLMpyProcessingSource(t *testing.T) {
 	runner := &seqRunner{responses: []runnerResponse{
 		{stdout: `{"sources":[{"id":"existing","title":"[impartus:1:2:10] LEC 001 Intro","status":"processing","status_id":1}]}`},
-		{stdout: `{"source_id":"existing","status":"ready","status_id":2}`},
+		{stdout: `{"source_id":"existing","status_code":2}`},
 	}}
 	u := NewWithRunner(Config{
 		CLIPath: "notebooklm", AuthProfile: "work", UploadTimeout: 1500 * time.Millisecond,
@@ -365,17 +365,30 @@ func TestReconcileUploadPreservesListAuthFailure(t *testing.T) {
 	}
 }
 
-func TestReconcileUploadAcceptsNLMReadyStatusID(t *testing.T) {
-	runner := &seqRunner{responses: []runnerResponse{
-		{stdout: `{"sources":[{"id":"existing","title":"[impartus:1:2:10] LEC 001 Intro","status":2}]}`},
-	}}
-	u := NewWithRunner(Config{Provider: ProviderNLM, CLIPath: "nlm"}, runner)
-	result, err := u.ReconcileUpload(
-		context.Background(), "routed",
-		"[impartus:1:2:10] LEC 001 Intro", "impartus:1:2:10",
-	)
-	if err != nil || result.Outcome != UploadFound || result.StatusID != 2 || len(runner.calls) != 1 {
-		t.Fatalf("READY nlm source was not reconciled: result=%+v err=%v calls=%v", result, err, runner.calls)
+func TestReconcileUploadAcceptsReadyStatusAliases(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+	}{
+		{name: "numeric status", status: `"status":2`},
+		{name: "snake status id", status: `"status_id":2`},
+		{name: "snake status code", status: `"status_code":2`},
+		{name: "camel status code", status: `"statusCode":2`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &seqRunner{responses: []runnerResponse{{
+				stdout: `{"sources":[{"id":"existing","title":"[impartus:1:2:10] LEC 001 Intro",` + tc.status + `}]}`,
+			}}}
+			u := NewWithRunner(Config{Provider: ProviderNLM, CLIPath: "nlm"}, runner)
+			result, err := u.ReconcileUpload(
+				context.Background(), "routed",
+				"[impartus:1:2:10] LEC 001 Intro", "impartus:1:2:10",
+			)
+			if err != nil || result.Outcome != UploadFound || result.StatusID != 2 || len(runner.calls) != 1 {
+				t.Fatalf("READY source alias was not reconciled: result=%+v err=%v calls=%v", result, err, runner.calls)
+			}
+		})
 	}
 }
 

@@ -349,16 +349,17 @@ func (w *Watcher) uploadOrReconcile(
 		upload, uploadErr = w.uploader.ReconcileUpload(
 			ctx, seen.NotebookID, title, seen.UploadKey,
 		)
+		if uploadErr == nil && upload.Outcome != notebooklm.UploadFound {
+			uploadErr = fmt.Errorf("notebooklm provider returned invalid successful reconciliation outcome %q", upload.Outcome)
+		}
 		if uploadErr != nil {
+			seen.ReconcileAttempts++
 			upload.Outcome = notebooklm.UploadAmbiguous
 			if seen.ReconcileAttempts >= maxAmbiguousReconcileAttempts {
-				uploadErr = errors.Join(
-					errSafetyStop,
-					fmt.Errorf(
-						"ambiguous NotebookLM upload remained unresolved after %d reconciliation attempts; manual verification required before clearing its state: %w",
-						seen.ReconcileAttempts,
-						uploadErr,
-					),
+				uploadErr = fmt.Errorf(
+					"ambiguous NotebookLM upload remained unresolved after %d reconciliation attempts; automatic reconciliation is paused for this lecture and manual verification is required before clearing its state: %w",
+					seen.ReconcileAttempts,
+					uploadErr,
 				)
 			}
 		}
@@ -435,7 +436,7 @@ func (w *Watcher) pendingLecture(
 	}
 	reconcileAttempts := 0
 	if existing.Status == StatusAmbiguous {
-		reconcileAttempts = existing.ReconcileAttempts + 1
+		reconcileAttempts = existing.ReconcileAttempts
 	}
 	return lectureTitle(lecture, key), existing, SeenLecture{
 		Status:            status,
