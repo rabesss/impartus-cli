@@ -551,6 +551,9 @@ func withRetries(ctx context.Context, maxRetries int, backoffFn func(int) time.D
 }
 
 func isRetryable(err error) bool {
+	if notebooklm.IsAmbiguous(err) {
+		return false
+	}
 	var nlmErr *notebooklm.Error
 	if errors.As(err, &nlmErr) {
 		return nlmErr.Retryable()

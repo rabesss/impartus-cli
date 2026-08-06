@@ -364,6 +364,12 @@ func IsAuth(err error) bool {
 	return hasErrorKind(err, ErrAuth)
 }
 
+// IsAmbiguous reports whether err contains an upload whose remote mutation
+// outcome is unknown. Callers must never retry the corresponding add.
+func IsAmbiguous(err error) bool {
+	return hasErrorKind(err, ErrAmbiguous)
+}
+
 func hasErrorKind(err error, kind ErrorKind) bool {
 	if err == nil {
 		return false

@@ -845,6 +845,24 @@ func TestWithRetriesRetriesTransientNotebookLMErrors(t *testing.T) {
 	}
 }
 
+func TestWithRetriesDoesNotRetryAmbiguousNestedRateLimit(t *testing.T) {
+	attempts := 0
+	err := withRetries(context.Background(), 3, func(int) time.Duration { return time.Millisecond }, io.Discard, func() error {
+		attempts++
+		return &notebooklm.Error{
+			Kind:    notebooklm.ErrAmbiguous,
+			Message: "upload outcome is ambiguous",
+			Err:     &notebooklm.Error{Kind: notebooklm.ErrRateLimit, Message: "retry later"},
+		}
+	})
+	if !notebooklm.IsAmbiguous(err) {
+		t.Fatalf("error = %v, want ambiguous outcome", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("ambiguous upload was retried %d times, want exactly one provider call", attempts)
+	}
+}
+
 func TestWithRetriesDoesNotRetryPermanent(t *testing.T) {
 	attempts := 0
 	err := withRetries(context.Background(), 3, func(int) time.Duration { return time.Millisecond }, io.Discard, func() error {
