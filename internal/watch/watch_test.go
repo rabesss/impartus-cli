@@ -612,6 +612,39 @@ func TestPersistUploadErrorReportsStateWriteFailure(t *testing.T) {
 	}
 }
 
+func TestAmbiguousStateWriteFailureCannotReAdd(t *testing.T) {
+	scenario := newUploadScenario(t)
+	persistErr := errors.New("state filesystem became read-only")
+	uploader := &fakeUploader{
+		result: notebooklm.UploadResult{Outcome: notebooklm.UploadAmbiguous},
+		err:    &notebooklm.Error{Kind: notebooklm.ErrAmbiguous, Message: "remote outcome unknown"},
+	}
+	uploader.beforeUpload = func() {
+		scenario.store.writeFile = func(string, []byte, os.FileMode) error { return persistErr }
+	}
+	w := New(testCfg(), fakeSource{lectures: scenario.lectures},
+		&fakeAudio{join: downloader.JoinResult{LeftOutput: scenario.output}},
+		uploader, scenario.store, scenario.opts)
+	result, cycleErr := w.RunCycle(context.Background())
+	if cycleErr != nil || result.Failed != 1 || uploader.calls != 1 {
+		t.Fatalf("unexpected ambiguous failure cycle: result=%+v err=%v calls=%d", result, cycleErr, uploader.calls)
+	}
+	seen, ok := scenario.store.Get(1, 2, 10)
+	if !ok || seen.Status != StatusAmbiguous {
+		t.Fatalf("failed post-provider state write rolled back past ambiguous intent: seen=%+v ok=%v", seen, ok)
+	}
+
+	scenario.store.writeFile = atomicWriteFile
+	uploader.beforeUpload = nil
+	uploader.reconcileResult = notebooklm.UploadResult{Outcome: notebooklm.UploadFound, SourceID: "existing"}
+	uploader.reconcileErr = nil
+	result, cycleErr = w.RunCycle(context.Background())
+	if cycleErr != nil || result.Uploaded != 1 || uploader.calls != 1 || uploader.reconcileCalls != 1 {
+		t.Fatalf("restart did not reconcile without another add: result=%+v err=%v addCalls=%d reconcileCalls=%d",
+			result, cycleErr, uploader.calls, uploader.reconcileCalls)
+	}
+}
+
 func TestRunCycleHardStopsWhenRejectedUploadCannotPersistFailedState(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "lec.mp3")

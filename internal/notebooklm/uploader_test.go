@@ -699,16 +699,26 @@ func TestParseSourceInventoryCount(t *testing.T) {
 		name    string
 		payload string
 		count   int
+		wantErr bool
 	}{
 		{name: "array length", payload: `[{"id":1},{"id":2}]`, count: 2},
 		{name: "object array length", payload: `{"sources":[1,2,3]}`, count: 3},
 		{name: "declared total exceeds page", payload: `{"sources":[1,2],"count":305}`, count: 305},
 		{name: "string declared total", payload: `{"items":[1],"count":"305"}`, count: 305},
 		{name: "declared total cannot undercount items", payload: `{"data":[1,2,3],"count":1}`, count: 3},
+		{name: "non-numeric count only", payload: `{"count":"many"}`, wantErr: true},
+		{name: "non-numeric count with items", payload: `{"sources":[1],"count":false}`, wantErr: true},
+		{name: "negative count", payload: `{"sources":[1],"count":-1}`, wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			inventory, err := parseSourceInventory(tc.payload, "")
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("malformed count parsed as valid inventory: %+v", inventory)
+				}
+				return
+			}
 			if err != nil || inventory.Count != tc.count {
 				t.Fatalf("count = %d err=%v, want %d", inventory.Count, err, tc.count)
 			}

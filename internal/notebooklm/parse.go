@@ -167,20 +167,23 @@ func sourceItems(payload providerJSONValue) (providerJSONArray, int, bool) {
 	case providerJSONArray:
 		return typed, len(typed), true
 	case providerJSONObject:
-		declaredCount := intField(typed, "count")
+		declaredCount, hasDeclaredCount := intFieldOK(typed, "count")
+		if _, countExists := typed["count"]; countExists && (!hasDeclaredCount || declaredCount < 0) {
+			return nil, 0, false
+		}
 		for _, key := range []string{"sources", "items", "data"} {
 			value, exists := typed[key]
 			if !exists {
 				continue
 			}
 			if items, count, ok := sourceItems(value); ok {
-				if declaredCount > count {
+				if hasDeclaredCount && declaredCount > count {
 					count = declaredCount
 				}
 				return items, count, true
 			}
 		}
-		if _, exists := typed["count"]; exists {
+		if hasDeclaredCount {
 			return nil, declaredCount, true
 		}
 	}
@@ -199,6 +202,11 @@ func stringField(m providerJSONObject, keys ...string) string {
 }
 
 func intField(m providerJSONObject, keys ...string) int {
+	value, _ := intFieldOK(m, keys...)
+	return value
+}
+
+func intFieldOK(m providerJSONObject, keys ...string) (int, bool) {
 	for _, key := range keys {
 		value, ok := m[key]
 		if !ok {
@@ -206,20 +214,20 @@ func intField(m providerJSONObject, keys ...string) int {
 		}
 		switch typed := value.(type) {
 		case float64:
-			return int(typed)
+			return int(typed), true
 		case int:
-			return typed
+			return typed, true
 		case json.Number:
 			if parsed, err := strconv.Atoi(typed.String()); err == nil {
-				return parsed
+				return parsed, true
 			}
 		case string:
 			if parsed, err := strconv.Atoi(strings.TrimSpace(typed)); err == nil {
-				return parsed
+				return parsed, true
 			}
 		}
 	}
-	return 0
+	return 0, false
 }
 
 func firstNonZero(values ...int) int {
