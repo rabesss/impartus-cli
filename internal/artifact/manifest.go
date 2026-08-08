@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,7 +117,7 @@ func Build(input BuildInput) (Manifest, error) {
 	files := make([]File, 0, len(input.Files))
 	seenPaths := make(map[string]struct{}, len(input.Files))
 	for _, spec := range input.Files {
-		file, fileErr := verifyFile(spec, normalized.AudioOnly)
+		file, fileErr := verifyFile(spec, normalized.AudioOnly, normalized.Views)
 		if fileErr != nil {
 			return Manifest{}, fileErr
 		}
@@ -161,60 +162,104 @@ func (manifest Manifest) Identity() Identity {
 	}
 }
 
-func verifyFile(spec FileSpec, audioOnly bool) (File, error) {
-	path := strings.TrimSpace(spec.Path)
-	if path == "" {
-		return File{}, errors.New("output path is required")
-	}
-	absolutePath, err := filepath.Abs(filepath.Clean(path))
+func verifyFile(spec FileSpec, audioOnly bool, selectedViews string) (File, error) {
+	absolutePath, size, err := statCompletedFile(spec.Path)
 	if err != nil {
-		return File{}, fmt.Errorf("normalize output path: %w", err)
-	}
-	if strings.HasSuffix(strings.ToLower(absolutePath), ".part") {
-		return File{}, fmt.Errorf("output %q is still partial", absolutePath)
-	}
-	info, err := os.Stat(absolutePath)
-	if err != nil {
-		return File{}, fmt.Errorf("stat output %q: %w", absolutePath, err)
-	}
-	if !info.Mode().IsRegular() {
-		return File{}, fmt.Errorf("output %q is not a regular file", absolutePath)
-	}
-	if info.Size() <= 0 {
-		return File{}, fmt.Errorf("output %q is empty", absolutePath)
-	}
-
-	role := strings.ToLower(strings.TrimSpace(spec.Role))
-	wantRole := "video"
-	if audioOnly {
-		wantRole = "audio"
-	}
-	if role != wantRole {
-		return File{}, fmt.Errorf("output role %q does not match selection role %q", role, wantRole)
-	}
-	view := strings.ToLower(strings.TrimSpace(spec.View))
-	switch view {
-	case "left", "right", "both":
-	default:
-		return File{}, fmt.Errorf("unsupported output view %q", view)
-	}
-	container := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(spec.Container)), ".")
-	if err := validateContainer(container, audioOnly); err != nil {
 		return File{}, err
 	}
-
-	sha256Hex := strings.ToLower(strings.TrimSpace(spec.SHA256))
-	if sha256Hex != "" && !validSHA256Hex(sha256Hex) {
-		return File{}, errors.New("sha256 must be 64 lowercase hexadecimal characters")
+	role, view, container, sha256Hex, err := normalizeFileSpec(spec, audioOnly, selectedViews)
+	if err != nil {
+		return File{}, err
+	}
+	if sha256Hex != "" {
+		if err := verifySHA256(absolutePath, sha256Hex); err != nil {
+			return File{}, err
+		}
 	}
 	return File{
 		Path:      absolutePath,
 		Role:      role,
 		View:      view,
 		Container: container,
-		Bytes:     info.Size(),
+		Bytes:     size,
 		SHA256:    sha256Hex,
 	}, nil
+}
+
+func statCompletedFile(rawPath string) (string, int64, error) {
+	path := strings.TrimSpace(rawPath)
+	if path == "" {
+		return "", 0, errors.New("output path is required")
+	}
+	absolutePath, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", 0, fmt.Errorf("normalize output path: %w", err)
+	}
+	if strings.HasSuffix(strings.ToLower(absolutePath), ".part") {
+		return "", 0, fmt.Errorf("output %q is still partial", absolutePath)
+	}
+	info, err := os.Stat(absolutePath)
+	if err != nil {
+		return "", 0, fmt.Errorf("stat output %q: %w", absolutePath, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", 0, fmt.Errorf("output %q is not a regular file", absolutePath)
+	}
+	if info.Size() <= 0 {
+		return "", 0, fmt.Errorf("output %q is empty", absolutePath)
+	}
+	return absolutePath, info.Size(), nil
+}
+
+func normalizeFileSpec(spec FileSpec, audioOnly bool, selectedViews string) (string, string, string, string, error) {
+	role := strings.ToLower(strings.TrimSpace(spec.Role))
+	wantRole := "video"
+	if audioOnly {
+		wantRole = "audio"
+	}
+	if role != wantRole {
+		return "", "", "", "", fmt.Errorf("output role %q does not match selection role %q", role, wantRole)
+	}
+	view := strings.ToLower(strings.TrimSpace(spec.View))
+	switch view {
+	case "left", "right", "both":
+	default:
+		return "", "", "", "", fmt.Errorf("unsupported output view %q", view)
+	}
+	if selectedViews != "both" && view != selectedViews {
+		return "", "", "", "", fmt.Errorf("output view %q is outside selected views %q", view, selectedViews)
+	}
+	container := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(spec.Container)), ".")
+	if err := validateContainer(container, audioOnly); err != nil {
+		return "", "", "", "", err
+	}
+
+	sha256Hex := strings.ToLower(strings.TrimSpace(spec.SHA256))
+	if sha256Hex != "" && !validSHA256Hex(sha256Hex) {
+		return "", "", "", "", errors.New("sha256 must be 64 lowercase hexadecimal characters")
+	}
+	return role, view, container, sha256Hex, nil
+}
+
+func verifySHA256(path, expected string) error {
+	file, err := os.Open(path) // #nosec G304 -- path was explicitly supplied by the caller and validated above
+	if err != nil {
+		return fmt.Errorf("open output %q for sha256 verification: %w", path, err)
+	}
+	defer func() {
+		closeErr := file.Close()
+		_ = closeErr
+	}()
+
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return fmt.Errorf("hash output %q: %w", path, err)
+	}
+	actual := fmt.Sprintf("%x", hasher.Sum(nil))
+	if actual != expected {
+		return fmt.Errorf("sha256 for output %q does not match file contents", path)
+	}
+	return nil
 }
 
 func validateContainer(container string, audioOnly bool) error {

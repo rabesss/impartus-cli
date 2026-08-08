@@ -1,7 +1,9 @@
 package artifact
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -131,6 +133,7 @@ func TestBuildRejectsIncompleteOutputs(t *testing.T) {
 			}
 			return path
 		}, want: "is empty"},
+		{name: "non-regular", prepare: func(t *testing.T) string { return t.TempDir() }, want: "not a regular file"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -139,6 +142,104 @@ func TestBuildRejectsIncompleteOutputs(t *testing.T) {
 			_, err := Build(input)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Build() error = %v, want substring %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestBuildRejectsInvalidManifestMetadata(t *testing.T) {
+	outputPath := filepath.Join(t.TempDir(), "lecture.mp4")
+	if err := os.WriteFile(outputPath, []byte("media"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	valid := BuildInput{
+		Lecture:    Lecture{TTID: 4, InstituteID: 1, SubjectID: 2, SessionID: 3},
+		Selection:  Selection{Views: "left", Quality: "720"},
+		Files:      []FileSpec{{Path: outputPath, Role: "video", View: "left", Container: "mp4"}},
+		ProducedAt: time.Now(),
+		Producer:   Producer{Name: "impartus", Version: "test"},
+	}
+	tests := []struct {
+		name   string
+		change func(*BuildInput)
+		want   string
+	}{
+		{name: "no files", change: func(input *BuildInput) { input.Files = nil }, want: "at least one"},
+		{name: "zero producedAt", change: func(input *BuildInput) { input.ProducedAt = time.Time{} }, want: "producedAt"},
+		{name: "empty producer name", change: func(input *BuildInput) { input.Producer.Name = "" }, want: "producer"},
+		{name: "empty producer version", change: func(input *BuildInput) { input.Producer.Version = "" }, want: "producer"},
+		{name: "duplicate output", change: func(input *BuildInput) { input.Files = append(input.Files, input.Files[0]) }, want: "duplicate output"},
+		{name: "malformed sha256", change: func(input *BuildInput) { input.Files[0].SHA256 = "not-a-digest" }, want: "sha256 must"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := valid
+			input.Files = append([]FileSpec(nil), valid.Files...)
+			test.change(&input)
+			_, err := Build(input)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Build() error = %v, want substring %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestBuildVerifiesProvidedSHA256(t *testing.T) {
+	outputPath := filepath.Join(t.TempDir(), "lecture.mp4")
+	contents := []byte("known media")
+	if err := os.WriteFile(outputPath, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := BuildInput{
+		Lecture:    Lecture{TTID: 4, InstituteID: 1, SubjectID: 2, SessionID: 3},
+		Selection:  Selection{Views: "left", Quality: "720"},
+		ProducedAt: time.Now(),
+		Producer:   Producer{Name: "impartus", Version: "test"},
+	}
+
+	t.Run("matching", func(t *testing.T) {
+		digest := sha256.Sum256(contents)
+		input := base
+		input.Files = []FileSpec{{Path: outputPath, Role: "video", View: "left", Container: "mp4", SHA256: fmt.Sprintf("%x", digest)}}
+		if _, err := Build(input); err != nil {
+			t.Fatalf("Build() error = %v", err)
+		}
+	})
+
+	t.Run("mismatched", func(t *testing.T) {
+		input := base
+		input.Files = []FileSpec{{Path: outputPath, Role: "video", View: "left", Container: "mp4", SHA256: strings.Repeat("ab", sha256.Size)}}
+		_, err := Build(input)
+		if err == nil || !strings.Contains(err.Error(), "does not match") {
+			t.Fatalf("Build() error = %v, want digest mismatch", err)
+		}
+	})
+}
+
+func TestBuildRejectsFileViewOutsideSelection(t *testing.T) {
+	outputPath := filepath.Join(t.TempDir(), "lecture.mp4")
+	if err := os.WriteFile(outputPath, []byte("media"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		selection string
+		fileView  string
+	}{
+		{selection: "left", fileView: "right"},
+		{selection: "left", fileView: "both"},
+		{selection: "right", fileView: "left"},
+		{selection: "right", fileView: "both"},
+	} {
+		t.Run(test.selection+" rejects "+test.fileView, func(t *testing.T) {
+			_, err := Build(BuildInput{
+				Lecture:    Lecture{TTID: 4, InstituteID: 1, SubjectID: 2, SessionID: 3},
+				Selection:  Selection{Views: test.selection, Quality: "720"},
+				Files:      []FileSpec{{Path: outputPath, Role: "video", View: test.fileView, Container: "mp4"}},
+				ProducedAt: time.Now(),
+				Producer:   Producer{Name: "impartus", Version: "test"},
+			})
+			if err == nil || !strings.Contains(err.Error(), "outside selected views") {
+				t.Fatalf("Build() error = %v, want view mismatch", err)
 			}
 		})
 	}

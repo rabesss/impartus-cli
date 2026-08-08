@@ -34,11 +34,15 @@ type M3U8File struct {
 	Playlist       client.ParsedPlaylist
 }
 
-// JoinResult contains the output file paths from joining downloaded chunks.
+// JoinResult contains typed output paths from joining downloaded chunks. Each
+// populated path has a matching container supplied by the code that created it.
 type JoinResult struct {
-	LeftOutput  string
-	RightOutput string
-	BothOutput  string
+	LeftOutput     string
+	LeftContainer  string
+	RightOutput    string
+	RightContainer string
+	BothOutput     string
+	BothContainer  string
 }
 
 // OutputPaths returns the non-empty output file paths in left, right, both order.
@@ -449,12 +453,15 @@ func (d *Downloader) joinAudioOutput(ctx context.Context, file M3U8File) (JoinRe
 	}
 	result.LeftOutput = left
 	result.RightOutput = right
+	result.LeftContainer = containerWhenPresent(left, audioContainer(d.config.AudioFormat))
+	result.RightContainer = containerWhenPresent(right, audioContainer(d.config.AudioFormat))
 	if left != "" && right != "" && d.config.HasBothViews() {
 		both, joinErr := d.CreateBothViewsAudioOutput(ctx, left, fmt.Sprintf("LEC %03d %s", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title)), d.config.AudioFormat)
 		if joinErr != nil {
 			return result, joinErr
 		}
 		result.BothOutput = both
+		result.BothContainer = containerWhenPresent(both, audioContainer(d.config.AudioFormat))
 	}
 	return result, nil
 }
@@ -471,14 +478,31 @@ func (d *Downloader) joinVideoOutput(ctx context.Context, file M3U8File) (JoinRe
 	}
 	result.LeftOutput = left
 	result.RightOutput = right
+	result.LeftContainer = containerWhenPresent(left, "mp4")
+	result.RightContainer = containerWhenPresent(right, "mp4")
 	if left != "" && right != "" && d.config.HasBothViews() {
 		both, joinErr := d.JoinViews(ctx, left, right, fmt.Sprintf("LEC %03d %s", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title)))
 		if joinErr != nil {
 			return result, joinErr
 		}
 		result.BothOutput = both
+		result.BothContainer = containerWhenPresent(both, "mkv")
 	}
 	return result, nil
+}
+
+func audioContainer(format string) string {
+	if format == "aac" {
+		return "m4a"
+	}
+	return format
+}
+
+func containerWhenPresent(path, container string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	return container
 }
 func (d *Downloader) joinIfPresent(ctx context.Context, path string, enabled bool, title string, join func(context.Context, string, string) (string, error)) (string, error) {
 	if path == "" || !enabled {

@@ -360,4 +360,7 @@ func TestJoinAudioOutputKeepsPerViewOutputsForBothViews(t *testing.T) {
 			t.Fatalf("expected output to exist: %s (%v)", output, err)
 		}
 	}
+	if result.LeftContainer != "mp3" || result.RightContainer != "mp3" || result.BothContainer != "mp3" {
+		t.Fatalf("unexpected typed audio containers: %+v", result)
+	}
 }

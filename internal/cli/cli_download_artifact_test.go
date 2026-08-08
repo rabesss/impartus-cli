@@ -19,8 +19,11 @@ func TestDownloadArtifactsAllowTTIDCollisionAcrossScopes(t *testing.T) {
 		{LeftOutput: "second.mp4"},
 	})
 	runner := &fakeLectureDownloadRunner{
-		playlists: []client.ParsedPlaylist{{ID: 9}, {ID: 9}},
-		results:   results,
+		playlists: []client.ParsedPlaylist{
+			{InstituteID: 10, SubjectID: 20, SessionID: 30, ID: 9},
+			{InstituteID: 1, SubjectID: 2, SessionID: 3, ID: 9},
+		},
+		results: results,
 	}
 	lectures := client.Lectures{
 		{InstituteID: 1, SubjectID: 2, SessionID: 3, TTID: 9},
@@ -41,8 +44,27 @@ func TestDownloadArtifactsAllowTTIDCollisionAcrossScopes(t *testing.T) {
 	if result.Artifacts[0].ArtifactID == result.Artifacts[1].ArtifactID {
 		t.Fatalf("cross-scope artifacts shared ID %q", result.Artifacts[0].ArtifactID)
 	}
-	if result.Artifacts[1].Lecture.InstituteID != 10 {
-		t.Fatalf("second artifact mapped to wrong lecture: %+v", result.Artifacts[1].Lecture)
+	if result.Artifacts[0].Lecture.InstituteID != 10 || result.Artifacts[1].Lecture.InstituteID != 1 {
+		t.Fatalf("artifacts followed lecture FIFO instead of playlist scope: %+v", result.Artifacts)
+	}
+}
+
+func TestDownloadArtifactsValidateIdentityBeforeMediaFetch(t *testing.T) {
+	outputDir := t.TempDir()
+	runner := &fakeLectureDownloadRunner{
+		playlists: []client.ParsedPlaylist{{InstituteID: 0, SubjectID: 2, SessionID: 3, ID: 9}},
+		results:   materializeJoinResults(t, outputDir, []downloader.JoinResult{{LeftOutput: "lecture.mp4"}}),
+	}
+	_, err := downloadLecturesWithRunner(context.Background(), &config.Config{
+		DownloadLocation: outputDir,
+		Views:            "left",
+		Quality:          "720",
+	}, runner, client.Lectures{{InstituteID: 0, SubjectID: 2, SessionID: 3, TTID: 9}}, quietDownloadPresentation())
+	if err == nil {
+		t.Fatal("downloadLecturesWithRunner() error = nil, want invalid identity error")
+	}
+	if runner.fetches != 0 || runner.downloads != 0 {
+		t.Fatalf("invalid identity performed media work: fetches=%d downloads=%d", runner.fetches, runner.downloads)
 	}
 }
 
@@ -78,9 +100,12 @@ func TestBuildDownloadArtifactUsesTypedOutputMetadata(t *testing.T) {
 	t.Run("video views", func(t *testing.T) {
 		outputDir := t.TempDir()
 		result := materializeJoinResults(t, outputDir, []downloader.JoinResult{{
-			LeftOutput:  "opaque-left",
-			RightOutput: "opaque-right",
-			BothOutput:  "opaque-both",
+			LeftOutput:     "opaque-left.mp4",
+			LeftContainer:  "mp4",
+			RightOutput:    "opaque-right.mp4",
+			RightContainer: "mp4",
+			BothOutput:     "opaque-both.mkv",
+			BothContainer:  "mkv",
 		}})[0]
 		manifest, err := buildDownloadArtifact(lecture, &config.Config{Views: "both", Quality: "720"}, result, producedAt)
 		if err != nil {
@@ -114,7 +139,7 @@ func TestBuildDownloadArtifactUsesTypedOutputMetadata(t *testing.T) {
 				Quality:     "450",
 				AudioOnly:   true,
 				AudioFormat: test.format,
-			}, downloader.JoinResult{LeftOutput: path}, producedAt)
+			}, downloader.JoinResult{LeftOutput: path, LeftContainer: test.wantContainer}, producedAt)
 			if err != nil {
 				t.Fatalf("buildDownloadArtifact() error = %v", err)
 			}

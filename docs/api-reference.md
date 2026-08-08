@@ -255,7 +255,8 @@ canonical binary encoding of the positive institute, subject, session, and
 lecture IDs plus the normalized view, quality, and audio choices. Paths,
 display text, timestamps, producer version, and file bytes do not affect it.
 The optional lowercase `files[].sha256` field is omitted until an explicit
-verification pass calculates it.
+verification pass calculates it. When supplied to the manifest builder, it is
+checked against the complete file before being published.
 
 A command fails instead of emitting a completed manifest when a selected
 playlist cannot be associated with a unique scoped lecture or when any reported

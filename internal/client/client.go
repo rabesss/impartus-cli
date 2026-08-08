@@ -184,6 +184,9 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 		if parseErr != nil {
 			return parsedPlaylists, fmt.Errorf("parse playlist for lecture %d (%s): %w", lecture.TTID, lecture.Topic, parseErr)
 		}
+		parsed.InstituteID = lecture.InstituteID
+		parsed.SubjectID = lecture.SubjectID
+		parsed.SessionID = lecture.SessionID
 		parsedPlaylists = append(parsedPlaylists, parsed)
 	}
 

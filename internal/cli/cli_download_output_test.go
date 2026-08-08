@@ -29,16 +29,35 @@ type fakeLectureDownloadRunner struct {
 	results   []downloader.JoinResult
 	progress  []*mpb.Progress
 	trackers  []*downloader.ProgressTracker
+	fetches   int
+	downloads int
 	next      int
 }
 
-func (f *fakeLectureDownloadRunner) FetchLecturePlaylists(context.Context, []client.Lecture) ([]client.ParsedPlaylist, error) {
-	return f.playlists, nil
+func (f *fakeLectureDownloadRunner) FetchLecturePlaylists(_ context.Context, lectures []client.Lecture) ([]client.ParsedPlaylist, error) {
+	f.fetches++
+	playlists := append([]client.ParsedPlaylist(nil), f.playlists...)
+	for index := range playlists {
+		if index >= len(lectures) {
+			break
+		}
+		if playlists[index].InstituteID == 0 {
+			playlists[index].InstituteID = lectures[index].InstituteID
+		}
+		if playlists[index].SubjectID == 0 {
+			playlists[index].SubjectID = lectures[index].SubjectID
+		}
+		if playlists[index].SessionID == 0 {
+			playlists[index].SessionID = lectures[index].SessionID
+		}
+	}
+	return playlists, nil
 }
 
 func (f *fakeLectureDownloadRunner) DownloadAndJoinPlaylist(_ context.Context, _ client.ParsedPlaylist, progress *mpb.Progress, tracker *downloader.ProgressTracker) (downloader.JoinResult, error) {
 	f.progress = append(f.progress, progress)
 	f.trackers = append(f.trackers, tracker)
+	f.downloads++
 	result := f.results[f.next]
 	f.next++
 	return result, nil
@@ -81,7 +100,7 @@ func TestDownloadLectureCountTracksCompletedPlaylists(t *testing.T) {
 				lectures[i] = client.Lecture{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: i + 1}
 			}
 			runner := &fakeLectureDownloadRunner{playlists: playlists, results: materializeJoinResults(t, outputDir, tt.results)}
-			result, err := downloadLecturesWithRunner(context.Background(), &config.Config{DownloadLocation: outputDir, Views: "left", Quality: "720"}, runner, lectures, quietDownloadPresentation())
+			result, err := downloadLecturesWithRunner(context.Background(), &config.Config{DownloadLocation: outputDir, Views: "both", Quality: "720"}, runner, lectures, quietDownloadPresentation())
 			if err != nil {
 				t.Fatalf("downloadLecturesWithRunner() error = %v", err)
 			}
@@ -199,16 +218,22 @@ func materializeJoinResults(t *testing.T, outputDir string, results []downloader
 	t.Helper()
 	materialized := make([]downloader.JoinResult, len(results))
 	for i, result := range results {
-		for view, path := range map[string]*string{
-			"left":  &result.LeftOutput,
-			"right": &result.RightOutput,
-			"both":  &result.BothOutput,
+		for view, output := range map[string]struct {
+			path      *string
+			container *string
+		}{
+			"left":  {path: &result.LeftOutput, container: &result.LeftContainer},
+			"right": {path: &result.RightOutput, container: &result.RightContainer},
+			"both":  {path: &result.BothOutput, container: &result.BothContainer},
 		} {
-			if *path == "" {
+			if *output.path == "" {
 				continue
 			}
-			*path = filepath.Join(outputDir, fmt.Sprintf("%d-%s-%s", i, view, filepath.Base(*path)))
-			if err := os.WriteFile(*path, []byte("media"), 0o600); err != nil {
+			if *output.container == "" {
+				*output.container = strings.TrimPrefix(strings.ToLower(filepath.Ext(*output.path)), ".")
+			}
+			*output.path = filepath.Join(outputDir, fmt.Sprintf("%d-%s-%s", i, view, filepath.Base(*output.path)))
+			if err := os.WriteFile(*output.path, []byte("media"), 0o600); err != nil {
 				t.Fatalf("write fake %s output: %v", view, err)
 			}
 		}
@@ -278,7 +303,7 @@ func TestJSONDownloadStreamContract(t *testing.T) {
 		t.Fatalf("len(artifacts) = %d, want 1", len(envelope.Data.Artifacts))
 	}
 	manifest := envelope.Data.Artifacts[0]
-	if manifest.SchemaVersion != 1 || manifest.Lecture.TTID != 7 || manifest.Lecture.InstituteID != 4 {
+	if manifest.SchemaVersion != 1 || manifest.Lecture.TTID != 7 || manifest.Lecture.InstituteID != 4 || manifest.Lecture.SubjectID != 1 || manifest.Lecture.SessionID != 2 {
 		t.Fatalf("unexpected JSON artifact manifest: %+v", manifest)
 	}
 	if len(manifest.Files) != 1 || manifest.Files[0].Role != "video" || manifest.Files[0].View != "left" || manifest.Files[0].Container != "mp4" {
@@ -504,7 +529,9 @@ func newJSONDownloadIntegrationWithFailureHook(t *testing.T, failChunk bool, fai
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/subjects/1/lectures/2":
-			if err := json.NewEncoder(w).Encode(client.Lectures{{InstituteID: 4, SubjectID: 1, SessionID: 2, TTID: 7, Topic: "JSON Lecture", SeqNo: 1, NoAudio: 1}}); err != nil {
+			// Subject/session are deliberately omitted to exercise the command's
+			// authoritative request-scope fallback.
+			if err := json.NewEncoder(w).Encode(client.Lectures{{InstituteID: 4, TTID: 7, Topic: "JSON Lecture", SeqNo: 1, NoAudio: 1}}); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
 		case "/fetchvideo":

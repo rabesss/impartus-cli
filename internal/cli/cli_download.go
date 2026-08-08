@@ -166,6 +166,12 @@ func executeDownloadWithDependencies(args []string, presentation downloadPresent
 	if err != nil {
 		return downloadResult{}, err
 	}
+	for index := range selected {
+		// The resource selected by the command is authoritative for course scope;
+		// some upstream lecture payloads omit these otherwise redundant IDs.
+		selected[index].SubjectID = f.subject
+		selected[index].SessionID = f.session
+	}
 
 	// Warn about no-audio lectures in the selection (only when not filtering).
 	totalLectures := len(selected) + filteredCount
@@ -238,16 +244,17 @@ func downloadLecturesWithRunner(ctx context.Context, cfg *config.Config, d lectu
 		return downloadResult{}, err
 	}
 
+	lecturesByScope, err := indexLecturesForArtifacts(lectures, cfg)
+	if err != nil {
+		return downloadResult{}, err
+	}
+
 	playlists, err := d.FetchLecturePlaylists(ctx, lectures)
 	if err != nil {
 		return downloadResult{}, err
 	}
 	if len(playlists) == 0 {
 		return downloadResult{}, errors.New("no playlists available for selected lectures")
-	}
-	lecturesByTTID, err := indexLecturesForArtifacts(lectures)
-	if err != nil {
-		return downloadResult{}, err
 	}
 
 	p, tracker, err := newDownloadProgress(cfg, presentation, len(playlists), countChunks(playlists, cfg.Views))
@@ -261,7 +268,7 @@ func downloadLecturesWithRunner(ctx context.Context, cfg *config.Config, d lectu
 		defer tracker.Stop()
 	}
 
-	outputPaths, artifacts, completedLectures, err := completeLectureDownloads(ctx, cfg, d, playlists, lecturesByTTID, p, tracker)
+	outputPaths, artifacts, completedLectures, err := completeLectureDownloads(ctx, cfg, d, playlists, lecturesByScope, p, tracker)
 	if err != nil {
 		return downloadResult{}, err
 	}
@@ -281,19 +288,30 @@ func completeLectureDownloads(
 	cfg *config.Config,
 	d lectureDownloadRunner,
 	playlists []client.ParsedPlaylist,
-	lecturesByTTID map[int][]client.Lecture,
+	lecturesByScope map[scopedLectureKey]client.Lecture,
 	progress *mpb.Progress,
 	tracker *downloader.ProgressTracker,
 ) ([]string, []artifact.Manifest, int, error) {
 	outputPaths := make([]string, 0, len(playlists))
 	artifacts := make([]artifact.Manifest, 0, len(playlists))
 	for _, playlist := range playlists {
-		lectureCandidates := lecturesByTTID[playlist.ID]
-		if len(lectureCandidates) == 0 {
-			return nil, nil, 0, fmt.Errorf("playlist lecture %d is missing from the selected scoped lectures", playlist.ID)
+		key := scopedLectureKey{
+			instituteID: playlist.InstituteID,
+			subjectID:   playlist.SubjectID,
+			sessionID:   playlist.SessionID,
+			ttid:        playlist.ID,
 		}
-		lecture := lectureCandidates[0]
-		lecturesByTTID[playlist.ID] = lectureCandidates[1:]
+		lecture, exists := lecturesByScope[key]
+		if !exists {
+			return nil, nil, 0, fmt.Errorf(
+				"playlist is missing from selected scoped lectures: institute=%d subject=%d session=%d ttid=%d",
+				key.instituteID,
+				key.subjectID,
+				key.sessionID,
+				key.ttid,
+			)
+		}
+		delete(lecturesByScope, key)
 
 		// Route through the shared DownloadAndJoinPlaylist (the same method the
 		// server job runner uses) so per-lecture download+join logic has one home.
@@ -321,9 +339,8 @@ type scopedLectureKey struct {
 	ttid        int
 }
 
-func indexLecturesForArtifacts(lectures client.Lectures) (map[int][]client.Lecture, error) {
-	byTTID := make(map[int][]client.Lecture, len(lectures))
-	seenScoped := make(map[scopedLectureKey]struct{}, len(lectures))
+func indexLecturesForArtifacts(lectures client.Lectures, cfg *config.Config) (map[scopedLectureKey]client.Lecture, error) {
+	byScope := make(map[scopedLectureKey]client.Lecture, len(lectures))
 	for _, lecture := range lectures {
 		key := scopedLectureKey{
 			instituteID: lecture.InstituteID,
@@ -331,7 +348,7 @@ func indexLecturesForArtifacts(lectures client.Lectures) (map[int][]client.Lectu
 			sessionID:   lecture.SessionID,
 			ttid:        lecture.TTID,
 		}
-		if _, exists := seenScoped[key]; exists {
+		if _, exists := byScope[key]; exists {
 			return nil, fmt.Errorf(
 				"duplicate scoped lecture identity institute=%d subject=%d session=%d ttid=%d",
 				key.instituteID,
@@ -340,24 +357,27 @@ func indexLecturesForArtifacts(lectures client.Lectures) (map[int][]client.Lectu
 				key.ttid,
 			)
 		}
-		seenScoped[key] = struct{}{}
-		byTTID[lecture.TTID] = append(byTTID[lecture.TTID], lecture)
+		if _, err := artifact.NewID(artifact.Identity{
+			InstituteID: lecture.InstituteID,
+			SubjectID:   lecture.SubjectID,
+			SessionID:   lecture.SessionID,
+			TTID:        lecture.TTID,
+			AudioOnly:   cfg.AudioOnly,
+			Views:       cfg.Views,
+			Quality:     cfg.Quality,
+			AudioFormat: cfg.AudioFormat,
+		}); err != nil {
+			return nil, fmt.Errorf("invalid artifact identity for lecture %d: %w", lecture.TTID, err)
+		}
+		byScope[key] = lecture
 	}
-	return byTTID, nil
+	return byScope, nil
 }
 
 func buildDownloadArtifact(lecture client.Lecture, cfg *config.Config, result downloader.JoinResult, producedAt time.Time) (artifact.Manifest, error) {
 	role := "video"
-	leftContainer := "mp4"
-	rightContainer := "mp4"
-	bothContainer := "mkv"
 	if cfg.AudioOnly {
 		role = "audio"
-		container := strings.ToLower(strings.TrimSpace(cfg.AudioFormat))
-		if container == "aac" {
-			container = "m4a"
-		}
-		leftContainer, rightContainer, bothContainer = container, container, container
 	}
 
 	fileSpecs := make([]artifact.FileSpec, 0, 3)
@@ -366,9 +386,9 @@ func buildDownloadArtifact(lecture client.Lecture, cfg *config.Config, result do
 		view      string
 		container string
 	}{
-		{path: result.LeftOutput, view: "left", container: leftContainer},
-		{path: result.RightOutput, view: "right", container: rightContainer},
-		{path: result.BothOutput, view: "both", container: bothContainer},
+		{path: result.LeftOutput, view: "left", container: result.LeftContainer},
+		{path: result.RightOutput, view: "right", container: result.RightContainer},
+		{path: result.BothOutput, view: "both", container: result.BothContainer},
 	} {
 		if strings.TrimSpace(output.path) == "" {
 			continue

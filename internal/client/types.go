@@ -95,6 +95,9 @@ type ParsedPlaylist struct {
 	FirstDurations   []float64
 	SecondDurations  []float64
 	ID               int
+	InstituteID      int
+	SubjectID        int
+	SessionID        int
 	SeqNo            int
 	HasMultipleViews bool
 }
