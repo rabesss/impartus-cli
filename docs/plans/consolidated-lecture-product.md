@@ -128,9 +128,10 @@ fields.
 ```json
 {
   "schemaVersion": 1,
-  "artifactId": "impartus:v1:BASE64URL_SHA256",
+  "artifactId": "impartus:v1:CmQ1iLsQw_Aarxg3Rp4svvDdKX4sJ6R0KFWXn3keTn4",
   "lecture": {
     "ttid": 12345,
+    "instituteId": 4,
     "subjectId": 67,
     "sessionId": 8,
     "seqNo": 12,
@@ -145,7 +146,7 @@ fields.
     "views": "both",
     "quality": "720",
     "audioOnly": false,
-    "audioFormat": "mp3"
+    "audioFormat": ""
   },
   "files": [
     {
@@ -167,6 +168,27 @@ Canonical `artifactId` input is a length-delimited, versioned encoding of:
 `instituteId, subjectId, sessionId, ttid, normalized views, normalized quality,
 audioOnly, normalized audioFormat`.
 
+The normative byte encoding is the ASCII domain prefix
+`impartus-artifact-v1\0`, followed by the four positive IDs as unsigned 64-bit
+big-endian integers, one byte for `audioOnly`, and each selection string as a
+two-byte unsigned big-endian byte length followed by UTF-8 bytes. The only
+valid normalized values are:
+
+- views: `left`, `right`, or `both`; aliases `first` and `second` normalize to
+  `left` and `right` before hashing;
+- quality: `144`, `450`, or `720` after trimming;
+- audio format: `mp3`, `m4a`, `aac`, or `opus` when `audioOnly=true`, and the
+  empty string when `audioOnly=false` regardless of configured default.
+
+All IDs must be positive and every enum must already be valid before hashing.
+The external form is `impartus:v1:` plus unpadded RFC 4648 base64url of the
+SHA-256 digest of those canonical bytes.
+The published Go golden vectors, including their canonical bytes, are the
+normative cross-product fixtures. The Hermes bridge vendors the JSON fixture
+and verifies it without reimplementing an undocumented normalization rule.
+For the sample above, the canonical bytes are
+`696d7061727475732d61727469666163742d7631000000000000000004000000000000004300000000000000080000000000003039000004626f746800033732300000`.
+
 It excludes path, title, timestamps, producer version, output bytes, and map
 iteration order. IDs are computed in one package with golden vectors. A file
 hash is optional in interactive use because hashing a large lecture adds a full
@@ -184,48 +206,75 @@ Compatibility rules:
 
 ### Event stream v1
 
-`--events` selects NDJSON and is mutually exclusive with the one-envelope
-`--json` mode. Every record includes `schemaVersion`, `event`, `timestamp`, and
-`jobId`; lecture events include `artifactId`. The terminating event is
-`job.completed` with the complete artifact array. Event names in scope are:
+`download --events` and `watch --events` select NDJSON and are mutually
+exclusive with the one-envelope `--json` mode. A UUIDv4 job ID is generated at
+command start (or loaded from the durable watch job). Every record includes
+`schemaVersion`, `event`, `timestamp`, and `jobId`; lecture events include
+`artifactId`. Exactly one terminal event is emitted:
+
+- `job.completed` on complete success, exit 0;
+- `job.failed` on any lecture failure, exit 1, with counts plus manifests for
+  fully validated lectures completed before the fail-fast error;
+- `job.cancelled` on signal cancellation, exit 130, with the same partial
+  completion fields.
+
+The existing single-envelope `download --json` remains fail-fast: any lecture
+failure returns the existing error envelope with `data:null`; it does not add a
+new partial-success shape. Per-lecture artifacts completed before the failure
+may still be present in the library. Event names in scope are:
 
 - `job.started`, `lecture.started`, `lecture.progress`,
-  `lecture.completed`, `lecture.failed`, `job.completed`, `job.cancelled`.
+  `lecture.completed`, `lecture.failed`, `job.completed`, `job.failed`, and
+  `job.cancelled`.
 
-Human diagnostics go to stderr. Cancellation must emit a terminal event when
-stdout is still writable. The event stream is implemented with the generic
-watcher, not in the first manifest PR.
+Human diagnostics go to stderr. Cancellation emits a terminal event when stdout
+is still writable. A closed stdout/EPIPE cancels producers, exits 1, and never
+hangs while attempting a second terminal write. The event stream is implemented
+with the generic watcher, not in the first manifest PR.
 
 ### mpv IPC contract
 
-- Unix socket: `$XDG_RUNTIME_DIR/impartus/mpv-<pid>-<random>.sock`, parent mode
-  0700, socket mode 0600 after creation. A private 0700 temp runtime directory
-  is the fallback when `XDG_RUNTIME_DIR` is absent.
+- Unix socket: `$XDG_RUNTIME_DIR/impartus/mpv-<pid>-<random>.sock` in an
+  ownership-checked parent mode 0700. A private, unpredictably named 0700 temp
+  runtime directory owned by the current UID is the fallback when
+  `XDG_RUNTIME_DIR` is absent. Reject symlinks, wrong ownership, and socket paths
+  too long for the platform before starting mpv. Because mpv creates the
+  socket, the private parent is the primary access boundary; after creation,
+  lstat and verify the socket owner/type, chmod it 0600, then connect.
 - Windows: an isolated named pipe behind a build-tagged transport. Unsupported
   functionality fails clearly; Linux behavior must not silently be compiled
   into Windows.
-- mpv starts with no upstream credential and no Impartus URL in argv. It only
-  receives the loopback URL.
+- mpv starts idle with `--no-config`, `--no-terminal`, and the private IPC path,
+  with no upstream credential or loopback capability URL in argv. After the IPC
+  connection is verified, the URL is delivered only through `loadfile`. The
+  loopback path token is treated as a secret and scrubbed from logs/errors.
 - One reader goroutine owns newline-delimited JSON decoding. Commands carry a
   monotonically increasing integer `request_id`; pending replies are bounded
   and removed on response, context cancellation, timeout, or disconnect.
 - Observed properties: `pause`, `time-pos`, `duration`, `volume`, `mute`,
   `speed`, `playlist-pos`, `core-idle`, and `eof-reached`/end-file events.
-- Shutdown sends `quit`, waits a bounded interval, then kills and reaps the
-  process group. Socket cleanup is idempotent.
+- On Unix, mpv starts in its own process group (`Setpgid`). Shutdown sends
+  `quit`, waits a bounded interval, verifies the child pgid differs from the
+  caller's pgid, then signals only that child group and reaps the child. Socket
+  cleanup is idempotent. Platform-specific Windows supervision is explicit.
 - mpv uses `--no-terminal`; Bubble Tea exclusively owns the terminal.
 
 ### Local library contract
 
-The database lives at `$XDG_STATE_HOME/impartus/library.db` with a private
-0700 parent and 0600 file. Use `modernc.org/sqlite`, WAL, foreign keys, and a
-busy timeout. Embedded forward-only migrations are keyed by `PRAGMA
-user_version` and execute transactionally.
+The database lives at `$XDG_STATE_HOME/impartus/library.db` (falling back to
+`~/.local/state/impartus/library.db`) with a private 0700 parent and 0600 file.
+Use `modernc.org/sqlite`, WAL, foreign keys, `synchronous=FULL`, and a busy
+timeout. Embedded forward-only migrations are keyed by `PRAGMA user_version`
+and execute transactionally.
 
 Initial tables are deliberately narrow:
 
-- `artifacts`: manifest JSON plus indexed identity, lecture, path-presence, and
-  verification columns;
+- `artifacts`: one logical identity row with immutable canonical identity and
+  the most recent manifest metadata;
+- `artifact_files`: every materialized file keyed by `(artifact_id, path)` with
+  role/view/bytes/hash/presence fields. A forced re-download to a new path adds
+  or atomically updates that materialization; it does not discard a still-valid
+  older path or silently retarget playback;
 - `playback`: artifact/lecture resume position, duration, completion, and last
   played time;
 - `jobs`: download lifecycle, attempts, error summary, cancellation request,
@@ -235,6 +284,18 @@ Do not cache the remote catalog in this project phase. Do not write progress to
 SQLite for every media chunk; coalesce progress updates. Never delete an
 artifact row just because its file is missing—`library verify` marks it missing.
 
+One-shot `download` remains useful if the library is unavailable after media
+files are complete: it exits 0, emits the normal manifest, reports
+`libraryRecorded:false` in the additive download data and an additive
+`meta.warnings` entry, and prints the warning to stderr in human mode. A watch
+run requires its durable job store before downloading and fails the cycle if it
+cannot commit state. Final media output uses same-directory `.part` files plus
+fsync/atomic rename. Before ffmpeg starts, the watch job records the expected
+final paths. After a crash, a final path is reusable only when the job identity
+matches and all outputs pass stat/container validation; then the manifest is
+committed without another network fetch. Partial `.part` files are never
+mistaken for completed artifacts.
+
 ### Hermes/NotebookLM bridge contract
 
 The bridge is a separate Hermes skill/script, not an Impartus package. It
@@ -242,22 +303,53 @@ accepts a manifest plus an explicit full notebook UUID and profile/home
 selection. It invokes the pinned `notebooklm-py` CLI with `--json`, validates
 the documented JSON error codes, and never relies on selected-notebook context.
 
+The bridge is maintained in its own local Git workspace with a recorded commit
+SHA and receives the same exact-head Droid/Grok review as the Go PRs. Installation
+into `~/.hermes/skills` is a symlink or copy from that reviewed commit; an
+unversioned local script is not acceptable transition evidence. A remote/private
+repository is optional and is not created without separate owner approval.
+
+Its state is a private SQLite database at
+`$XDG_STATE_HOME/impartus-notebooklm/bridge.db` (same XDG fallback), mode 0600,
+with WAL, `synchronous=FULL`, transactional migrations, a unique key on
+`(profile, notebook_id, artifact_id)`, and sanitized fields only. A private
+per-database `flock` serializes bridge mutations. If the lock or pre-add durable
+commit fails, `source add` is never invoked.
+
 For each `(profile, notebookId, artifactId)` it stores:
 
-- state: `pending`, `ambiguous`, `uploaded`, or `manual_review`;
+- state: `pending`, `ambiguous`, `added`, `uploaded`, or `manual_review`;
 - exact source title token, source ID when known, attempt count, and sanitized
   error class;
 - an atomic durable commit before and after the remote mutation.
 
-The title contains an exact, reversible token such as
-`[impartus:<artifactId>]`. On first use the bridge lists sources and refuses an
-ambiguous partial match. Immediately before `source add`, it commits
-`ambiguous`. On exit 0 it records the returned source ID. On timeout, crash, or
-non-zero after invocation, the next run lists exact-title matches and calls
-`source wait` for a unique source. READY becomes `uploaded`; missing remains
-ambiguous for a bounded reconciliation window before an explicit retry;
-multiple matches, processing failure, or an unclassifiable response becomes
-`manual_review`. It never deletes a NotebookLM source automatically.
+NotebookLM-py v0.8.0 accepts `source add --title`, but its upload pipeline first
+registers the source using the filename and can log-and-swallow a later rename
+failure. Therefore title reconciliation never depends on that rename. The
+bridge creates a hard link (or bounded local copy when hard links are
+unavailable) inside a private temporary directory whose filename is the exact,
+length-bounded token plus the original extension, for example
+`[impartus-v1-BASE64URL].mp3`, and passes the same filename as `--title`. The
+token is the first component, contains only the safe v1 digest alphabet, and is
+kept below a documented byte limit. A live add/list round trip must prove the
+listed title is byte-exact before #139 can close. A missing, normalized, or
+truncated token fails to `manual_review`; it never authorizes another add.
+
+On first use the bridge lists sources and requires zero exact-token matches.
+Immediately before `source add`, it durably commits `ambiguous`. Exit 0 commits
+`added` plus the returned source ID, then calls `source wait`; only READY commits
+`uploaded`. A FAILED source or unclassifiable result becomes `manual_review`.
+On timeout, crash, or non-zero after invocation, the next run lists exact-token
+matches under the same per-key lock and calls `source wait` for one unique
+source. READY becomes `uploaded`; multiple matches, list error, processing
+failure, missing/truncated title, or a source that remains missing after three
+reconciliation checks spaced 30 seconds apart becomes `manual_review`.
+
+There is no time-based or automatic ambiguous re-add. A separate `resolve`
+operation re-lists remote state, records the operator's decision, and can return
+`manual_review` to `pending` only when an explicit `--retry-missing` is supplied
+and the current successful list proves zero exact-token matches. It never
+deletes a NotebookLM source automatically.
 
 The bridge stores no Google cookie itself and scrubs CLI output. Authentication
 continues to live in `NOTEBOOKLM_HOME`, `NOTEBOOKLM_PROFILE`, or
@@ -283,8 +375,9 @@ Work:
 
 1. Introduce typed manifest and deterministic ID golden vectors.
 2. Preserve the existing result while adding per-lecture artifacts.
-3. Map each playlist/join result to its original lecture by TTID and fail if the
-   mapping is missing or duplicated.
+3. Map each playlist/join result to its original lecture by the composite
+   `(instituteId, subjectId, sessionId, ttid)` identity and fail if that key is
+   missing or duplicated. Never assume TTID is globally unique.
 4. Stat outputs, normalize absolute paths, infer role/view/container from the
    typed join result rather than filename heuristics, and reject missing outputs.
 5. Add exact JSON golden tests for video left/right/both and audio formats.
@@ -294,6 +387,11 @@ Acceptance:
 - legacy JSON fields and human output tests remain unchanged;
 - identical logical inputs produce identical IDs across runs and map order;
 - different TTID/view/quality/audio settings produce different IDs;
+- different institute/subject/session values produce different IDs, a batch
+  with colliding TTIDs in different scopes succeeds, and recomputing from a
+  stored manifest yields its exact ID;
+- the published sample and an `audioOnly=false` fixture with empty/default
+  audio format match the cross-product golden vectors;
 - partial/missing output files fail before a completed manifest is emitted;
 - `go test ./... -count=1`, `go test -race ./...`, `go build ./...`,
   `CGO_ENABLED=0 go build ./...`, `make lint`, and `git diff --check` pass.
@@ -312,8 +410,9 @@ Likely files:
 Work:
 
 1. Build the bounded JSON IPC client against a fake Unix-socket mpv.
-2. Add process supervision, readiness polling, events, controls, graceful quit,
-   kill fallback, and reaping.
+2. Add process supervision in a verified private process group, readiness
+   polling, events, controls, graceful quit, kill fallback, and reaping. Start
+   idle and send the tokenized loopback URL only through IPC `loadfile`.
 3. Route existing `play` through `internal/app` while preserving flags and
    sequential playback behavior.
 4. Add `doctor` checks for mpv, ffmpeg, config permissions, and writable state/
@@ -325,8 +424,12 @@ Acceptance:
 
 - fake mpv covers replies, out-of-order request IDs, property events, malformed
   JSON, disconnect, command timeout, cancellation, and silent process death;
-- no credential appears in mpv argv, logs, or errors;
+- no credential or loopback capability token appears in mpv argv, logs, or
+  errors; supervised argv disables user config/scripts;
 - cancellation leaves no child process or socket;
+- a fake mpv that ignores quit is killed/reaped while a canary in the caller's
+  process group survives; attacker-owned/symlinked and overlong runtime paths
+  fail before spawn;
 - existing `play` tests and all baseline gates pass;
 - an opt-in local smoke launches real mpv with `--vo=null`, observes state,
   pauses/seeks, quits, and verifies the child is reaped.
@@ -344,11 +447,14 @@ Likely files:
 Work:
 
 1. Add pure-Go SQLite and transactional migrations.
-2. Commit completed manifests idempotently and expose `library list`, `show`,
-   and `verify` with human and JSON modes.
+2. Commit completed manifests idempotently into logical artifact plus
+   materialized-file rows and expose `library list`, `show`, and `verify` with
+   human and JSON modes.
 3. Record coalesced playback positions and offer resume through the app service.
-4. Persist download job lifecycle. Mark interrupted running jobs recoverable on
-   startup; do not pretend chunk-level resume exists yet.
+4. Persist download job lifecycle and expected output paths before final media
+   creation. Make final outputs atomic. Mark interrupted running jobs
+   recoverable on startup; validate/recommit complete outputs without another
+   fetch, but do not pretend chunk-level resume exists yet.
 5. Add `library repair` only if a real corruption fixture proves a safe action;
    otherwise `doctor` reports and stops.
 
@@ -357,7 +463,13 @@ Acceptance:
 - migration from empty and repeated migration are deterministic;
 - downgrade/newer-schema input fails closed without changing the DB;
 - concurrent reader/writer, cancellation, disk-full/write error, duplicate
-  manifest, moved/missing file, and path-with-non-ASCII tests pass;
+  manifest at a second path, moved/missing file, and path-with-non-ASCII tests
+  pass;
+- an unwritable state home after successful one-shot download leaves exit 0,
+  the manifest, `libraryRecorded:false`, and one warning; the same failure
+  stops watch before network work;
+- crash injection after atomic final rename and before artifact commit recovers
+  one row without a second network fetch or orphan output;
 - `library verify` never deletes user data;
 - `go test -race ./...` and `CGO_ENABLED=0 go build ./...` pass.
 
@@ -378,6 +490,8 @@ Work:
 1. Use Bubble Tea v2, Bubbles, and Lip Gloss v2 in the existing binary.
 2. Ship an explicit `impartus tui`; no-arg launches it only on a real TTY.
    Preserve the old prompt UI temporarily as `impartus classic` for one release.
+   No-arg on a non-TTY prints help to stderr and exits 2. The `classic` command
+   prints a one-release deprecation notice; dispatch tests pin all three paths.
 3. Implement course list, lecture list, details, filtering, responsive layout,
    generated help, loading/error/empty states, and dependency diagnostics.
 4. `enter` plays through the app/player service; transport keys use IPC. `d`
@@ -395,6 +509,9 @@ Acceptance:
   signal cancellation, and panic recovery;
 - no TUI package directly performs HTTP, subprocess, or SQL work;
 - real local browse/play/download is completed with user credentials.
+- an IPC startup failure in the TUI reports an error and never spawns blocking
+  legacy mpv. Legacy playback is opt-in only on non-TUI `play` through
+  `--mpv-mode=legacy`; no interactive fallback prompt exists.
 
 ### PR 5 — `feat(watch): add generic durable lecture auto-download`
 
@@ -415,7 +532,10 @@ Work:
    committed download manifest—not an upload.
 3. Add `--once`, `--dry-run`, and `--events`. Do not add `--upload`, `--check`,
    notebook routing, or deletion-after-upload.
-4. Treat interrupted downloads as recoverable. Chunk-level resumability is a
+4. Use an OS-level advisory `flock` in the state directory for one active
+   watcher; kernel release on process death is the stale-lock recovery rule.
+   Cancellation is signal/context based; no second process mutates a DB flag.
+5. Treat interrupted downloads as recoverable. Chunk-level resumability is a
    separately reviewed optimization, not a false promise in this PR.
 
 Acceptance:
@@ -425,6 +545,8 @@ Acceptance:
 - crash before file completion, crash after file completion but before DB
   commit, corrupt/newer DB, partial target failure, auth expiry, rate limiting,
   cancellation, and concurrent-instance lock tests pass;
+- SIGKILL releases the watcher lock so a new process starts without manual
+  cleanup; two simultaneous starts produce exactly one active poller;
 - NDJSON is valid and terminal events are not dropped;
 - no source file or configuration key contains `notebooklm`, notebook/source
   IDs, Google auth, or provider process execution.
@@ -433,9 +555,10 @@ Acceptance:
 
 This is not an Impartus PR. Install notebooklm-py v0.8.0's own `notebooklm`
 skill into the intended Hermes instance, then add a small composition skill and
-tested script under that Hermes instance. If an existing version-controlled
-Hermes workspace is discovered, use a focused PR there; otherwise keep the
-patch local and record exact files/checks without creating a new public repo.
+tested script under that Hermes instance. Maintain it in a separate local Git
+workspace and record its reviewed exact commit. If a suitable existing remote
+workspace is discovered, use a focused PR there; otherwise do not create a new
+public/private GitHub repository without separate owner approval.
 
 Work:
 
@@ -443,8 +566,9 @@ Work:
 2. Validate schema v1, allowed local media path, file size, and optional hash.
 3. Implement the durable ambiguity/reconciliation contract above using fake
    `notebooklm` process fixtures and an allowlisted environment.
-4. Add `doctor`, `plan`, and `sync` operations. `plan` is read-only; `sync`
-   performs the upload. No automatic source deletion exists.
+4. Add `doctor`, `plan`, `sync`, and `resolve` operations. `plan` is read-only;
+   `sync` performs the upload; `resolve` is the only explicit recovery path. No
+   automatic source deletion exists.
 5. Run a live upload twice and prove the second run returns the same source ID
    or a reconciled no-op. Simulate timeout-after-remote-acceptance with the fake
    CLI and prove no second add occurs.
@@ -452,12 +576,16 @@ Work:
 Acceptance:
 
 - invalid manifest, missing file, hash mismatch, auth failure, rate limit,
-  provider JSON noise, timeout, subprocess crash, unique READY match, missing
-  match, PROCESSING timeout, failed source, and duplicate-title cases are tested;
+  provider JSON noise, timeout, subprocess crash, unique READY match, listing
+  lag, missing match, PROCESSING timeout, exit-0 then FAILED wait, failed source,
+  truncated title, and duplicate-title cases are tested;
+- two concurrent `sync` calls produce at most one provider add; pre-add state
+  failure produces zero provider calls;
 - durable state is private and atomic; errors contain no cookies or raw auth;
 - live `notebooklm auth check --test --json` passes for the selected profile;
 - a real Impartus artifact reaches the intended notebook and is READY;
-- a repeated bridge run does not create a duplicate.
+- the exact staged title survives add/list byte-for-byte, and a repeated bridge
+  run returns the same source ID without creating a duplicate.
 
 ## PR #139 preserve/delete and transition
 
@@ -481,9 +609,10 @@ Delete from Impartus:
 
 Transition gate:
 
-1. PR 1 is open with a reviewed artifact contract.
-2. The Hermes bridge passes fake ambiguity tests and a real repeated upload.
-3. PR 5 is open or its exact generic-watch diff is ready and green.
+1. PR 1 is merged and its artifact contract exists on `main`.
+2. The versioned Hermes bridge exact commit passes fake ambiguity tests, a live
+   byte-exact title round trip, and a real repeated upload.
+3. PR 5 is merged and generic watch exists on `main`.
 4. Update #139's title/body with replacement links and a concise preserve/delete
    table, reply to the unresolved duplicate comment with the ownership fix,
    then close #139 as superseded. Never claim its old head was merged.
@@ -519,7 +648,8 @@ Stop the affected PR and report instead of improvising if:
 - a SQLite migration is destructive, non-transactional, or requires cgo;
 - a generic watcher needs any NotebookLM read or credential;
 - the bridge cannot distinguish a unique exact-token source or cannot persist
-  `ambiguous` before starting the provider command;
+  `ambiguous` before starting the provider command, or its lock/state store is
+  unavailable;
 - live auth targets the wrong Impartus or Google account;
 - a review finds a correctness/security blocker that is not reproduced and
   resolved on the exact head;
@@ -532,9 +662,9 @@ Stop the affected PR and report instead of improvising if:
   the first TUI release.
 - The manifest is additive to the download result. Old JSON consumers continue
   to read their fields.
-- The player can temporarily fall back to the current blocking mpv launch if IPC
-  startup fails before playback and the user explicitly selects that fallback;
-  it may not fall back after an ambiguous command or leak the TTY to two owners.
+- Only non-TUI `play --mpv-mode=legacy` may use the current blocking mpv launch.
+  IPC failure never auto-falls back or prompts; the TUI never gives the terminal
+  to mpv, so two owners cannot overlap.
 - Library migrations are forward-only, but the pre-library binary remains able
   to download/play because the DB is additive local state.
 - The generic watcher is independently stoppable and has no daemon requirement.
@@ -553,7 +683,8 @@ Stop the affected PR and report instead of improvising if:
 - [ ] PR 3 library/history/jobs implemented with migration and race evidence.
 - [ ] PR 4 TUI supports real browse/play/control/download/library/resume.
 - [ ] PR 5 generic watcher preserves automatic download without NotebookLM.
-- [ ] Hermes composition skill/bridge installed and fake ambiguity suite green.
+- [ ] Hermes composition skill/bridge has a recorded reviewed Git commit, is
+      installed from it, and its fake ambiguity/concurrency suite is green.
 - [ ] Real Impartus lecture streamed, controlled, downloaded, manifested, and
       recorded locally without exposing credentials.
 - [ ] Real manifest uploaded to the intended NotebookLM notebook and READY;
@@ -564,4 +695,3 @@ Stop the affected PR and report instead of improvising if:
       diff; findings are reproduced locally and all valid blockers fixed.
 - [ ] Every final exact head has tests, race, build, cgo-free build, lint, diff
       check, hosted check, and review status recorded separately.
-
