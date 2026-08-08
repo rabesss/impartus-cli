@@ -165,8 +165,8 @@ fields.
 
 Canonical `artifactId` input is a length-delimited, versioned encoding of:
 
-`instituteId, subjectId, sessionId, ttid, normalized views, normalized quality,
-audioOnly, normalized audioFormat`.
+`instituteId, subjectId, sessionId, ttid, audioOnly, normalized views,
+normalized quality, normalized audioFormat`.
 
 The normative byte encoding is the ASCII domain prefix
 `impartus-artifact-v1\0`, followed by the four positive IDs as unsigned 64-bit
@@ -232,6 +232,11 @@ is still writable. A closed stdout/EPIPE cancels producers, exits 1, and never
 hangs while attempting a second terminal write. The event stream is implemented
 with the generic watcher, not in the first manifest PR.
 
+One-shot download remains fail-fast. A watch cycle instead attempts every
+configured target despite isolated target failures, then emits one aggregate
+terminal event with attempted/succeeded/failed counts, all validated artifacts,
+and exit 1 when any target failed.
+
 ### mpv IPC contract
 
 - Unix socket: `$XDG_RUNTIME_DIR/impartus/mpv-<pid>-<random>.sock` in an
@@ -277,8 +282,7 @@ Initial tables are deliberately narrow:
   older path or silently retarget playback;
 - `playback`: artifact/lecture resume position, duration, completion, and last
   played time;
-- `jobs`: download lifecycle, attempts, error summary, cancellation request,
-  and timestamps.
+- `jobs`: download lifecycle, attempts, error summary, and timestamps.
 
 Do not cache the remote catalog in this project phase. Do not write progress to
 SQLite for every media chunk; coalesce progress updates. Never delete an
@@ -329,9 +333,10 @@ failure. Therefore title reconciliation never depends on that rename. The
 bridge creates a hard link (or bounded local copy when hard links are
 unavailable) inside a private temporary directory whose filename is the exact,
 length-bounded token plus the original extension, for example
-`[impartus-v1-BASE64URL].mp3`, and passes the same filename as `--title`. The
-token is the first component, contains only the safe v1 digest alphabet, and is
-kept below a documented byte limit. A live add/list round trip must prove the
+`impartus-v1-CmQ1iLsQw_Aarxg3Rp4svvDdKX4sJ6R0KFWXn3keTn4.mp3`, and passes the
+same filename as `--title`. The 43-character digest uses only the base64url
+alphabet; the complete ASCII filename, including an allowlisted extension, is
+bounded to 64 bytes. A live add/list round trip must prove the
 listed title is byte-exact before #139 can close. A missing, normalized, or
 truncated token fails to `manual_review`; it never authorizes another add.
 
@@ -350,6 +355,16 @@ operation re-lists remote state, records the operator's decision, and can return
 `manual_review` to `pending` only when an explicit `--retry-missing` is supplied
 and the current successful list proves zero exact-token matches. It never
 deletes a NotebookLM source automatically.
+
+`sync` entry actions are exhaustive:
+
+- `pending`: list first; zero exact matches may proceed to the pre-add commit,
+  while any pre-existing exact match becomes `manual_review` because ownership
+  is not proven;
+- `ambiguous`: reconcile by exact title only and never invoke add;
+- `added`: wait/reconcile the stored source ID and never invoke add;
+- `uploaded`: return the stored source ID as an idempotent no-op;
+- `manual_review`: refuse and direct the operator to `resolve`.
 
 The bridge stores no Google cookie itself and scrubs CLI output. Authentication
 continues to live in `NOTEBOOKLM_HOME`, `NOTEBOOKLM_PROFILE`, or
@@ -391,7 +406,8 @@ Acceptance:
   with colliding TTIDs in different scopes succeeds, and recomputing from a
   stored manifest yields its exact ID;
 - the published sample and an `audioOnly=false` fixture with empty/default
-  audio format match the cross-product golden vectors;
+  audio format match the cross-product golden vectors, including exact
+  canonical bytes before hashing;
 - partial/missing output files fail before a completed manifest is emitted;
 - `go test ./... -count=1`, `go test -race ./...`, `go build ./...`,
   `CGO_ENABLED=0 go build ./...`, `make lint`, and `git diff --check` pass.
@@ -475,7 +491,7 @@ Acceptance:
 
 ### PR 4 — `feat(tui): browse, play, download, and resume lectures`
 
-Dependencies: PRs 1–3.
+Dependencies: PRs 1, 2, and 3.
 
 Likely files:
 
@@ -521,7 +537,8 @@ Likely files:
 
 - a fresh, NotebookLM-free `internal/watch` package and tests;
 - generic watch target config/validation;
-- `internal/cli/cli_watch.go`, dispatch and JSON/NDJSON tests;
+- `internal/cli/cli_watch.go`, `internal/cli/cli_download.go`, dispatch and
+  JSON/NDJSON tests;
 - sample config and operational docs.
 
 Work:
@@ -530,8 +547,9 @@ Work:
    isolation, and crash-safe download concepts from #139.
 2. Use the library job table and artifact ID. Terminal success is a validated,
    committed download manifest—not an upload.
-3. Add `--once`, `--dry-run`, and `--events`. Do not add `--upload`, `--check`,
-   notebook routing, or deletion-after-upload.
+3. Add `--once`, `--dry-run`, and `--events` to watch, and the shared `--events`
+   producer to one-shot download. Pin mutual exclusion with `--json`. Do not add
+   `--upload`, `--check`, notebook routing, or deletion-after-upload.
 4. Use an OS-level advisory `flock` in the state directory for one active
    watcher; kernel release on process death is the stale-lock recovery rule.
    Cancellation is signal/context based; no second process mutates a DB flag.
@@ -545,6 +563,8 @@ Acceptance:
 - crash before file completion, crash after file completion but before DB
   commit, corrupt/newer DB, partial target failure, auth expiry, rate limiting,
   cancellation, and concurrent-instance lock tests pass;
+- a partial target failure still attempts later targets and emits exactly one
+  aggregate `job.failed` terminal record with exit 1;
 - SIGKILL releases the watcher lock so a new process starts without manual
   cleanup; two simultaneous starts produce exactly one active poller;
 - NDJSON is valid and terminal events are not dropped;
@@ -579,6 +599,8 @@ Acceptance:
   provider JSON noise, timeout, subprocess crash, unique READY match, listing
   lag, missing match, PROCESSING timeout, exit-0 then FAILED wait, failed source,
   truncated title, and duplicate-title cases are tested;
+- every `sync` entry state follows the table above, and the staged filename is
+  rejected before provider execution if it exceeds 64 ASCII bytes;
 - two concurrent `sync` calls produce at most one provider add; pre-add state
   failure produces zero provider calls;
 - durable state is private and atomic; errors contain no cookies or raw auth;
