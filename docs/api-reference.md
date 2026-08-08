@@ -11,6 +11,7 @@
     * [JSON error envelope (`respondWithError`)](#json-error-envelope-respondwitherror)
     * [JSON success envelope (`respondWithSuccess`)](#json-success-envelope-respondwithsuccess)
     * [Direct JSON responses](#direct-json-responses)
+  * [CLI download artifact manifest](#cli-download-artifact-manifest)
   * [Courses](#courses)
   * [Lectures](#lectures)
   * [Jobs](#jobs)
@@ -206,6 +207,59 @@ All handlers wrap responses in `{success, data, error, meta}` envelope using `re
 - `GET /courses` → `{success: true, data: [...], meta: {command, mode: 'api'}}`
 - `GET /lectures` → `{success: true, data: [...], meta: {command, mode: 'api'}}`
 - `POST /jobs`, `GET /jobs`, `GET /jobs/{id}` → `{success: true, data: {...}, meta: {command, mode: 'api'}}`
+
+## CLI download artifact manifest
+
+`impartus download --json` preserves the standard CLI response envelope and
+the existing `status`, `outputPaths`, `lectureCount`, `filteredCount`, and
+`totalLectures` fields. Its `data.artifacts` array adds one verified manifest
+for every completed lecture download:
+
+```json
+{
+  "schemaVersion": 1,
+  "artifactId": "impartus:v1:CmQ1iLsQw_Aarxg3Rp4svvDdKX4sJ6R0KFWXn3keTn4",
+  "lecture": {
+    "ttid": 12345,
+    "instituteId": 4,
+    "subjectId": 67,
+    "sessionId": 8,
+    "seqNo": 12,
+    "topic": "Topic",
+    "startTime": "upstream value",
+    "durationSeconds": 3600,
+    "professor": "Name",
+    "institute": "Institute",
+    "noAudio": false
+  },
+  "selection": {
+    "views": "both",
+    "quality": "720",
+    "audioOnly": false,
+    "audioFormat": ""
+  },
+  "files": [{
+    "path": "/absolute/path/to/file.mkv",
+    "role": "video",
+    "view": "both",
+    "container": "mkv",
+    "bytes": 90604400
+  }],
+  "producedAt": "2026-08-08T04:05:06Z",
+  "producer": {"name": "impartus", "version": "0.1.20"}
+}
+```
+
+`artifactId` is a logical identity, not a file-content hash. Version 1 hashes a
+canonical binary encoding of the positive institute, subject, session, and
+lecture IDs plus the normalized view, quality, and audio choices. Paths,
+display text, timestamps, producer version, and file bytes do not affect it.
+The optional lowercase `files[].sha256` field is omitted until an explicit
+verification pass calculates it.
+
+A command fails instead of emitting a completed manifest when a selected
+playlist cannot be associated with a unique scoped lecture or when any reported
+output is missing, empty, non-regular, or still has a `.part` suffix.
 
 ## Courses
 

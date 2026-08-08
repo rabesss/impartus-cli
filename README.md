@@ -259,7 +259,11 @@ to stderr while leaving stdout empty; in that envelope, `success` is `false`,
 
 For JSON downloads, `lectureCount` is the number of lectures completed.
 `outputPaths` contains the files produced, so one completed lecture can add
-multiple paths when multiple views or output forms are requested.
+multiple paths when multiple views or output forms are requested. The additive
+`artifacts` array contains one versioned manifest per completed lecture with its
+scoped IDs, normalized media selection, verified absolute files, byte sizes,
+and a stable `impartus:v1:` logical identity. Existing automation can continue
+using the legacy fields unchanged.
 
 ### Command Reference
 

@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/vbauerster/mpb/v8"
 
+	"github.com/rabesss/impartus-cli/internal/artifact"
+	"github.com/rabesss/impartus-cli/internal/buildinfo"
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/downloader"
@@ -32,11 +35,12 @@ type downloadFlags struct {
 }
 
 type downloadResult struct {
-	Status        string   `json:"status"`
-	OutputPaths   []string `json:"outputPaths"`
-	LectureCount  int      `json:"lectureCount"`
-	FilteredCount int      `json:"filteredCount,omitempty"`
-	TotalLectures int      `json:"totalLectures,omitempty"`
+	Status        string              `json:"status"`
+	OutputPaths   []string            `json:"outputPaths"`
+	LectureCount  int                 `json:"lectureCount"`
+	FilteredCount int                 `json:"filteredCount,omitempty"`
+	TotalLectures int                 `json:"totalLectures,omitempty"`
+	Artifacts     []artifact.Manifest `json:"artifacts"`
 }
 
 // downloadPresentationOptions keeps user-facing output policy at the CLI
@@ -241,6 +245,10 @@ func downloadLecturesWithRunner(ctx context.Context, cfg *config.Config, d lectu
 	if len(playlists) == 0 {
 		return downloadResult{}, errors.New("no playlists available for selected lectures")
 	}
+	lecturesByTTID, err := indexLecturesForArtifacts(lectures)
+	if err != nil {
+		return downloadResult{}, err
+	}
 
 	p, tracker, err := newDownloadProgress(cfg, presentation, len(playlists), countChunks(playlists, cfg.Views))
 	if err != nil {
@@ -253,21 +261,9 @@ func downloadLecturesWithRunner(ctx context.Context, cfg *config.Config, d lectu
 		defer tracker.Stop()
 	}
 
-	outputPaths := make([]string, 0, len(playlists))
-	completedLectures := 0
-	for _, playlist := range playlists {
-		// Route through the shared DownloadAndJoinPlaylist (the same method the
-		// server job runner uses) so per-lecture download+join logic has one home.
-		joinResult, err := d.DownloadAndJoinPlaylist(ctx, playlist, p, tracker)
-		if err != nil {
-			return downloadResult{}, err
-		}
-		outputPaths = append(outputPaths, joinResult.OutputPaths()...)
-		completedLectures++
-
-		if tracker != nil {
-			downloader.LectureCompleted(tracker)
-		}
+	outputPaths, artifacts, completedLectures, err := completeLectureDownloads(ctx, cfg, d, playlists, lecturesByTTID, p, tracker)
+	if err != nil {
+		return downloadResult{}, err
 	}
 
 	if tracker != nil {
@@ -277,7 +273,141 @@ func downloadLecturesWithRunner(ctx context.Context, cfg *config.Config, d lectu
 	if p != nil {
 		p.Wait()
 	}
-	return downloadResult{Status: "completed", OutputPaths: outputPaths, LectureCount: completedLectures}, nil
+	return downloadResult{Status: "completed", OutputPaths: outputPaths, LectureCount: completedLectures, Artifacts: artifacts}, nil
+}
+
+func completeLectureDownloads(
+	ctx context.Context,
+	cfg *config.Config,
+	d lectureDownloadRunner,
+	playlists []client.ParsedPlaylist,
+	lecturesByTTID map[int][]client.Lecture,
+	progress *mpb.Progress,
+	tracker *downloader.ProgressTracker,
+) ([]string, []artifact.Manifest, int, error) {
+	outputPaths := make([]string, 0, len(playlists))
+	artifacts := make([]artifact.Manifest, 0, len(playlists))
+	for _, playlist := range playlists {
+		lectureCandidates := lecturesByTTID[playlist.ID]
+		if len(lectureCandidates) == 0 {
+			return nil, nil, 0, fmt.Errorf("playlist lecture %d is missing from the selected scoped lectures", playlist.ID)
+		}
+		lecture := lectureCandidates[0]
+		lecturesByTTID[playlist.ID] = lectureCandidates[1:]
+
+		// Route through the shared DownloadAndJoinPlaylist (the same method the
+		// server job runner uses) so per-lecture download+join logic has one home.
+		joinResult, err := d.DownloadAndJoinPlaylist(ctx, playlist, progress, tracker)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		manifest, err := buildDownloadArtifact(lecture, cfg, joinResult, time.Now().UTC())
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("build artifact manifest for lecture %d: %w", lecture.TTID, err)
+		}
+		outputPaths = append(outputPaths, joinResult.OutputPaths()...)
+		artifacts = append(artifacts, manifest)
+		if tracker != nil {
+			downloader.LectureCompleted(tracker)
+		}
+	}
+	return outputPaths, artifacts, len(artifacts), nil
+}
+
+type scopedLectureKey struct {
+	instituteID int
+	subjectID   int
+	sessionID   int
+	ttid        int
+}
+
+func indexLecturesForArtifacts(lectures client.Lectures) (map[int][]client.Lecture, error) {
+	byTTID := make(map[int][]client.Lecture, len(lectures))
+	seenScoped := make(map[scopedLectureKey]struct{}, len(lectures))
+	for _, lecture := range lectures {
+		key := scopedLectureKey{
+			instituteID: lecture.InstituteID,
+			subjectID:   lecture.SubjectID,
+			sessionID:   lecture.SessionID,
+			ttid:        lecture.TTID,
+		}
+		if _, exists := seenScoped[key]; exists {
+			return nil, fmt.Errorf(
+				"duplicate scoped lecture identity institute=%d subject=%d session=%d ttid=%d",
+				key.instituteID,
+				key.subjectID,
+				key.sessionID,
+				key.ttid,
+			)
+		}
+		seenScoped[key] = struct{}{}
+		byTTID[lecture.TTID] = append(byTTID[lecture.TTID], lecture)
+	}
+	return byTTID, nil
+}
+
+func buildDownloadArtifact(lecture client.Lecture, cfg *config.Config, result downloader.JoinResult, producedAt time.Time) (artifact.Manifest, error) {
+	role := "video"
+	leftContainer := "mp4"
+	rightContainer := "mp4"
+	bothContainer := "mkv"
+	if cfg.AudioOnly {
+		role = "audio"
+		container := strings.ToLower(strings.TrimSpace(cfg.AudioFormat))
+		if container == "aac" {
+			container = "m4a"
+		}
+		leftContainer, rightContainer, bothContainer = container, container, container
+	}
+
+	fileSpecs := make([]artifact.FileSpec, 0, 3)
+	for _, output := range []struct {
+		path      string
+		view      string
+		container string
+	}{
+		{path: result.LeftOutput, view: "left", container: leftContainer},
+		{path: result.RightOutput, view: "right", container: rightContainer},
+		{path: result.BothOutput, view: "both", container: bothContainer},
+	} {
+		if strings.TrimSpace(output.path) == "" {
+			continue
+		}
+		fileSpecs = append(fileSpecs, artifact.FileSpec{
+			Path:      output.path,
+			Role:      role,
+			View:      output.view,
+			Container: output.container,
+		})
+	}
+
+	return artifact.Build(artifact.BuildInput{
+		Lecture: artifact.Lecture{
+			TTID:            lecture.TTID,
+			InstituteID:     lecture.InstituteID,
+			SubjectID:       lecture.SubjectID,
+			SessionID:       lecture.SessionID,
+			SeqNo:           lecture.SeqNo,
+			Topic:           lecture.Topic,
+			StartTime:       lecture.StartTime,
+			DurationSeconds: lecture.ActualDuration,
+			Professor:       lecture.ProfessorName,
+			Institute:       lecture.Institute,
+			NoAudio:         lecture.NoAudio == 1,
+		},
+		Selection: artifact.Selection{
+			Views:       cfg.Views,
+			Quality:     cfg.Quality,
+			AudioOnly:   cfg.AudioOnly,
+			AudioFormat: cfg.AudioFormat,
+		},
+		Files:      fileSpecs,
+		ProducedAt: producedAt,
+		Producer: artifact.Producer{
+			Name:    "impartus",
+			Version: buildinfo.Version,
+		},
+	})
 }
 
 func newDownloadProgress(cfg *config.Config, presentation downloadPresentationOptions, totalLectures, totalChunks int) (*mpb.Progress, *downloader.ProgressTracker, error) {
