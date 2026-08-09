@@ -484,6 +484,12 @@ func (session *Session) SeekRelative(ctx context.Context, seconds float64) error
 	return err
 }
 
+// SeekAbsolute seeks to an absolute playback position in seconds.
+func (session *Session) SeekAbsolute(ctx context.Context, seconds float64) error {
+	_, err := session.client.Command(ctx, "seek", seconds, "absolute")
+	return err
+}
+
 // SetVolume sets mpv volume in percent.
 func (session *Session) SetVolume(ctx context.Context, volume float64) error {
 	_, err := session.client.Command(ctx, "set_property", "volume", volume)

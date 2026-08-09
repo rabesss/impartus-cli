@@ -167,6 +167,7 @@ func (playback *fakePlayback) SeekRelative(_ context.Context, seconds float64) e
 	playback.seeks = append(playback.seeks, seconds)
 	return nil
 }
+func (playback *fakePlayback) SeekAbsolute(context.Context, float64) error { return nil }
 func (playback *fakePlayback) SetVolume(_ context.Context, value float64) error {
 	playback.volumes = append(playback.volumes, value)
 	return nil
@@ -368,13 +369,11 @@ func TestPlaybackEventsUpdateViewAndPersistCompletedResumeState(t *testing.T) {
 
 func TestEarlyPlaybackTerminationPreservesResumeCheckpoint(t *testing.T) {
 	for _, test := range []struct {
-		name         string
-		event        player.Event
-		closeChannel bool
+		name  string
+		event player.Event
 	}{
 		{name: "stop", event: player.Event{Name: "end-file", Reason: "stop"}},
 		{name: "quit", event: player.Event{Name: "end-file", Reason: "quit"}},
-		{name: "event channel closed", closeChannel: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			playback := &fakePlayback{events: make(chan player.Event, 1)}
@@ -393,11 +392,7 @@ func TestEarlyPlaybackTerminationPreservesResumeCheckpoint(t *testing.T) {
 			model = applyCommand(t, model, command)
 			model, command = update(t, model, key('y', "y"))
 			model, eventCommand := applyCommandAndKeepNext(t, model, command)
-			if test.closeChannel {
-				close(playback.events)
-			} else {
-				playback.events <- test.event
-			}
+			playback.events <- test.event
 			model, finishCommand := applyCommandAndKeepNext(t, model, eventCommand)
 			model = applyCommand(t, model, finishCommand)
 			if len(backend.recorded) != 1 || backend.recorded[0].Completed || backend.recorded[0].PositionSeconds != 42 {
@@ -407,6 +402,34 @@ func TestEarlyPlaybackTerminationPreservesResumeCheckpoint(t *testing.T) {
 				t.Fatalf("early-exit status =\n%s", got)
 			}
 		})
+	}
+}
+
+func TestPlaybackEventChannelClosureSurfacesWaitFailure(t *testing.T) {
+	playback := &fakePlayback{events: make(chan player.Event), waitErr: errors.New("mpv IPC disconnected")}
+	backend := &fakeBackend{
+		courses:     client.Courses{{SubjectName: "Course", SubjectID: 11, SessionID: 22}},
+		lectures:    client.Lectures{{Topic: "Lecture", TTID: 101}},
+		resume:      library.PlaybackState{ArtifactID: "impartus:v1:test", PositionSeconds: 42, DurationSeconds: 120},
+		resumeFound: true,
+		playback:    playback,
+	}
+	model := tui.New(context.Background(), backend)
+	model = applyCommand(t, model, model.Init())
+	model, command := update(t, model, key(tea.KeyEnter, ""))
+	model = applyCommand(t, model, command)
+	model, command = update(t, model, key(tea.KeyEnter, ""))
+	model = applyCommand(t, model, command)
+	model, command = update(t, model, key('y', "y"))
+	model, eventCommand := applyCommandAndKeepNext(t, model, command)
+	close(playback.events)
+	model, finishCommand := applyCommandAndKeepNext(t, model, eventCommand)
+	model = applyCommand(t, model, finishCommand)
+	if len(backend.recorded) != 1 || backend.recorded[0].Completed {
+		t.Fatalf("closed-channel checkpoint = %+v, want one incomplete checkpoint", backend.recorded)
+	}
+	if got := model.View().Content; !strings.Contains(got, "mpv IPC disconnected") {
+		t.Fatalf("closed-channel failure was hidden:\n%s", got)
 	}
 }
 

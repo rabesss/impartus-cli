@@ -41,6 +41,7 @@ type managedPlayer interface {
 	Events() <-chan player.Event
 	Pause(context.Context, bool) error
 	SeekRelative(context.Context, float64) error
+	SeekAbsolute(context.Context, float64) error
 	SetVolume(context.Context, float64) error
 	SetMute(context.Context, bool) error
 	SetSpeed(context.Context, float64) error

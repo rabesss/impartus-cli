@@ -379,7 +379,7 @@ func (model Model) waitPlaybackEvent() tea.Cmd {
 	})
 }
 
-func (model Model) finishPlayback(completed, observedTerminal bool) tea.Cmd {
+func (model Model) finishPlayback(completed, awaitCompletion bool) tea.Cmd {
 	playback := model.playback
 	lease := model.playbackLease
 	generation := model.playbackGeneration
@@ -392,12 +392,12 @@ func (model Model) finishPlayback(completed, observedTerminal bool) tea.Cmd {
 	}
 	return model.command(func() tea.Msg {
 		var waitErr error
-		if observedTerminal {
-			// The terminal may quit after mpv has already emitted its terminal
-			// event. Preserve that observed completion while teardown drains.
+		if awaitCompletion {
+			// Drain the player's error-bearing completion path after either a
+			// terminal event or closure of its public event stream.
 			waitErr = playback.WaitForEnd(context.WithoutCancel(model.ctx))
 		}
-		state.Completed = observedTerminal && completed && waitErr == nil
+		state.Completed = awaitCompletion && completed && waitErr == nil
 		closeErr := model.playbacks.close(lease)
 		if model.playbacks == nil || lease == 0 {
 			closeErr = playback.Close(context.Background())

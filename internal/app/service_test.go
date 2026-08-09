@@ -137,13 +137,15 @@ func (fake *fakeStreams) StartPlaybackStream(_ context.Context, playlist client.
 }
 
 type fakeManagedPlayer struct {
-	loaded      []string
-	seeks       []float64
-	load        error
-	wait        error
-	waitStarted chan struct{}
-	waitRelease <-chan struct{}
-	closed      int
+	loaded        []string
+	seeks         []float64
+	absoluteSeeks []float64
+	events        chan player.Event
+	load          error
+	wait          error
+	waitStarted   chan struct{}
+	waitRelease   <-chan struct{}
+	closed        int
 }
 
 func (fake *fakeManagedPlayer) Load(_ context.Context, playbackURL string) error {
@@ -304,10 +306,14 @@ func (fake *fakeManagedPlayer) Close(context.Context) error {
 	fake.closed++
 	return nil
 }
-func (fake *fakeManagedPlayer) Events() <-chan player.Event       { return nil }
+func (fake *fakeManagedPlayer) Events() <-chan player.Event       { return fake.events }
 func (fake *fakeManagedPlayer) Pause(context.Context, bool) error { return nil }
 func (fake *fakeManagedPlayer) SeekRelative(_ context.Context, seconds float64) error {
 	fake.seeks = append(fake.seeks, seconds)
+	return nil
+}
+func (fake *fakeManagedPlayer) SeekAbsolute(_ context.Context, seconds float64) error {
+	fake.absoluteSeeks = append(fake.absoluteSeeks, seconds)
 	return nil
 }
 func (fake *fakeManagedPlayer) SetVolume(context.Context, float64) error { return nil }
@@ -348,7 +354,8 @@ func TestServiceCatalogHonorsSkipNoAudio(t *testing.T) {
 
 func TestStartLectureResolvesOnePlaylistAndAppliesResume(t *testing.T) {
 	streams := &fakeStreams{playlists: []client.ParsedPlaylist{{ID: 91}}}
-	fakePlayer := &fakeManagedPlayer{}
+	fakePlayer := &fakeManagedPlayer{events: make(chan player.Event, 1)}
+	fakePlayer.events <- player.Event{Name: "property-change", Property: "duration", Data: []byte("120")}
 	service := newService(&config.Config{}, &fakeCatalog{}, streams, func(context.Context, player.Options) (managedPlayer, error) {
 		return fakePlayer, nil
 	})
@@ -360,11 +367,30 @@ func TestStartLectureResolvesOnePlaylistAndAppliesResume(t *testing.T) {
 	if len(streams.starts) != 1 || streams.starts[0] != 91 {
 		t.Fatalf("started playlists = %v, want [91]", streams.starts)
 	}
-	if !reflect.DeepEqual(fakePlayer.seeks, []float64{42.5}) {
-		t.Fatalf("resume seeks = %v, want [42.5]", fakePlayer.seeks)
+	if len(fakePlayer.seeks) != 0 || !reflect.DeepEqual(fakePlayer.absoluteSeeks, []float64{42.5}) {
+		t.Fatalf("resume relative=%v absolute=%v, want readiness-gated absolute [42.5]", fakePlayer.seeks, fakePlayer.absoluteSeeks)
 	}
 	if closeErr := playback.Close(context.Background()); closeErr != nil {
 		t.Fatalf("Close() error = %v", closeErr)
+	}
+}
+
+func TestStartLectureSurfacesFailureBeforeMediaReady(t *testing.T) {
+	sentinel := errors.New("mpv IPC disconnected")
+	streams := &fakeStreams{playlists: []client.ParsedPlaylist{{ID: 91}}}
+	events := make(chan player.Event)
+	close(events)
+	fakePlayer := &fakeManagedPlayer{events: events, wait: sentinel}
+	service := newService(&config.Config{}, &fakeCatalog{}, streams, func(context.Context, player.Options) (managedPlayer, error) {
+		return fakePlayer, nil
+	})
+
+	playback, err := service.StartLecture(context.Background(), client.Lecture{TTID: 91}, 42.5)
+	if playback != nil || !errors.Is(err, sentinel) {
+		t.Fatalf("StartLecture() = (%v, %v), want readiness failure", playback, err)
+	}
+	if fakePlayer.closed != 1 || streams.cleanups != 1 {
+		t.Fatalf("readiness failure cleanup player=%d proxy=%d, want one each", fakePlayer.closed, streams.cleanups)
 	}
 }
 

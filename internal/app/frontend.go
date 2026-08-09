@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -27,6 +28,7 @@ type PlaybackSession interface {
 	WaitForEnd(context.Context) error
 	Pause(context.Context, bool) error
 	SeekRelative(context.Context, float64) error
+	SeekAbsolute(context.Context, float64) error
 	SetVolume(context.Context, float64) error
 	SetMute(context.Context, bool) error
 	SetSpeed(context.Context, float64) error
@@ -64,12 +66,76 @@ func (service *Service) StartLecture(ctx context.Context, lecture client.Lecture
 		return nil, err
 	}
 	if resumeSeconds > 0 {
-		if err := playback.SeekRelative(ctx, resumeSeconds); err != nil {
+		if err := waitForPlaybackReady(ctx, playback); err != nil {
+			closeErr := playback.Close(context.Background())
+			return nil, errors.Join(fmt.Errorf("resume lecture playback: wait for media readiness: %w", err), closeErr)
+		}
+		if err := playback.SeekAbsolute(ctx, resumeSeconds); err != nil {
 			closeErr := playback.Close(context.Background())
 			return nil, errors.Join(fmt.Errorf("resume lecture playback: %w", err), closeErr)
 		}
 	}
 	return playback, nil
+}
+
+func waitForPlaybackReady(ctx context.Context, playback PlaybackSession) error {
+	for {
+		select {
+		case event, open := <-playback.Events():
+			if !open {
+				if waitErr := playback.WaitForEnd(ctx); waitErr != nil {
+					return waitErr
+				}
+				return errors.New("playback ended before media became ready")
+			}
+			ready, terminal, eventErr := playbackReadiness(event)
+			if eventErr != nil {
+				return eventErr
+			}
+			if ready {
+				return nil
+			}
+			if terminal {
+				if waitErr := playback.WaitForEnd(ctx); waitErr != nil {
+					return waitErr
+				}
+				return errors.New("playback ended before media became ready")
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+func playbackReadiness(event player.Event) (ready, terminal bool, err error) {
+	if event.Name == "end-file" {
+		return false, event.Reason != "redirect", nil
+	}
+	if event.Name != "property-change" {
+		return false, false, nil
+	}
+	switch event.Property {
+	case "duration":
+		if len(event.Data) == 0 || string(event.Data) == "null" {
+			return false, false, nil
+		}
+		var duration float64
+		if err := json.Unmarshal(event.Data, &duration); err != nil {
+			return false, false, fmt.Errorf("decode playback duration: %w", err)
+		}
+		return duration > 0, false, nil
+	case "eof-reached":
+		if len(event.Data) == 0 || string(event.Data) == "null" {
+			return false, false, nil
+		}
+		var reached bool
+		if err := json.Unmarshal(event.Data, &reached); err != nil {
+			return false, false, fmt.Errorf("decode playback eof state: %w", err)
+		}
+		return false, reached, nil
+	default:
+		return false, false, nil
+	}
 }
 
 // ResumeLecture resolves the canonical artifact identity for the configured

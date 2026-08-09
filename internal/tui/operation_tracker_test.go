@@ -30,10 +30,11 @@ func (playback *cleanupPlayback) Pause(context.Context, bool) error { return nil
 func (playback *cleanupPlayback) SeekRelative(context.Context, float64) error {
 	return nil
 }
-func (playback *cleanupPlayback) SetVolume(context.Context, float64) error { return nil }
-func (playback *cleanupPlayback) SetMute(context.Context, bool) error      { return nil }
-func (playback *cleanupPlayback) SetSpeed(context.Context, float64) error  { return nil }
-func (playback *cleanupPlayback) CycleVideo(context.Context) error         { return nil }
+func (playback *cleanupPlayback) SeekAbsolute(context.Context, float64) error { return nil }
+func (playback *cleanupPlayback) SetVolume(context.Context, float64) error    { return nil }
+func (playback *cleanupPlayback) SetMute(context.Context, bool) error         { return nil }
+func (playback *cleanupPlayback) SetSpeed(context.Context, float64) error     { return nil }
+func (playback *cleanupPlayback) CycleVideo(context.Context) error            { return nil }
 func (playback *cleanupPlayback) Close(context.Context) error {
 	playback.closed.Add(1)
 	if playback.release != nil && playback.once.CompareAndSwap(false, true) {

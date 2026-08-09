@@ -144,6 +144,11 @@ func (playback *Playback) SeekRelative(ctx context.Context, seconds float64) err
 	return playback.player.SeekRelative(ctx, seconds)
 }
 
+// SeekAbsolute seeks to an absolute playback position in seconds.
+func (playback *Playback) SeekAbsolute(ctx context.Context, seconds float64) error {
+	return playback.player.SeekAbsolute(ctx, seconds)
+}
+
 // SetVolume sets volume in percent.
 func (playback *Playback) SetVolume(ctx context.Context, volume float64) error {
 	return playback.player.SetVolume(ctx, volume)

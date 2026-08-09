@@ -114,6 +114,10 @@ func (model Model) updatePlaybackStarted(message playbackStartedMsg) (tea.Model,
 	model.playbackLease = message.lease
 	model.playbackControls = nil
 	model.playbackControlBusy = false
+	model.paused = false
+	model.muted = false
+	model.volume = 100
+	model.speed = 1
 	model.position = message.resume.PositionSeconds
 	model.duration = message.resume.DurationSeconds
 	model.status = "Playback started in mpv"
@@ -139,7 +143,7 @@ func (model Model) updatePlaybackEvent(message playbackEventMsg) (tea.Model, tea
 		return model.beginPlaybackFinish(false, false)
 	}
 	if !message.open {
-		return model.beginPlaybackFinish(false, false)
+		return model.beginPlaybackFinish(false, true)
 	}
 	var terminal, completed bool
 	model, terminal, completed = model.applyPlaybackEvent(message.event)
@@ -215,8 +219,6 @@ func (model Model) updatePlaybackControl(message playbackControlMsg) (tea.Model,
 			model.paused = message.flag
 		case "mute":
 			model.muted = message.flag
-		case "seek":
-			model.position = max(0, model.position+message.value)
 		case "volume":
 			model.volume = message.value
 		case "speed":
@@ -375,7 +377,7 @@ func (model Model) quit() (Model, tea.Cmd) {
 	return model, tea.Quit
 }
 
-func (model Model) beginPlaybackFinish(completed, observedTerminal bool) (Model, tea.Cmd) {
+func (model Model) beginPlaybackFinish(completed, awaitCompletion bool) (Model, tea.Cmd) {
 	if model.playback == nil || model.playbackFinishing {
 		return model, nil
 	}
@@ -385,7 +387,7 @@ func (model Model) beginPlaybackFinish(completed, observedTerminal bool) (Model,
 	if model.playbackCancel != nil {
 		model.playbackCancel()
 	}
-	return model, model.finishPlayback(completed, observedTerminal)
+	return model, model.finishPlayback(completed, awaitCompletion)
 }
 
 func (model Model) moveCursor(delta int) Model {
