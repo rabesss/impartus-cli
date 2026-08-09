@@ -158,6 +158,48 @@ func TestDownloadPlaylistDefaultPipelineHonorsCancellation(t *testing.T) {
 	}
 }
 
+func TestPipelineFinalizationCancellationPrecedence(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	tests := []struct {
+		name        string
+		result      PipelineResult
+		totalChunks int
+		wantErr     error
+	}{
+		{
+			name:        "incomplete result keeps parent cancellation",
+			result:      PipelineResult{FirstViewChunks: []string{"first-0.ts"}},
+			totalChunks: 2,
+			wantErr:     context.Canceled,
+		},
+		{
+			name:        "complete success wins post-collection cancellation race",
+			result:      PipelineResult{FirstViewChunks: []string{"first-0.ts", "first-1.ts"}},
+			totalChunks: 2,
+		},
+		{
+			name: "complete failure set keeps detailed pipeline error precedence",
+			result: PipelineResult{
+				FirstViewChunks: []string{"first-0.ts"},
+				FailedChunks:    []int{1},
+				FailureDetails:  []string{"first view chunk 1: upstream failed"},
+			},
+			totalChunks: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := pipelineCancellationError(ctx, tt.result, tt.totalChunks)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("pipelineCancellationError() = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestDownloadPlaylistPipelineUsesDownloaderRetryLimit(t *testing.T) {
 	key := []byte("0123456789abcdef")
 	var chunkRequests atomic.Int64

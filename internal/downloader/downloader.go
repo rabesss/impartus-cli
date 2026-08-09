@@ -220,7 +220,7 @@ func (d *Downloader) downloadPlaylistPipelined(ctx context.Context, playlist cli
 	submitErr := <-submitErrCh
 
 	d.stopPipelineMonitor(monitorDone, downloadBar, totalChunks)
-	if err := ctx.Err(); err != nil {
+	if err := pipelineCancellationError(ctx, result, totalChunks); err != nil {
 		return downloadedPlaylist, err
 	}
 	if submitErr != nil {
@@ -235,6 +235,16 @@ func (d *Downloader) downloadPlaylistPipelined(ctx context.Context, playlist cli
 	downloadedPlaylist.FirstViewChunks = result.FirstViewChunks
 	downloadedPlaylist.SecondViewChunks = result.SecondViewChunks
 	return downloadedPlaylist, nil
+}
+
+func pipelineCancellationError(ctx context.Context, result PipelineResult, totalChunks int) error {
+	// Once every submitted chunk has a terminal result, collection is complete:
+	// preserve that success or detailed chunk failure even if cancellation races
+	// with finalization. Cancellation wins only when collection stopped early.
+	if len(result.FirstViewChunks)+len(result.SecondViewChunks)+len(result.FailedChunks) == totalChunks {
+		return nil
+	}
+	return ctx.Err()
 }
 
 // DownloadAndJoinPlaylist downloads a playlist and joins the chunks into final output file(s).
