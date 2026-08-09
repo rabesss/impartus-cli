@@ -190,6 +190,7 @@ Only the settings listed below have environment-variable overrides. Settings abs
 | `IMPARTUS_SLIDES` | `slides` | Boolean |
 | `IMPARTUS_SKIP_NO_AUDIO` | `skipNoAudio` | Boolean |
 | `IMPARTUS_ALLOW_REMOTE_ACCESS` | `allowRemoteAccess` | Boolean |
+| `IMPARTUS_ENABLE_PIPELINE` | `enablePipeline` | Boolean; `false` preserves the legacy serial path |
 | `IMPARTUS_ENABLE_JITTER` | `enableJitter` | Boolean |
 | `IMPARTUS_PROGRESS_TRACKING_ENABLED` | `progressTracking.enabled` | Boolean; controls all progress bars |
 | `IMPARTUS_NUM_WORKERS` | `numWorkers` | Integer from 1-50 |

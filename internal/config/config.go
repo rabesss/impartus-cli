@@ -320,7 +320,9 @@ func LoadResolved(path string) (*Config, error) {
 	// API jitter ON unless the env explicitly disabled jitter. File-loaded configs
 	// already resolved omitted versus explicit values in Parse.
 	if !fileLoaded {
-		cfg.EnablePipeline = true
+		if _, envSet := os.LookupEnv("IMPARTUS_ENABLE_PIPELINE"); !envSet {
+			cfg.EnablePipeline = true
+		}
 		if _, envSet := os.LookupEnv("IMPARTUS_ENABLE_JITTER"); !envSet {
 			cfg.EnableJitter = true
 		}
@@ -350,6 +352,7 @@ func applyEnvOverrides(cfg *Config) error {
 		func() error { return applyBoolEnv("IMPARTUS_SLIDES", &cfg.Slides) },
 		func() error { return applyBoolEnv("IMPARTUS_SKIP_NO_AUDIO", &cfg.SkipNoAudio) },
 		func() error { return applyBoolEnv("IMPARTUS_ALLOW_REMOTE_ACCESS", &cfg.AllowRemoteAccess) },
+		func() error { return applyBoolEnv("IMPARTUS_ENABLE_PIPELINE", &cfg.EnablePipeline) },
 		func() error { return applyBoolEnv("IMPARTUS_ENABLE_JITTER", &cfg.EnableJitter) },
 		func() error { return applyBoolEnv("IMPARTUS_PROGRESS_TRACKING_ENABLED", &cfg.ProgressTracking.Enabled) },
 		func() error { return applyIntEnv("IMPARTUS_NUM_WORKERS", &cfg.NumWorkers) },

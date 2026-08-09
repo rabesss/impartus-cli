@@ -404,6 +404,35 @@ func TestLoadResolvedNoConfigFileUsesEnvOnly(t *testing.T) {
 	}
 }
 
+func TestLoadResolvedNoConfigFileHonorsPipelineEnvOptOut(t *testing.T) {
+	t.Setenv("IMPARTUS_USERNAME", "env-user")
+	t.Setenv("IMPARTUS_PASSWORD", "env-pass")
+	t.Setenv("IMPARTUS_BASE_URL", "https://env.example.com")
+	t.Setenv("IMPARTUS_QUALITY", "450")
+	t.Setenv("IMPARTUS_ENABLE_PIPELINE", "false")
+
+	originalDirectory, err := os.Getwd()
+	if err != nil {
+		t.Skipf("cannot get cwd: %v", err)
+	}
+	if chdirErr := os.Chdir(t.TempDir()); chdirErr != nil {
+		t.Skipf("cannot chdir: %v", chdirErr)
+	}
+	defer func() {
+		if restoreErr := os.Chdir(originalDirectory); restoreErr != nil {
+			t.Fatalf("cannot restore cwd: %v", restoreErr)
+		}
+	}()
+
+	cfg, err := LoadResolved("")
+	if err != nil {
+		t.Fatalf("LoadResolved: %v", err)
+	}
+	if cfg.EnablePipeline {
+		t.Error("expected IMPARTUS_ENABLE_PIPELINE=false to preserve the serial opt-out without a config file")
+	}
+}
+
 func TestProgressTrackingValidation(t *testing.T) {
 	cfg := minimalValidConfig()
 	cfg.ApplyDefaults()
