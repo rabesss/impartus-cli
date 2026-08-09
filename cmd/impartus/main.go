@@ -12,6 +12,6 @@ import (
 func main() {
 	if err := cli.Execute(buildinfo.Version, buildinfo.Date); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		os.Exit(cli.ExitCode(err))
 	}
 }

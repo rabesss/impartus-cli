@@ -118,8 +118,8 @@ func newJSONErrorWithData(command string, data any, err error) error {
 func helpPayload() capabilityPayload {
 	return capabilityPayload{
 		Name:        "impartus",
-		Description: "CLI and interactive downloader for Impartus lectures",
-		DefaultMode: "interactive",
+		Description: "CLI and terminal UI for Impartus lectures",
+		DefaultMode: "tui",
 		Flags:       []string{"--json"},
 		Commands: []capabilityCommand{
 			{Name: "help", Usage: "impartus help"},
@@ -131,6 +131,8 @@ func helpPayload() capabilityPayload {
 			{Name: "play", Usage: "impartus play --subject <id> --session <id> [--lecture <n>] (not available in JSON mode)"},
 			{Name: "doctor", Usage: "impartus doctor"},
 			{Name: "library", Usage: "impartus library list|show|verify"},
+			{Name: "tui", Usage: "impartus tui (not available in JSON mode)"},
+			{Name: "classic", Usage: "impartus classic (deprecated; not available in JSON mode)"},
 		},
 	}
 }

@@ -4,6 +4,7 @@ package app
 import (
 	"context"
 
+	"github.com/rabesss/impartus-cli/internal/artifact"
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/downloader"
@@ -19,6 +20,17 @@ type catalogClient interface {
 type playbackStreams interface {
 	FetchLecturePlaylists(context.Context, []client.Lecture) ([]client.ParsedPlaylist, error)
 	StartPlaybackStream(context.Context, client.ParsedPlaylist) (downloader.PlaybackStream, error)
+}
+
+type lectureDownloads interface {
+	FetchLecturePlaylists(context.Context, []client.Lecture) ([]client.ParsedPlaylist, error)
+	DownloadAndJoin(context.Context, client.ParsedPlaylist) (downloader.JoinResult, error)
+}
+
+type artifactLibrary interface {
+	RecordManifest(context.Context, artifact.Manifest) error
+	ListArtifacts(context.Context) ([]library.ArtifactRecord, error)
+	GetArtifact(context.Context, string) (library.ArtifactRecord, error)
 }
 
 type managedPlayer interface {
@@ -50,6 +62,8 @@ type Service struct {
 	startPlayer   playerStarter
 	playerOptions player.Options
 	history       playbackHistory
+	downloads     lectureDownloads
+	library       artifactLibrary
 }
 
 // New creates the production application service.
@@ -88,6 +102,9 @@ func newService(cfg *config.Config, catalog catalogClient, streams playbackStrea
 		streams:     streams,
 		startPlayer: start,
 	}
+	if downloads, ok := streams.(lectureDownloads); ok {
+		service.downloads = downloads
+	}
 	if len(options) > 0 {
 		service.playerOptions = options[0]
 	}
@@ -104,5 +121,8 @@ func newServiceWithHistory(
 ) *Service {
 	service := newService(cfg, catalog, streams, start, options)
 	service.history = history
+	if artifacts, ok := history.(artifactLibrary); ok {
+		service.library = artifacts
+	}
 	return service
 }

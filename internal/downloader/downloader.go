@@ -288,6 +288,13 @@ func (d *Downloader) DownloadAndJoinPlaylist(ctx context.Context, playlist clien
 	return invocationDownloader.JoinLectureOutput(ctx, metadataFile)
 }
 
+// DownloadAndJoin downloads one playlist without owning a presentation-layer
+// progress renderer. Interactive frontends translate the returned lifecycle
+// result into their own UI events.
+func (d *Downloader) DownloadAndJoin(ctx context.Context, playlist client.ParsedPlaylist) (JoinResult, error) {
+	return d.DownloadAndJoinPlaylist(ctx, playlist, nil, nil)
+}
+
 // JoinLectureOutput joins the chunks described by the M3U8 file into final output.
 func (d *Downloader) JoinLectureOutput(ctx context.Context, file M3U8File) (JoinResult, error) {
 	if d.config.AudioOnly {

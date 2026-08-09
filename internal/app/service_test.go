@@ -3,10 +3,13 @@ package app
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/rabesss/impartus-cli/internal/artifact"
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/downloader"
@@ -46,6 +49,60 @@ func TestServiceExposesLibraryResumeSeam(t *testing.T) {
 	}
 }
 
+func TestResumeLectureUsesCanonicalArtifactIdentity(t *testing.T) {
+	identity := artifact.Identity{
+		InstituteID: 4,
+		SubjectID:   67,
+		SessionID:   8,
+		TTID:        12345,
+		Views:       "both",
+		Quality:     "720",
+	}
+	artifactID, err := artifact.NewID(identity)
+	if err != nil {
+		t.Fatalf("NewID() error = %v", err)
+	}
+	history := &fakePlaybackHistory{state: library.PlaybackState{ArtifactID: artifactID, PositionSeconds: 42}, found: true}
+	service := newServiceWithHistory(
+		&config.Config{Views: "both", Quality: "720"},
+		&fakeCatalog{},
+		&fakeStreams{},
+		nil,
+		player.Options{},
+		history,
+	)
+
+	state, found, err := service.ResumeLecture(context.Background(), client.Lecture{
+		InstituteID: 4,
+		SubjectID:   67,
+		SessionID:   8,
+		TTID:        12345,
+	})
+	if err != nil || !found || state.ArtifactID != artifactID {
+		t.Fatalf("ResumeLecture() = (%+v, %t, %v), want artifact %s", state, found, err, artifactID)
+	}
+}
+
+func TestResumeLectureReturnsArtifactIdentityBeforeFirstCheckpoint(t *testing.T) {
+	identity := artifact.Identity{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 12345, Views: "both", Quality: "720"}
+	artifactID, err := artifact.NewID(identity)
+	if err != nil {
+		t.Fatalf("NewID() error = %v", err)
+	}
+	service := &Service{
+		config:  &config.Config{Views: "both", Quality: "720"},
+		history: &fakePlaybackHistory{},
+		library: &fakeArtifactStore{recorded: []artifact.Manifest{{ArtifactID: artifactID}}},
+	}
+
+	state, found, err := service.ResumeLecture(context.Background(), client.Lecture{
+		InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 12345,
+	})
+	if err != nil || found || state.ArtifactID != artifactID || state.PositionSeconds != 0 {
+		t.Fatalf("ResumeLecture() = (%+v, %t, %v), want first checkpoint identity %s", state, found, err, artifactID)
+	}
+}
+
 type fakeCatalog struct {
 	courses  client.Courses
 	lectures client.Lectures
@@ -81,6 +138,7 @@ func (fake *fakeStreams) StartPlaybackStream(_ context.Context, playlist client.
 
 type fakeManagedPlayer struct {
 	loaded      []string
+	seeks       []float64
 	load        error
 	wait        error
 	waitStarted chan struct{}
@@ -246,13 +304,16 @@ func (fake *fakeManagedPlayer) Close(context.Context) error {
 	fake.closed++
 	return nil
 }
-func (fake *fakeManagedPlayer) Events() <-chan player.Event                 { return nil }
-func (fake *fakeManagedPlayer) Pause(context.Context, bool) error           { return nil }
-func (fake *fakeManagedPlayer) SeekRelative(context.Context, float64) error { return nil }
-func (fake *fakeManagedPlayer) SetVolume(context.Context, float64) error    { return nil }
-func (fake *fakeManagedPlayer) SetMute(context.Context, bool) error         { return nil }
-func (fake *fakeManagedPlayer) SetSpeed(context.Context, float64) error     { return nil }
-func (fake *fakeManagedPlayer) CycleVideo(context.Context) error            { return nil }
+func (fake *fakeManagedPlayer) Events() <-chan player.Event       { return nil }
+func (fake *fakeManagedPlayer) Pause(context.Context, bool) error { return nil }
+func (fake *fakeManagedPlayer) SeekRelative(_ context.Context, seconds float64) error {
+	fake.seeks = append(fake.seeks, seconds)
+	return nil
+}
+func (fake *fakeManagedPlayer) SetVolume(context.Context, float64) error { return nil }
+func (fake *fakeManagedPlayer) SetMute(context.Context, bool) error      { return nil }
+func (fake *fakeManagedPlayer) SetSpeed(context.Context, float64) error  { return nil }
+func (fake *fakeManagedPlayer) CycleVideo(context.Context) error         { return nil }
 
 func TestServiceCatalogDelegatesToClient(t *testing.T) {
 	catalog := &fakeCatalog{
@@ -267,6 +328,28 @@ func TestServiceCatalogDelegatesToClient(t *testing.T) {
 	lectures, err := service.Lectures(context.Background(), client.Course{SubjectID: 1, SessionID: 3})
 	if err != nil || len(lectures) != 1 || lectures[0].TTID != 2 {
 		t.Fatalf("Lectures() = %+v, %v", lectures, err)
+	}
+}
+
+func TestStartLectureResolvesOnePlaylistAndAppliesResume(t *testing.T) {
+	streams := &fakeStreams{playlists: []client.ParsedPlaylist{{ID: 91}}}
+	fakePlayer := &fakeManagedPlayer{}
+	service := newService(&config.Config{}, &fakeCatalog{}, streams, func(context.Context, player.Options) (managedPlayer, error) {
+		return fakePlayer, nil
+	})
+
+	playback, err := service.StartLecture(context.Background(), client.Lecture{TTID: 91}, 42.5)
+	if err != nil {
+		t.Fatalf("StartLecture() error = %v", err)
+	}
+	if len(streams.starts) != 1 || streams.starts[0] != 91 {
+		t.Fatalf("started playlists = %v, want [91]", streams.starts)
+	}
+	if !reflect.DeepEqual(fakePlayer.seeks, []float64{42.5}) {
+		t.Fatalf("resume seeks = %v, want [42.5]", fakePlayer.seeks)
+	}
+	if closeErr := playback.Close(context.Background()); closeErr != nil {
+		t.Fatalf("Close() error = %v", closeErr)
 	}
 }
 
@@ -335,5 +418,124 @@ func TestPlaybackWaitSurfacesProxyAuthorizationFailure(t *testing.T) {
 	}()
 	if err := playback.WaitForEnd(context.Background()); !errors.Is(err, downloader.ErrPlaybackAuthorization) {
 		t.Fatalf("WaitForEnd() error = %v, want ErrPlaybackAuthorization", err)
+	}
+}
+
+type fakeLectureDownloader struct {
+	playlists []client.ParsedPlaylist
+	joined    downloader.JoinResult
+	err       error
+	afterJoin func()
+}
+
+func (fake *fakeLectureDownloader) FetchLecturePlaylists(context.Context, []client.Lecture) ([]client.ParsedPlaylist, error) {
+	return fake.playlists, fake.err
+}
+
+func (fake *fakeLectureDownloader) DownloadAndJoin(context.Context, client.ParsedPlaylist) (downloader.JoinResult, error) {
+	if fake.afterJoin != nil {
+		fake.afterJoin()
+	}
+	return fake.joined, fake.err
+}
+
+type fakeArtifactStore struct {
+	recorded         []artifact.Manifest
+	record           error
+	recordContextErr error
+}
+
+func (store *fakeArtifactStore) RecordManifest(ctx context.Context, manifest artifact.Manifest) error {
+	store.recordContextErr = ctx.Err()
+	store.recorded = append(store.recorded, manifest)
+	return store.record
+}
+
+func TestDownloadLectureFinishesArtifactCommitAfterPublishedMedia(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "lecture.mp4")
+	if err := os.WriteFile(output, []byte("media"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	downloads := &fakeLectureDownloader{
+		playlists: []client.ParsedPlaylist{{ID: 12345}},
+		joined:    downloader.JoinResult{LeftOutput: output, LeftContainer: "mp4"},
+		afterJoin: cancel,
+	}
+	store := &fakeArtifactStore{}
+	service := &Service{
+		config:    &config.Config{DownloadLocation: t.TempDir(), Views: "left", Quality: "720"},
+		downloads: downloads,
+		library:   store,
+	}
+	result, err := service.DownloadLecture(ctx, client.Lecture{
+		InstituteID: 1, SubjectID: 2, SessionID: 3, TTID: 12345, Topic: "Published",
+	})
+	if err != nil {
+		t.Fatalf("DownloadLecture() error = %v", err)
+	}
+	if !result.LibraryRecorded || len(store.recorded) != 1 || store.recordContextErr != nil {
+		t.Fatalf("published download result=%+v recorded=%d recordContextErr=%v", result, len(store.recorded), store.recordContextErr)
+	}
+}
+
+func (store *fakeArtifactStore) ListArtifacts(context.Context) ([]library.ArtifactRecord, error) {
+	records := make([]library.ArtifactRecord, 0, len(store.recorded))
+	for _, manifest := range store.recorded {
+		records = append(records, library.ArtifactRecord{Manifest: manifest})
+	}
+	return records, nil
+}
+
+func (store *fakeArtifactStore) GetArtifact(_ context.Context, artifactID string) (library.ArtifactRecord, error) {
+	for _, manifest := range store.recorded {
+		if manifest.ArtifactID == artifactID {
+			return library.ArtifactRecord{Manifest: manifest}, nil
+		}
+	}
+	return library.ArtifactRecord{}, library.ErrArtifactNotFound
+}
+
+func TestDownloadLectureBuildsAndRecordsOneArtifact(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "lecture.mp4")
+	if err := os.WriteFile(output, []byte("media"), 0o600); err != nil {
+		t.Fatalf("write output: %v", err)
+	}
+	downloads := &fakeLectureDownloader{
+		playlists: []client.ParsedPlaylist{{ID: 12345, InstituteID: 4, SubjectID: 67, SessionID: 8}},
+		joined:    downloader.JoinResult{LeftOutput: output, LeftContainer: "mp4"},
+	}
+	store := &fakeArtifactStore{}
+	service := &Service{
+		config: &config.Config{
+			DownloadLocation: t.TempDir(),
+			Views:            "left",
+			Quality:          "720",
+		},
+		downloads: downloads,
+		library:   store,
+	}
+	lecture := client.Lecture{
+		InstituteID: 4,
+		SubjectID:   67,
+		SessionID:   8,
+		TTID:        12345,
+		Topic:       "Consensus",
+		SeqNo:       7,
+	}
+
+	result, err := service.DownloadLecture(context.Background(), lecture)
+	if err != nil {
+		t.Fatalf("DownloadLecture() error = %v", err)
+	}
+	if !result.LibraryRecorded || result.Warning != "" || len(store.recorded) != 1 {
+		t.Fatalf("download result = %+v, recorded=%d", result, len(store.recorded))
+	}
+	if result.Manifest.Lecture.TTID != 12345 || result.Manifest.Files[0].Path != output || result.Manifest.Files[0].View != "left" {
+		t.Fatalf("manifest = %+v", result.Manifest)
+	}
+	records, err := service.Artifacts(context.Background())
+	if err != nil || len(records) != 1 || records[0].Manifest.ArtifactID != result.Manifest.ArtifactID {
+		t.Fatalf("Artifacts() = %+v, %v", records, err)
 	}
 }

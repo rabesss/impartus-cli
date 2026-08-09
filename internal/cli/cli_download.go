@@ -12,8 +12,8 @@ import (
 
 	"github.com/vbauerster/mpb/v8"
 
+	"github.com/rabesss/impartus-cli/internal/app"
 	"github.com/rabesss/impartus-cli/internal/artifact"
-	"github.com/rabesss/impartus-cli/internal/buildinfo"
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/downloader"
@@ -485,59 +485,7 @@ func indexLecturesForArtifacts(lectures client.Lectures, cfg *config.Config) (ma
 }
 
 func buildDownloadArtifact(lecture client.Lecture, cfg *config.Config, result downloader.JoinResult, producedAt time.Time) (artifact.Manifest, error) {
-	role := "video"
-	if cfg.AudioOnly {
-		role = "audio"
-	}
-
-	fileSpecs := make([]artifact.FileSpec, 0, 3)
-	for _, output := range []struct {
-		path      string
-		view      string
-		container string
-	}{
-		{path: result.LeftOutput, view: "left", container: result.LeftContainer},
-		{path: result.RightOutput, view: "right", container: result.RightContainer},
-		{path: result.BothOutput, view: "both", container: result.BothContainer},
-	} {
-		if strings.TrimSpace(output.path) == "" {
-			continue
-		}
-		fileSpecs = append(fileSpecs, artifact.FileSpec{
-			Path:      output.path,
-			Role:      role,
-			View:      output.view,
-			Container: output.container,
-		})
-	}
-
-	return artifact.Build(artifact.BuildInput{
-		Lecture: artifact.Lecture{
-			TTID:            lecture.TTID,
-			InstituteID:     lecture.InstituteID,
-			SubjectID:       lecture.SubjectID,
-			SessionID:       lecture.SessionID,
-			SeqNo:           lecture.SeqNo,
-			Topic:           lecture.Topic,
-			StartTime:       lecture.StartTime,
-			DurationSeconds: lecture.ActualDuration,
-			Professor:       lecture.ProfessorName,
-			Institute:       lecture.Institute,
-			NoAudio:         lecture.NoAudio == 1,
-		},
-		Selection: artifact.Selection{
-			Views:       cfg.Views,
-			Quality:     cfg.Quality,
-			AudioOnly:   cfg.AudioOnly,
-			AudioFormat: cfg.AudioFormat,
-		},
-		Files:      fileSpecs,
-		ProducedAt: producedAt,
-		Producer: artifact.Producer{
-			Name:    "impartus",
-			Version: buildinfo.Version,
-		},
-	})
+	return app.BuildDownloadArtifact(lecture, cfg, result, producedAt)
 }
 
 func newDownloadProgress(cfg *config.Config, presentation downloadPresentationOptions, totalLectures, totalChunks int) (*mpb.Progress, *downloader.ProgressTracker, error) {

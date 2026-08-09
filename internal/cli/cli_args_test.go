@@ -2,10 +2,15 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 )
+
+type rejectingWriter struct{}
+
+func (rejectingWriter) Write([]byte) (int, error) { return 0, errors.New("write rejected") }
 
 func TestCoursesRejectsPositionalArguments(t *testing.T) {
 	_, err := getCourses([]string{"extra"})
@@ -72,5 +77,12 @@ func TestPlayRejectsPositionalArguments(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "does not accept positional arguments") {
 		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+func TestHelpRenderingPropagatesWriterFailure(t *testing.T) {
+	err := showHelpTo(rejectingWriter{}, "v1", "d1")
+	if err == nil || !strings.Contains(err.Error(), "write rejected") {
+		t.Fatalf("showHelpTo(rejecting writer) error = %v", err)
 	}
 }
