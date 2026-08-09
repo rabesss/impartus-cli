@@ -3,9 +3,11 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 var (
@@ -31,24 +33,24 @@ func (model Model) render() string {
 	if model.loading {
 		body.WriteString("Loading…")
 	} else if model.err != nil {
-		body.WriteString(errorStyle.Render(model.err.Error()))
+		body.WriteString(errorStyle.Render(terminalText(model.err.Error())))
 	} else if model.screen == screenResume {
-		appendf(&body, "Resume %s from %s?\n", model.lecture.Topic, formatClock(model.resume.PositionSeconds))
+		appendf(&body, "Resume %s from %s?\n", terminalText(model.lecture.Topic), formatClock(model.resume.PositionSeconds))
 		body.WriteString("y/enter resume • n restart • esc back")
 	} else if model.screen == screenPlayback {
 		if model.playbackFinishing {
-			appendf(&body, "Stopping playback for %s…\n", model.lecture.Topic)
+			appendf(&body, "Stopping playback for %s…\n", terminalText(model.lecture.Topic))
 			body.WriteString("Saving the latest playback checkpoint")
 		} else {
-			appendf(&body, "Playing %s in mpv\n", model.lecture.Topic)
+			appendf(&body, "Playing %s in mpv\n", terminalText(model.lecture.Topic))
 			appendf(&body, "%s / %s  •  volume %.0f%%  •  speed %.2fx\n", formatClock(model.position), formatClock(model.duration), model.volume, model.speed)
 			body.WriteString("space pause • ←/→ seek • m mute • v camera • esc stop")
 		}
 	} else if model.screen == screenDetails {
-		appendf(&body, "Topic: %s\n", model.lecture.Topic)
-		appendf(&body, "Professor: %s\n", model.lecture.ProfessorName)
-		appendf(&body, "Classroom: %s\n", model.lecture.ClassroomName)
-		appendf(&body, "Started: %s\n", model.lecture.StartTime)
+		appendf(&body, "Topic: %s\n", terminalText(model.lecture.Topic))
+		appendf(&body, "Professor: %s\n", terminalText(model.lecture.ProfessorName))
+		appendf(&body, "Classroom: %s\n", terminalText(model.lecture.ClassroomName))
+		appendf(&body, "Started: %s\n", terminalText(model.lecture.StartTime))
 		appendf(&body, "Duration: %s\n", formatDuration(model.lecture.ActualDuration))
 		body.WriteString("esc back")
 	} else {
@@ -60,7 +62,7 @@ func (model Model) render() string {
 	}
 	if model.status != "" && model.err == nil && model.screen != screenPlayback {
 		body.WriteByte('\n')
-		body.WriteString(dimStyle.Render(model.status))
+		body.WriteString(dimStyle.Render(terminalText(model.status)))
 	}
 	body.WriteByte('\n')
 	body.WriteString(dimStyle.Render(model.help.View(model.keys)))
@@ -72,7 +74,7 @@ func (model Model) heading() string {
 	case screenCourses:
 		return "Impartus › Courses"
 	case screenLectures:
-		return fmt.Sprintf("Impartus › %s", model.course.SubjectName)
+		return fmt.Sprintf("Impartus › %s", terminalText(model.course.SubjectName))
 	case screenLibrary:
 		return "Impartus › Library"
 	case screenResume:
@@ -89,6 +91,20 @@ func (model Model) heading() string {
 
 func appendf(body *strings.Builder, format string, values ...any) {
 	body.WriteString(string(fmt.Appendf(nil, format, values...)))
+}
+
+// terminalText strips escape sequences and flattens control characters before
+// backend-provided text reaches the terminal. Styling is applied only after
+// this boundary, so application-owned ANSI sequences remain intact.
+func terminalText(value string) string {
+	value = ansi.Strip(value)
+	value = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
+			return ' '
+		}
+		return r
+	}, value)
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func (model Model) renderItems(body *strings.Builder) {
@@ -125,18 +141,18 @@ func (model Model) renderItems(body *strings.Builder) {
 func (model Model) itemLabel(index int) string {
 	if model.screen == screenCourses {
 		course := model.visibleCourses()[index]
-		return fmt.Sprintf("%s  ·  %s  ·  %d lectures", course.SubjectName, course.ProfessorName, course.VideoCount)
+		return fmt.Sprintf("%s  ·  %s  ·  %d lectures", terminalText(course.SubjectName), terminalText(course.ProfessorName), course.VideoCount)
 	}
 	if model.screen == screenLibrary {
 		manifest := model.artifacts[index].Manifest
-		return fmt.Sprintf("%03d  %s  ·  %d file(s)", manifest.Lecture.SeqNo, manifest.Lecture.Topic, len(model.artifacts[index].Files))
+		return fmt.Sprintf("%03d  %s  ·  %d file(s)", manifest.Lecture.SeqNo, terminalText(manifest.Lecture.Topic), len(model.artifacts[index].Files))
 	}
 	if model.screen == screenDiagnostics {
 		diagnostic := model.diagnostics[index]
-		return fmt.Sprintf("[%s] %s — %s", strings.ToUpper(diagnostic.Status), diagnostic.Name, diagnostic.Detail)
+		return fmt.Sprintf("[%s] %s — %s", strings.ToUpper(terminalText(diagnostic.Status)), terminalText(diagnostic.Name), terminalText(diagnostic.Detail))
 	}
 	lecture := model.visibleLectures()[index]
-	return fmt.Sprintf("%03d  %s", lecture.SeqNo, lecture.Topic)
+	return fmt.Sprintf("%03d  %s", lecture.SeqNo, terminalText(lecture.Topic))
 }
 
 func clampLines(content string, width, height int) string {
