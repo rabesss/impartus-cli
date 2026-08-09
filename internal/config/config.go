@@ -27,22 +27,23 @@ type ProgressConfig struct {
 
 // Config holds all application configuration values.
 type Config struct {
-	Username         string  `json:"username"`
-	Password         string  `json:"password"`
-	BaseURL          string  `json:"baseUrl"`
-	Quality          string  `json:"quality"`
-	Views            string  `json:"views"`
-	DownloadLocation string  `json:"downloadLocation"`
-	Token            string  `json:"token"`
-	TempDirLocation  string  `json:"tempDirLocation"`
-	NumWorkers       int     `json:"numWorkers"`
-	Slides           bool    `json:"slides"`
-	AudioOnly        bool    `json:"audioOnly"`
-	AudioFormat      string  `json:"audioFormat"`
-	RateLimit        float64 `json:"rateLimit"`
-	APIRateLimit     float64 `json:"apiRateLimit"`
-	EnableJitter     bool    `json:"enableJitter"`
-	SkipNoAudio      bool    `json:"skipNoAudio"`
+	Username         string      `json:"username"`
+	Password         string      `json:"password"`
+	BaseURL          string      `json:"baseUrl"`
+	Quality          string      `json:"quality"`
+	Views            string      `json:"views"`
+	DownloadLocation string      `json:"downloadLocation"`
+	Token            string      `json:"token"`
+	TempDirLocation  string      `json:"tempDirLocation"`
+	NumWorkers       int         `json:"numWorkers"`
+	Slides           bool        `json:"slides"`
+	AudioOnly        bool        `json:"audioOnly"`
+	AudioFormat      string      `json:"audioFormat"`
+	RateLimit        float64     `json:"rateLimit"`
+	APIRateLimit     float64     `json:"apiRateLimit"`
+	EnableJitter     bool        `json:"enableJitter"`
+	SkipNoAudio      bool        `json:"skipNoAudio"`
+	Watch            WatchConfig `json:"watch,omitempty"`
 
 	EnablePipeline            bool           `json:"enablePipeline"`
 	DownloadWorkersPerLecture int            `json:"downloadWorkersPerLecture"`
@@ -62,6 +63,7 @@ func (c *Config) ApplyDefaults() {
 	c.applyRateLimitDefaults()
 	c.applyProgressDefaults()
 	c.applyListenDefaults()
+	c.applyWatchDefaults()
 	if c.Quality == "" {
 		c.Quality = "720"
 	}
@@ -163,7 +165,10 @@ func (c *Config) Validate() error {
 	if err := c.validatePipeline(); err != nil {
 		return err
 	}
-	return c.validateTimeout()
+	if err := c.validateTimeout(); err != nil {
+		return err
+	}
+	return c.validateWatch()
 }
 
 func (c *Config) validateCore() error {
@@ -359,6 +364,9 @@ func applyEnvOverrides(cfg *Config) error {
 		if err := apply(); err != nil {
 			return err
 		}
+	}
+	if err := applyWatchEnvOverrides(cfg); err != nil {
+		return err
 	}
 
 	applyCanonicalFields(cfg)

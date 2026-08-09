@@ -25,6 +25,8 @@ var (
 	runPlayFn               = runPlay
 	runDoctorFn             = runDoctor
 	runLibraryFn            = runLibrary
+	runWatchFn              = runWatch
+	runWatchJSONFn          = runWatchJSON
 	loadResolvedFn          = config.LoadResolved
 	newLoggedInFn           = client.NewLoggedIn
 )
@@ -74,6 +76,8 @@ func executeHuman(args []string, version, date string) error {
 		return runDoctorFn(args[1:])
 	case "library":
 		return runLibraryFn(args[1:])
+	case "watch":
+		return runWatchFn(args[1:])
 	case "tui":
 		return executeHumanTUI(args)
 	case "classic":
@@ -132,6 +136,8 @@ func executeJSON(args []string, version, date string) error {
 		return executeJSONDoctor(args[1:])
 	case "library":
 		return executeJSONLibrary(args[1:])
+	case "watch":
+		return executeJSONWatch(args[1:])
 	case "tui", "classic":
 		return newJSONError(command, fmt.Errorf("%s command is not supported in JSON mode", command))
 	case "serve":
@@ -174,6 +180,14 @@ func executeJSONDownload(args []string) error {
 		return newJSONError("download", err)
 	}
 	return emitJSONEnvelope(newSuccessEnvelopeWithWarnings("download", result, result.Warnings))
+}
+
+func executeJSONWatch(args []string) error {
+	result, err := runWatchJSONFn(args)
+	if err != nil {
+		return newJSONErrorWithData("watch", result, err)
+	}
+	return emitJSONEnvelope(newSuccessEnvelope("watch", result))
 }
 
 func executeJSONServe(args []string) error {

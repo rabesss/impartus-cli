@@ -7,8 +7,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"sort"
+	"strconv"
+	"strings"
+	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/vbauerster/mpb/v8"
 
 	"github.com/rabesss/impartus-cli/internal/app"
@@ -16,6 +22,7 @@ import (
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/downloader"
+	"github.com/rabesss/impartus-cli/internal/events"
 	"github.com/rabesss/impartus-cli/internal/library"
 	"github.com/rabesss/impartus-cli/internal/paths"
 	"github.com/rabesss/impartus-cli/internal/secrets"
@@ -33,6 +40,7 @@ type downloadFlags struct {
 	output         string
 	skipNoAudio    bool
 	includeNoAudio bool
+	events         bool
 }
 
 type downloadResult struct {
@@ -75,6 +83,8 @@ type downloadExecutionDependencies struct {
 	recordArtifacts  func(context.Context, []artifact.Manifest) error
 }
 
+var errDownloadEventDelivery = errors.New("download event delivery failed")
+
 type lectureDownloadRunner interface {
 	FetchLecturePlaylists(context.Context, []client.Lecture) ([]client.ParsedPlaylist, error)
 	DownloadAndJoinPlaylist(context.Context, client.ParsedPlaylist, *mpb.Progress, *downloader.ProgressTracker) (downloader.JoinResult, error)
@@ -90,7 +100,23 @@ func defaultDownloadExecutionDependencies() downloadExecutionDependencies {
 }
 
 func runDownload(args []string) error {
+	if requestedEvents(args) {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		err := runDownloadEventsWithDependenciesContext(ctx, args, os.Stdout, defaultDownloadExecutionDependencies(), time.Now, "")
+		return downloadCommandError(err)
+	}
 	_, err := executeDownload(args, humanDownloadPresentation())
+	return err
+}
+
+func downloadCommandError(err error) error {
+	if errors.Is(err, errDownloadEventDelivery) {
+		return err
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return &exitCodeError{code: 130, err: err}
+	}
 	return err
 }
 
@@ -99,6 +125,9 @@ func runDownloadJSON(args []string) (downloadResult, error) {
 }
 
 func runDownloadJSONWithDependencies(args []string, deps downloadExecutionDependencies) (downloadResult, error) {
+	if requestedEvents(args) {
+		return downloadResult{}, errors.New("cannot combine --json and --events")
+	}
 	return executeDownloadWithDependencies(args, quietDownloadPresentation(), deps)
 }
 
@@ -120,6 +149,7 @@ func parseDownloadFlags(args []string) (downloadFlags, error) {
 	fs.StringVar(&f.output, "o", "", "Output directory override")
 	fs.BoolVar(&f.skipNoAudio, "skip-no-audio", false, "Skip lectures with no audio track")
 	fs.BoolVar(&f.includeNoAudio, "include-noaudio", false, "Include lectures with no audio track (overrides --skip-no-audio)")
+	fs.BoolVar(&f.events, "events", false, "Emit newline-delimited JSON lifecycle events")
 
 	if err := fs.Parse(args); err != nil {
 		return downloadFlags{}, err
@@ -133,11 +163,164 @@ func parseDownloadFlags(args []string) (downloadFlags, error) {
 	return f, nil
 }
 
+type downloadEventStream struct {
+	writer  *events.Writer
+	jobID   string
+	now     func() time.Time
+	started bool
+}
+
+func newDownloadEventStream(output io.Writer, jobID string, now func() time.Time) *downloadEventStream {
+	if strings.TrimSpace(jobID) == "" {
+		jobID = "job-" + uuid.NewString()
+	}
+	if now == nil {
+		now = time.Now
+	}
+	return &downloadEventStream{writer: events.NewWriter(output), jobID: jobID, now: now}
+}
+
+func (stream *downloadEventStream) start() error {
+	if stream.started {
+		return nil
+	}
+	stream.started = true
+	return stream.writer.Emit(events.Event{
+		Type: events.JobStarted, JobID: stream.jobID, Command: "download",
+		Status: "running", Timestamp: stream.now().UTC(),
+	})
+}
+
+func (stream *downloadEventStream) finish(result downloadResult, cause error) error {
+	if cause != nil {
+		return stream.fail(cause)
+	}
+	if !result.LibraryRecorded {
+		cause = errors.New("download completed but the local library commit did not complete")
+		return stream.fail(cause)
+	}
+	for index := range result.Artifacts {
+		manifest := result.Artifacts[index]
+		if err := stream.writer.Emit(events.Event{
+			Type: events.ArtifactCommitted, JobID: stream.jobID, Command: "download",
+			Status: "completed", Timestamp: stream.now().UTC(), Artifact: &manifest,
+			Outputs: manifestOutputPaths(manifest),
+		}); err != nil {
+			return stream.fail(err)
+		}
+	}
+	if err := stream.writer.Emit(events.Event{
+		Type: events.JobCompleted, JobID: stream.jobID, Command: "download",
+		Status: "completed", Timestamp: stream.now().UTC(), Outputs: artifactOutputPaths(result.Artifacts),
+		Details: map[string]any{
+			"lectureCount": result.LectureCount, "libraryRecorded": result.LibraryRecorded,
+			"filteredCount": result.FilteredCount, "totalLectures": result.TotalLectures,
+		},
+	}); err != nil {
+		return stream.fail(err)
+	}
+	return nil
+}
+
+func (stream *downloadEventStream) fail(cause error) error {
+	event := events.Failure(stream.jobID, "download", cause, stream.now())
+	if errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
+		event = events.Cancellation(stream.jobID, "download", cause, stream.now())
+	}
+	emitErr := stream.writer.Emit(event)
+	if emitErr != nil {
+		return errors.Join(events.RedactedError(cause), errDownloadEventDelivery, events.RedactedError(emitErr))
+	}
+	return events.RedactedError(cause)
+}
+
+func runDownloadEventsWithDependenciesContext(ctx context.Context, args []string, output io.Writer, deps downloadExecutionDependencies, now func() time.Time, jobID string) error {
+	stream := newDownloadEventStream(output, jobID, now)
+	if err := stream.start(); err != nil {
+		return stream.fail(err)
+	}
+	result, err := executeDownloadWithDependenciesContext(ctx, args, quietDownloadPresentation(), deps)
+	return stream.finish(result, err)
+}
+
+func emitDownloadResultEvents(output io.Writer, jobID string, result downloadResult, cause error, now func() time.Time) error {
+	stream := newDownloadEventStream(output, jobID, now)
+	if err := stream.start(); err != nil {
+		return stream.fail(err)
+	}
+	return stream.finish(result, cause)
+}
+
+func requestedEvents(args []string) bool {
+	enabled := false
+	valueFlags := map[string]bool{
+		"--subject": true, "-subject": true, "-s": true,
+		"--session": true, "-session": true, "-S": true,
+		"--start": true, "-start": true, "--end": true, "-end": true,
+		"--quality": true, "-quality": true, "--views": true, "-views": true,
+		"--format": true, "-format": true, "--output": true, "-output": true, "-o": true,
+		"--interval": true, "-interval": true,
+	}
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		if argument == "--" {
+			break
+		}
+		if valueFlags[argument] {
+			index++
+			continue
+		}
+		if argument == "--events" || argument == "-events" {
+			enabled = true
+			continue
+		}
+		prefix := "--events="
+		if strings.HasPrefix(argument, "-events=") && !strings.HasPrefix(argument, prefix) {
+			prefix = "-events="
+		}
+		if !strings.HasPrefix(argument, prefix) {
+			continue
+		}
+		value, err := strconv.ParseBool(strings.TrimPrefix(argument, prefix))
+		if err == nil {
+			enabled = value
+		}
+	}
+	return enabled
+}
+
+func manifestOutputPaths(manifest artifact.Manifest) []string {
+	paths := make([]string, 0, len(manifest.Files))
+	for _, file := range manifest.Files {
+		paths = append(paths, file.Path)
+	}
+	return paths
+}
+
+func artifactOutputPaths(manifests []artifact.Manifest) []string {
+	count := 0
+	for _, manifest := range manifests {
+		count += len(manifest.Files)
+	}
+	output := make([]string, 0, count)
+	for _, manifest := range manifests {
+		output = append(output, manifestOutputPaths(manifest)...)
+	}
+	return output
+}
+
 func executeDownload(args []string, presentation downloadPresentationOptions) (downloadResult, error) {
 	return executeDownloadWithDependencies(args, presentation, defaultDownloadExecutionDependencies())
 }
 
 func executeDownloadWithDependencies(args []string, presentation downloadPresentationOptions, deps downloadExecutionDependencies) (downloadResult, error) {
+	return executeDownloadWithDependenciesContext(context.Background(), args, presentation, deps)
+}
+
+func executeDownloadWithDependenciesContext(ctx context.Context, args []string, presentation downloadPresentationOptions, deps downloadExecutionDependencies) (downloadResult, error) {
+	if ctx == nil {
+		return downloadResult{}, errors.New("download context is required")
+	}
 	f, err := parseDownloadFlags(args)
 	if err != nil {
 		return downloadResult{}, err
@@ -147,7 +330,6 @@ func executeDownloadWithDependencies(args []string, presentation downloadPresent
 		return downloadResult{}, ffmpegErr
 	}
 
-	ctx := context.Background()
 	cfg, apiClient, err := deps.initClient(ctx)
 	if err != nil {
 		return downloadResult{}, err
@@ -183,7 +365,11 @@ func executeDownloadWithDependencies(args []string, presentation downloadPresent
 	if err != nil {
 		return downloadResult{}, err
 	}
-	result = applyLibraryRecording(ctx, result, presentation, deps.recordArtifacts)
+	// Once media has been published, finish the durable library commit even if
+	// a signal races with this short post-download transition. The event stream
+	// must not report completed media as an unrecorded hard failure merely
+	// because its request context was canceled after the producer returned.
+	result = applyLibraryRecording(context.WithoutCancel(ctx), result, presentation, deps.recordArtifacts)
 	result.FilteredCount = filteredCount
 	result.TotalLectures = totalLectures
 	return result, nil

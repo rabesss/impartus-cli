@@ -116,6 +116,7 @@ func showHelpTo(output io.Writer, version, date string) error {
 		"  play [flags]                         Play lectures in mpv",
 		"  doctor                               Check local dependencies and private paths",
 		"  library list|show|verify             Inspect and verify the local lecture library",
+		"  watch [--once] [--dry-run]           Poll and durably download new lectures",
 		"  serve [--port <port>]                Start HTTP API server",
 		"  version                              Show version",
 		"  help                                 Show help",
@@ -135,6 +136,7 @@ func showHelpTo(output io.Writer, version, date string) error {
 		"  --format            Audio format override (download only)", "  --output,-o         Output directory (download only)",
 		"  --skip-no-audio     Skip lectures with no audio track", "  --include-noaudio   Include noaudio lectures (overrides --skip-no-audio)",
 		"  --mpv-mode          Playback mode: ipc by default, legacy on Windows (play only)",
+		"  --events            NDJSON lifecycle stream (download/watch; exclusive with --json)",
 	} {
 		if _, err := fmt.Fprintln(output, line); err != nil {
 			return err

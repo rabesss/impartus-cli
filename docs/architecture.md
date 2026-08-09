@@ -8,6 +8,7 @@
   * [CLI deterministic JSON mode flow](#cli-deterministic-json-mode-flow)
   * [CLI play command flow](#cli-play-command-flow)
   * [Local library and recovery flow](#local-library-and-recovery-flow)
+  * [Generic watcher flow](#generic-watcher-flow)
   * [API authenticated job lifecycle flow](#api-authenticated-job-lifecycle-flow)
   * [Internal package/module boundaries](#internal-packagemodule-boundaries)
 
@@ -65,7 +66,7 @@ sequenceDiagram
     C->>J: executeJSON(args)
     alt courses / lectures
       J-->>A: success envelope with fetched data
-    else download
+    else download / watch
       J-->>A: run command silently + success envelope
     else serve
       J-->>A: non-blocking ready metadata (no server start)
@@ -86,7 +87,8 @@ multiple files for each lecture. `artifacts` contains one stable version-1
 manifest per completed lecture; the older fields retain their meaning.
 `libraryRecorded` is additive. A post-download SQLite failure leaves the media
 and manifest successful, sets it to `false`, and adds one structured
-`meta.warnings` entry.
+`meta.warnings` entry. Watch JSON mode runs exactly one polling cycle and reports
+the cycle result through the same single-envelope boundary.
 Failed `doctor` envelopes retain the complete check report in `data` so JSON
 automation receives the same diagnostic detail as human mode.
 
@@ -158,11 +160,43 @@ fails before journal mode or tables are changed.
 state; `playback` holds coalesced resume checkpoints; and `jobs` holds expected
 outputs and lifecycle state. Default verification checks type and size; only
 `--hash` fills or rechecks SHA-256. Verification updates rows but never deletes
-media or history. One-shot CLI downloads record completed manifests best-effort;
-job creation and recovery are an explicit seam for the later watcher
-integration. Recovery requires the watcher single-instance lock and runs before
-workers, not yet part of that one-shot path. The HTTP API server's existing
-`.jobs.json` store remains a separate compatibility surface.
+media or history. One-shot CLI downloads record completed manifests best-effort
+without creating local job rows. The generic watcher creates and starts a local
+`watch` job before media publication, then commits its manifest and completed job
+atomically only after every expected final file validates. Startup recovery runs
+while the watcher owns its OS advisory lock and before login or other network
+work. The HTTP API server's existing `.jobs.json` store remains a separate
+compatibility surface.
+
+## Generic watcher flow
+
+```mermaid
+flowchart TD
+  A[impartus watch] --> B[Load and validate generic targets]
+  B --> C[Acquire state-directory OS advisory lock]
+  C --> D[Open private library and recover interrupted jobs]
+  D --> E[Login and list target lectures]
+  E --> F{Committed artifact validates?}
+  F -- yes --> G[Emit lecture.skipped]
+  F -- no --> H{Within global cycle budget?}
+  H -- no --> I[Emit cycle_budget skip]
+  H -- yes --> J[Create or reuse durable watch job]
+  J --> K[Download and atomically publish final media]
+  K --> L[Atomic manifest plus completed-job transaction]
+  L --> M[Emit artifact.committed]
+  G --> N[Emit cycle.completed]
+  I --> N
+  M --> N
+  N --> O{One shot, JSON, or dry run?}
+  O -- yes --> P[Emit exactly one terminal event and exit]
+  O -- no --> Q[Wait poll interval and repeat]
+```
+
+The watcher is deliberately provider-neutral. It owns Impartus discovery and
+the durable local artifact boundary, but has no NotebookLM credentials, upload
+logic, source identifiers, or deletion policy. `download --events` and
+`watch --events` expose the same synchronous version-1 NDJSON lifecycle
+contract for independent local consumers.
 
 ## API authenticated job lifecycle flow
 
@@ -220,6 +254,8 @@ flowchart LR
     APP[internal/app]
     PLR[internal/player]
     LIB[internal/library]
+    EVT[internal/events]
+    WATCH[internal/watch]
     SRV[internal/server]
   end
 
@@ -237,12 +273,20 @@ flowchart LR
   CLI --> APP
   CLI --> TUI
   CLI --> LIB
+  CLI --> EVT
+  CLI --> WATCH
   CLI --> SRV
   APP --> CLT
   APP --> DL
   APP --> PLR
   APP --> LIB
   TUI --> APP
+  WATCH --> CFG
+  WATCH --> CLT
+  WATCH --> DL
+  WATCH --> ART
+  WATCH --> EVT
+  WATCH --> LIB
   SRV --> CFG
   SRV --> CLT
   SRV --> DL

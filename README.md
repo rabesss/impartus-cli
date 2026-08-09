@@ -160,6 +160,7 @@ protection manually with `chmod 600 config.json`.
 | `listenAddr` | string | No | `"127.0.0.1"` | API server bind address (loopback only unless `allowRemoteAccess` is set) |
 | `allowRemoteAccess` | bool | No | `false` | Permit a non-loopback `listenAddr` (e.g. `0.0.0.0`); required to expose the API on the network |
 | `progressTracking` | object | No | see below | Progress bar tracking configuration |
+| `watch` | object | No | disabled | Generic durable lecture auto-download configuration |
 
 #### Progress Tracking Options
 
@@ -170,6 +171,44 @@ protection manually with `chmod 600 config.json`.
 | `showETA` | bool | `false` | Include estimated time remaining in the aggregate progress status |
 | `updateInterval` | string | `"2s"` | Speed-sampling interval (500ms-10s) |
 | `speedWindowSize` | int | `10` | Number of samples used for the speed moving average (3-30) |
+
+#### Watch Options
+
+The watcher owns Impartus polling and completed local artifacts only. Configure
+one or more course targets; downstream tools consume the committed manifest or
+the NDJSON event stream independently.
+
+```json
+{
+  "watch": {
+    "enabled": true,
+    "pollInterval": "10m",
+    "maxLecturesPerCycle": 3,
+    "maxRetries": 3,
+    "quality": "144",
+    "views": "left",
+    "audioFormat": "mp3",
+    "targets": [
+      {"subjectId": 123, "sessionId": 456, "label": "Algorithms"}
+    ]
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Validate and enable configured watch targets |
+| `pollInterval` | string | `"5m"` | Delay between cycles, from 5 minutes to 24 hours |
+| `maxLecturesPerCycle` | int | `3` | Global new-lecture budget across all targets |
+| `maxRetries` | int | `3` | Playlist/download attempts with bounded backoff |
+| `targets` | array | none | Unique `subjectId`/`sessionId` pairs with optional display labels |
+| `quality` | string | `"144"` | Watch download quality |
+| `views` | string | `"left"` | Watch view selection: `left`, `right`, or `both` |
+| `audioFormat` | string | `"mp3"` | Watch audio output: `mp3`, `m4a`, `aac`, or `opus` |
+
+Watch downloads are always audio-only and skip lectures marked as having no
+audio. There are no remote-provider credentials or routing fields in this
+configuration.
 
 #### Environment Variables
 
@@ -197,6 +236,13 @@ Only the settings listed below have environment-variable overrides. Settings abs
 | `IMPARTUS_NUM_WORKERS` | `numWorkers` | Integer from 1-50 |
 | `IMPARTUS_RATE_LIMIT` | `rateLimit` | Number from 0.1-100 |
 | `IMPARTUS_API_RATE_LIMIT` | `apiRateLimit` | Number from 0.1-20 |
+| `IMPARTUS_WATCH_ENABLED` | `watch.enabled` | Boolean |
+| `IMPARTUS_WATCH_POLL_INTERVAL` | `watch.pollInterval` | Duration from 5m to 24h |
+| `IMPARTUS_WATCH_MAX_LECTURES_PER_CYCLE` | `watch.maxLecturesPerCycle` | Positive integer |
+| `IMPARTUS_WATCH_MAX_RETRIES` | `watch.maxRetries` | Positive integer |
+| `IMPARTUS_WATCH_QUALITY` | `watch.quality` | `144`, `450`, or `720` |
+| `IMPARTUS_WATCH_VIEWS` | `watch.views` | `left`, `right`, or `both` |
+| `IMPARTUS_WATCH_AUDIO_FORMAT` | `watch.audioFormat` | `mp3`, `m4a`, `aac`, or `opus` |
 
 #### Validation Rules
 
@@ -303,6 +349,7 @@ the selection alone.
 | `impartus courses` | List available courses |
 | `impartus lectures -s ID -S ID` | List lectures for subject/session |
 | `impartus download [flags]` | Download lectures |
+| `impartus watch [flags]` | Poll configured targets and durably download new lectures |
 | `impartus play [flags]` | Play lectures in mpv |
 | `impartus doctor` | Check mpv, FFmpeg, credential permissions, and private writable state/runtime paths |
 | `impartus library list` | List logical artifacts and materialized file counts |
@@ -331,6 +378,7 @@ the selection alone.
 | `--format` | | Audio format: `mp3`, `m4a`, `aac`, `opus` | Download Only |
 | `--output` | `-o` | Output directory | Download Only |
 | `--json` | | JSON output (non-blocking) | Download Only |
+| `--events` | | NDJSON lifecycle stream; mutually exclusive with `--json` | Download Only |
 
 **Examples:**
 
@@ -364,9 +412,38 @@ the selection alone.
 ./impartus library show 'impartus:v1:...'
 ./impartus library verify --hash
 
+# Preview new lectures once without creating media or jobs
+./impartus watch --once --dry-run -s 123 -S 456
+
+# Run one durable cycle and stream machine-readable lifecycle events
+./impartus watch --once --events -s 123 -S 456
+
 # Temporary compatibility path; IPC failures never select this automatically
 ./impartus play -s 123 -S 456 --lecture 3 --mpv-mode legacy
 ```
+
+### Durable Watch
+
+`impartus watch` reads `watch.targets`, or accepts one target through
+`--subject/-s` and `--session/-S`. JSON mode, dry-run, and `--once` each run one
+cycle. Without them, the command sleeps for `watch.pollInterval` and continues
+until signaled.
+
+| Flag | Description |
+|------|-------------|
+| `--subject,-s` and `--session,-S` | Replace configured targets with one course |
+| `--interval` | Override the polling interval |
+| `--output,-o` | Override the download directory |
+| `--once` | Run one cycle and exit |
+| `--dry-run` | Discover and report without media or job mutations |
+| `--events` | Emit synchronous NDJSON lifecycle records to stdout |
+| `--force` | Explicitly redownload a present committed artifact |
+
+The per-cycle budget is global across targets. A failed target is recorded but
+does not prevent later targets from running; a one-shot cycle with any failure
+exits non-zero and emits one aggregate `job.failed` terminal record. See
+[`docs/cli-events.md`](docs/cli-events.md) for the stream contract.
+Signal cancellation emits `job.canceled` in events mode and exits 130.
 
 The default `ipc` mode starts mpv idle with user configuration and scripts
 disabled, creates an owner-private Unix socket, and sends the tokenized local
@@ -414,9 +491,19 @@ artifact without another Impartus fetch; incomplete `.part` files are never
 considered complete. Startup recovery must run while the watcher holds its
 single-instance lock and before workers start; the recovery method is never an
 implicit database-open side effect. Current one-shot CLI downloads best-effort
-record their completed manifests but do not yet create lifecycle job rows; the
-watcher will use that job seam in a later stacked change. These local jobs are
-separate from the existing HTTP API server's `.jobs.json` compatibility store.
+record their completed manifests but do not create lifecycle job rows. The
+generic watcher creates a UUIDv4 `watch` job before final-output work, marks it
+running, and calls the atomic artifact-plus-job completion transaction only
+after every expected final file validates. It reuses recoverable jobs after an
+interrupted process and skips a present committed artifact on later cycles
+unless `--force` is explicit. These local jobs are separate from the existing
+HTTP API server's `.jobs.json` compatibility store.
+
+Only one watcher can own the state directory at a time. `watch.lock` is an OS
+advisory lock rather than a database flag; closing the process or SIGKILL
+releases ownership in the kernel, so the small lock file may safely remain.
+Startup acquires that lock and recovers interrupted jobs before login or other
+network work.
 
 ### API Server
 
@@ -676,6 +763,8 @@ impartus/
 │   ├── tui/                 # Bubble Tea view state, keys, layout, and app-event translation
 │   ├── player/              # Supervised mpv process and bounded JSON IPC
 │   ├── library/             # Pure-Go SQLite artifacts, playback, and local jobs
+│   ├── events/              # Shared synchronous CLI NDJSON lifecycle contract
+│   ├── watch/               # Generic polling, advisory lock, and durable downloads
 │   └── server/              # HTTP API, auth middleware, jobs, WebSocket
 ├── docs/                    # Documentation
 └── config.json              # User configuration
@@ -691,6 +780,8 @@ impartus/
 - **`internal/tui`** - Bubble Tea v2 terminal state only; it performs no HTTP, subprocess, or SQL work directly
 - **`internal/player`** - Private mpv runtime, process-group supervision, bounded JSON IPC, events, and typed controls
 - **`internal/library`** - Private SQLite migrations, artifact paths, verification, resume history, and recoverable local jobs
+- **`internal/events`** - Single-terminal NDJSON lifecycle events for automation
+- **`internal/watch`** - Provider-neutral polling and durable artifact completion
 - **`internal/server`** - HTTP API server with bearer-token auth, background jobs, and WebSocket broadcasting
 
 For detailed flow diagrams, see [`docs/architecture.md`](docs/architecture.md).
