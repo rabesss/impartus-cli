@@ -21,6 +21,7 @@ var (
 	runDownloadJSONFn = runDownloadJSON
 	runServeFn        = runServe
 	runPlayFn         = runPlay
+	runDoctorFn       = runDoctor
 	loadResolvedFn    = config.LoadResolved
 	newLoggedInFn     = client.NewLoggedIn
 )
@@ -59,6 +60,8 @@ func Execute(version, date string) error {
 		return runServeFn(args[1:], version)
 	case "play":
 		return runPlayFn(args[1:])
+	case "doctor":
+		return runDoctorFn(args[1:])
 	default:
 		showHelp(version, date)
 		return fmt.Errorf("unknown command: %s", args[0])
@@ -99,6 +102,8 @@ func executeJSON(args []string, version, date string) error {
 		return emitJSONEnvelope(newSuccessEnvelope("download", result))
 	case "play":
 		return newJSONError("play", fmt.Errorf("play command is not supported in JSON mode"))
+	case "doctor":
+		return executeJSONDoctor(args[1:])
 	case "serve":
 		port, err := parseServePort(args[1:])
 		if err != nil {
@@ -115,6 +120,17 @@ func executeJSON(args []string, version, date string) error {
 	default:
 		return newJSONError(command, fmt.Errorf("unknown command: %s", command))
 	}
+}
+
+func executeJSONDoctor(args []string) error {
+	report, err := getDoctorReport(args)
+	if err != nil {
+		return newJSONError("doctor", err)
+	}
+	if !report.OK {
+		return newJSONErrorWithData("doctor", report, errors.New("doctor found one or more blocking problems"))
+	}
+	return emitJSONEnvelope(newSuccessEnvelope("doctor", report))
 }
 
 func runCourses(args []string) error {

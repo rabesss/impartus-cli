@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 )
 
@@ -191,6 +194,11 @@ func TestValidatePlayFlagsRejectsPartialDirectSelection(t *testing.T) {
 			in:   playFlags{lecture: -1},
 			want: "selection values must be positive",
 		},
+		{
+			name: "invalid mpv mode",
+			in:   playFlags{mpvMode: "automatic"},
+			want: "mpv mode",
+		},
 	}
 
 	for _, tt := range tests {
@@ -219,11 +227,13 @@ func TestParsePlayFlags(t *testing.T) {
 		wantViews     string
 		wantSkipNA    bool
 		wantIncludeNA bool
+		wantMPVMode   string
 	}{
 		{
-			name:    "empty args gives all defaults",
-			args:    []string{},
-			wantErr: false,
+			name:        "empty args gives all defaults",
+			args:        []string{},
+			wantErr:     false,
+			wantMPVMode: "ipc",
 		},
 		{
 			name:        "-s 1 -S 2 sets subject and session",
@@ -258,6 +268,12 @@ func TestParsePlayFlags(t *testing.T) {
 			name:          "--include-noaudio sets flag",
 			args:          []string{"--include-noaudio"},
 			wantIncludeNA: true,
+			wantMPVMode:   "ipc",
+		},
+		{
+			name:        "--mpv-mode legacy is explicit",
+			args:        []string{"--mpv-mode", "legacy"},
+			wantMPVMode: "legacy",
 		},
 		{
 			name:    "unknown flag returns error",
@@ -302,6 +318,72 @@ func TestParsePlayFlags(t *testing.T) {
 			if f.includeNoAudio != tt.wantIncludeNA {
 				t.Errorf("includeNoAudio = %v, want %v", f.includeNoAudio, tt.wantIncludeNA)
 			}
+			wantMPVMode := tt.wantMPVMode
+			if wantMPVMode == "" {
+				wantMPVMode = "ipc"
+			}
+			if f.mpvMode != wantMPVMode {
+				t.Errorf("mpvMode = %q, want %q", f.mpvMode, wantMPVMode)
+			}
 		})
+	}
+}
+
+type fakeSequentialPlayer struct {
+	lectures client.Lectures
+	started  []int
+	err      error
+}
+
+func (fake *fakeSequentialPlayer) PlaySequential(_ context.Context, lectures client.Lectures, onStart func(client.ParsedPlaylist)) error {
+	if fake.err != nil {
+		return fake.err
+	}
+	fake.lectures = lectures
+	for _, playlist := range []client.ParsedPlaylist{{ID: 1, SeqNo: 1, Title: "One"}, {ID: 2, SeqNo: 2, Title: "Two"}} {
+		fake.started = append(fake.started, playlist.ID)
+		onStart(playlist)
+	}
+	return nil
+}
+
+func TestRoutePlayLecturesNeverFallsBackFromIPC(t *testing.T) {
+	sentinel := errors.New("IPC startup failed")
+	legacyCalls := 0
+	legacy := func(context.Context, *config.Config, *client.Client, client.Lectures) error {
+		legacyCalls++
+		return nil
+	}
+	err := routePlayLectures(context.Background(), &config.Config{}, nil, client.Lectures{{TTID: 1}}, "ipc", &fakeSequentialPlayer{err: sentinel}, legacy)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("routePlayLectures() error = %v, want IPC sentinel", err)
+	}
+	if legacyCalls != 0 {
+		t.Fatalf("IPC failure invoked legacy route %d time(s)", legacyCalls)
+	}
+}
+
+func TestRoutePlayLecturesUsesLegacyOnlyWhenExplicit(t *testing.T) {
+	legacyCalls := 0
+	legacy := func(context.Context, *config.Config, *client.Client, client.Lectures) error {
+		legacyCalls++
+		return nil
+	}
+	if err := routePlayLectures(context.Background(), &config.Config{}, nil, client.Lectures{{TTID: 1}}, "legacy", &fakeSequentialPlayer{err: errors.New("must not run")}, legacy); err != nil {
+		t.Fatalf("routePlayLectures() error = %v", err)
+	}
+	if legacyCalls != 1 {
+		t.Fatalf("explicit legacy route calls = %d, want 1", legacyCalls)
+	}
+}
+
+func TestPlayLecturesWithServiceUsesSupervisedApplicationPath(t *testing.T) {
+	fake := &fakeSequentialPlayer{}
+	err := playLecturesWithService(context.Background(), &config.Config{Views: "both"}, client.Lectures{{TTID: 1}, {TTID: 2}}, fake)
+	if err != nil {
+		t.Fatalf("playLecturesWithService() error = %v", err)
+	}
+	if len(fake.lectures) != 2 || len(fake.started) != 2 {
+		t.Fatalf("service calls = lectures:%v starts:%v", fake.lectures, fake.started)
 	}
 }

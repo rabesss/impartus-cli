@@ -98,6 +98,16 @@ func newJSONError(command string, err error) error {
 	return jsonEnvelopeError{payload: string(payload)}
 }
 
+func newJSONErrorWithData(command string, data any, err error) error {
+	envelope := newErrorEnvelope(command, err)
+	envelope.Data = data
+	payload, marshalErr := json.Marshal(envelope)
+	if marshalErr != nil {
+		return err
+	}
+	return jsonEnvelopeError{payload: string(payload)}
+}
+
 func helpPayload() capabilityPayload {
 	return capabilityPayload{
 		Name:        "impartus",
@@ -112,6 +122,7 @@ func helpPayload() capabilityPayload {
 			{Name: "download", Usage: "impartus download --subject <id> --session <id> [--start <n>] [--end <n>]"},
 			{Name: "serve", Usage: "impartus serve [--port <port>]"},
 			{Name: "play", Usage: "impartus play --subject <id> --session <id> [--lecture <n>] (not available in JSON mode)"},
+			{Name: "doctor", Usage: "impartus doctor"},
 		},
 	}
 }

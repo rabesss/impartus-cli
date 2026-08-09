@@ -100,6 +100,7 @@ func showHelp(version, date string) {
 	fmt.Println("  lectures -s <subject> -S <session>   List lectures (JSON)")
 	fmt.Println("  download [flags]                     Download lectures")
 	fmt.Println("  play [flags]                         Play lectures in mpv")
+	fmt.Println("  doctor                               Check local dependencies and private paths")
 	fmt.Println("  serve [--port <port>]                Start HTTP API server")
 	fmt.Println("  version                              Show version")
 	fmt.Println("  help                                 Show help")
@@ -116,6 +117,7 @@ func showHelp(version, date string) {
 	fmt.Println("  --output,-o         Output directory (download only)")
 	fmt.Println("  --skip-no-audio     Skip lectures with no audio track")
 	fmt.Println("  --include-noaudio   Include noaudio lectures (overrides --skip-no-audio)")
+	fmt.Println("  --mpv-mode          Playback mode: ipc (default) or legacy (play only)")
 	fmt.Println("\nNo command starts interactive download mode (or interactive play mode if 'play' is used without flags).")
 }
 

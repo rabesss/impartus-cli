@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/rabesss/impartus-cli/internal/client"
@@ -246,7 +247,7 @@ func TestHandleSegmentErrorPaths(t *testing.T) {
 	}
 	key := []byte("0123456789abcdef") // 16-byte AES key
 
-	handler := d.handleSegment(playlist, key)
+	handler := d.handleSegment(playlist, newPlaybackKey(key), "token")
 
 	tests := []struct {
 		name       string
@@ -264,6 +265,18 @@ func TestHandleSegmentErrorPaths(t *testing.T) {
 			name:       "too many path parts",
 			path:       "/token/segment/left/0/extra",
 			wantStatus: http.StatusBadRequest,
+			wantBody:   "invalid segment path",
+		},
+		{
+			name:       "wrong session token",
+			path:       "/wrong-token/segment/left/0",
+			wantStatus: http.StatusNotFound,
+			wantBody:   "invalid segment path",
+		},
+		{
+			name:       "wrong route name",
+			path:       "/token/not-segment/left/0",
+			wantStatus: http.StatusNotFound,
 			wantBody:   "invalid segment path",
 		},
 		{
@@ -314,6 +327,176 @@ func TestHandleSegmentErrorPaths(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPlayServerRejectsUnexpectedHost(t *testing.T) {
+	key := []byte("0123456789abcdef")
+	upstream := newPlayTestUpstream(t, key, http.StatusOK)
+	defer upstream.Close()
+
+	d := New(&config.Config{Views: "left"}, client.New(nil, nil))
+	playURL, cleanup, err := d.StartPlayServer(context.Background(), client.ParsedPlaylist{
+		KeyURL:        upstream.URL + "/key",
+		FirstViewURLs: []string{upstream.URL + "/segment"},
+	})
+	if err != nil {
+		t.Fatalf("StartPlayServer failed: %v", err)
+	}
+	defer cleanup()
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, playURL, nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Host = "evil.example"
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request play server: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusMisdirectedRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusMisdirectedRequest)
+	}
+}
+
+func TestPlayServerSurfacesUpstreamAuthorizationFailure(t *testing.T) {
+	key := []byte("0123456789abcdef")
+	upstream := newPlayTestUpstream(t, key, http.StatusUnauthorized)
+	defer upstream.Close()
+
+	d := New(&config.Config{Views: "left"}, client.New(nil, nil))
+	playURL, cleanup, err := d.StartPlayServer(context.Background(), client.ParsedPlaylist{
+		KeyURL:        upstream.URL + "/key",
+		FirstViewURLs: []string{upstream.URL + "/segment"},
+	})
+	if err != nil {
+		t.Fatalf("StartPlayServer failed: %v", err)
+	}
+	defer cleanup()
+
+	segmentURL := strings.TrimSuffix(playURL, "master.m3u8") + "segment/left/0"
+	resp, err := http.Get(segmentURL) //nolint:noctx // test-only local request
+	if err != nil {
+		t.Fatalf("request segment: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadGateway)
+	}
+	if !strings.Contains(string(body), "upstream authorization failed") {
+		t.Fatalf("body = %q, want actionable authorization failure", body)
+	}
+}
+
+func TestPlayServerCleanupIsIdempotent(t *testing.T) {
+	key := []byte("0123456789abcdef")
+	upstream := newPlayTestUpstream(t, key, http.StatusOK)
+	defer upstream.Close()
+
+	d := New(&config.Config{Views: "left"}, client.New(nil, nil))
+	playURL, cleanup, err := d.StartPlayServer(context.Background(), client.ParsedPlaylist{
+		KeyURL:        upstream.URL + "/key",
+		FirstViewURLs: []string{upstream.URL + "/segment"},
+	})
+	if err != nil {
+		t.Fatalf("StartPlayServer failed: %v", err)
+	}
+
+	var wait sync.WaitGroup
+	for range 2 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			cleanup()
+		}()
+	}
+	wait.Wait()
+	resp, err := http.Get(playURL) //nolint:noctx // test-only local request
+	if err == nil {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			t.Fatalf("close unexpected response body: %v", closeErr)
+		}
+		t.Fatal("expected cleaned-up play server to refuse connections")
+	}
+}
+
+func TestHandleSegmentRefusesKeyAfterConcurrentShutdown(t *testing.T) {
+	upstreamStarted := make(chan struct{})
+	releaseUpstream := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(upstreamStarted)
+		<-releaseUpstream
+		_, _ = w.Write(make([]byte, aes.BlockSize)) //nolint:errcheck
+	}))
+	defer upstream.Close()
+
+	d := New(&config.Config{Views: "left"}, client.New(nil, nil))
+	key := []byte("0123456789abcdef")
+	keyStore := newPlaybackKey(key)
+	handler := d.handleSegment(client.ParsedPlaylist{FirstViewURLs: []string{upstream.URL}}, keyStore, "token")
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://localhost/token/segment/left/0", nil)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		handler.ServeHTTP(recorder, request)
+	}()
+	<-upstreamStarted
+	keyStore.close()
+	close(releaseUpstream)
+	<-done
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+	}
+	if !strings.Contains(recorder.Body.String(), "playback is shutting down") {
+		t.Fatalf("body = %q, want shutdown error", recorder.Body.String())
+	}
+	for index, value := range key {
+		if value != 0 {
+			t.Fatalf("master key byte %d was not zeroed", index)
+		}
+	}
+}
+
+func TestPlayServerStartupErrorRedactsKeyURLToken(t *testing.T) {
+	const secret = "do-not-leak"
+	d := New(&config.Config{Views: "left"}, client.New(nil, nil))
+	_, cleanup, err := d.StartPlayServer(context.Background(), client.ParsedPlaylist{
+		KeyURL:        "http://127.0.0.1:1/key?token=" + secret,
+		FirstViewURLs: []string{"https://example.invalid/segment"},
+	})
+	if err == nil {
+		t.Fatal("expected startup failure")
+	}
+	if cleanup != nil {
+		t.Fatal("cleanup should be nil when startup fails")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("startup error leaked URL token: %v", err)
+	}
+}
+
+func newPlayTestUpstream(t *testing.T, key []byte, segmentStatus int) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/key":
+			reversed := make([]byte, len(key))
+			for i := range key {
+				reversed[i] = key[len(key)-1-i]
+			}
+			_, _ = w.Write(append([]byte{0, 0}, reversed...)) //nolint:errcheck
+		case "/segment":
+			w.WriteHeader(segmentStatus)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
 }
 
 func TestHandleMasterViewConfigurations(t *testing.T) {
