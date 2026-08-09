@@ -20,6 +20,7 @@
 !*.go
 !go.sum
 !go.mod
+!internal/library/migrations/*.sql
 
 !/CHANGELOG.md
 !/Dockerfile

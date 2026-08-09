@@ -22,6 +22,7 @@ var (
 	runServeFn        = runServe
 	runPlayFn         = runPlay
 	runDoctorFn       = runDoctor
+	runLibraryFn      = runLibrary
 	loadResolvedFn    = config.LoadResolved
 	newLoggedInFn     = client.NewLoggedIn
 )
@@ -62,6 +63,8 @@ func Execute(version, date string) error {
 		return runPlayFn(args[1:])
 	case "doctor":
 		return runDoctorFn(args[1:])
+	case "library":
+		return runLibraryFn(args[1:])
 	default:
 		showHelp(version, date)
 		return fmt.Errorf("unknown command: %s", args[0])
@@ -99,11 +102,13 @@ func executeJSON(args []string, version, date string) error {
 		if err != nil {
 			return newJSONError("download", err)
 		}
-		return emitJSONEnvelope(newSuccessEnvelope("download", result))
+		return emitJSONEnvelope(newSuccessEnvelopeWithWarnings("download", result, result.Warnings))
 	case "play":
 		return newJSONError("play", fmt.Errorf("play command is not supported in JSON mode"))
 	case "doctor":
 		return executeJSONDoctor(args[1:])
+	case "library":
+		return executeJSONLibrary(args[1:])
 	case "serve":
 		port, err := parseServePort(args[1:])
 		if err != nil {

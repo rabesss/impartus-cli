@@ -245,7 +245,7 @@ for arg in "$@"; do
   previous="$arg"
   last="$arg"
 done
-printf '%%s' "$input" > "${last}.input"
+printf '%%s' "$input" > "${last%%.part}.input"
 printf '%%s' %q > "$last"
 `, outputContent)
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {

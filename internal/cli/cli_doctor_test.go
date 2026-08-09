@@ -29,11 +29,12 @@ func TestCollectDoctorReportChecksDependenciesAndPaths(t *testing.T) {
 		checkRuntime: func() error {
 			return nil
 		},
+		checkLibrary: func() error { return nil },
 	})
 	if !report.OK {
 		t.Fatalf("report should be healthy: %+v", report)
 	}
-	for _, name := range []string{"mpv", "ffmpeg", "config", "token", "state", "runtime"} {
+	for _, name := range []string{"mpv", "ffmpeg", "config", "token", "state", "runtime", "library"} {
 		check := doctorCheckNamed(t, report, name)
 		if check.Status != doctorStatusPass {
 			t.Fatalf("check %q status = %q, want pass: %+v", name, check.Status, check)
@@ -72,11 +73,12 @@ func TestCollectDoctorReportFailsUnsafeConfigAndMissingDependency(t *testing.T) 
 		checkRuntime: func() error {
 			return errors.New("unsafe runtime")
 		},
+		checkLibrary: func() error { return errors.New("database corrupt") },
 	})
 	if report.OK {
 		t.Fatalf("report should fail: %+v", report)
 	}
-	for _, name := range []string{"mpv", "config", "token", "runtime"} {
+	for _, name := range []string{"mpv", "config", "token", "runtime", "library"} {
 		check := doctorCheckNamed(t, report, name)
 		if check.Status != doctorStatusFail {
 			t.Fatalf("check %q status = %q, want fail: %+v", name, check.Status, check)
@@ -157,6 +159,7 @@ func TestCollectDoctorReportAllowsMissingConfig(t *testing.T) {
 		tokenPath:    filepath.Join(root, "missing.token"),
 		stateDir:     filepath.Join(root, "state"),
 		checkRuntime: func() error { return nil },
+		checkLibrary: func() error { return nil },
 	})
 	if !report.OK {
 		t.Fatalf("environment-only configuration should remain valid: %+v", report)
@@ -197,6 +200,7 @@ func TestCollectDoctorReportAllowsSymlinkedStateAncestor(t *testing.T) {
 		tokenPath:    filepath.Join(t.TempDir(), "missing.token"),
 		stateDir:     filepath.Join(linkedParent, "impartus"),
 		checkRuntime: func() error { return nil },
+		checkLibrary: func() error { return nil },
 	})
 	if got := doctorCheckNamed(t, report, "state").Status; got != doctorStatusPass {
 		t.Fatalf("state status = %q, want pass through safe ancestor symlink: %+v", got, report)
@@ -225,7 +229,7 @@ func TestExecuteJSONDoctorFailureIncludesChecks(t *testing.T) {
 	if decodeErr := json.Unmarshal([]byte(err.Error()), &envelope); decodeErr != nil {
 		t.Fatalf("decode doctor error envelope: %v", decodeErr)
 	}
-	if envelope.Success || envelope.Error == nil || envelope.Data.OK || len(envelope.Data.Checks) != 6 {
+	if envelope.Success || envelope.Error == nil || envelope.Data.OK || len(envelope.Data.Checks) != 7 {
 		t.Fatalf("failed doctor envelope lost diagnostics: %+v", envelope)
 	}
 }

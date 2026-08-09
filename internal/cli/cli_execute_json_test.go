@@ -232,6 +232,37 @@ func TestExecuteJSONDownloadUsesStructuredResult(t *testing.T) {
 	}
 }
 
+func TestExecuteJSONDownloadIncludesLibraryWarningInMeta(t *testing.T) {
+	restoreCLIState(t)
+	runDownloadJSONFn = func([]string) (downloadResult, error) {
+		return downloadResult{
+			Status:          "completed",
+			LectureCount:    1,
+			LibraryRecorded: false,
+			Warnings:        []string{"local library unavailable"},
+		}, nil
+	}
+	os.Args = []string{"impartus", "download", "--json"}
+	output, err := captureStdout(t, func() error { return Execute("dev", "") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Status          string `json:"status"`
+			LibraryRecorded bool   `json:"libraryRecorded"`
+		} `json:"data"`
+		Meta jsonMeta `json:"meta"`
+	}
+	if err := json.Unmarshal([]byte(output), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if !envelope.Success || envelope.Data.Status != "completed" || envelope.Data.LibraryRecorded || len(envelope.Meta.Warnings) != 1 {
+		t.Fatalf("download warning envelope = %+v", envelope)
+	}
+}
+
 func TestExecuteJSONPlayRejects(t *testing.T) {
 	restoreCLIState(t)
 	os.Args = []string{"impartus", "play", "--json"}

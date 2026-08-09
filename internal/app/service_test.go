@@ -10,8 +10,41 @@ import (
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/downloader"
+	"github.com/rabesss/impartus-cli/internal/library"
 	"github.com/rabesss/impartus-cli/internal/player"
 )
+
+type fakePlaybackHistory struct {
+	state library.PlaybackState
+	found bool
+	err   error
+}
+
+func (fake *fakePlaybackHistory) Playback(context.Context, string) (library.PlaybackState, bool, error) {
+	return fake.state, fake.found, fake.err
+}
+
+func (fake *fakePlaybackHistory) RecordPlayback(_ context.Context, state library.PlaybackState) error {
+	fake.state = state
+	fake.found = true
+	return fake.err
+}
+
+func TestServiceExposesLibraryResumeSeam(t *testing.T) {
+	history := &fakePlaybackHistory{state: library.PlaybackState{ArtifactID: "artifact", PositionSeconds: 42}, found: true}
+	service := newServiceWithHistory(&config.Config{}, &fakeCatalog{}, &fakeStreams{}, nil, player.Options{}, history)
+	state, found, err := service.Resume(context.Background(), "artifact")
+	if err != nil || !found || state.PositionSeconds != 42 {
+		t.Fatalf("Resume() = (%+v, %t, %v)", state, found, err)
+	}
+	want := library.PlaybackState{ArtifactID: "artifact", PositionSeconds: 75}
+	if err := service.RecordPlayback(context.Background(), want); err != nil {
+		t.Fatalf("RecordPlayback() error = %v", err)
+	}
+	if history.state.PositionSeconds != 75 {
+		t.Fatalf("history state = %+v", history.state)
+	}
+}
 
 type fakeCatalog struct {
 	courses  client.Courses

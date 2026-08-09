@@ -17,7 +17,9 @@ import (
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/downloader"
+	"github.com/rabesss/impartus-cli/internal/library"
 	"github.com/rabesss/impartus-cli/internal/paths"
+	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
 type downloadFlags struct {
@@ -35,12 +37,14 @@ type downloadFlags struct {
 }
 
 type downloadResult struct {
-	Status        string              `json:"status"`
-	OutputPaths   []string            `json:"outputPaths"`
-	LectureCount  int                 `json:"lectureCount"`
-	FilteredCount int                 `json:"filteredCount,omitempty"`
-	TotalLectures int                 `json:"totalLectures,omitempty"`
-	Artifacts     []artifact.Manifest `json:"artifacts"`
+	Status          string              `json:"status"`
+	OutputPaths     []string            `json:"outputPaths"`
+	LectureCount    int                 `json:"lectureCount"`
+	FilteredCount   int                 `json:"filteredCount,omitempty"`
+	TotalLectures   int                 `json:"totalLectures,omitempty"`
+	Artifacts       []artifact.Manifest `json:"artifacts"`
+	LibraryRecorded bool                `json:"libraryRecorded"`
+	Warnings        []string            `json:"-"`
 }
 
 // downloadPresentationOptions keeps user-facing output policy at the CLI
@@ -69,6 +73,7 @@ type downloadExecutionDependencies struct {
 	ensureFFmpeg     func() error
 	initClient       func(context.Context) (*config.Config, *client.Client, error)
 	downloadLectures func(context.Context, *config.Config, *client.Client, client.Lectures, downloadPresentationOptions) (downloadResult, error)
+	recordArtifacts  func(context.Context, []artifact.Manifest) error
 }
 
 type lectureDownloadRunner interface {
@@ -81,6 +86,7 @@ func defaultDownloadExecutionDependencies() downloadExecutionDependencies {
 		ensureFFmpeg:     ensureFFmpeg,
 		initClient:       initClient,
 		downloadLectures: downloadLectures,
+		recordArtifacts:  recordDownloadedArtifacts,
 	}
 }
 
@@ -178,9 +184,48 @@ func executeDownloadWithDependencies(args []string, presentation downloadPresent
 	if err != nil {
 		return downloadResult{}, err
 	}
+	result = applyLibraryRecording(ctx, result, presentation, deps.recordArtifacts)
 	result.FilteredCount = filteredCount
 	result.TotalLectures = totalLectures
 	return result, nil
+}
+
+func recordDownloadedArtifacts(ctx context.Context, manifests []artifact.Manifest) error {
+	store, err := library.Open(ctx, library.Options{})
+	if err != nil {
+		return err
+	}
+	recordErr := store.RecordManifests(ctx, manifests)
+	return errors.Join(recordErr, store.Close())
+}
+
+func applyLibraryRecording(
+	ctx context.Context,
+	result downloadResult,
+	presentation downloadPresentationOptions,
+	record func(context.Context, []artifact.Manifest) error,
+) downloadResult {
+	if record == nil {
+		result.LibraryRecorded = true
+		return result
+	}
+	if err := record(ctx, result.Artifacts); err != nil {
+		result.LibraryRecorded = false
+		warning := "download completed but the local library was not updated: " + secrets.ScrubError(err)
+		result.Warnings = append(result.Warnings, warning)
+		if presentation.warningOutput != nil {
+			writeDownloadLibraryWarning(presentation.warningOutput, warning)
+		}
+		return result
+	}
+	result.LibraryRecorded = true
+	return result
+}
+
+func writeDownloadLibraryWarning(output io.Writer, warning string) {
+	if _, err := fmt.Fprintf(output, "[WARNING] %s\n", warning); err != nil {
+		return
+	}
 }
 
 // applyAndValidateFlags applies CLI flag overrides to the config and validates them.
