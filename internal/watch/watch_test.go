@@ -857,14 +857,22 @@ func TestWatcherAppliesOneGlobalBudgetAcrossTargets(t *testing.T) {
 	first := config.WatchTarget{SubjectID: 10, SessionID: 11, Label: "first"}
 	second := config.WatchTarget{SubjectID: 20, SessionID: 21, Label: "second"}
 	cfg.Watch.Targets = []config.WatchTarget{first, second}
+	firstLecture := watchLecture(first, 91, 1, "First")
+	secondLecture := watchLecture(second, 92, 1, "Second")
 	source := &fakeSource{
 		lectures: map[[2]int]client.Lectures{
-			{first.SubjectID, first.SessionID}:   {watchLecture(first, 91, 1, "First")},
-			{second.SubjectID, second.SessionID}: {watchLecture(second, 92, 1, "Second")},
+			{first.SubjectID, first.SessionID}:   {firstLecture},
+			{second.SubjectID, second.SessionID}: {secondLecture},
 		},
 		errors: map[[2]int]error{},
 	}
-	producer := &fakeProducer{cfg: cfg, fetchErrors: map[int]error{}, downloadErrors: map[int]error{}}
+	producer := &fakeProducer{
+		cfg: cfg,
+		fetchErrors: map[int]error{
+			secondLecture.TTID: errors.New("over-budget playlist must not be fetched"),
+		},
+		downloadErrors: map[int]error{},
+	}
 	var output bytes.Buffer
 
 	cycle, err := New(cfg, source, producer, store, Options{

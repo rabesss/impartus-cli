@@ -39,6 +39,21 @@ func TestParseWatchFlagsKeepsGenericSurface(t *testing.T) {
 	}
 }
 
+func TestParseWatchFlagsRejectsNonpositiveExplicitTargets(t *testing.T) {
+	t.Parallel()
+
+	for _, arguments := range [][]string{
+		{"--subject=-1", "--session=-2"},
+		{"--subject=0", "--session=2"},
+		{"--subject=1", "--session=0"},
+		{"-s=-1", "-S=2"},
+	} {
+		if _, err := parseWatchFlags(arguments); err == nil || !strings.Contains(err.Error(), "positive") {
+			t.Fatalf("parseWatchFlags(%v) error = %v, want positive-ID error", arguments, err)
+		}
+	}
+}
+
 func TestRootDispatchRoutesWatchInHumanAndJSONModes(t *testing.T) {
 	restoreCLIState(t)
 	humanArgs := []string(nil)

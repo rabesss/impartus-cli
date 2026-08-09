@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -41,10 +40,6 @@ var (
 		LectureSkipped: true, LectureFailed: true, ArtifactCommitted: true,
 		CycleCompleted: true, JobCompleted: true, JobFailed: true, JobCanceled: true,
 	}
-	authorizationValue = regexp.MustCompile(`(?i)(\bauthorization\s*:\s*)[^,;\r\n]+`)
-	bareSecretValue    = regexp.MustCompile(
-		`(?i)(\b(?:[a-z0-9_-]*(?:token|password|secret)|api[_-]?key)\s*[:=]\s*)[^\s,;]+`,
-	)
 )
 
 // Target identifies the course associated with an event.
@@ -227,7 +222,5 @@ func (err redactedError) Error() string { return RedactError(err.cause) }
 func (err redactedError) Unwrap() error { return err.cause }
 
 func scrubFailure(cause error) string {
-	message := secrets.ScrubError(cause)
-	message = authorizationValue.ReplaceAllString(message, "${1}REDACTED")
-	return bareSecretValue.ReplaceAllString(message, "${1}REDACTED")
+	return secrets.ScrubError(cause)
 }

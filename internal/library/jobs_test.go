@@ -440,6 +440,36 @@ func TestJobFailureAndCancellationAreDurableTerminalStates(t *testing.T) {
 	}
 }
 
+func TestJobFailureRedactsHeadersAndBareAssignments(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	expected := library.ExpectedArtifact{
+		Lecture:    artifact.Lecture{TTID: 61, InstituteID: 1, SubjectID: 2, SessionID: 3},
+		Selection:  artifact.Selection{Views: "left", Quality: "720"},
+		Files:      []library.ExpectedFile{{Path: filepath.Join(t.TempDir(), "expected.mp4"), Role: "video", View: "left", Container: "mp4"}},
+		ProducedAt: time.Date(2026, time.August, 9, 10, 0, 0, 0, time.UTC),
+		Producer:   artifact.Producer{Name: "impartus", Version: "test"},
+	}
+	jobID := uuid.NewString()
+	if err := store.CreateJob(context.Background(), library.JobSpec{ID: jobID, Kind: "watch", Expected: expected}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StartJob(context.Background(), jobID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FailJob(context.Background(), jobID, errors.New("Authorization: Token auth-secret upload_token=body-secret")); err != nil {
+		t.Fatal(err)
+	}
+	job, err := store.Job(context.Background(), jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(job.ErrorSummary, "auth-secret") || strings.Contains(job.ErrorSummary, "body-secret") || !strings.Contains(job.ErrorSummary, "REDACTED") {
+		t.Fatalf("durable failure summary was not fully redacted: %q", job.ErrorSummary)
+	}
+}
+
 func TestCreateJobRejectsInvalidExpectedOutputBeforeWork(t *testing.T) {
 	store := openTestStore(t)
 	expected := library.ExpectedArtifact{

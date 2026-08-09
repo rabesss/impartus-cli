@@ -113,7 +113,22 @@ func parseWatchFlags(args []string) (watchFlags, error) {
 	if set.NArg() > 0 {
 		return watchFlags{}, errors.New("watch does not accept positional arguments")
 	}
-	if (values.subject > 0) != (values.session > 0) {
+	var subjectSet, sessionSet bool
+	set.Visit(func(option *flag.Flag) {
+		switch option.Name {
+		case "subject", "s":
+			subjectSet = true
+		case "session", "S":
+			sessionSet = true
+		}
+	})
+	if subjectSet && values.subject <= 0 {
+		return watchFlags{}, errors.New("--subject/-s must be a positive integer")
+	}
+	if sessionSet && values.session <= 0 {
+		return watchFlags{}, errors.New("--session/-S must be a positive integer")
+	}
+	if subjectSet != sessionSet {
 		return watchFlags{}, errors.New("--subject/-s and --session/-S must be provided together")
 	}
 	return values, nil

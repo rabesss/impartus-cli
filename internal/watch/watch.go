@@ -378,6 +378,12 @@ func (watcher *Watcher) inspectAndProcess(ctx context.Context, target config.Wat
 			return lectureOutcome{}, skipErr
 		}
 	}
+	outcome := lectureOutcome{New: 1}
+	if !watcher.options.DryRun && !withinBudget {
+		outcome.Skipped = 1
+		emitErr := watcher.emitLecture(events.LectureSkipped, target, lecture, localArtifactID, map[string]any{"reason": "cycle_budget"})
+		return outcome, emitErr
+	}
 	lecture, playlist, expected, artifactID, resolveErr := watcher.resolveLecture(ctx, target, lecture)
 	if resolveErr != nil {
 		return lectureOutcome{}, watcher.lectureFailure(target, lecture, "", resolveErr)
@@ -391,14 +397,8 @@ func (watcher *Watcher) inspectAndProcess(ctx context.Context, target config.Wat
 			return lectureOutcome{}, skipErr
 		}
 	}
-	outcome := lectureOutcome{New: 1}
 	if watcher.options.DryRun {
 		return outcome, nil
-	}
-	if !withinBudget {
-		outcome.Skipped = 1
-		emitErr := watcher.emitLecture(events.LectureSkipped, target, lecture, artifactID, map[string]any{"reason": "cycle_budget"})
-		return outcome, emitErr
 	}
 	outcome.Attempted = true
 	manifest, downloadErr := watcher.downloadLecture(ctx, target, lecture, playlist, expected, artifactID)
