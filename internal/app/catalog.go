@@ -20,5 +20,12 @@ func (service *Service) Lectures(ctx context.Context, course client.Course) (cli
 	if service == nil || service.config == nil || service.catalog == nil {
 		return nil, errors.New("application catalog service is not configured")
 	}
-	return service.catalog.GetLectures(ctx, service.config, course)
+	lectures, err := service.catalog.GetLectures(ctx, service.config, course)
+	if err != nil {
+		return nil, err
+	}
+	if service.config.SkipNoAudio {
+		lectures = lectures.FilterNoAudio()
+	}
+	return lectures, nil
 }

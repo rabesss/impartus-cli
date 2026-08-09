@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,12 +13,17 @@ import (
 )
 
 type cleanupPlayback struct {
-	events chan player.Event
-	closed atomic.Int32
+	events  chan player.Event
+	closed  atomic.Int32
+	release chan struct{}
+	once    atomic.Bool
 }
 
 func (playback *cleanupPlayback) Events() <-chan player.Event { return playback.events }
 func (playback *cleanupPlayback) WaitForEnd(context.Context) error {
+	if playback.release != nil {
+		<-playback.release
+	}
 	return nil
 }
 func (playback *cleanupPlayback) Pause(context.Context, bool) error { return nil }
@@ -30,6 +36,9 @@ func (playback *cleanupPlayback) SetSpeed(context.Context, float64) error  { ret
 func (playback *cleanupPlayback) CycleVideo(context.Context) error         { return nil }
 func (playback *cleanupPlayback) Close(context.Context) error {
 	playback.closed.Add(1)
+	if playback.release != nil && playback.once.CompareAndSwap(false, true) {
+		close(playback.release)
+	}
 	return nil
 }
 
@@ -69,6 +78,51 @@ func TestRuntimeShutdownClosesPlaybackOwnedByTheTUI(t *testing.T) {
 
 	if err := model.shutdown(); err != nil {
 		t.Fatalf("shutdown() error = %v", err)
+	}
+	if got := playback.closed.Load(); got != 1 {
+		t.Fatalf("playback close count = %d, want 1", got)
+	}
+}
+
+func TestRuntimeShutdownClosesPlaybackBeforeWaitingForFinishDrain(t *testing.T) {
+	model := New(context.Background(), nil)
+	playback := &cleanupPlayback{events: make(chan player.Event), release: make(chan struct{})}
+	if _, err := model.playbacks.adopt(playback); err != nil {
+		t.Fatalf("adopt playback: %v", err)
+	}
+	started := make(chan struct{})
+	command := model.operations.command(func() tea.Msg {
+		close(started)
+		return playbackFinishedMsg{err: playback.WaitForEnd(context.Background())}
+	})
+	go command()
+	<-started
+	done := make(chan error, 1)
+	go func() { done <- model.shutdown() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("shutdown() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		if playback.once.CompareAndSwap(false, true) {
+			close(playback.release)
+		}
+		t.Fatal("shutdown waited for playback drain before closing its owner")
+	}
+}
+
+func TestRunAndShutdownRecoversPanicAndClosesOwnedPlayback(t *testing.T) {
+	model := New(context.Background(), nil)
+	playback := &cleanupPlayback{events: make(chan player.Event)}
+	if _, err := model.playbacks.adopt(playback); err != nil {
+		t.Fatalf("adopt playback: %v", err)
+	}
+	err := runAndShutdown(model, func() error {
+		panic("render panic fixture")
+	})
+	if err == nil || !strings.Contains(err.Error(), "terminal UI panicked") {
+		t.Fatalf("runAndShutdown() error = %v", err)
 	}
 	if got := playback.closed.Load(); got != 1 {
 		t.Fatalf("playback close count = %d, want 1", got)

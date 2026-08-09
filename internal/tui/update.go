@@ -112,6 +112,8 @@ func (model Model) updatePlaybackStarted(message playbackStartedMsg) (tea.Model,
 	model.resume = message.resume
 	model.playback = message.playback
 	model.playbackLease = message.lease
+	model.playbackControls = nil
+	model.playbackControlBusy = false
 	model.position = message.resume.PositionSeconds
 	model.duration = message.resume.DurationSeconds
 	model.status = "Playback started in mpv"
@@ -134,13 +136,15 @@ func (model Model) updatePlaybackEvent(message playbackEventMsg) (tea.Model, tea
 		return model, nil
 	}
 	if message.canceled {
-		return model.beginPlaybackFinish(false)
+		return model.beginPlaybackFinish(false, false)
 	}
 	if !message.open {
-		return model.beginPlaybackFinish(true)
+		return model.beginPlaybackFinish(false, false)
 	}
-	if model.applyPlaybackEvent(message.event) {
-		return model.beginPlaybackFinish(true)
+	var terminal, completed bool
+	model, terminal, completed = model.applyPlaybackEvent(message.event)
+	if terminal {
+		return model.beginPlaybackFinish(completed, true)
 	}
 	return model, model.waitPlaybackEvent()
 }
@@ -155,6 +159,8 @@ func (model Model) updatePlaybackFinished(message playbackFinishedMsg) (tea.Mode
 	model.playbackCtx = nil
 	model.playbackCancel = nil
 	model.playbackFinishing = false
+	model.playbackControls = nil
+	model.playbackControlBusy = false
 	model.screen = screenLectures
 	model.err = message.err
 	if message.err == nil {
@@ -198,23 +204,30 @@ func (model Model) updatePlaybackControl(message playbackControlMsg) (tea.Model,
 	if message.generation != model.playbackGeneration || model.playback == nil || model.playbackFinishing {
 		return model, nil
 	}
-	model.err = message.err
-	if message.err != nil {
+	if len(model.playbackControls) == 0 || model.playbackControls[0].action != message.action {
 		return model, nil
 	}
-	switch message.action {
-	case "pause":
-		model.paused = message.flag
-	case "mute":
-		model.muted = message.flag
-	case "seek":
-		model.position = max(0, model.position+message.value)
-	case "volume":
-		model.volume = message.value
-	case "speed":
-		model.speed = message.value
-	case "camera":
+	model.playbackControls = model.playbackControls[1:]
+	model.err = message.err
+	if message.err == nil {
+		switch message.action {
+		case "pause":
+			model.paused = message.flag
+		case "mute":
+			model.muted = message.flag
+		case "seek":
+			model.position = max(0, model.position+message.value)
+		case "volume":
+			model.volume = message.value
+		case "speed":
+			model.speed = message.value
+		case "camera":
+		}
 	}
+	if len(model.playbackControls) > 0 {
+		return model, model.runNextPlaybackControl()
+	}
+	model.playbackControlBusy = false
 	return model, nil
 }
 
@@ -226,12 +239,15 @@ func (model Model) updateWindowSize(message tea.WindowSizeMsg) (tea.Model, tea.C
 	return model, nil
 }
 
-func (model *Model) applyPlaybackEvent(event player.Event) bool {
+func (model Model) applyPlaybackEvent(event player.Event) (Model, bool, bool) {
 	if event.Name == "end-file" {
-		return event.Reason != "redirect"
+		if event.Reason == "redirect" {
+			return model, false, false
+		}
+		return model, true, event.Reason == "eof"
 	}
 	if event.Name != "property-change" {
-		return false
+		return model, false, false
 	}
 	var target any
 	switch event.Property {
@@ -251,19 +267,23 @@ func (model *Model) applyPlaybackEvent(event player.Event) bool {
 		var reached bool
 		if err := json.Unmarshal(event.Data, &reached); err != nil {
 			model.err = fmt.Errorf("decode playback property %s: %w", event.Property, err)
-			return false
+			return model, false, false
 		}
-		return reached
+		return model, reached, reached
 	default:
-		return false
+		return model, false, false
 	}
 	if err := json.Unmarshal(event.Data, target); err != nil {
 		model.err = fmt.Errorf("decode playback property %s: %w", event.Property, err)
 	}
-	return false
+	return model, false, false
 }
 
 func (model Model) updateKey(message tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if message.String() == "ctrl+c" {
+		updated, command, _ := model.updateGlobalKey("ctrl+c")
+		return updated, command
+	}
 	if model.filtering {
 		return model.updateFilterKey(message)
 	}
@@ -347,7 +367,7 @@ func (model Model) quit() (Model, tea.Cmd) {
 		if model.playbackFinishing {
 			return model, nil
 		}
-		return model.beginPlaybackFinish(false)
+		return model.beginPlaybackFinish(false, false)
 	}
 	if model.cancel != nil {
 		model.cancel()
@@ -355,15 +375,17 @@ func (model Model) quit() (Model, tea.Cmd) {
 	return model, tea.Quit
 }
 
-func (model Model) beginPlaybackFinish(completed bool) (Model, tea.Cmd) {
+func (model Model) beginPlaybackFinish(completed, observedTerminal bool) (Model, tea.Cmd) {
 	if model.playback == nil || model.playbackFinishing {
 		return model, nil
 	}
 	model.playbackFinishing = true
+	model.playbackControls = nil
+	model.playbackControlBusy = false
 	if model.playbackCancel != nil {
 		model.playbackCancel()
 	}
-	return model, model.finishPlayback(completed)
+	return model, model.finishPlayback(completed, observedTerminal)
 }
 
 func (model Model) moveCursor(delta int) Model {
@@ -448,7 +470,7 @@ func (model Model) goBack() (Model, tea.Cmd) {
 		model.screen = screenLectures
 		model.err = nil
 	case screenPlayback:
-		return model.beginPlaybackFinish(false)
+		return model.beginPlaybackFinish(false, false)
 	case screenDetails:
 		model.screen = model.returnTo
 	}
@@ -520,45 +542,45 @@ func (model Model) updatePlaybackKey(key string) (tea.Model, tea.Cmd) {
 	}
 	switch key {
 	case "space":
-		paused := !model.paused
-		return model, model.playbackControl("pause", 0, paused, func() error {
+		paused := !model.pendingControlFlag("pause", model.paused)
+		return model.enqueuePlaybackControl("pause", 0, paused, func() error {
 			return model.playback.Pause(model.playbackCtx, paused)
 		})
 	case "left":
-		return model, model.playbackControl("seek", -10, false, func() error {
+		return model.enqueuePlaybackControl("seek", -10, false, func() error {
 			return model.playback.SeekRelative(model.playbackCtx, -10)
 		})
 	case "right":
-		return model, model.playbackControl("seek", 10, false, func() error {
+		return model.enqueuePlaybackControl("seek", 10, false, func() error {
 			return model.playback.SeekRelative(model.playbackCtx, 10)
 		})
 	case "m":
-		muted := !model.muted
-		return model, model.playbackControl("mute", 0, muted, func() error {
+		muted := !model.pendingControlFlag("mute", model.muted)
+		return model.enqueuePlaybackControl("mute", 0, muted, func() error {
 			return model.playback.SetMute(model.playbackCtx, muted)
 		})
 	case "+", "=":
-		volume := min(130, model.volume+5)
-		return model, model.playbackControl("volume", volume, false, func() error {
+		volume := min(130, model.pendingControlValue("volume", model.volume)+5)
+		return model.enqueuePlaybackControl("volume", volume, false, func() error {
 			return model.playback.SetVolume(model.playbackCtx, volume)
 		})
 	case "-":
-		volume := max(0, model.volume-5)
-		return model, model.playbackControl("volume", volume, false, func() error {
+		volume := max(0, model.pendingControlValue("volume", model.volume)-5)
+		return model.enqueuePlaybackControl("volume", volume, false, func() error {
 			return model.playback.SetVolume(model.playbackCtx, volume)
 		})
 	case "]":
-		speed := min(4, model.speed+0.25)
-		return model, model.playbackControl("speed", speed, false, func() error {
+		speed := min(4, model.pendingControlValue("speed", model.speed)+0.25)
+		return model.enqueuePlaybackControl("speed", speed, false, func() error {
 			return model.playback.SetSpeed(model.playbackCtx, speed)
 		})
 	case "[":
-		speed := max(0.25, model.speed-0.25)
-		return model, model.playbackControl("speed", speed, false, func() error {
+		speed := max(0.25, model.pendingControlValue("speed", model.speed)-0.25)
+		return model.enqueuePlaybackControl("speed", speed, false, func() error {
 			return model.playback.SetSpeed(model.playbackCtx, speed)
 		})
 	case "v":
-		return model, model.playbackControl("camera", 0, false, func() error {
+		return model.enqueuePlaybackControl("camera", 0, false, func() error {
 			return model.playback.CycleVideo(model.playbackCtx)
 		})
 	default:

@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"io"
 
 	"github.com/rabesss/impartus-cli/internal/artifact"
 	"github.com/rabesss/impartus-cli/internal/client"
@@ -84,6 +85,15 @@ func NewWithPlayerOptions(cfg *config.Config, apiClient *client.Client, options 
 // playback resume support for TUI and automation callers.
 func NewWithLibrary(cfg *config.Config, apiClient *client.Client, store *library.Store) *Service {
 	return NewWithLibraryAndPlayerOptions(cfg, apiClient, store, player.Options{})
+}
+
+// NewWithLibraryAndDiagnosticWriter creates the full production service while
+// routing downloader diagnostics to the caller-owned writer.
+func NewWithLibraryAndDiagnosticWriter(cfg *config.Config, apiClient *client.Client, store *library.Store, diagnostics io.Writer) *Service {
+	media := downloader.NewWithDiagnosticWriter(cfg, apiClient, diagnostics)
+	return newServiceWithHistory(cfg, apiClient, media, func(ctx context.Context, playerOptions player.Options) (managedPlayer, error) {
+		return player.Start(ctx, playerOptions)
+	}, player.Options{}, store)
 }
 
 // NewWithLibraryAndPlayerOptions creates the full playback service with both

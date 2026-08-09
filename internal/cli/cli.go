@@ -97,6 +97,9 @@ func executeHumanTUI(args []string) error {
 	if len(args) != 1 {
 		return errors.New("tui does not accept positional arguments")
 	}
+	if !isInteractiveTerminalFn() {
+		return &exitCodeError{code: 2, err: errors.New("interactive TUI requires a terminal")}
+	}
 	return runTUIFn()
 }
 

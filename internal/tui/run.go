@@ -25,15 +25,27 @@ func Run(ctx context.Context, backend Backend, input io.Reader, output io.Writer
 		tea.WithInput(input),
 		tea.WithOutput(output),
 	)
-	_, err := program.Run()
-	closeErr := model.shutdown()
-	return errors.Join(err, ctx.Err(), model.runtime.Err(), closeErr)
+	return runAndShutdown(model, func() error {
+		_, runErr := program.Run()
+		return errors.Join(runErr, ctx.Err(), model.runtime.Err())
+	})
+}
+
+func runAndShutdown(model Model, run func() error) (returnErr error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			returnErr = errors.Join(returnErr, errors.New("terminal UI panicked unexpectedly"))
+		}
+		returnErr = errors.Join(returnErr, model.shutdown())
+	}()
+	return run()
 }
 
 func (model Model) shutdown() error {
 	if model.cancel != nil {
 		model.cancel()
 	}
+	closeErr := model.playbacks.StopAndClose()
 	model.operations.StopAndWait()
-	return model.playbacks.StopAndClose()
+	return closeErr
 }

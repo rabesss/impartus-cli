@@ -331,6 +331,21 @@ func TestServiceCatalogDelegatesToClient(t *testing.T) {
 	}
 }
 
+func TestServiceCatalogHonorsSkipNoAudio(t *testing.T) {
+	catalog := &fakeCatalog{lectures: client.Lectures{
+		{TTID: 1, Topic: "Audio", NoAudio: 0},
+		{TTID: 2, Topic: "Silent", NoAudio: 1},
+	}}
+	service := newService(&config.Config{SkipNoAudio: true}, catalog, &fakeStreams{}, nil)
+	lectures, err := service.Lectures(context.Background(), client.Course{SubjectID: 1, SessionID: 2})
+	if err != nil {
+		t.Fatalf("Lectures() error = %v", err)
+	}
+	if len(lectures) != 1 || lectures[0].TTID != 1 {
+		t.Fatalf("Lectures() = %+v, want only audio-capable lecture", lectures)
+	}
+}
+
 func TestStartLectureResolvesOnePlaylistAndAppliesResume(t *testing.T) {
 	streams := &fakeStreams{playlists: []client.ParsedPlaylist{{ID: 91}}}
 	fakePlayer := &fakeManagedPlayer{}

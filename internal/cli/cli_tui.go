@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"golang.org/x/term"
@@ -22,8 +23,8 @@ func (err *exitCodeError) Error() string { return err.err.Error() }
 func (err *exitCodeError) Unwrap() error { return err.err }
 func (err *exitCodeError) ExitCode() int { return err.code }
 
-// ExitCode maps command errors to their process status. Usage errors retain
-// code 2 while all other failures remain code 1.
+// ExitCode maps explicitly coded errors to their requested process status;
+// uncoded command failures use status 1.
 func ExitCode(err error) int {
 	if err == nil {
 		return 0
@@ -49,7 +50,7 @@ func runTUI() error {
 	if err != nil {
 		return fmt.Errorf("open local lecture library: %w", err)
 	}
-	service := app.NewWithLibrary(cfg, apiClient, store)
+	service := app.NewWithLibraryAndDiagnosticWriter(cfg, apiClient, store, io.Discard)
 	report, reportErr := getDoctorReport(nil)
 	if reportErr != nil {
 		return errors.Join(reportErr, store.Close())

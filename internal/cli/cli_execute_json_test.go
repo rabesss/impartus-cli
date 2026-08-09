@@ -45,6 +45,22 @@ func TestExecuteNoArgsOnPipePrintsHelpAndReturnsExitTwo(t *testing.T) {
 	}
 }
 
+func TestExplicitTUIOnPipeReturnsExitTwoWithoutLaunching(t *testing.T) {
+	restoreCLIState(t)
+	runTUIFn = func() error {
+		t.Fatal("explicit TUI must not claim a non-interactive terminal")
+		return nil
+	}
+	isInteractiveTerminalFn = func() bool { return false }
+	os.Args = []string{"impartus", "tui"}
+
+	err := Execute("dev", "")
+	var exitErr interface{ ExitCode() int }
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+		t.Fatalf("explicit non-TTY error = %v, want exit code 2", err)
+	}
+}
+
 func TestClassicPreservesOldPromptForOneRelease(t *testing.T) {
 	restoreCLIState(t)
 	called := false

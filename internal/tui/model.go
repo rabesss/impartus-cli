@@ -55,6 +55,13 @@ type Options struct {
 	Diagnostics []Diagnostic
 }
 
+type playbackControlRequest struct {
+	action string
+	value  float64
+	flag   bool
+	run    func() error
+}
+
 // Model is the deterministic terminal state machine.
 type Model struct {
 	ctx        context.Context
@@ -77,20 +84,22 @@ type Model struct {
 	status      string
 	returnTo    screen
 
-	playback           app.PlaybackSession
-	playbackLease      uint64
-	playbackCtx        context.Context
-	playbackCancel     context.CancelFunc
-	playbackGeneration uint64
-	playbackFinishing  bool
-	resume             library.PlaybackState
-	paused             bool
-	muted              bool
-	volume             float64
-	speed              float64
-	position           float64
-	duration           float64
-	quitting           bool
+	playback            app.PlaybackSession
+	playbackLease       uint64
+	playbackCtx         context.Context
+	playbackCancel      context.CancelFunc
+	playbackGeneration  uint64
+	playbackFinishing   bool
+	resume              library.PlaybackState
+	paused              bool
+	muted               bool
+	volume              float64
+	speed               float64
+	position            float64
+	duration            float64
+	quitting            bool
+	playbackControls    []playbackControlRequest
+	playbackControlBusy bool
 
 	width  int
 	height int
@@ -298,11 +307,48 @@ func (model Model) startLecture(lecture client.Lecture, state library.PlaybackSt
 	})
 }
 
-func (model Model) playbackControl(action string, value float64, flag bool, run func() error) tea.Cmd {
+func (model Model) enqueuePlaybackControl(action string, value float64, flag bool, run func() error) (Model, tea.Cmd) {
+	model.playbackControls = append(model.playbackControls, playbackControlRequest{action: action, value: value, flag: flag, run: run})
+	if model.playbackControlBusy {
+		return model, nil
+	}
+	model.playbackControlBusy = true
+	return model, model.runNextPlaybackControl()
+}
+
+func (model Model) runNextPlaybackControl() tea.Cmd {
+	if len(model.playbackControls) == 0 {
+		return nil
+	}
+	request := model.playbackControls[0]
 	generation := model.playbackGeneration
 	return model.command(func() tea.Msg {
-		return playbackControlMsg{generation: generation, action: action, value: value, flag: flag, err: run()}
+		return playbackControlMsg{
+			generation: generation,
+			action:     request.action,
+			value:      request.value,
+			flag:       request.flag,
+			err:        request.run(),
+		}
 	})
+}
+
+func (model Model) pendingControlFlag(action string, fallback bool) bool {
+	for index := len(model.playbackControls) - 1; index >= 0; index-- {
+		if model.playbackControls[index].action == action {
+			return model.playbackControls[index].flag
+		}
+	}
+	return fallback
+}
+
+func (model Model) pendingControlValue(action string, fallback float64) float64 {
+	for index := len(model.playbackControls) - 1; index >= 0; index-- {
+		if model.playbackControls[index].action == action {
+			return model.playbackControls[index].value
+		}
+	}
+	return fallback
 }
 
 func (model Model) downloadLecture(lecture client.Lecture) tea.Cmd {
@@ -333,7 +379,7 @@ func (model Model) waitPlaybackEvent() tea.Cmd {
 	})
 }
 
-func (model Model) finishPlayback(completed bool) tea.Cmd {
+func (model Model) finishPlayback(completed, observedTerminal bool) tea.Cmd {
 	playback := model.playback
 	lease := model.playbackLease
 	generation := model.playbackGeneration
@@ -346,12 +392,12 @@ func (model Model) finishPlayback(completed bool) tea.Cmd {
 	}
 	return model.command(func() tea.Msg {
 		var waitErr error
-		if completed {
+		if observedTerminal {
 			// The terminal may quit after mpv has already emitted its terminal
 			// event. Preserve that observed completion while teardown drains.
 			waitErr = playback.WaitForEnd(context.WithoutCancel(model.ctx))
 		}
-		state.Completed = completed && waitErr == nil
+		state.Completed = observedTerminal && completed && waitErr == nil
 		closeErr := model.playbacks.close(lease)
 		if model.playbacks == nil || lease == 0 {
 			closeErr = playback.Close(context.Background())

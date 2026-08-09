@@ -366,6 +366,97 @@ func TestPlaybackEventsUpdateViewAndPersistCompletedResumeState(t *testing.T) {
 	}
 }
 
+func TestEarlyPlaybackTerminationPreservesResumeCheckpoint(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		event        player.Event
+		closeChannel bool
+	}{
+		{name: "stop", event: player.Event{Name: "end-file", Reason: "stop"}},
+		{name: "quit", event: player.Event{Name: "end-file", Reason: "quit"}},
+		{name: "event channel closed", closeChannel: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			playback := &fakePlayback{events: make(chan player.Event, 1)}
+			backend := &fakeBackend{
+				courses:     client.Courses{{SubjectName: "Course", SubjectID: 11, SessionID: 22}},
+				lectures:    client.Lectures{{Topic: "Lecture", TTID: 101}},
+				resume:      library.PlaybackState{ArtifactID: "impartus:v1:test", PositionSeconds: 42, DurationSeconds: 120},
+				resumeFound: true,
+				playback:    playback,
+			}
+			model := tui.New(context.Background(), backend)
+			model = applyCommand(t, model, model.Init())
+			model, command := update(t, model, key(tea.KeyEnter, ""))
+			model = applyCommand(t, model, command)
+			model, command = update(t, model, key(tea.KeyEnter, ""))
+			model = applyCommand(t, model, command)
+			model, command = update(t, model, key('y', "y"))
+			model, eventCommand := applyCommandAndKeepNext(t, model, command)
+			if test.closeChannel {
+				close(playback.events)
+			} else {
+				playback.events <- test.event
+			}
+			model, finishCommand := applyCommandAndKeepNext(t, model, eventCommand)
+			model = applyCommand(t, model, finishCommand)
+			if len(backend.recorded) != 1 || backend.recorded[0].Completed || backend.recorded[0].PositionSeconds != 42 {
+				t.Fatalf("early-exit checkpoint = %+v, want one incomplete resume at 42s", backend.recorded)
+			}
+			if got := model.View().Content; !strings.Contains(got, "Playback stopped") {
+				t.Fatalf("early-exit status =\n%s", got)
+			}
+		})
+	}
+}
+
+func TestCtrlCQuitsWhileFilterHasFocus(t *testing.T) {
+	backend := &fakeBackend{courses: client.Courses{{SubjectName: "Course"}}}
+	model := tui.New(context.Background(), backend)
+	model = applyCommand(t, model, model.Init())
+	model, _ = update(t, model, key('/', "/"))
+	_, command := update(t, model, tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModCtrl}))
+	if command == nil {
+		t.Fatal("ctrl+c while filtering did not quit")
+	}
+	if _, ok := command().(tea.QuitMsg); !ok {
+		t.Fatal("ctrl+c while filtering did not return tea.Quit")
+	}
+}
+
+func TestRapidPlaybackControlsAreSerializedFromPendingState(t *testing.T) {
+	playback := &fakePlayback{events: make(chan player.Event)}
+	backend := &fakeBackend{
+		courses:     client.Courses{{SubjectName: "Course", SubjectID: 11, SessionID: 22}},
+		lectures:    client.Lectures{{Topic: "Lecture", TTID: 101}},
+		resume:      library.PlaybackState{ArtifactID: "impartus:v1:test", PositionSeconds: 1},
+		resumeFound: true,
+		playback:    playback,
+	}
+	model := tui.New(context.Background(), backend)
+	model = applyCommand(t, model, model.Init())
+	model, command := update(t, model, key(tea.KeyEnter, ""))
+	model = applyCommand(t, model, command)
+	model, command = update(t, model, key(tea.KeyEnter, ""))
+	model = applyCommand(t, model, command)
+	model, command = update(t, model, key('y', "y"))
+	model, _ = applyCommandAndKeepNext(t, model, command)
+
+	model, first := update(t, model, key(tea.KeySpace, ""))
+	model, second := update(t, model, key(tea.KeySpace, ""))
+	if first == nil || second != nil {
+		t.Fatalf("rapid controls first=%v second=%v, want one active command and one queued request", first != nil, second != nil)
+	}
+	model, second = applyCommandAndKeepNext(t, model, first)
+	if second == nil {
+		t.Fatal("first control completion did not start queued control")
+	}
+	_ = applyCommand(t, model, second)
+	if !reflect.DeepEqual(playback.paused, []bool{true, false}) {
+		t.Fatalf("rapid pause requests = %v, want [true false]", playback.paused)
+	}
+}
+
 func TestPlaybackFailurePersistsAnIncompleteCheckpoint(t *testing.T) {
 	playback := &fakePlayback{events: make(chan player.Event, 1), waitErr: errors.New("mpv playback failed")}
 	backend := &fakeBackend{
