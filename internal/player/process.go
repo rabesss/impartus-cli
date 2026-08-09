@@ -309,7 +309,7 @@ func (session *Session) acceptEvent(event Event) {
 }
 
 func (session *Session) closeEventsOnDisconnect() {
-	<-session.client.Done()
+	<-session.client.readDone
 	session.eventMutex.Lock()
 	defer session.eventMutex.Unlock()
 	if session.eventsClosed {
@@ -346,6 +346,13 @@ func (session *Session) WaitForEnd(ctx context.Context) error {
 		case endErr := <-session.playbackEnd:
 			return endErr
 		case <-session.client.Done():
+			select {
+			case endErr := <-session.playbackEnd:
+				return endErr
+			case <-session.client.readDone:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 			select {
 			case endErr := <-session.playbackEnd:
 				return endErr

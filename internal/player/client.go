@@ -80,6 +80,7 @@ type Client struct {
 
 	events       chan Event
 	done         chan struct{}
+	readDone     chan struct{}
 	shutdownOnce sync.Once
 	closeErr     error
 }
@@ -102,6 +103,7 @@ func NewClient(connection net.Conn, options ClientOptions) *Client {
 		pending:    make(map[int64]chan commandResult, options.MaxPending),
 		events:     make(chan Event, options.EventBuffer),
 		done:       make(chan struct{}),
+		readDone:   make(chan struct{}),
 	}
 	go client.readLoop()
 	return client
@@ -249,7 +251,10 @@ func (client *Client) removePending(requestID int64, response chan commandResult
 }
 
 func (client *Client) readLoop() {
-	defer close(client.events)
+	defer func() {
+		close(client.events)
+		close(client.readDone)
+	}()
 	reader := bufio.NewReaderSize(client.connection, maxIPCFrameBytes+1)
 	for {
 		encoded, readErr := reader.ReadSlice('\n')
