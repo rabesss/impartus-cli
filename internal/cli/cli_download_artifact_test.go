@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +13,101 @@ import (
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/downloader"
 )
+
+type fakeCourseCatalog struct {
+	courses client.Courses
+	err     error
+	calls   int
+}
+
+func (fake *fakeCourseCatalog) GetCourses(context.Context, *config.Config) (client.Courses, error) {
+	fake.calls++
+	return fake.courses, fake.err
+}
+
+func TestResolveDownloadLectureScopeUsesSelectedBatchInstitute(t *testing.T) {
+	catalog := &fakeCourseCatalog{err: errors.New("catalog must not be called")}
+	lectures := client.Lectures{
+		{InstituteID: 4, TTID: 1},
+		{InstituteID: 0, TTID: 2},
+	}
+	if err := resolveDownloadLectureScope(context.Background(), &config.Config{}, catalog, lectures, 67, 8); err != nil {
+		t.Fatalf("resolveDownloadLectureScope() error = %v", err)
+	}
+	if catalog.calls != 0 {
+		t.Fatalf("catalog calls = %d, want 0", catalog.calls)
+	}
+	for _, lecture := range lectures {
+		if lecture.InstituteID != 4 || lecture.SubjectID != 67 || lecture.SessionID != 8 {
+			t.Fatalf("resolved lecture = %+v", lecture)
+		}
+	}
+}
+
+func TestResolveDownloadLectureScopeFallsBackToExactCourse(t *testing.T) {
+	catalog := &fakeCourseCatalog{courses: client.Courses{
+		{InstituteID: 99, SubjectID: 1, SessionID: 2},
+		{InstituteID: 4, SubjectID: 67, SessionID: 8},
+		{InstituteID: 4, SubjectID: 67, SessionID: 8},
+	}}
+	lectures := client.Lectures{{TTID: 1}, {TTID: 2}}
+	if err := resolveDownloadLectureScope(context.Background(), &config.Config{}, catalog, lectures, 67, 8); err != nil {
+		t.Fatalf("resolveDownloadLectureScope() error = %v", err)
+	}
+	if catalog.calls != 1 || lectures[0].InstituteID != 4 || lectures[1].InstituteID != 4 {
+		t.Fatalf("catalog calls=%d lectures=%+v", catalog.calls, lectures)
+	}
+}
+
+func TestResolveDownloadLectureScopeRejectsAmbiguousInstitute(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		lectures client.Lectures
+		courses  client.Courses
+	}{
+		{
+			name: "selected batch",
+			lectures: client.Lectures{
+				{InstituteID: 4, TTID: 1},
+				{InstituteID: 5, TTID: 2},
+				{TTID: 3},
+			},
+		},
+		{
+			name:     "course catalog",
+			lectures: client.Lectures{{TTID: 1}},
+			courses: client.Courses{
+				{InstituteID: 4, SubjectID: 67, SessionID: 8},
+				{InstituteID: 5, SubjectID: 67, SessionID: 8},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			catalog := &fakeCourseCatalog{courses: test.courses}
+			err := resolveDownloadLectureScope(context.Background(), &config.Config{}, catalog, test.lectures, 67, 8)
+			if err == nil || !strings.Contains(err.Error(), "ambiguous institute") {
+				t.Fatalf("resolveDownloadLectureScope() error = %v, want ambiguity", err)
+			}
+		})
+	}
+}
+
+func TestResolveDownloadLectureScopeRejectsMissingInstituteMatch(t *testing.T) {
+	catalog := &fakeCourseCatalog{courses: client.Courses{{InstituteID: 4, SubjectID: 1, SessionID: 2}}}
+	err := resolveDownloadLectureScope(context.Background(), &config.Config{}, catalog, client.Lectures{{TTID: 1}}, 67, 8)
+	if err == nil || !strings.Contains(err.Error(), "cannot resolve institute scope") {
+		t.Fatalf("resolveDownloadLectureScope() error = %v, want missing-scope failure", err)
+	}
+}
+
+func TestResolveDownloadLectureScopePreservesCatalogFailure(t *testing.T) {
+	sentinel := errors.New("catalog unavailable")
+	catalog := &fakeCourseCatalog{err: sentinel}
+	err := resolveDownloadLectureScope(context.Background(), &config.Config{}, catalog, client.Lectures{{TTID: 1}}, 67, 8)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("resolveDownloadLectureScope() error = %v, want wrapped sentinel", err)
+	}
+}
 
 func TestDownloadArtifactsAllowTTIDCollisionAcrossScopes(t *testing.T) {
 	outputDir := t.TempDir()

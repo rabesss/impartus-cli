@@ -66,7 +66,7 @@ func selectCourseInteractive(ctx context.Context, cfg *config.Config, apiClient 
 }
 
 func filterLecturesInteractive(ctx context.Context, cfg *config.Config, apiClient *client.Client, course *client.Course) (client.Lectures, error) {
-	lectures, err := apiClient.GetLectures(ctx, cfg, client.Course{SubjectID: course.SubjectID, SessionID: course.SessionID})
+	lectures, err := apiClient.GetLectures(ctx, cfg, *course)
 	if err != nil {
 		return nil, err
 	}

@@ -261,6 +261,11 @@ checked against the complete file before being published.
 A command fails instead of emitting a completed manifest when a selected
 playlist cannot be associated with a unique scoped lecture or when any reported
 output is missing, empty, non-regular, or still has a `.part` suffix.
+Subject and session scope come from the explicit CLI selection when redundant
+lecture fields are omitted. If a lecture also omits `instituteId`, the CLI uses
+the one unique positive institute already present in the selected batch or the
+one unique exact subject/session match from `/subjects`; missing or conflicting
+matches fail before media fetch rather than weakening the version-1 identity.
 
 ## Courses
 

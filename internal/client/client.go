@@ -131,6 +131,15 @@ func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Cou
 	}
 
 	for i := range lectures {
+		if lectures[i].InstituteID == 0 {
+			lectures[i].InstituteID = course.InstituteID
+		}
+		if lectures[i].SubjectID == 0 {
+			lectures[i].SubjectID = course.SubjectID
+		}
+		if lectures[i].SessionID == 0 {
+			lectures[i].SessionID = course.SessionID
+		}
 		lectures[i].Topic = sanitizeFileName(lectures[i].Topic)
 		lectures[i].SubjectName = sanitizeFileName(lectures[i].SubjectName)
 	}

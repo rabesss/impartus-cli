@@ -3,9 +3,11 @@ package client
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -552,6 +554,32 @@ func TestGetLectures_InputValidation(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "token is not set") {
 		t.Errorf("GetLectures(no token) error = %q, want contains %q", err.Error(), "token is not set")
+	}
+}
+
+func TestGetLecturesFillsOmittedScopeFromSelectedCourse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/subjects/67/lectures/8" {
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(Lectures{{TTID: 9, Topic: "Scope fallback"}}); err != nil {
+			t.Errorf("encode lectures: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	c := New(server.Client(), nil)
+	lectures, err := c.GetLectures(context.Background(), &config.Config{BaseURL: server.URL, Token: "test"}, Course{
+		InstituteID: 4,
+		SubjectID:   67,
+		SessionID:   8,
+	})
+	if err != nil {
+		t.Fatalf("GetLectures() error = %v", err)
+	}
+	if len(lectures) != 1 || lectures[0].InstituteID != 4 || lectures[0].SubjectID != 67 || lectures[0].SessionID != 8 {
+		t.Fatalf("lectures = %+v, want selected course scope", lectures)
 	}
 }
 
