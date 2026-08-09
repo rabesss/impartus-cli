@@ -3,9 +3,13 @@ package downloader
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
 //nolint:misspell // Prefer UK English in user-facing error text.
@@ -69,6 +73,7 @@ type PipelineResult struct {
 	SecondViewChunks []string
 	TotalTime        time.Duration
 	FailedChunks     []int
+	FailureDetails   []string
 }
 
 // LecturePipeline manages concurrent download and decrypt workers for a single lecture.
@@ -88,6 +93,7 @@ type LecturePipeline struct {
 	secondViewMap   map[int]string
 	totalChunks     atomic.Int64
 	failedChunks    []int
+	failureDetails  []string
 	firstViewCount  atomic.Int64
 	secondViewCount atomic.Int64
 	failedCount     atomic.Int64
@@ -134,6 +140,7 @@ func NewLecturePipeline(config PipelineConfig, downloader *Downloader) *LectureP
 		firstViewMap:     make(map[int]string),
 		secondViewMap:    make(map[int]string),
 		failedChunks:     make([]int, 0),
+		failureDetails:   make([]string, 0),
 		startTime:        time.Now(),
 	}
 	pipeline.inFlightCond = sync.NewCond(&pipeline.inFlightMu)
@@ -298,6 +305,7 @@ func (p *LecturePipeline) Collect() PipelineResult {
 	for decrypted := range p.decryptedChunks {
 		if decrypted.Err != nil {
 			p.failedChunks = append(p.failedChunks, decrypted.ChunkID)
+			p.failureDetails = append(p.failureDetails, fmt.Sprintf("%s view chunk %d: %s", decrypted.View, decrypted.ChunkID, secrets.ScrubError(decrypted.Err)))
 			p.failedCount.Add(1)
 		} else if decrypted.View == "first" {
 			p.firstViewMap[decrypted.ChunkID] = decrypted.DecryptedPath
@@ -311,11 +319,13 @@ func (p *LecturePipeline) Collect() PipelineResult {
 	// All decrypt workers have finished; zero the shared decryption key.
 	defer zeroKey(p.config.DecryptionKey)
 
+	sort.Strings(p.failureDetails)
 	return PipelineResult{
 		FirstViewChunks:  p.buildOrderedList(p.firstViewMap),
 		SecondViewChunks: p.buildOrderedList(p.secondViewMap),
 		TotalTime:        time.Since(p.startTime),
 		FailedChunks:     p.failedChunks,
+		FailureDetails:   p.failureDetails,
 	}
 }
 

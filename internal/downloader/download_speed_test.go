@@ -188,10 +188,16 @@ func TestDownloadPlaylistPipelineUsesDownloaderRetryLimit(t *testing.T) {
 		ID:            42,
 		SeqNo:         1,
 		KeyURL:        server.URL + "/key",
-		FirstViewURLs: []string{server.URL + "/chunk"},
+		FirstViewURLs: []string{server.URL + "/chunk?access_token=must-not-leak"},
 	}, nil, nil)
 	if err == nil {
 		t.Fatal("DownloadPlaylist returned nil error for HTTP 503")
+	}
+	if !strings.Contains(err.Error(), "status 503") {
+		t.Fatalf("DownloadPlaylist error = %v, want scrubbed HTTP root cause", err)
+	}
+	if strings.Contains(err.Error(), "must-not-leak") {
+		t.Fatalf("DownloadPlaylist failure detail leaked URL secret: %v", err)
 	}
 	if got := chunkRequests.Load(); got != 1 {
 		t.Fatalf("chunk requests = %d, want 1 configured attempt", got)
@@ -245,6 +251,9 @@ func TestDownloadPlaylistDefaultPipelineRejectsOversizedChunkBeforeReadingBody(t
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("oversized chunk was read until the test deadline instead of rejected from Content-Length")
+	}
+	if !strings.Contains(err.Error(), "exceeds max size") {
+		t.Fatalf("DownloadPlaylist error = %v, want size-limit root cause", err)
 	}
 	if elapsed >= 500*time.Millisecond {
 		t.Fatalf("oversized chunk rejection took %v, want under 500ms", elapsed)

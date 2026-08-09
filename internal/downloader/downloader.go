@@ -227,6 +227,9 @@ func (d *Downloader) downloadPlaylistPipelined(ctx context.Context, playlist cli
 		return downloadedPlaylist, submitErr
 	}
 	if len(result.FailedChunks) > 0 {
+		if len(result.FailureDetails) > 0 {
+			return downloadedPlaylist, fmt.Errorf("%d chunks failed to download: %s", len(result.FailedChunks), strings.Join(result.FailureDetails, "; "))
+		}
 		return downloadedPlaylist, fmt.Errorf("%d chunks failed to download: %v", len(result.FailedChunks), result.FailedChunks)
 	}
 	downloadedPlaylist.FirstViewChunks = result.FirstViewChunks
