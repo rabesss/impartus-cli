@@ -63,6 +63,9 @@ func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, i
 	}
 
 	outFilepath := filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_%s_%04d.ts.temp", id, view, chunk))
+	if resp.ContentLength > limit {
+		return "", nil, 0, fmt.Errorf("chunk %d exceeds max size %d bytes: %w", chunk, limit, errDownloadSizeLimit)
+	}
 
 	if toMemory {
 		data, readErr := io.ReadAll(io.LimitReader(resp.Body, limit+1))
@@ -74,10 +77,6 @@ func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, i
 		}
 		return outFilepath, data, int64(len(data)), nil
 	}
-	if resp.ContentLength > limit {
-		return "", nil, 0, fmt.Errorf("chunk %d exceeds max size %d bytes: %w", chunk, limit, errDownloadSizeLimit)
-	}
-
 	// G304: file paths are constructed from validated config and internal data
 	// #nosec G304
 	outFile, createErr := os.Create(outFilepath)

@@ -220,6 +220,9 @@ func (d *Downloader) downloadPlaylistPipelined(ctx context.Context, playlist cli
 	submitErr := <-submitErrCh
 
 	d.stopPipelineMonitor(monitorDone, downloadBar, totalChunks)
+	if err := ctx.Err(); err != nil {
+		return downloadedPlaylist, err
+	}
 	if submitErr != nil {
 		return downloadedPlaylist, submitErr
 	}

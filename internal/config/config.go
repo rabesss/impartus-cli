@@ -275,10 +275,14 @@ func Parse(path string) (*Config, error) {
 	if err := json.Unmarshal(contents, &cfg); err != nil {
 		return nil, fmt.Errorf("could not parse config json: %w", err)
 	}
-	// Default API jitter ON unless the config file explicitly disables it; an
-	// explicit "enableJitter": false must be honored rather than overridden.
+	// Default throughput and API jitter improvements ON unless the config file
+	// explicitly disables them. An explicit false remains a compatibility
+	// contract rather than being silently overwritten.
 	if !jsonKeyPresent(contents, "enableJitter") {
 		cfg.EnableJitter = true
+	}
+	if !jsonKeyPresent(contents, "enablePipeline") {
+		cfg.EnablePipeline = true
 	}
 
 	return &cfg, nil
@@ -312,9 +316,11 @@ func LoadResolved(path string) (*Config, error) {
 	if err := applyEnvOverrides(cfg); err != nil {
 		return nil, err
 	}
-	// For configs not loaded from a file, default API jitter ON unless the env
-	// explicitly disabled it. File-loaded configs already resolved this in Parse.
+	// For configs not loaded from a file, use the concurrent pipeline and default
+	// API jitter ON unless the env explicitly disabled jitter. File-loaded configs
+	// already resolved omitted versus explicit values in Parse.
 	if !fileLoaded {
+		cfg.EnablePipeline = true
 		if _, envSet := os.LookupEnv("IMPARTUS_ENABLE_JITTER"); !envSet {
 			cfg.EnableJitter = true
 		}

@@ -149,7 +149,7 @@ protection manually with `chmod 600 config.json`.
 | `numWorkers` | int | No | `5` | Concurrent lecture workers (1-50); active playlist downloads are bounded by per-lecture media workers to preserve the browser-observed burst envelope |
 | `rateLimit` | float | No | `100` | Download rate limit (0.1-100 req/sec) |
 | `apiRateLimit` | float | No | `2` | API rate limit (0.1-20 req/sec) |
-| `enablePipeline` | bool | No | `false` | Enable concurrent download+decrypt |
+| `enablePipeline` | bool | No | `true` | Use bounded concurrent download+decrypt; set `false` to keep the legacy serial path |
 | `downloadWorkersPerLecture` | int | No | `12` | Download workers per lecture (1-12) |
 | `decryptWorkersPerLecture` | int | No | `4` | Decrypt workers per lecture (1-10) |
 | `httpTimeout` | string | No | `"10m"` | Timeout for the shared upstream HTTP client, including login, API, playlist, and media requests (30s-60m) |

@@ -195,6 +195,48 @@ func TestLoadResolvedEnableJitterEnvOverridesDefault(t *testing.T) {
 	}
 }
 
+func TestLoadResolvedEnablePipelineDefaultsTrueWhenOmitted(t *testing.T) {
+	path := writeTempConfig(t, `{
+		"username": "u", "password": "p", "baseUrl": "https://example.com",
+		"quality": "450", "views": "both"
+	}`)
+	cfg, err := LoadResolved(path)
+	if err != nil {
+		t.Fatalf("LoadResolved: %v", err)
+	}
+	if !cfg.EnablePipeline {
+		t.Error("expected EnablePipeline to default true when omitted from config")
+	}
+}
+
+func TestLoadResolvedEnablePipelineHonorsExplicitFalse(t *testing.T) {
+	path := writeTempConfig(t, `{
+		"username": "u", "password": "p", "baseUrl": "https://example.com",
+		"quality": "450", "views": "both", "enablePipeline": false
+	}`)
+	cfg, err := LoadResolved(path)
+	if err != nil {
+		t.Fatalf("LoadResolved: %v", err)
+	}
+	if cfg.EnablePipeline {
+		t.Error("expected EnablePipeline to stay false when explicitly disabled in config")
+	}
+}
+
+func TestLoadResolvedEnablePipelineHonorsExplicitFalseLowercaseKey(t *testing.T) {
+	path := writeTempConfig(t, `{
+		"username": "u", "password": "p", "baseUrl": "https://example.com",
+		"quality": "450", "views": "both", "enablepipeline": false
+	}`)
+	cfg, err := LoadResolved(path)
+	if err != nil {
+		t.Fatalf("LoadResolved: %v", err)
+	}
+	if cfg.EnablePipeline {
+		t.Error("expected EnablePipeline to stay false when set via a lowercase key")
+	}
+}
+
 func TestLoadResolvedReturnsValidationErrorsBeforeRemoteWork(t *testing.T) {
 	t.Setenv("IMPARTUS_USERNAME", "env-user")
 	t.Setenv("IMPARTUS_PASSWORD", "env-pass")
@@ -356,6 +398,9 @@ func TestLoadResolvedNoConfigFileUsesEnvOnly(t *testing.T) {
 	}
 	if cfg.Username != "env-user" {
 		t.Errorf("expected env-user, got %s", cfg.Username)
+	}
+	if !cfg.EnablePipeline {
+		t.Error("expected EnablePipeline to default true without a config file")
 	}
 }
 
