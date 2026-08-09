@@ -296,14 +296,14 @@ func (session *Session) Events() <-chan Event { return session.events }
 func (session *Session) acceptEvent(event Event) {
 	session.eventMutex.Lock()
 	defer session.eventMutex.Unlock()
-	if session.eventsClosed {
-		return
-	}
 	if ended, endErr := playbackEndResult(event); ended {
 		select {
 		case session.playbackEnd <- endErr:
 		default:
 		}
+	}
+	if session.eventsClosed {
+		return
 	}
 	publishNewestEvent(session.events, event)
 }
