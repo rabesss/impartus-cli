@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -325,8 +326,8 @@ func downloadLecturesWithRunner(ctx context.Context, cfg *config.Config, d lectu
 	if err != nil {
 		return downloadResult{}, err
 	}
-	if len(playlists) == 0 {
-		return downloadResult{}, errors.New("no playlists available for selected lectures")
+	if coverageErr := validateSelectedPlaylistCoverage(playlists, lecturesByScope); coverageErr != nil {
+		return downloadResult{}, coverageErr
 	}
 
 	p, tracker, err := newDownloadProgress(cfg, presentation, len(playlists), countChunks(playlists, cfg.Views))
@@ -389,7 +390,14 @@ func completeLectureDownloads(
 		// server job runner uses) so per-lecture download+join logic has one home.
 		joinResult, err := d.DownloadAndJoinPlaylist(ctx, playlist, progress, tracker)
 		if err != nil {
-			return nil, nil, 0, err
+			return nil, nil, 0, fmt.Errorf(
+				"download and join lecture institute=%d subject=%d session=%d ttid=%d: %w",
+				key.instituteID,
+				key.subjectID,
+				key.sessionID,
+				key.ttid,
+				err,
+			)
 		}
 		manifest, err := buildDownloadArtifact(lecture, cfg, joinResult, time.Now().UTC())
 		if err != nil {
@@ -402,6 +410,56 @@ func completeLectureDownloads(
 		}
 	}
 	return outputPaths, artifacts, len(artifacts), nil
+}
+
+func validateSelectedPlaylistCoverage(playlists []client.ParsedPlaylist, lecturesByScope map[scopedLectureKey]client.Lecture) error {
+	seen := make(map[scopedLectureKey]struct{}, len(playlists))
+	for _, playlist := range playlists {
+		key := scopedLectureKey{
+			instituteID: playlist.InstituteID,
+			subjectID:   playlist.SubjectID,
+			sessionID:   playlist.SessionID,
+			ttid:        playlist.ID,
+		}
+		if _, exists := lecturesByScope[key]; !exists {
+			return fmt.Errorf(
+				"playlist is missing from selected scoped lectures: institute=%d subject=%d session=%d ttid=%d",
+				key.instituteID,
+				key.subjectID,
+				key.sessionID,
+				key.ttid,
+			)
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return fmt.Errorf(
+				"duplicate playlist for selected lecture: institute=%d subject=%d session=%d ttid=%d",
+				key.instituteID,
+				key.subjectID,
+				key.sessionID,
+				key.ttid,
+			)
+		}
+		seen[key] = struct{}{}
+	}
+
+	missing := make([]string, 0, len(lecturesByScope)-len(seen))
+	for key := range lecturesByScope {
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		missing = append(missing, fmt.Sprintf(
+			"institute=%d subject=%d session=%d ttid=%d",
+			key.instituteID,
+			key.subjectID,
+			key.sessionID,
+			key.ttid,
+		))
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return fmt.Errorf("no playlist available for selected lecture(s): %s", strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 type scopedLectureKey struct {

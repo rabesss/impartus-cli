@@ -201,8 +201,12 @@ func TestBuildVerifiesProvidedSHA256(t *testing.T) {
 		digest := sha256.Sum256(contents)
 		input := base
 		input.Files = []FileSpec{{Path: outputPath, Role: "video", View: "left", Container: "mp4", SHA256: fmt.Sprintf("%x", digest)}}
-		if _, err := Build(input); err != nil {
+		manifest, err := Build(input)
+		if err != nil {
 			t.Fatalf("Build() error = %v", err)
+		}
+		if len(manifest.Files) != 1 || manifest.Files[0].Bytes != int64(len(contents)) || manifest.Files[0].SHA256 != fmt.Sprintf("%x", digest) {
+			t.Fatalf("Files = %+v, want one digest-verified %d-byte snapshot", manifest.Files, len(contents))
 		}
 	})
 

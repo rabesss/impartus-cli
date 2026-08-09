@@ -25,13 +25,14 @@ import (
 )
 
 type fakeLectureDownloadRunner struct {
-	playlists []client.ParsedPlaylist
-	results   []downloader.JoinResult
-	progress  []*mpb.Progress
-	trackers  []*downloader.ProgressTracker
-	fetches   int
-	downloads int
-	next      int
+	playlists   []client.ParsedPlaylist
+	results     []downloader.JoinResult
+	progress    []*mpb.Progress
+	trackers    []*downloader.ProgressTracker
+	fetches     int
+	downloads   int
+	next        int
+	downloadErr error
 }
 
 func (f *fakeLectureDownloadRunner) FetchLecturePlaylists(_ context.Context, lectures []client.Lecture) ([]client.ParsedPlaylist, error) {
@@ -58,9 +59,55 @@ func (f *fakeLectureDownloadRunner) DownloadAndJoinPlaylist(_ context.Context, _
 	f.progress = append(f.progress, progress)
 	f.trackers = append(f.trackers, tracker)
 	f.downloads++
+	if f.downloadErr != nil {
+		return downloader.JoinResult{}, f.downloadErr
+	}
 	result := f.results[f.next]
 	f.next++
 	return result, nil
+}
+
+func TestDownloadRejectsSelectedLectureWithoutPlaylistBeforeMediaWork(t *testing.T) {
+	t.Parallel()
+
+	outputDir := t.TempDir()
+	runner := &fakeLectureDownloadRunner{
+		playlists: []client.ParsedPlaylist{{InstituteID: 1, SubjectID: 2, SessionID: 3, ID: 10}},
+		results:   materializeJoinResults(t, outputDir, []downloader.JoinResult{{LeftOutput: "one.mp4"}}),
+	}
+	lectures := client.Lectures{
+		{InstituteID: 1, SubjectID: 2, SessionID: 3, TTID: 10},
+		{InstituteID: 1, SubjectID: 2, SessionID: 3, TTID: 11},
+	}
+	_, err := downloadLecturesWithRunner(context.Background(), &config.Config{
+		DownloadLocation: outputDir,
+		Views:            "left",
+		Quality:          "720",
+	}, runner, lectures, quietDownloadPresentation())
+	if err == nil || !strings.Contains(err.Error(), "ttid=11") || !strings.Contains(err.Error(), "no playlist") {
+		t.Fatalf("downloadLecturesWithRunner() error = %v, want missing TTID context", err)
+	}
+	if runner.downloads != 0 {
+		t.Fatalf("downloads = %d, want no partial media work", runner.downloads)
+	}
+}
+
+func TestDownloadFailureIncludesLectureScope(t *testing.T) {
+	t.Parallel()
+
+	lecture := client.Lecture{InstituteID: 1, SubjectID: 2, SessionID: 3, TTID: 10}
+	runner := &fakeLectureDownloadRunner{
+		playlists:   []client.ParsedPlaylist{{InstituteID: 1, SubjectID: 2, SessionID: 3, ID: 10}},
+		downloadErr: errors.New("chunk failed"),
+	}
+	_, err := downloadLecturesWithRunner(context.Background(), &config.Config{
+		DownloadLocation: t.TempDir(),
+		Views:            "left",
+		Quality:          "720",
+	}, runner, client.Lectures{lecture}, quietDownloadPresentation())
+	if err == nil || !strings.Contains(err.Error(), "ttid=10") || !strings.Contains(err.Error(), "chunk failed") {
+		t.Fatalf("downloadLecturesWithRunner() error = %v, want lecture-scoped cause", err)
+	}
 }
 
 func TestDownloadLectureCountTracksCompletedPlaylists(t *testing.T) {

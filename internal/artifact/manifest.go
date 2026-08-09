@@ -163,16 +163,22 @@ func (manifest Manifest) Identity() Identity {
 }
 
 func verifyFile(spec FileSpec, audioOnly bool, selectedViews string) (File, error) {
-	absolutePath, size, err := statCompletedFile(spec.Path)
+	absolutePath, file, info, err := openCompletedFile(spec.Path)
 	if err != nil {
 		return File{}, err
 	}
+	defer func() {
+		closeErr := file.Close()
+		_ = closeErr
+	}()
 	role, view, container, sha256Hex, err := normalizeFileSpec(spec, audioOnly, selectedViews)
 	if err != nil {
 		return File{}, err
 	}
+	size := info.Size()
 	if sha256Hex != "" {
-		if err := verifySHA256(absolutePath, sha256Hex); err != nil {
+		size, err = verifySHA256(file, absolutePath, sha256Hex)
+		if err != nil {
 			return File{}, err
 		}
 	}
@@ -186,29 +192,36 @@ func verifyFile(spec FileSpec, audioOnly bool, selectedViews string) (File, erro
 	}, nil
 }
 
-func statCompletedFile(rawPath string) (string, int64, error) {
+func openCompletedFile(rawPath string) (string, *os.File, os.FileInfo, error) {
 	path := strings.TrimSpace(rawPath)
 	if path == "" {
-		return "", 0, errors.New("output path is required")
+		return "", nil, nil, errors.New("output path is required")
 	}
 	absolutePath, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
-		return "", 0, fmt.Errorf("normalize output path: %w", err)
+		return "", nil, nil, fmt.Errorf("normalize output path: %w", err)
 	}
 	if strings.HasSuffix(strings.ToLower(absolutePath), ".part") {
-		return "", 0, fmt.Errorf("output %q is still partial", absolutePath)
+		return "", nil, nil, fmt.Errorf("output %q is still partial", absolutePath)
 	}
-	info, err := os.Stat(absolutePath)
+	file, err := os.Open(absolutePath) // #nosec G304 -- path was explicitly supplied by the caller
 	if err != nil {
-		return "", 0, fmt.Errorf("stat output %q: %w", absolutePath, err)
+		return "", nil, nil, fmt.Errorf("stat output %q: %w", absolutePath, err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close() //nolint:errcheck // preserve the primary stat failure
+		return "", nil, nil, fmt.Errorf("stat output %q: %w", absolutePath, err)
 	}
 	if !info.Mode().IsRegular() {
-		return "", 0, fmt.Errorf("output %q is not a regular file", absolutePath)
+		_ = file.Close() //nolint:errcheck // validation failure is the actionable error
+		return "", nil, nil, fmt.Errorf("output %q is not a regular file", absolutePath)
 	}
 	if info.Size() <= 0 {
-		return "", 0, fmt.Errorf("output %q is empty", absolutePath)
+		_ = file.Close() //nolint:errcheck // validation failure is the actionable error
+		return "", nil, nil, fmt.Errorf("output %q is empty", absolutePath)
 	}
-	return absolutePath, info.Size(), nil
+	return absolutePath, file, info, nil
 }
 
 func normalizeFileSpec(spec FileSpec, audioOnly bool, selectedViews string) (string, string, string, string, error) {
@@ -241,25 +254,20 @@ func normalizeFileSpec(spec FileSpec, audioOnly bool, selectedViews string) (str
 	return role, view, container, sha256Hex, nil
 }
 
-func verifySHA256(path, expected string) error {
-	file, err := os.Open(path) // #nosec G304 -- path was explicitly supplied by the caller and validated above
-	if err != nil {
-		return fmt.Errorf("open output %q for sha256 verification: %w", path, err)
-	}
-	defer func() {
-		closeErr := file.Close()
-		_ = closeErr
-	}()
-
+func verifySHA256(file *os.File, path, expected string) (int64, error) {
 	hasher := sha256.New()
-	if _, err := io.Copy(hasher, file); err != nil {
-		return fmt.Errorf("hash output %q: %w", path, err)
+	size, err := io.Copy(hasher, file)
+	if err != nil {
+		return 0, fmt.Errorf("hash output %q: %w", path, err)
+	}
+	if size <= 0 {
+		return 0, fmt.Errorf("output %q is empty", path)
 	}
 	actual := fmt.Sprintf("%x", hasher.Sum(nil))
 	if actual != expected {
-		return fmt.Errorf("sha256 for output %q does not match file contents", path)
+		return 0, fmt.Errorf("sha256 for output %q does not match file contents", path)
 	}
-	return nil
+	return size, nil
 }
 
 func validateContainer(container string, audioOnly bool) error {

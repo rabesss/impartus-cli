@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rabesss/impartus-cli/internal/artifact"
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/downloader"
@@ -191,7 +192,10 @@ func TestDownloadArtifactsRejectPlaylistWithoutSelectedLecture(t *testing.T) {
 }
 
 func TestBuildDownloadArtifactUsesTypedOutputMetadata(t *testing.T) {
-	lecture := client.Lecture{InstituteID: 1, SubjectID: 2, SessionID: 3, TTID: 4}
+	lecture := client.Lecture{
+		InstituteID: 1, SubjectID: 2, SessionID: 3, TTID: 4, SeqNo: 5,
+		Topic: "Topic", StartTime: "start", ActualDuration: 678, ProfessorName: "Professor", Institute: "Institute", NoAudio: 1,
+	}
 	producedAt := time.Date(2026, time.August, 8, 5, 6, 7, 0, time.UTC)
 
 	t.Run("video views", func(t *testing.T) {
@@ -207,6 +211,13 @@ func TestBuildDownloadArtifactUsesTypedOutputMetadata(t *testing.T) {
 		manifest, err := buildDownloadArtifact(lecture, &config.Config{Views: "both", Quality: "720"}, result, producedAt)
 		if err != nil {
 			t.Fatalf("buildDownloadArtifact() error = %v", err)
+		}
+		wantLecture := artifact.Lecture{
+			TTID: 4, InstituteID: 1, SubjectID: 2, SessionID: 3, SeqNo: 5,
+			Topic: "Topic", StartTime: "start", DurationSeconds: 678, Professor: "Professor", Institute: "Institute", NoAudio: true,
+		}
+		if manifest.Lecture != wantLecture {
+			t.Fatalf("Lecture = %+v, want %+v", manifest.Lecture, wantLecture)
 		}
 		wantContainers := []string{"mp4", "mp4", "mkv"}
 		wantViews := []string{"left", "right", "both"}
