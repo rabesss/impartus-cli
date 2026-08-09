@@ -421,6 +421,52 @@ func TestWatchEventsPreflightCancellationEmitsCanceledTerminal(t *testing.T) {
 	}
 }
 
+func TestWatchPreflightCleanupFailureIsDurableAndFailedWhenLoginCanceled(t *testing.T) {
+	t.Parallel()
+
+	store := openCLIWatchStore(t)
+	cfg := cliWatchConfig(t)
+	closeCalls := 0
+	deps := watchExecutionDependencies{
+		loadConfig:         func() (*config.Config, error) { return cfg, nil },
+		defaultLibraryPath: func() (string, error) { return filepath.Join(t.TempDir(), "library.db"), nil },
+		acquireLock: func(string) (io.Closer, error) {
+			return closerFunc(func() error {
+				closeCalls++
+				return errors.New("preflight lock release failed")
+			}), nil
+		},
+		openLibrary: func(context.Context, library.Options) (*library.Store, error) { return store, nil },
+		recoverJobs: func(context.Context, *library.Store) (library.RecoveryResult, error) {
+			return library.RecoveryResult{}, nil
+		},
+		ensureFFmpeg: func() error { return nil },
+		login: func(context.Context, *config.Config) (*client.Client, error) {
+			return nil, context.Canceled
+		},
+		now: func() time.Time { return time.Unix(5, 0).UTC() },
+	}
+	var output bytes.Buffer
+	_, err := executeWatchWithDependencies(
+		context.Background(),
+		[]string{"--events", "--once", "-s", "67", "-S", "8"},
+		false,
+		&output,
+		io.Discard,
+		deps,
+	)
+	if !errors.Is(err, watch.ErrDurableState) || !errors.Is(err, context.Canceled) || ExitCode(watchCommandError(err)) != 1 {
+		t.Fatalf("preflight error = %v, exit = %d", err, ExitCode(watchCommandError(err)))
+	}
+	if closeCalls != 1 {
+		t.Fatalf("lock close calls = %d, want 1", closeCalls)
+	}
+	decoded := decodeCLIEvents(t, output.String())
+	if len(decoded) != 1 || decoded[0].Type != events.JobFailed {
+		t.Fatalf("events = %+v", decoded)
+	}
+}
+
 func TestWatchCancellationMapsToExit130(t *testing.T) {
 	t.Parallel()
 

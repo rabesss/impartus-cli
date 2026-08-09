@@ -72,6 +72,13 @@ func (prepared *preparedWatch) close() error {
 	return errors.Join(storeErr, lockErr)
 }
 
+func (prepared *preparedWatch) closeAfterPrepareFailure(cause error) error {
+	if closeErr := prepared.close(); closeErr != nil {
+		return errors.Join(cause, watch.ErrDurableState, fmt.Errorf("close watch state: %w", closeErr))
+	}
+	return cause
+}
+
 func defaultWatchExecutionDependencies() watchExecutionDependencies {
 	return watchExecutionDependencies{
 		loadConfig:         loadConfig,
@@ -237,33 +244,32 @@ func prepareWatch(ctx context.Context, flags watchFlags, dependencies watchExecu
 	prepared.lock = lock
 	store, openErr := dependencies.openLibrary(ctx, library.Options{Path: libraryPath})
 	if openErr != nil {
-		return prepared, errors.Join(openErr, prepared.close())
+		return prepared, prepared.closeAfterPrepareFailure(openErr)
 	}
 	prepared.store = store
 	if !flags.dryRun {
 		recovery, recoveryErr := dependencies.recoverJobs(context.WithoutCancel(ctx), store)
 		if recoveryErr != nil {
-			return prepared, errors.Join(
+			return prepared, prepared.closeAfterPrepareFailure(errors.Join(
 				watch.ErrDurableState,
 				fmt.Errorf("recover interrupted watch jobs: %w", recoveryErr),
-				prepared.close(),
-			)
+			))
 		}
 		prepared.recovery = recovery
 	}
 	if !flags.dryRun {
 		if ffmpegErr := dependencies.ensureFFmpeg(); ffmpegErr != nil {
-			return prepared, errors.Join(ffmpegErr, prepared.close())
+			return prepared, prepared.closeAfterPrepareFailure(ffmpegErr)
 		}
 	}
 	apiClient, loginErr := dependencies.login(ctx, cfg)
 	if loginErr != nil {
-		return prepared, errors.Join(loginErr, prepared.close())
+		return prepared, prepared.closeAfterPrepareFailure(loginErr)
 	}
 	prepared.apiClient = apiClient
 	interval, parseErr := time.ParseDuration(cfg.Watch.PollInterval)
 	if parseErr != nil {
-		return prepared, errors.Join(parseErr, prepared.close())
+		return prepared, prepared.closeAfterPrepareFailure(parseErr)
 	}
 	prepared.interval = interval
 	return prepared, nil

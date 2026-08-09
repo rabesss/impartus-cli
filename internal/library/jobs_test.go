@@ -458,14 +458,14 @@ func TestJobFailureRedactsHeadersAndBareAssignments(t *testing.T) {
 	if err := store.StartJob(context.Background(), jobID); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.FailJob(context.Background(), jobID, errors.New("Authorization: Token auth-secret upload_token=body-secret")); err != nil {
+	if err := store.FailJob(context.Background(), jobID, errors.New(`Authorization: Token auth-secret upload_token=body-secret response={"token":"json-secret"}`)); err != nil {
 		t.Fatal(err)
 	}
 	job, err := store.Job(context.Background(), jobID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(job.ErrorSummary, "auth-secret") || strings.Contains(job.ErrorSummary, "body-secret") || !strings.Contains(job.ErrorSummary, "REDACTED") {
+	if strings.Contains(job.ErrorSummary, "auth-secret") || strings.Contains(job.ErrorSummary, "body-secret") || strings.Contains(job.ErrorSummary, "json-secret") || !strings.Contains(job.ErrorSummary, "REDACTED") {
 		t.Fatalf("durable failure summary was not fully redacted: %q", job.ErrorSummary)
 	}
 }
