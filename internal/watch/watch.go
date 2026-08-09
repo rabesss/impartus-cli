@@ -219,6 +219,9 @@ func (watcher *Watcher) Run(ctx context.Context) (CycleResult, error) {
 	}); err != nil {
 		return result, watcher.finish(err, result)
 	}
+	if err := watcher.emitRecoveredArtifacts(recovery.Artifacts); err != nil {
+		return result, watcher.finish(err, result)
+	}
 	for {
 		cycle, cycleErr := watcher.RunCycle(ctx)
 		cycle.Recovered = append([]string(nil), result.Recovered...)
@@ -248,13 +251,45 @@ func (watcher *Watcher) recover(ctx context.Context) (library.RecoveryResult, er
 	}
 	if watcher.options.StartupRecovery == nil {
 		recovery, err := watcher.store.RecoverInterruptedJobs(context.WithoutCancel(ctx))
-		return recovery, durableStateError("recover interrupted watch jobs", err)
+		return cloneRecoveryResult(recovery), durableStateError("recover interrupted watch jobs", err)
 	}
-	recovery := *watcher.options.StartupRecovery
+	return cloneRecoveryResult(*watcher.options.StartupRecovery), nil
+}
+
+func cloneRecoveryResult(source library.RecoveryResult) library.RecoveryResult {
+	recovery := source
 	recovery.Recovered = append([]string(nil), recovery.Recovered...)
 	recovery.Pending = append([]string(nil), recovery.Pending...)
 	recovery.Skipped = append([]string(nil), recovery.Skipped...)
-	return recovery, nil
+	recovery.Artifacts = make([]library.RecoveredArtifact, len(source.Artifacts))
+	for index, recovered := range source.Artifacts {
+		recovery.Artifacts[index] = recovered
+		recovery.Artifacts[index].Manifest.Files = append([]artifact.File(nil), recovered.Manifest.Files...)
+	}
+	return recovery
+}
+
+func (watcher *Watcher) emitRecoveredArtifacts(recovered []library.RecoveredArtifact) error {
+	for _, item := range recovered {
+		manifest := item.Manifest
+		if err := watcher.emit(events.Event{
+			Type: events.ArtifactCommitted,
+			Target: &events.Target{
+				SubjectID: manifest.Lecture.SubjectID,
+				SessionID: manifest.Lecture.SessionID,
+			},
+			Lecture: &events.Lecture{
+				TTID: manifest.Lecture.TTID, SeqNo: manifest.Lecture.SeqNo, Topic: manifest.Lecture.Topic,
+			},
+			Artifact: &manifest,
+			Details: map[string]any{
+				"libraryJobId": item.JobID, "artifactId": manifest.ArtifactID, "recovered": true,
+			},
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (watcher *Watcher) validate() error {

@@ -270,6 +270,12 @@ func requestedEvents(args []string) bool {
 			index++
 			continue
 		}
+		// flag.FlagSet stops parsing immediately before the first positional
+		// argument. Keep this pre-parser aligned so a later --events token cannot
+		// change the output mode of a parse error the real parser never reached.
+		if argument == "" || argument == "-" || !strings.HasPrefix(argument, "-") {
+			break
+		}
 		if argument == "--events" || argument == "-events" {
 			enabled = true
 			continue

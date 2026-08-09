@@ -175,8 +175,10 @@ flowchart TD
   A[impartus watch] --> B[Load and validate generic targets]
   B --> C[Acquire state-directory OS advisory lock]
   C --> D[Open private library and recover interrupted jobs]
-  D --> E[Login and list target lectures]
-  E --> F{Committed artifact validates?}
+  D --> E[Login]
+  E --> R[Emit job.started and recovered artifact manifests]
+  R --> S[List target lectures]
+  S --> F{Committed artifact validates?}
   F -- yes --> G[Emit lecture.skipped]
   F -- no --> H{Within global cycle budget?}
   H -- no --> I[Emit cycle_budget skip]

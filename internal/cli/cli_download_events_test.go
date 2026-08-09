@@ -256,6 +256,8 @@ func TestRequestedEventsMatchesGoBooleanFlagFormsAndLastValueWins(t *testing.T) 
 		{name: "last true wins", args: []string{"--events=false", "--events"}, want: true},
 		{name: "output consumes events token", args: []string{"--output", "--events"}, want: false},
 		{name: "short output consumes events token", args: []string{"-o", "--events"}, want: false},
+		{name: "positional argument stops flags", args: []string{"bogus", "--events"}, want: false},
+		{name: "event before positional argument remains", args: []string{"--events", "bogus", "--events=false"}, want: true},
 		{name: "double dash stops flags", args: []string{"--", "--events"}, want: false},
 		{name: "event before double dash remains", args: []string{"--events", "--", "--events=false"}, want: true},
 	}

@@ -47,6 +47,12 @@ been recorded in the local library. If media was published but that commit did
 not complete, events mode fails closed with `job.failed`; the existing human and
 single-envelope JSON compatibility modes retain their warning behavior.
 
+When watcher startup recovery commits a previously published output set, the
+watch stream emits `job.started` and then one `artifact.committed` record per
+recovered manifest before the first lecture cycle. Its details include
+`"recovered": true` and the durable `libraryJobId`, so consumers receive the
+same verified paths without waiting for or repeating an Impartus download.
+
 ## Committed artifact example
 
 ```json

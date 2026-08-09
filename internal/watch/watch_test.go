@@ -695,6 +695,10 @@ func TestWatcherRecoversCompletedOutputBeforeFirstNetworkCall(t *testing.T) {
 	if err := os.WriteFile(output, []byte("published before crash"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	recovery, err := store.RecoverInterruptedJobs(context.Background())
+	if err != nil {
+		t.Fatalf("RecoverInterruptedJobs() error = %v", err)
+	}
 	artifactID, err := artifact.NewID(expectedIdentity(expected))
 	if err != nil {
 		t.Fatal(err)
@@ -708,9 +712,23 @@ func TestWatcherRecoversCompletedOutputBeforeFirstNetworkCall(t *testing.T) {
 		},
 	}
 	producer := &fakeProducer{cfg: cfg, fetchErrors: map[int]error{}, downloadErrors: map[int]error{}}
+	var eventOutput bytes.Buffer
 
-	if _, runErr := New(cfg, source, producer, store, Options{Once: true}).Run(context.Background()); runErr != nil {
+	if _, runErr := New(cfg, source, producer, store, Options{
+		Once: true, Emitter: events.NewWriter(&eventOutput), StartupRecovery: &recovery,
+	}).Run(context.Background()); runErr != nil {
 		t.Fatalf("Run() error = %v", runErr)
+	}
+	decoded := decodeEvents(t, eventOutput.String())
+	if len(decoded) < 2 || decoded[0].Type != events.JobStarted || decoded[1].Type != events.ArtifactCommitted {
+		t.Fatalf("recovery event order = %+v, want job.started then artifact.committed", decoded)
+	}
+	if decoded[1].Artifact == nil || decoded[1].Artifact.ArtifactID != artifactID || len(decoded[1].Artifact.Files) != 1 || decoded[1].Artifact.Files[0].Path != output {
+		t.Fatalf("recovered artifact event = %+v", decoded[1])
+	}
+	details, ok := decoded[1].Details.(map[string]any)
+	if !ok || details["libraryJobId"] != jobID || details["recovered"] != true {
+		t.Fatalf("recovered artifact details = %#v", decoded[1].Details)
 	}
 	job, err := store.Job(context.Background(), jobID)
 	if err != nil || job.Status != library.JobCompleted {

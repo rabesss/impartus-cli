@@ -490,7 +490,9 @@ mark interrupted `running` jobs
 artifact without another Impartus fetch; incomplete `.part` files are never
 considered complete. Startup recovery must run while the watcher holds its
 single-instance lock and before workers start; the recovery method is never an
-implicit database-open side effect. Current one-shot CLI downloads best-effort
+implicit database-open side effect. Event-mode watcher runs carry each recovered
+manifest across preflight and emit it immediately after `job.started`, before
+the first lecture cycle. Current one-shot CLI downloads best-effort
 record their completed manifests but do not create lifecycle job rows. The
 generic watcher creates a UUIDv4 `watch` job before final-output work, marks it
 running, and calls the atomic artifact-plus-job completion transaction only
