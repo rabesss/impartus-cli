@@ -195,55 +195,71 @@ func verifyFile(spec FileSpec, audioOnly bool, selectedViews string) (File, erro
 }
 
 func openCompletedFile(rawPath string) (string, *os.File, os.FileInfo, error) {
-	path := strings.TrimSpace(rawPath)
-	if path == "" {
-		return "", nil, nil, errors.New("output path is required")
-	}
-	absolutePath, err := filepath.Abs(filepath.Clean(path))
+	absolutePath, err := normalizeCompletedPath(rawPath)
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("normalize output path: %w", err)
+		return "", nil, nil, err
 	}
-	if strings.HasSuffix(strings.ToLower(absolutePath), ".part") {
-		return "", nil, nil, fmt.Errorf("output %q is still partial", absolutePath)
-	}
-	pathInfo, err := os.Lstat(absolutePath)
+	pathInfo, err := completedPathInfo(absolutePath, "stat")
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("stat output %q: %w", absolutePath, err)
-	}
-	if pathInfo.Mode()&os.ModeSymlink != 0 {
-		return "", nil, nil, fmt.Errorf("output %q is a symlink", absolutePath)
-	}
-	if !pathInfo.Mode().IsRegular() {
-		return "", nil, nil, fmt.Errorf("output %q is not a regular file", absolutePath)
+		return "", nil, nil, err
 	}
 	file, err := os.Open(absolutePath) // #nosec G304 -- path was explicitly supplied by the caller
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("stat output %q: %w", absolutePath, err)
 	}
-	info, err := file.Stat()
+	info, err := validateOpenedCompletedFile(absolutePath, file, pathInfo)
 	if err != nil {
-		_ = file.Close() //nolint:errcheck // preserve the primary stat failure
-		return "", nil, nil, fmt.Errorf("stat output %q: %w", absolutePath, err)
-	}
-	currentPathInfo, err := os.Lstat(absolutePath)
-	if err != nil {
-		_ = file.Close() //nolint:errcheck // preserve the primary validation failure
-		return "", nil, nil, fmt.Errorf("restat output %q: %w", absolutePath, err)
-	}
-	if currentPathInfo.Mode()&os.ModeSymlink != 0 {
 		_ = file.Close() //nolint:errcheck // validation failure is the actionable error
-		return "", nil, nil, fmt.Errorf("output %q is a symlink", absolutePath)
-	}
-	if !info.Mode().IsRegular() || !currentPathInfo.Mode().IsRegular() ||
-		!os.SameFile(pathInfo, info) || !os.SameFile(currentPathInfo, info) {
-		_ = file.Close() //nolint:errcheck // validation failure is the actionable error
-		return "", nil, nil, fmt.Errorf("output %q changed during validation or is not a regular file", absolutePath)
-	}
-	if info.Size() <= 0 {
-		_ = file.Close() //nolint:errcheck // validation failure is the actionable error
-		return "", nil, nil, fmt.Errorf("output %q is empty", absolutePath)
+		return "", nil, nil, err
 	}
 	return absolutePath, file, info, nil
+}
+
+func normalizeCompletedPath(rawPath string) (string, error) {
+	path := strings.TrimSpace(rawPath)
+	if path == "" {
+		return "", errors.New("output path is required")
+	}
+	absolutePath, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", fmt.Errorf("normalize output path: %w", err)
+	}
+	if strings.HasSuffix(strings.ToLower(absolutePath), ".part") {
+		return "", fmt.Errorf("output %q is still partial", absolutePath)
+	}
+	return absolutePath, nil
+}
+
+func completedPathInfo(path, action string) (os.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("%s output %q: %w", action, path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("output %q is a symlink", path)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("output %q is not a regular file", path)
+	}
+	return info, nil
+}
+
+func validateOpenedCompletedFile(path string, file *os.File, initial os.FileInfo) (os.FileInfo, error) {
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stat output %q: %w", path, err)
+	}
+	currentPathInfo, err := completedPathInfo(path, "restat")
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || !os.SameFile(initial, info) || !os.SameFile(currentPathInfo, info) {
+		return nil, fmt.Errorf("output %q changed during validation or is not a regular file", path)
+	}
+	if info.Size() <= 0 {
+		return nil, fmt.Errorf("output %q is empty", path)
+	}
+	return info, nil
 }
 
 func normalizeFileSpec(spec FileSpec, audioOnly bool, selectedViews string) (string, string, string, string, error) {
