@@ -173,6 +173,9 @@ func formatClock(seconds float64) string {
 		seconds = 0
 	}
 	total := int(seconds)
+	if total >= 3600 {
+		return fmt.Sprintf("%02d:%02d:%02d", total/3600, (total%3600)/60, total%60)
+	}
 	return fmt.Sprintf("%02d:%02d", total/60, total%60)
 }
 
