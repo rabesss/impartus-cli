@@ -35,35 +35,29 @@ command exits 1 and does not loop trying to write another terminal record.
 
 Watch can emit:
 
-- `lecture.discovered`
 - `lecture.started`
 - `lecture.progress` after published media is durably committed
 - `lecture.completed` with the validated manifest and output paths
-- `lecture.skipped` with `artifact_committed` or `cycle_budget`
 - `lecture.failed`
-- `artifact.committed`
-- `cycle.completed`
 
 Every lecture event carries its canonical top-level `artifactId`. One-shot
 download emits `lecture.started`, `lecture.progress`, and `lecture.completed`
-while producing each lecture, then emits `artifact.committed` only after the manifest batch has
-been recorded in the local library. If media was published but that commit did
-not complete, events mode fails closed with `job.failed`; the existing human and
-single-envelope JSON compatibility modes retain their warning behavior.
+while producing each lecture, then includes the complete validated manifest
+batch in `job.completed` only after it has been recorded in the local library.
+If media was published but that commit did not complete, events mode fails
+closed with `job.failed`; the existing human and single-envelope JSON
+compatibility modes retain their warning behavior.
 
-When watcher startup recovery commits a previously published output set, the
-watch stream emits `job.started` and then one `artifact.committed` record per
-recovered manifest before the first lecture cycle. Its details include
-`"recovered": true` and the durable `libraryJobId`, so consumers receive the
-same verified paths without waiting for or repeating an Impartus download.
+Watcher startup recovery emits `lecture.completed` with `"recovered": true`
+and the durable `libraryJobId` before the first lecture cycle. Consumers receive
+the same verified paths without waiting for or repeating an Impartus download.
 
-## Committed artifact example
+## Completed lecture example
 
 ```json
-{"schemaVersion":1,"event":"artifact.committed","jobId":"job-...","command":"watch","timestamp":"2026-08-09T12:00:00Z","target":{"subjectId":123,"sessionId":456},"lecture":{"ttid":789,"seqNo":4,"topic":"Graph traversal"},"artifactId":"impartus:v1:...","artifact":{"schemaVersion":1,"artifactId":"impartus:v1:...","lecture":{"ttid":789,"instituteId":10,"subjectId":123,"sessionId":456,"seqNo":4,"topic":"Graph traversal","startTime":"2026-08-09T09:00:00Z","durationSeconds":3600,"professor":"Ada","institute":"Example Institute","noAudio":false},"selection":{"views":"left","quality":"144","audioOnly":true,"audioFormat":"mp3"},"files":[{"path":"/home/user/lectures/Graph traversal.mp3","role":"audio","view":"left","container":"mp3","bytes":1048576}],"producedAt":"2026-08-09T12:00:00Z","producer":{"name":"impartus","version":"dev"}}}
+{"schemaVersion":1,"event":"lecture.completed","jobId":"job-...","command":"watch","timestamp":"2026-08-09T12:00:00Z","target":{"subjectId":123,"sessionId":456},"lecture":{"ttid":789,"seqNo":4,"topic":"Graph traversal"},"artifactId":"impartus:v1:...","artifact":{"schemaVersion":1,"artifactId":"impartus:v1:...","lecture":{"ttid":789,"instituteId":10,"subjectId":123,"sessionId":456,"seqNo":4,"topic":"Graph traversal","startTime":"2026-08-09T09:00:00Z","durationSeconds":3600,"professor":"Ada","institute":"Example Institute","noAudio":false},"selection":{"views":"left","quality":"144","audioOnly":true,"audioFormat":"mp3"},"files":[{"path":"/home/user/lectures/Graph traversal.mp3","role":"audio","view":"left","container":"mp3","bytes":1048576}],"producedAt":"2026-08-09T12:00:00Z","producer":{"name":"impartus","version":"dev"}}}
 ```
 
 Consumers should treat `artifact.artifactId` as the logical identity and each
 `artifact.files[].path` as a verified local materialization. They must not infer
-completion from `lecture.started`, an output filename, or a non-terminal cycle
-event.
+completion from `lecture.started` or an output filename.

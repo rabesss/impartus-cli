@@ -200,19 +200,10 @@ func (stream *downloadEventStream) finish(result downloadResult, cause error) er
 		cause = errors.New("download completed but the local library commit did not complete")
 		return stream.failResult(result, cause)
 	}
-	for index := range result.Artifacts {
-		manifest := result.Artifacts[index]
-		if err := stream.writer.Emit(events.Event{
-			Type: events.ArtifactCommitted, JobID: stream.jobID, Command: "download", ArtifactID: manifest.ArtifactID,
-			Status: "completed", Timestamp: stream.now().UTC(), Artifact: &manifest,
-			Outputs: manifestOutputPaths(manifest),
-		}); err != nil {
-			return stream.failResult(result, err)
-		}
-	}
 	if err := stream.writer.Emit(events.Event{
 		Type: events.JobCompleted, JobID: stream.jobID, Command: "download",
 		Status: "completed", Timestamp: stream.now().UTC(), Outputs: artifactOutputPaths(result.Artifacts),
+		Artifacts: append([]artifact.Manifest(nil), result.Artifacts...),
 		Details: map[string]any{
 			"lectureCount": result.LectureCount, "libraryRecorded": result.LibraryRecorded,
 			"filteredCount": result.FilteredCount, "totalLectures": result.TotalLectures,

@@ -45,7 +45,7 @@ func (watcher *Watcher) emitRecoveredArtifacts(recovered []library.RecoveredArti
 	for _, item := range recovered {
 		manifest := item.Manifest
 		if err := watcher.emit(events.Event{
-			Type:       events.ArtifactCommitted,
+			Type:       events.LectureCompleted,
 			ArtifactID: manifest.ArtifactID,
 			Target: &events.Target{
 				SubjectID: manifest.Lecture.SubjectID,
@@ -55,8 +55,9 @@ func (watcher *Watcher) emitRecoveredArtifacts(recovered []library.RecoveredArti
 				TTID: manifest.Lecture.TTID, SeqNo: manifest.Lecture.SeqNo, Topic: manifest.Lecture.Topic,
 			},
 			Artifact: &manifest,
+			Outputs:  manifestPaths(manifest),
 			Details: map[string]any{
-				"libraryJobId": item.JobID, "artifactId": manifest.ArtifactID, "recovered": true,
+				"libraryJobId": item.JobID, "recovered": true,
 			},
 		}); err != nil {
 			return err
@@ -148,16 +149,6 @@ func (watcher *Watcher) emitCompletedLecture(target config.WatchTarget, lecture 
 		ArtifactID: artifactID,
 		Artifact:   &manifest,
 		Outputs:    manifestPaths(manifest),
-		Details:    map[string]any{"libraryJobId": jobID},
-	}); err != nil {
-		return err
-	}
-	if err := watcher.emit(events.Event{
-		Type:       events.ArtifactCommitted,
-		Target:     &events.Target{SubjectID: target.SubjectID, SessionID: target.SessionID, Label: target.Label},
-		Lecture:    &events.Lecture{TTID: lecture.TTID, SeqNo: lecture.SeqNo, Topic: lecture.Topic},
-		ArtifactID: manifest.ArtifactID,
-		Artifact:   &manifest,
 		Details:    map[string]any{"libraryJobId": jobID},
 	}); err != nil {
 		return err

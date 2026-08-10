@@ -20,27 +20,22 @@ const SchemaVersion = 1
 
 // Lifecycle event types are stable values consumed by local automation.
 const (
-	JobStarted        = "job.started"
-	LectureDiscovered = "lecture.discovered"
-	LectureStarted    = "lecture.started"
-	LectureProgress   = "lecture.progress"
-	LectureCompleted  = "lecture.completed"
-	LectureSkipped    = "lecture.skipped"
-	LectureFailed     = "lecture.failed"
-	ArtifactCommitted = "artifact.committed"
-	CycleCompleted    = "cycle.completed"
-	JobCompleted      = "job.completed"
-	JobFailed         = "job.failed"
-	JobCanceled       = "job.canceled"
+	JobStarted       = "job.started"
+	LectureStarted   = "lecture.started"
+	LectureProgress  = "lecture.progress"
+	LectureCompleted = "lecture.completed"
+	LectureFailed    = "lecture.failed"
+	JobCompleted     = "job.completed"
+	JobFailed        = "job.failed"
+	JobCanceled      = "job.canceled"
 )
 
 var (
 	// ErrTerminalEvent reports a second terminal event or any event after one.
 	ErrTerminalEvent = errors.New("event stream already emitted a terminal event")
 	validTypes       = map[string]bool{
-		JobStarted: true, LectureDiscovered: true, LectureStarted: true, LectureProgress: true, LectureCompleted: true,
-		LectureSkipped: true, LectureFailed: true, ArtifactCommitted: true,
-		CycleCompleted: true, JobCompleted: true, JobFailed: true, JobCanceled: true,
+		JobStarted: true, LectureStarted: true, LectureProgress: true, LectureCompleted: true,
+		LectureFailed: true, JobCompleted: true, JobFailed: true, JobCanceled: true,
 	}
 )
 
@@ -174,7 +169,7 @@ func validate(event Event) error {
 
 func isLectureLifecycle(eventType string) bool {
 	switch eventType {
-	case LectureDiscovered, LectureStarted, LectureProgress, LectureCompleted, LectureSkipped, LectureFailed:
+	case LectureStarted, LectureProgress, LectureCompleted, LectureFailed:
 		return true
 	default:
 		return false

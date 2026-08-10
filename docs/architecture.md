@@ -176,17 +176,17 @@ flowchart TD
   B --> C[Acquire state-directory OS advisory lock]
   C --> D[Open private library and recover interrupted jobs]
   D --> E[Login]
-  E --> R[Emit job.started and recovered artifact manifests]
+  E --> R[Emit job.started and recovered lecture.completed records]
   R --> S[List target lectures]
   S --> F{Committed artifact validates?}
-  F -- yes --> G[Emit lecture.skipped]
+  F -- yes --> G[Count committed skip]
   F -- no --> H{Within global cycle budget?}
-  H -- no --> I[Emit cycle_budget skip]
-  H -- yes --> J[Create or reuse durable watch job]
+  H -- no --> I[Count cycle-budget skip]
+  H -- yes --> J[Create or reuse durable watch job and emit lecture.started]
   J --> K[Download and atomically publish final media]
   K --> L[Atomic manifest plus completed-job transaction]
-  L --> M[Emit artifact.committed]
-  G --> N[Emit cycle.completed]
+  L --> M[Emit lecture.progress and lecture.completed]
+  G --> N[Finish cycle]
   I --> N
   M --> N
   N --> O{One shot, JSON, or dry run?}

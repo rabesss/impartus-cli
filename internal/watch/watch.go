@@ -301,12 +301,6 @@ func (watcher *Watcher) RunCycle(ctx context.Context) (CycleResult, error) {
 			}
 		}
 	}
-	if err := watcher.emit(events.Event{
-		Type: events.CycleCompleted, Status: statusForFailures(failures),
-		Details: map[string]any{"listed": result.Listed, "new": result.New, "skipped": result.Skipped, "downloaded": result.Downloaded, "failed": result.Failed, "dryRun": result.DryRun},
-	}); err != nil {
-		return result, err
-	}
 	return result, errors.Join(failures...)
 }
 
@@ -344,9 +338,6 @@ func (watcher *Watcher) inspectAndProcess(ctx context.Context, target config.Wat
 	if identityErr != nil {
 		return lectureOutcome{}, watcher.lectureFailure(target, lecture, "", identityErr)
 	}
-	if err := watcher.emitLecture(events.LectureDiscovered, target, lecture, artifactID, nil); err != nil {
-		return lectureOutcome{}, err
-	}
 	skipped, skipErr := watcher.skipCommitted(ctx, target, lecture, artifactID)
 	if skipped {
 		return lectureOutcome{Skipped: 1}, skipErr
@@ -357,8 +348,7 @@ func (watcher *Watcher) inspectAndProcess(ctx context.Context, target config.Wat
 	outcome := lectureOutcome{New: 1}
 	if !watcher.options.DryRun && !withinBudget {
 		outcome.Skipped = 1
-		emitErr := watcher.emitLecture(events.LectureSkipped, target, lecture, artifactID, map[string]any{"reason": "cycle_budget"})
-		return outcome, emitErr
+		return outcome, nil
 	}
 	lecture, playlist, expected, resolvedArtifactID, resolveErr := watcher.resolveLecture(ctx, target, lecture)
 	if resolveErr != nil {
@@ -394,8 +384,7 @@ func (watcher *Watcher) skipCommitted(ctx context.Context, target config.WatchTa
 	if !committed {
 		return false, nil
 	}
-	emitErr := watcher.emitLecture(events.LectureSkipped, target, lecture, artifactID, map[string]any{"reason": "artifact_committed"})
-	return true, emitErr
+	return true, nil
 }
 
 func targetLabel(target config.WatchTarget) string {
@@ -403,11 +392,4 @@ func targetLabel(target config.WatchTarget) string {
 		return label
 	}
 	return fmt.Sprintf("subject=%d session=%d", target.SubjectID, target.SessionID)
-}
-
-func statusForFailures(failures []error) string {
-	if len(failures) > 0 {
-		return "failed"
-	}
-	return "completed"
 }

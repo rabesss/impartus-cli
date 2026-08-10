@@ -113,7 +113,7 @@ func TestWatcherEmitsRequiredLectureLifecycleWithArtifactID(t *testing.T) {
 	if _, err := New(cfg, source, producer, store, Options{Once: true, Emitter: emitter}).Run(context.Background()); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := []string{events.LectureDiscovered, events.LectureStarted, events.LectureProgress, events.LectureCompleted}
+	want := []string{events.LectureStarted, events.LectureProgress, events.LectureCompleted}
 	next := 0
 	for _, event := range emitter.events {
 		if event.Lecture != nil && event.ArtifactID == "" {
@@ -344,7 +344,7 @@ func TestWatcherAttemptsFailedTerminalAfterStartedEventDeliveryFails(t *testing.
 	}
 }
 
-func TestWatcherPreservesCommittedOutcomeWhenArtifactEventDeliveryFails(t *testing.T) {
+func TestWatcherPreservesCommittedOutcomeWhenCompletedEventDeliveryFails(t *testing.T) {
 	t.Parallel()
 
 	store := openWatchStore(t)
@@ -353,7 +353,7 @@ func TestWatcherPreservesCommittedOutcomeWhenArtifactEventDeliveryFails(t *testi
 	lecture := watchLecture(target, 62, 3, "Committed despite event failure")
 	source := &fakeSource{lectures: map[[2]int]client.Lectures{{target.SubjectID, target.SessionID}: {lecture}}, errors: map[[2]int]error{}}
 	producer := &fakeProducer{cfg: cfg, fetchErrors: map[int]error{}, downloadErrors: map[int]error{}}
-	emitter := &recordingEmitter{failType: events.ArtifactCommitted, failures: 1}
+	emitter := &recordingEmitter{failType: events.LectureCompleted, failures: 1}
 
 	cycle, err := New(cfg, source, producer, store, Options{Once: true, Emitter: emitter}).Run(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "event sink failed") {
@@ -367,50 +367,7 @@ func TestWatcherPreservesCommittedOutcomeWhenArtifactEventDeliveryFails(t *testi
 	}
 }
 
-func TestWatcherPreservesCommittedSkipWhenSkipEventDeliveryFails(t *testing.T) {
-	t.Parallel()
-
-	store := openWatchStore(t)
-	cfg := watchTestConfig(t)
-	target := cfg.Watch.Targets[0]
-	lecture := watchLecture(target, 63, 4, "Skipped despite event failure")
-	source := &fakeSource{lectures: map[[2]int]client.Lectures{{target.SubjectID, target.SessionID}: {lecture}}, errors: map[[2]int]error{}}
-	producer := &fakeProducer{cfg: cfg, fetchErrors: map[int]error{}, downloadErrors: map[int]error{}}
-	if _, err := New(cfg, source, producer, store, Options{Once: true}).Run(context.Background()); err != nil {
-		t.Fatalf("initial Run() error = %v", err)
-	}
-	emitter := &recordingEmitter{failType: events.LectureSkipped, failures: 1}
-
-	cycle, err := New(cfg, source, producer, store, Options{Once: true, Emitter: emitter}).Run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "event sink failed") {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if cycle.Skipped != 1 || cycle.Downloaded != 0 {
-		t.Fatalf("cycle = %+v", cycle)
-	}
-}
-
-func TestWatcherContinuousRunStopsOnEventDeliveryFailure(t *testing.T) {
-	t.Parallel()
-
-	store := openWatchStore(t)
-	cfg := watchTestConfig(t)
-	source := &fakeSource{lectures: map[[2]int]client.Lectures{}, errors: map[[2]int]error{}}
-	producer := &fakeProducer{cfg: cfg, fetchErrors: map[int]error{}, downloadErrors: map[int]error{}}
-	emitter := &recordingEmitter{failType: events.CycleCompleted, failures: 1}
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	_, err := New(cfg, source, producer, store, Options{Interval: time.Hour, Emitter: emitter}).Run(ctx)
-	if !errors.Is(err, ErrEventDelivery) {
-		t.Fatalf("Run() error = %v, want ErrEventDelivery", err)
-	}
-	if got, want := emitter.types(), []string{events.JobStarted, events.CycleCompleted, events.JobFailed}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("event types = %v, want %v", got, want)
-	}
-}
-
-func TestWatcherStopsProducingAfterArtifactEventDeliveryFails(t *testing.T) {
+func TestWatcherStopsProducingAfterCompletedEventDeliveryFails(t *testing.T) {
 	t.Parallel()
 
 	store := openWatchStore(t)
@@ -423,7 +380,7 @@ func TestWatcherStopsProducingAfterArtifactEventDeliveryFails(t *testing.T) {
 		errors: map[[2]int]error{},
 	}
 	producer := &fakeProducer{cfg: cfg, fetchErrors: map[int]error{}, downloadErrors: map[int]error{}}
-	emitter := &recordingEmitter{failType: events.ArtifactCommitted, failures: 1}
+	emitter := &recordingEmitter{failType: events.LectureCompleted, failures: 1}
 
 	cycle, err := New(cfg, source, producer, store, Options{Once: true, Emitter: emitter}).Run(context.Background())
 	if !errors.Is(err, ErrEventDelivery) {
@@ -613,8 +570,8 @@ func TestWatcherRecoversCompletedOutputBeforeFirstNetworkCall(t *testing.T) {
 		t.Fatalf("Run() error = %v", runErr)
 	}
 	decoded := decodeEvents(t, eventOutput.String())
-	if len(decoded) < 2 || decoded[0].Type != events.JobStarted || decoded[1].Type != events.ArtifactCommitted {
-		t.Fatalf("recovery event order = %+v, want job.started then artifact.committed", decoded)
+	if len(decoded) < 2 || decoded[0].Type != events.JobStarted || decoded[1].Type != events.LectureCompleted {
+		t.Fatalf("recovery event order = %+v, want job.started then lecture.completed", decoded)
 	}
 	if decoded[1].Artifact == nil || decoded[1].Artifact.ArtifactID != artifactID || len(decoded[1].Artifact.Files) != 1 || decoded[1].Artifact.Files[0].Path != output {
 		t.Fatalf("recovered artifact event = %+v", decoded[1])
@@ -843,14 +800,11 @@ func TestWatcherAppliesOneGlobalBudgetAcrossTargets(t *testing.T) {
 	if downloads != 1 {
 		t.Fatalf("download calls = %d, want 1", downloads)
 	}
-	foundBudgetSkip := false
 	for _, event := range decodeEvents(t, output.String()) {
-		if event.Type == events.LectureSkipped && strings.Contains(fmt.Sprint(event.Details), "cycle_budget") {
-			foundBudgetSkip = true
+		if event.Type != events.JobStarted && event.Type != events.LectureStarted &&
+			event.Type != events.LectureProgress && event.Type != events.LectureCompleted && event.Type != events.JobCompleted {
+			t.Fatalf("event stream contains out-of-contract event %q: %s", event.Type, output.String())
 		}
-	}
-	if !foundBudgetSkip {
-		t.Fatalf("event stream has no cycle-budget skip: %s", output.String())
 	}
 }
 

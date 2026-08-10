@@ -44,13 +44,13 @@ func TestDownloadEventsEmitCommittedArtifactsAndOneTerminal(t *testing.T) {
 		t.Fatalf("emitDownloadResultEvents() error = %v", err)
 	}
 	decoded := decodeCLIEvents(t, output.String())
-	if len(decoded) != 3 || decoded[0].Type != events.JobStarted || decoded[1].Type != events.ArtifactCommitted || decoded[2].Type != events.JobCompleted {
+	if len(decoded) != 2 || decoded[0].Type != events.JobStarted || decoded[1].Type != events.JobCompleted {
 		t.Fatalf("event types = %+v", decoded)
 	}
-	if decoded[1].Artifact == nil || decoded[1].Artifact.ArtifactID != manifest.ArtifactID {
-		t.Fatalf("artifact event = %+v", decoded[1])
+	if len(decoded[1].Artifacts) != 1 || decoded[1].Artifacts[0].ArtifactID != manifest.ArtifactID {
+		t.Fatalf("completed artifacts = %+v", decoded[1])
 	}
-	if got := decoded[2].Outputs; len(got) != 1 || got[0] != "/absolute/lecture.mp3" {
+	if got := decoded[1].Outputs; len(got) != 1 || got[0] != "/absolute/lecture.mp3" {
 		t.Fatalf("job.completed outputs = %v, want committed manifest path", got)
 	}
 }
@@ -83,7 +83,7 @@ func TestDownloadEventsEmitOriginalPerLectureLifecycleWithArtifactID(t *testing.
 	decoded := decodeCLIEvents(t, output.String())
 	wantTypes := []string{
 		events.JobStarted, events.LectureStarted, events.LectureProgress, events.LectureCompleted,
-		events.ArtifactCommitted, events.JobCompleted,
+		events.JobCompleted,
 	}
 	if len(decoded) != len(wantTypes) {
 		t.Fatalf("events = %+v, want types %v", decoded, wantTypes)
@@ -250,7 +250,7 @@ func TestDownloadEventsAttemptFailedTerminalAfterStreamWriteFailure(t *testing.T
 	for _, test := range []struct {
 		failAt       int
 		wantTerminal bool
-	}{{1, true}, {2, true}, {3, false}} {
+	}{{1, true}, {2, false}} {
 		t.Run(fmt.Sprintf("write_%d", test.failAt), func(t *testing.T) {
 			t.Parallel()
 			output := &failWriteOnce{failAt: test.failAt}
