@@ -77,22 +77,27 @@ func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
-		name  string
-		input string
+		name   string
+		input  string
+		secret string
 	}{
-		{name: "authorization header", input: "Authorization: Bearer body-secret"},
-		{name: "prefixed authorization header", input: "proxy error: Authorization: Bearer body-secret"},
-		{name: "auth equals", input: "upstream auth=body-secret failed"},
-		{name: "equals token", input: "upstream token=body-secret failed"},
-		{name: "json token", input: `{"refresh_token":"body-secret"}`},
-		{name: "password colon", input: "password:body-secret"},
-		{name: "inline tight auth colon", input: "upstream auth:body-secret failed"},
-		{name: "inline spaced auth colon", input: "upstream auth: body-secret failed"},
-		{name: "line token colon", input: "token: body-secret"},
+		{name: "authorization header", input: "Authorization: Bearer body-secret", secret: "body-secret"},
+		{name: "prefixed authorization header", input: "proxy error: Authorization: Bearer body-secret", secret: "body-secret"},
+		{name: "auth equals", input: "upstream auth=body-secret failed", secret: "body-secret"},
+		{name: "equals token", input: "upstream token=body-secret failed", secret: "body-secret"},
+		{name: "json token", input: `{"refresh_token":"body-secret"}`, secret: "body-secret"},
+		{name: "password colon", input: "password:body-secret", secret: "body-secret"},
+		{name: "inline tight auth colon", input: "upstream auth:body-secret failed", secret: "body-secret"},
+		{name: "inline spaced auth colon", input: "upstream auth: body-secret failed", secret: "body-secret"},
+		{name: "inline short auth colon", input: "upstream auth: abc123 failed", secret: "abc123"},
+		{name: "inline short token colon", input: "upstream access_token: z failed", secret: "z"},
+		{name: "inline short api key colon", input: "upstream api-key: q failed", secret: "q"},
+		{name: "inline short secret colon", input: "upstream secret: v failed", secret: "v"},
+		{name: "line token colon", input: "token: body-secret", secret: "body-secret"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got := Scrub(test.input)
-			if strings.Contains(got, "body-secret") || !strings.Contains(got, "REDACTED") {
+			if strings.Contains(got, test.secret) || !strings.Contains(got, "REDACTED") {
 				t.Fatalf("Scrub(%q) = %q", test.input, got)
 			}
 		})

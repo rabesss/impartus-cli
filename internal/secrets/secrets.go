@@ -62,6 +62,9 @@ var fieldBareSecretColon = regexp.MustCompile(
 var tightBareSecretColon = regexp.MustCompile(
 	`(?i)(\b` + sensitiveColonAssignmentKey + `\s*:)[^\s,;}]+`,
 )
+var inlineStrongSecretColon = regexp.MustCompile(
+	`(?i)(^|[^/a-z0-9_-])((?:authorization|auth|[a-z0-9_-]+token|[a-z0-9_-]*secret|api[_-]?key)\s*:\s+)[^\s,;}]+`,
+)
 var inlineBareSecretColon = regexp.MustCompile(
 	`(?i)(\b` + sensitiveColonAssignmentKey + `\s*:\s+)[^\s,;}]{8,}`,
 )
@@ -167,6 +170,7 @@ func Scrub(s string) string {
 	scrubbed = bareSecretEquals.ReplaceAllString(scrubbed, "${1}REDACTED")
 	scrubbed = fieldBareSecretColon.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
 	scrubbed = tightBareSecretColon.ReplaceAllString(scrubbed, "${1}REDACTED")
+	scrubbed = inlineStrongSecretColon.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
 	scrubbed = inlineBareSecretColon.ReplaceAllString(scrubbed, "${1}REDACTED")
 	return lineTokenColon.ReplaceAllString(scrubbed, "${1}REDACTED")
 }
