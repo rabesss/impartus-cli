@@ -16,8 +16,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rabesss/impartus-cli/internal/artifact"
-	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/secrets"
+	"github.com/rabesss/impartus-cli/internal/selection"
 )
 
 // JobStatus is the durable lifecycle state for a local download job.
@@ -568,21 +568,23 @@ func normalizeExpectedArtifact(expected ExpectedArtifact) (ExpectedArtifact, str
 	return expected, artifactID, nil
 }
 
-func validateExpectedFile(selection artifact.Selection, file ExpectedFile) error {
+func validateExpectedFile(selected artifact.Selection, file ExpectedFile) error {
 	wantRole := "video"
 	allowedContainers := map[string]bool{"mp4": true, "mkv": true}
-	if selection.AudioOnly {
+	if selected.AudioOnly {
 		wantRole = "audio"
 		allowedContainers = map[string]bool{"mp3": true, "m4a": true, "aac": true, "opus": true}
 	}
 	if file.Role != wantRole {
 		return fmt.Errorf("expected output role %q does not match selection role %q", file.Role, wantRole)
 	}
-	if file.View != "left" && file.View != "right" && file.View != "both" {
+	selectedView, selectedOK := selection.ParseView(selected.Views)
+	outputView, outputOK := selection.ParseView(file.View)
+	if !outputOK {
 		return fmt.Errorf("unsupported expected output view %q", file.View)
 	}
-	if !config.IncludesOutputView(selection.Views, file.View) {
-		return fmt.Errorf("expected output view %q is outside selected views %q", file.View, selection.Views)
+	if !selectedOK || !selectedView.Includes(outputView) {
+		return fmt.Errorf("expected output view %q is outside selected views %q", file.View, selected.Views)
 	}
 	if !allowedContainers[file.Container] {
 		return fmt.Errorf("unsupported expected output container %q", file.Container)

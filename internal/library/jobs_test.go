@@ -15,6 +15,8 @@ import (
 	"github.com/rabesss/impartus-cli/internal/library"
 )
 
+var validMP4Fixture = []byte{0, 0, 0, 24, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm'}
+
 func TestRecoverInterruptedJobCommitsValidFinalOutputWithoutNetwork(t *testing.T) {
 	databasePath := privateDatabasePath(t)
 	outputPath := filepath.Join(t.TempDir(), "recovered.mp4")
@@ -97,7 +99,7 @@ func TestCompleteJobRejectsUnexpectedOutputPath(t *testing.T) {
 	expectedPath := filepath.Join(t.TempDir(), "expected.mp4")
 	unexpectedPath := filepath.Join(t.TempDir(), "unexpected.mp4")
 	for _, path := range []string{expectedPath, unexpectedPath} {
-		if err := os.WriteFile(path, []byte("completed media"), 0o600); err != nil {
+		if err := os.WriteFile(path, validMP4Fixture, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -143,10 +145,10 @@ func TestCompleteJobRejectsUnexpectedOutputPath(t *testing.T) {
 func TestCompleteJobEnforcesExpectedSHA256(t *testing.T) {
 	store := openTestStore(t)
 	outputPath := filepath.Join(t.TempDir(), "expected.mp4")
-	if err := os.WriteFile(outputPath, []byte("completed media"), 0o600); err != nil {
+	if err := os.WriteFile(outputPath, validMP4Fixture, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	const expectedSHA256 = "03537391546a15a1fdb224f2a1c4acad82f63895734245521f18158460a7dba8"
+	const expectedSHA256 = "c43403fe022af967a0b859d3e14ea12d6633f4c8ad475816b0c55d85896e8e35"
 	expected := library.ExpectedArtifact{
 		Lecture:    artifact.Lecture{TTID: 51, InstituteID: 1, SubjectID: 2, SessionID: 3},
 		Selection:  artifact.Selection{Views: "left", Quality: "720"},
@@ -192,7 +194,7 @@ func TestCompleteJobEnforcesExpectedSHA256(t *testing.T) {
 func TestCompleteJobRejectsPendingLifecycleState(t *testing.T) {
 	store := openTestStore(t)
 	outputPath := filepath.Join(t.TempDir(), "pending.mp4")
-	if err := os.WriteFile(outputPath, []byte("completed media"), 0o600); err != nil {
+	if err := os.WriteFile(outputPath, validMP4Fixture, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	expected := library.ExpectedArtifact{
@@ -234,7 +236,7 @@ func TestCompleteJobIdempotencyStillValidatesManifestContract(t *testing.T) {
 	expectedPath := filepath.Join(directory, "expected.mp4")
 	unexpectedPath := filepath.Join(directory, "unexpected.mp4")
 	for _, path := range []string{expectedPath, unexpectedPath} {
-		if err := os.WriteFile(path, []byte("completed media"), 0o600); err != nil {
+		if err := os.WriteFile(path, validMP4Fixture, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}

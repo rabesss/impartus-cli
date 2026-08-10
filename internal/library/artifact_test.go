@@ -65,9 +65,19 @@ func TestVerifyArtifactFillsHashAndMarksMissingWithoutDeleting(t *testing.T) {
 	if !verified.OK || len(verified.Files) != 1 || verified.Files[0].Status != library.FilePresent {
 		t.Fatalf("verification = %+v", verified)
 	}
-	const expectedSHA256 = "03537391546a15a1fdb224f2a1c4acad82f63895734245521f18158460a7dba8"
+	const expectedSHA256 = "c43403fe022af967a0b859d3e14ea12d6633f4c8ad475816b0c55d85896e8e35"
 	if verified.Files[0].SHA256 != expectedSHA256 {
 		t.Fatalf("filled sha256 = %q, want %q", verified.Files[0].SHA256, expectedSHA256)
+	}
+	if recordErr := store.RecordManifest(context.Background(), manifest); recordErr != nil {
+		t.Fatalf("RecordManifest() after hash verification error = %v", recordErr)
+	}
+	recordedAgain, err := store.GetArtifact(context.Background(), manifest.ArtifactID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recordedAgain.Files) != 1 || recordedAgain.Files[0].SHA256 != expectedSHA256 {
+		t.Fatalf("idempotent record cleared verified hash: %+v", recordedAgain.Files)
 	}
 
 	if removeErr := os.Remove(path); removeErr != nil {
@@ -86,6 +96,21 @@ func TestVerifyArtifactFillsHashAndMarksMissingWithoutDeleting(t *testing.T) {
 	}
 	if len(record.Files) != 1 || record.Files[0].Present || record.Files[0].SHA256 != expectedSHA256 {
 		t.Fatalf("missing file row was deleted or lost metadata: %+v", record.Files)
+	}
+}
+
+func TestRecordManifestRechecksContainerSignature(t *testing.T) {
+	store := openTestStore(t)
+	path := filepath.Join(t.TempDir(), "lecture.mp4")
+	manifest := buildTestManifest(t, path, "container-recheck")
+
+	invalid := make([]byte, manifest.Files[0].Bytes)
+	copy(invalid, []byte("not-media"))
+	if err := os.WriteFile(path, invalid, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordManifest(context.Background(), manifest); err == nil {
+		t.Fatal("RecordManifest() error = nil, want container-signature rejection")
 	}
 }
 
@@ -268,7 +293,7 @@ func privateDatabasePath(t *testing.T) string {
 
 func buildTestManifest(t *testing.T, path, version string) artifact.Manifest {
 	t.Helper()
-	if err := os.WriteFile(path, []byte("completed media"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte{0, 0, 0, 24, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm'}, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	manifest, err := artifact.Build(artifact.BuildInput{

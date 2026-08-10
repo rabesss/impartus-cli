@@ -247,6 +247,13 @@ func openCompletedFile(rawPath string) (string, *os.File, os.FileInfo, error) {
 	return absolutePath, file, info, nil
 }
 
+// OpenCompletedFileDescriptor opens a completed local artifact without
+// following symlinks or blocking on a path swapped to a special file. Callers
+// must compare the returned descriptor metadata with their pre-open Lstat.
+func OpenCompletedFileDescriptor(path string) (*os.File, error) {
+	return openCompletedFileDescriptor(path)
+}
+
 func normalizeCompletedPath(rawPath string) (string, error) {
 	path := strings.TrimSpace(rawPath)
 	if path == "" {

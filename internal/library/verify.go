@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"time"
+
+	"github.com/rabesss/impartus-cli/internal/artifact"
 )
 
 // FileStatus describes the on-disk validity of one materialized path.
@@ -112,7 +114,7 @@ func verifyArtifactFile(file ArtifactFile, options VerifyOptions) FileVerificati
 		result.Status = FileNotRegular
 		return result
 	}
-	opened, openErr := os.Open(file.Path) // #nosec G304 -- path is an explicit local library materialization
+	opened, openErr := artifact.OpenCompletedFileDescriptor(file.Path)
 	if openErr != nil {
 		result.Status = FileUnreadable
 		result.Error = openErr.Error()

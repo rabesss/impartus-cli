@@ -81,11 +81,12 @@ func validateCompletedManifest(manifest artifact.Manifest) (artifact.Manifest, e
 	files := make([]artifact.FileSpec, 0, len(manifest.Files))
 	for _, file := range manifest.Files {
 		files = append(files, artifact.FileSpec{
-			Path:      file.Path,
-			Role:      file.Role,
-			View:      file.View,
-			Container: file.Container,
-			SHA256:    file.SHA256,
+			Path:            file.Path,
+			Role:            file.Role,
+			View:            file.View,
+			Container:       file.Container,
+			SHA256:          file.SHA256,
+			VerifyContainer: true,
 		})
 	}
 	rebuilt, err := artifact.Build(artifact.BuildInput{
@@ -166,7 +167,10 @@ func recordManifestTx(ctx context.Context, tx *sql.Tx, manifest artifact.Manifes
 				view = excluded.view,
 				container = excluded.container,
 				bytes = excluded.bytes,
-				sha256 = excluded.sha256,
+				sha256 = CASE
+					WHEN excluded.sha256 <> '' THEN excluded.sha256
+					ELSE artifact_files.sha256
+				END,
 				present = 1,
 				last_verified_at = excluded.last_verified_at,
 				updated_at = excluded.updated_at`,

@@ -16,7 +16,7 @@ func TestExecuteJSONLibraryListAndVerify(t *testing.T) {
 	restoreCLIState(t)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	mediaPath := filepath.Join(t.TempDir(), "lecture.mp4")
-	if err := os.WriteFile(mediaPath, []byte("media"), 0o600); err != nil {
+	if err := os.WriteFile(mediaPath, []byte{0, 0, 0, 24, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm'}, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	manifest, err := artifact.Build(artifact.BuildInput{
