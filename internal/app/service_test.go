@@ -94,6 +94,40 @@ func TestPlaybackWaitResultPreservesPlayerFailure(t *testing.T) {
 	}
 }
 
+func TestPlaybackCancellationResultPreservesReadyFailures(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	proxyFailure := errors.New("proxy failed")
+	playerFailure := errors.New("player failed")
+
+	tests := []struct {
+		name         string
+		proxyFailure error
+		playerResult error
+		want         error
+	}{
+		{name: "proxy", proxyFailure: proxyFailure, playerResult: playerFailure, want: proxyFailure},
+		{name: "player", playerResult: playerFailure, want: playerFailure},
+		{name: "clean player", want: context.Canceled},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			failures := make(chan error, 1)
+			playerResult := make(chan error, 1)
+			if test.proxyFailure != nil {
+				failures <- test.proxyFailure
+			}
+			playerResult <- test.playerResult
+
+			if err := playbackCancellationResult(ctx, failures, playerResult); !errors.Is(err, test.want) {
+				t.Fatalf("playbackCancellationResult() error = %v, want %v", err, test.want)
+			}
+		})
+	}
+}
+
 func TestServicePassesExplicitPlayerOptions(t *testing.T) {
 	streams := &fakeStreams{playlists: []client.ParsedPlaylist{{ID: 1}}}
 	fakePlayer := &fakeManagedPlayer{}

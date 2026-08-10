@@ -70,6 +70,33 @@ func TestPlaybackTerminalResultPreservesPlaybackFailure(t *testing.T) {
 	}
 }
 
+func TestPlaybackCancellationResultPreservesReadyFailure(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("playback failed")
+	playbackEnd := make(chan error, 1)
+	playbackEnd <- sentinel
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := playbackCancellationResult(ctx, playbackEnd); !errors.Is(err, sentinel) {
+		t.Fatalf("playbackCancellationResult() error = %v, want playback failure", err)
+	}
+}
+
+func TestPlaybackCancellationResultKeepsCancellationOverReadyCleanExit(t *testing.T) {
+	t.Parallel()
+
+	playbackEnd := make(chan error, 1)
+	playbackEnd <- nil
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := playbackCancellationResult(ctx, playbackEnd); !errors.Is(err, context.Canceled) {
+		t.Fatalf("playbackCancellationResult() error = %v, want context cancellation", err)
+	}
+}
+
 func TestAcceptEventRemovesUntrustedPeerTextFromPublicEvents(t *testing.T) {
 	t.Parallel()
 
