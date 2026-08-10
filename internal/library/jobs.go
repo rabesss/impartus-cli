@@ -623,37 +623,56 @@ func (expected ExpectedArtifact) buildManifest() (artifact.Manifest, error) {
 }
 
 func validateExpectedContainerSignature(expected ExpectedFile) error {
-	file, err := os.Open(expected.Path) // #nosec G304 -- path is the normalized durable job expectation
+	header, err := readExpectedContainerHeader(expected.Path)
 	if err != nil {
-		return fmt.Errorf("open expected output %q: %w", expected.Path, err)
+		return err
+	}
+	if !matchesExpectedContainer(header, expected.Container) {
+		return fmt.Errorf("expected output %q does not match container %q", expected.Path, expected.Container)
+	}
+	return nil
+}
+
+func readExpectedContainerHeader(path string) ([]byte, error) {
+	file, err := os.Open(path) // #nosec G304 -- path is the normalized durable job expectation
+	if err != nil {
+		return nil, fmt.Errorf("open expected output %q: %w", path, err)
 	}
 	defer func() { _ = file.Close() }() //nolint:errcheck
 
 	header := make([]byte, 12)
 	n, readErr := io.ReadFull(file, header)
 	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
-		return fmt.Errorf("read expected output %q: %w", expected.Path, readErr)
+		return nil, fmt.Errorf("read expected output %q: %w", path, readErr)
 	}
-	header = header[:n]
-	valid := false
-	switch expected.Container {
+	return header[:n], nil
+}
+
+func matchesExpectedContainer(header []byte, container string) bool {
+	switch container {
 	case "mp4", "m4a":
-		valid = len(header) >= 8 && bytes.Equal(header[4:8], []byte("ftyp"))
+		return len(header) >= 8 && bytes.Equal(header[4:8], []byte("ftyp"))
 	case "mkv":
-		valid = bytes.HasPrefix(header, []byte{0x1a, 0x45, 0xdf, 0xa3})
+		return bytes.HasPrefix(header, []byte{0x1a, 0x45, 0xdf, 0xa3})
 	case "mp3":
-		valid = bytes.HasPrefix(header, []byte("ID3")) ||
-			(len(header) >= 2 && header[0] == 0xff && header[1]&0xe0 == 0xe0)
+		return matchesMP3Header(header)
 	case "aac":
-		valid = bytes.HasPrefix(header, []byte("ADIF")) ||
-			(len(header) >= 2 && header[0] == 0xff && header[1]&0xf6 == 0xf0)
+		return matchesAACHeader(header)
 	case "opus":
-		valid = bytes.HasPrefix(header, []byte("OggS"))
+		return bytes.HasPrefix(header, []byte("OggS"))
+	default:
+		return false
 	}
-	if !valid {
-		return fmt.Errorf("expected output %q does not match container %q", expected.Path, expected.Container)
-	}
-	return nil
+}
+
+func matchesMP3Header(header []byte) bool {
+	return bytes.HasPrefix(header, []byte("ID3")) ||
+		(len(header) >= 2 && header[0] == 0xff && header[1]&0xe0 == 0xe0)
+}
+
+func matchesAACHeader(header []byte) bool {
+	return bytes.HasPrefix(header, []byte("ADIF")) ||
+		(len(header) >= 2 && header[0] == 0xff && header[1]&0xf6 == 0xf0)
 }
 
 func (expected ExpectedArtifact) matchesManifest(manifest artifact.Manifest) error {
