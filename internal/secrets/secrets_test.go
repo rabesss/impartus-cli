@@ -85,7 +85,9 @@ func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 		{name: "prefixed authorization header", input: "proxy error: Authorization: Bearer body-secret", secret: "body-secret"},
 		{name: "auth equals", input: "upstream auth=body-secret failed", secret: "body-secret"},
 		{name: "equals token", input: "upstream token=body-secret failed", secret: "body-secret"},
+		{name: "equals key", input: "upstream key=body-secret failed", secret: "body-secret"},
 		{name: "json token", input: `{"refresh_token":"body-secret"}`, secret: "body-secret"},
+		{name: "json key", input: `{"key":"body-secret"}`, secret: "body-secret"},
 		{name: "password colon", input: "password:body-secret", secret: "body-secret"},
 		{name: "inline tight auth colon", input: "upstream auth:body-secret failed", secret: "body-secret"},
 		{name: "inline spaced auth colon", input: "upstream auth: body-secret failed", secret: "body-secret"},
@@ -94,6 +96,7 @@ func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 		{name: "inline short token colon", input: "upstream access_token: z failed", secret: "z"},
 		{name: "inline short api key colon", input: "upstream api-key: q failed", secret: "q"},
 		{name: "inline short secret colon", input: "upstream secret: v failed", secret: "v"},
+		{name: "inline short key colon", input: "upstream key: q7 failed", secret: "q7"},
 		{name: "inline short password colon", input: "upstream password: hunter2 failed", secret: "hunter2"},
 		{name: "line token colon", input: "token: body-secret", secret: "body-secret"},
 	} {
@@ -111,6 +114,7 @@ func TestScrub_PreservesOrdinaryParserDiagnostics(t *testing.T) {
 
 	for _, diagnostic := range []string{
 		"open /etc/auth: no such file or directory",
+		"open /etc/key: permission denied",
 		"open /etc/token: no such file or directory",
 	} {
 		if got := Scrub(diagnostic); got != diagnostic {

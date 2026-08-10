@@ -45,8 +45,8 @@ var userinfoRe = regexp.MustCompile(`(?i)(https?://)[^/\s:@]+:[^/\s@]+@`)
 // bodies rather than URLs. A standalone colon-delimited "token" is matched
 // only at the start of a line so parser diagnostics such as
 // "unexpected token: EOF" remain useful.
-const sensitiveAssignmentKey = `(?:authorization|auth|[a-z0-9_-]*(?:token|password|secret)|api[_-]?key)`
-const sensitiveColonAssignmentKey = `(?:authorization|auth|[a-z0-9_-]+token|[a-z0-9_-]*(?:password|secret)|api[_-]?key)`
+const sensitiveAssignmentKey = `(?:authorization|auth|key|[a-z0-9_-]*(?:token|password|secret)|api[_-]?key)`
+const sensitiveColonAssignmentKey = `(?:authorization|auth|key|[a-z0-9_-]+token|[a-z0-9_-]*(?:password|secret)|api[_-]?key)`
 
 var authorizationEqualsValue = regexp.MustCompile(`(?i)(\bauthorization\s*=\s*)[^,;\r\n]+`)
 var authorizationColonValue = regexp.MustCompile(`(?i)(\bauthorization\s*:\s*)[^,;\r\n]+`)
@@ -63,10 +63,7 @@ var tightBareSecretColon = regexp.MustCompile(
 	`(?i)(\b` + sensitiveColonAssignmentKey + `\s*:)[^\s,;}]+`,
 )
 var inlineStrongSecretColon = regexp.MustCompile(
-	`(?i)(^|[^/a-z0-9_-])((?:authorization|auth|[a-z0-9_-]*(?:token|password|secret)|api[_-]?key)\s*:\s+)[^\s,;}]+`,
-)
-var inlineBareSecretColon = regexp.MustCompile(
-	`(?i)(\b` + sensitiveColonAssignmentKey + `\s*:\s+)[^\s,;}]{8,}`,
+	`(?i)(^|[^/a-z0-9_-])((?:authorization|auth|key|[a-z0-9_-]*(?:token|password|secret)|api[_-]?key)\s*:\s+)[^\s,;}]+`,
 )
 var lineTokenColon = regexp.MustCompile(`(?im)(^\s*token\s*:\s*)[^\s,;]+`)
 
@@ -171,7 +168,6 @@ func Scrub(s string) string {
 	scrubbed = fieldBareSecretColon.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
 	scrubbed = tightBareSecretColon.ReplaceAllString(scrubbed, "${1}REDACTED")
 	scrubbed = inlineStrongSecretColon.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
-	scrubbed = inlineBareSecretColon.ReplaceAllString(scrubbed, "${1}REDACTED")
 	return lineTokenColon.ReplaceAllString(scrubbed, "${1}REDACTED")
 }
 
