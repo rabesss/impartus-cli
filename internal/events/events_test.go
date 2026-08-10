@@ -2,9 +2,11 @@ package events
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -210,15 +212,22 @@ func TestRedactErrorPreservesParserTokenDetails(t *testing.T) {
 	}
 }
 
-func TestRedactedErrorPreservesIdentityWithoutRenderingSecrets(t *testing.T) {
+func TestRedactedErrorPreservesClassificationWithoutExposingRawCause(t *testing.T) {
 	t.Parallel()
 
-	sentinel := errors.New("Authorization: Token secret-value")
-	got := RedactedError(fmt.Errorf("request failed: %w", sentinel))
-	if !errors.Is(got, sentinel) {
-		t.Fatalf("RedactedError() lost original error identity: %v", got)
+	raw := &url.Error{Op: "Get", URL: "https://example.test/chunk?token=secret-value", Err: context.Canceled}
+	got := RedactedError(fmt.Errorf("request failed: %w", raw))
+	if !errors.Is(got, context.Canceled) {
+		t.Fatalf("RedactedError() lost cancellation classification: %v", got)
 	}
 	if strings.Contains(got.Error(), "secret-value") || !strings.Contains(got.Error(), "REDACTED") {
 		t.Fatalf("RedactedError() = %q", got.Error())
+	}
+	if unwrapped := errors.Unwrap(got); unwrapped != nil {
+		t.Fatalf("RedactedError() exposed raw cause through Unwrap: %v", unwrapped)
+	}
+	var recovered *url.Error
+	if errors.As(got, &recovered) {
+		t.Fatalf("RedactedError() exposed raw cause through errors.As: %v", recovered)
 	}
 }
