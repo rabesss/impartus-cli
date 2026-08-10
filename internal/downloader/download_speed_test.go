@@ -261,7 +261,7 @@ func TestDownloadPlaylistPipelineUsesDownloaderRetryLimit(t *testing.T) {
 			return
 		}
 		chunkRequests.Add(1)
-		http.Error(w, `Authorization: Bearer `+bodySecret+` token=`+bodySecret, http.StatusServiceUnavailable)
+		http.Error(w, `auth: Digest username="alice", response="`+bodySecret+`"`, http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
 

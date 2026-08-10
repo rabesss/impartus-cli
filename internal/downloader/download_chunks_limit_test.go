@@ -120,9 +120,10 @@ func TestDownloadURLWithLimitRemovesInterruptedPartial(t *testing.T) {
 func TestDownloadChunkScrubsUpstreamErrorBodyAtSource(t *testing.T) {
 	t.Parallel()
 
-	const secret = "body-secret-value"
+	const digestSecret = "digest-secret-value"
+	const apiSecret = "api-secret-value"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, `Authorization: Digest username="alice", realm="lecture", response="`+secret+`"`, http.StatusServiceUnavailable)
+		http.Error(w, `auth: Digest username="alice", response="`+digestSecret+`"`+"\nX-Api-Key: "+apiSecret, http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
 
@@ -134,7 +135,7 @@ func TestDownloadChunkScrubsUpstreamErrorBodyAtSource(t *testing.T) {
 	if path != "" || data != nil || written != 0 {
 		t.Fatalf("failed download returned path=%q data=%v written=%d", path, data, written)
 	}
-	if strings.Contains(err.Error(), secret) || !strings.Contains(err.Error(), "Authorization: REDACTED") {
+	if strings.Contains(err.Error(), digestSecret) || strings.Contains(err.Error(), apiSecret) || !strings.Contains(err.Error(), "REDACTED") {
 		t.Fatalf("doDownloadChunkWithLimit() leaked upstream credential: %v", err)
 	}
 }

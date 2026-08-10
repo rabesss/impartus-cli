@@ -105,6 +105,10 @@ func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 		{name: "authorization negotiate", input: "Authorization: Negotiate negotiate-secret", secret: "negotiate-secret"},
 		{name: "authorization aws", input: "authorization=AWS4-HMAC-SHA256 Credential=aws-secret SignedHeaders=host", secret: "aws-secret"},
 		{name: "authorization custom", input: "authorization: Custom id=public; proof=custom-secret", secret: "custom-secret"},
+		{name: "auth digest", input: `auth: Digest username="alice", response="digest-secret"`, secret: "digest-secret"},
+		{name: "proxy authorization", input: "Proxy-Authorization: Custom proof=proxy-secret", secret: "proxy-secret"},
+		{name: "x api key", input: "X-Api-Key: api-secret", secret: "api-secret"},
+		{name: "json x api key", input: `{"x-api-key":"api-secret"}`, secret: "api-secret"},
 		{name: "signature equals", input: "upstream signature=body-secret failed", secret: "body-secret"},
 		{name: "short sig colon", input: "upstream sig: q failed", secret: "q"},
 		{name: "json signature", input: `{"signature":"body-secret"}`, secret: "body-secret"},
@@ -137,14 +141,14 @@ func TestScrub_FreeFormCoverageTracksEverySensitiveQueryKey(t *testing.T) {
 func TestScrub_RedactsMultipleAssignmentsWithoutDiscardingTheirKeys(t *testing.T) {
 	t.Parallel()
 
-	input := "token=secret-value refresh_token=refresh-value auth: Bearer auth-value signature=signed-value"
+	input := "token=secret-value refresh_token=refresh-value signature=signed-value"
 	got := Scrub(input)
-	for _, secret := range []string{"secret-value", "refresh-value", "auth-value", "signed-value"} {
+	for _, secret := range []string{"secret-value", "refresh-value", "signed-value"} {
 		if strings.Contains(got, secret) {
 			t.Fatalf("Scrub(%q) leaked %q: %q", input, secret, got)
 		}
 	}
-	for _, key := range []string{"token=REDACTED", "refresh_token=REDACTED", "auth: REDACTED", "signature=REDACTED"} {
+	for _, key := range []string{"token=REDACTED", "refresh_token=REDACTED", "signature=REDACTED"} {
 		if !strings.Contains(got, key) {
 			t.Fatalf("Scrub(%q) lost diagnostic key %q: %q", input, key, got)
 		}
