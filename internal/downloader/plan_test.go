@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/rabesss/impartus-cli/internal/client"
@@ -182,6 +183,25 @@ func TestPlanJoinResultMatchesSelectedFinalOutputs(t *testing.T) {
 	}
 }
 
+func TestJoinResultOutputsPreserveTypedOrder(t *testing.T) {
+	t.Parallel()
+
+	result := JoinResult{
+		LeftOutput: "left.mp4", LeftContainer: "mp4",
+		BothOutput: "both.mkv", BothContainer: "matroska",
+	}
+	want := []JoinOutput{
+		{Path: "left.mp4", View: "left", Container: "mp4"},
+		{Path: "both.mkv", View: "both", Container: "matroska"},
+	}
+	if got := result.Outputs(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("JoinResult.Outputs() = %#v, want %#v", got, want)
+	}
+	if got := result.OutputPaths(); !reflect.DeepEqual(got, []string{"left.mp4", "both.mkv"}) {
+		t.Fatalf("JoinResult.OutputPaths() = %#v", got)
+	}
+}
+
 func TestPlanJoinResultMatchesPublishedJoinPaths(t *testing.T) {
 	t.Parallel()
 
@@ -227,15 +247,9 @@ func TestPlanJoinResultRejectsUnavailableSelectedView(t *testing.T) {
 
 func joinResultMetadata(result JoinResult) ([]string, []string) {
 	views, containers := make([]string, 0, 3), make([]string, 0, 3)
-	for _, output := range []struct{ path, view, container string }{
-		{result.LeftOutput, "left", result.LeftContainer},
-		{result.RightOutput, "right", result.RightContainer},
-		{result.BothOutput, "both", result.BothContainer},
-	} {
-		if output.path != "" {
-			views = append(views, output.view)
-			containers = append(containers, output.container)
-		}
+	for _, output := range result.Outputs() {
+		views = append(views, output.View)
+		containers = append(containers, output.Container)
 	}
 	return views, containers
 }

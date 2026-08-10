@@ -296,6 +296,26 @@ func TestWatcherResolvesMissingInstituteFromCourseCatalog(t *testing.T) {
 	}
 }
 
+func TestWatcherDoesNotListLecturesWhoseScopeCannotBeResolved(t *testing.T) {
+	t.Parallel()
+
+	store := openWatchStore(t)
+	cfg := watchTestConfig(t)
+	target := cfg.Watch.Targets[0]
+	lecture := watchLecture(target, 42, 3, "Unscoped")
+	lecture.InstituteID = 0
+	source := &fakeSource{
+		lectures: map[[2]int]client.Lectures{{target.SubjectID, target.SessionID}: {lecture}},
+		errors:   map[[2]int]error{},
+	}
+	producer := &fakeProducer{cfg: cfg, fetchErrors: map[int]error{}, downloadErrors: map[int]error{}}
+
+	cycle, err := New(cfg, source, producer, store, Options{Once: true}).Run(context.Background())
+	if err == nil || cycle.Listed != 0 || cycle.Failed != 1 {
+		t.Fatalf("Run() cycle = %+v, error = %v", cycle, err)
+	}
+}
+
 func TestWatcherScopesOutputNamesAcrossTargets(t *testing.T) {
 	t.Parallel()
 
@@ -773,6 +793,48 @@ func TestWatcherRetriesRecoverableJobWithoutCreatingDuplicate(t *testing.T) {
 	}
 	if jobs[0].ID != jobID || jobs[0].Status != library.JobCompleted || jobs[0].Attempts != 2 {
 		t.Fatalf("retried job = %+v", jobs[0])
+	}
+}
+
+func TestWatcherReconcilesEveryRetryableSiblingForOneArtifact(t *testing.T) {
+	t.Parallel()
+
+	store := openWatchStore(t)
+	cfg := watchTestConfig(t)
+	target := cfg.Watch.Targets[0]
+	lecture := watchLecture(target, 811, 21, "Duplicate interrupted jobs")
+	playlist := client.ParsedPlaylist{
+		ID: lecture.TTID, InstituteID: lecture.InstituteID, SubjectID: lecture.SubjectID,
+		SessionID: lecture.SessionID, SeqNo: lecture.SeqNo, Title: watchScopedTitle(lecture, lecture.Topic),
+		FirstViewURLs: []string{"left"},
+	}
+	plan, err := downloader.PlanJoinResult(cfg, playlist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := expectedArtifact(lecture, cfg, plan, time.Now().UTC())
+	for range 2 {
+		if err := store.CreateJob(context.Background(), library.JobSpec{ID: uuid.NewString(), Kind: "watch", Expected: expected}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source := &fakeSource{lectures: map[[2]int]client.Lectures{{target.SubjectID, target.SessionID}: {lecture}}, errors: map[[2]int]error{}}
+	producer := &fakeProducer{cfg: cfg, fetchErrors: map[int]error{}, downloadErrors: map[int]error{}}
+
+	cycle, err := New(cfg, source, producer, store, Options{Once: true}).Run(context.Background())
+	if err != nil || cycle.Downloaded != 1 {
+		t.Fatalf("Run() cycle = %+v, error = %v", cycle, err)
+	}
+	jobs, err := store.ListJobs(context.Background())
+	if err != nil || len(jobs) != 2 {
+		t.Fatalf("jobs = %+v, error = %v", jobs, err)
+	}
+	statuses := map[library.JobStatus]int{}
+	for _, job := range jobs {
+		statuses[job.Status]++
+	}
+	if statuses[library.JobCompleted] != 1 || statuses[library.JobFailed] != 1 {
+		t.Fatalf("job statuses = %#v, want one completed and one failed", statuses)
 	}
 }
 

@@ -178,6 +178,15 @@ func TestRedactErrorCoversAnyAuthorizationScheme(t *testing.T) {
 	}
 }
 
+func TestRedactErrorPreservesParserTokenDetails(t *testing.T) {
+	t.Parallel()
+
+	const message = "decode response: unexpected token: EOF"
+	if got := RedactError(errors.New(message)); got != message {
+		t.Fatalf("RedactError() = %q, want %q", got, message)
+	}
+}
+
 func TestRedactedErrorPreservesIdentityWithoutRenderingSecrets(t *testing.T) {
 	t.Parallel()
 
