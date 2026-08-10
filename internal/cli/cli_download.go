@@ -250,6 +250,9 @@ func downloadLecturesWithRunner(ctx context.Context, cfg *config.Config, d lectu
 	if err != nil {
 		return downloadResult{}, err
 	}
+	if len(playlists) == 0 {
+		return downloadResult{}, errors.New("no playlists available for selected lectures")
+	}
 	if coverageErr := validateSelectedPlaylistCoverage(playlists, lecturesByScope); coverageErr != nil {
 		return downloadResult{}, coverageErr
 	}

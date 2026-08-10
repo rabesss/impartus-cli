@@ -92,6 +92,26 @@ func TestDownloadSkipsSelectedLectureWithoutPlaylist(t *testing.T) {
 	}
 }
 
+func TestDownloadFailsWhenNoSelectedLectureHasPlaylist(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeLectureDownloadRunner{}
+	_, err := downloadLecturesWithRunner(context.Background(), &config.Config{
+		DownloadLocation: t.TempDir(),
+		Views:            "left",
+		Quality:          "720",
+	}, runner, client.Lectures{
+		{InstituteID: 1, SubjectID: 2, SessionID: 3, TTID: 10},
+		{InstituteID: 1, SubjectID: 2, SessionID: 3, TTID: 11},
+	}, quietDownloadPresentation())
+	if err == nil || !strings.Contains(err.Error(), "no playlists available") {
+		t.Fatalf("downloadLecturesWithRunner() error = %v", err)
+	}
+	if runner.downloads != 0 {
+		t.Fatalf("downloads = %d, want 0", runner.downloads)
+	}
+}
+
 func TestDownloadFailureIncludesLectureScope(t *testing.T) {
 	t.Parallel()
 
