@@ -254,6 +254,14 @@ func OpenCompletedFileDescriptor(path string) (*os.File, error) {
 	return openCompletedFileDescriptor(path)
 }
 
+// ValidateStableCompletedFile proves that path still names the same regular
+// file descriptor with unchanged size and modification time. Callers that
+// inspect or hash an opened completed file must invoke this immediately before
+// publishing their result.
+func ValidateStableCompletedFile(path string, file *os.File, initial os.FileInfo) error {
+	return validateStableCompletedFile(path, file, initial)
+}
+
 func normalizeCompletedPath(rawPath string) (string, error) {
 	path := strings.TrimSpace(rawPath)
 	if path == "" {

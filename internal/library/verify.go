@@ -12,6 +12,8 @@ import (
 	"github.com/rabesss/impartus-cli/internal/artifact"
 )
 
+var validateStableArtifactFile = artifact.ValidateStableCompletedFile
+
 // FileStatus describes the on-disk validity of one materialized path.
 type FileStatus string
 
@@ -149,6 +151,11 @@ func verifyArtifactFile(file ArtifactFile, options VerifyOptions) FileVerificati
 			return result
 		}
 		result.SHA256 = actual
+	}
+	if stableErr := validateStableArtifactFile(file.Path, opened, pathInfo); stableErr != nil {
+		result.Status = FileNotRegular
+		result.Error = stableErr.Error()
+		return result
 	}
 	result.Status = FilePresent
 	return result

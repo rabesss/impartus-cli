@@ -208,6 +208,14 @@ func (store *Store) CompleteJob(ctx context.Context, jobID string, manifest arti
 	if validationErr != nil {
 		return validationErr
 	}
+	return store.completeValidatedJob(ctx, jobID, validated)
+}
+
+// completeValidatedJob atomically records a manifest that was built and
+// validated against the current file descriptors by the immediate caller.
+// Keeping this separate prevents startup recovery from reopening the same
+// paths between validation and the durable transaction.
+func (store *Store) completeValidatedJob(ctx context.Context, jobID string, validated artifact.Manifest) error {
 	tx, beginErr := store.database.BeginTx(ctx, nil)
 	if beginErr != nil {
 		return fmt.Errorf("begin job completion: %w", beginErr)
@@ -353,7 +361,7 @@ func (store *Store) RecoverInterruptedJobs(ctx context.Context) (RecoveryResult,
 			}
 			continue
 		}
-		if err := store.CompleteJob(ctx, job.ID, manifest); err != nil {
+		if err := store.completeValidatedJob(ctx, job.ID, manifest); err != nil {
 			if errors.Is(err, ErrJobTerminal) || errors.Is(err, ErrJobTransition) || errors.Is(err, ErrJobNotFound) {
 				result.Skipped = append(result.Skipped, job.ID)
 				continue

@@ -47,6 +47,13 @@ func validatePrivateWindowsACL(path, label string) error {
 	if descriptor == nil {
 		return fmt.Errorf("%s has no security descriptor", label)
 	}
+	control, _, err := descriptor.Control()
+	if err != nil {
+		return fmt.Errorf("inspect %s security descriptor control: %w", label, err)
+	}
+	if !privateWindowsDACLIsProtected(uint16(control)) {
+		return fmt.Errorf("%s DACL must be protected from inherited permission changes", label)
+	}
 	owner, _, err := descriptor.Owner()
 	if err != nil {
 		return fmt.Errorf("inspect %s owner: %w", label, err)
