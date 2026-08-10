@@ -82,11 +82,11 @@ func TestRecoverInterruptedJobCommitsValidFinalOutputWithoutNetwork(t *testing.T
 	if len(third.Recovered) != 1 || third.Recovered[0] != jobID || len(third.Pending) != 0 {
 		t.Fatalf("completed-output recovery = %+v", third)
 	}
-	if len(second.Artifacts) != 1 || second.Artifacts[0].JobID != jobID {
-		t.Fatalf("completed-output recovery artifacts = %+v", second.Artifacts)
+	if len(third.Artifacts) != 1 || third.Artifacts[0].JobID != jobID {
+		t.Fatalf("completed-output recovery artifacts = %+v", third.Artifacts)
 	}
-	if second.Artifacts[0].Manifest.ArtifactID == "" || len(second.Artifacts[0].Manifest.Files) != 1 || second.Artifacts[0].Manifest.Files[0].Path != outputPath {
-		t.Fatalf("completed-output recovery manifest = %+v", second.Artifacts[0].Manifest)
+	if third.Artifacts[0].Manifest.ArtifactID == "" || len(third.Artifacts[0].Manifest.Files) != 1 || third.Artifacts[0].Manifest.Files[0].Path != outputPath {
+		t.Fatalf("completed-output recovery manifest = %+v", third.Artifacts[0].Manifest)
 	}
 	job, err := store.Job(context.Background(), jobID)
 	if err != nil {

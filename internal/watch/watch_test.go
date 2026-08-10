@@ -573,7 +573,7 @@ func TestWatcherRecoversCompletedOutputBeforeFirstNetworkCall(t *testing.T) {
 	if err := store.StartJob(context.Background(), jobID); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(output, []byte("published before crash"), 0o600); err != nil {
+	if err := os.WriteFile(output, []byte("ID3published before crash"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	recovery, err := store.RecoverInterruptedJobs(context.Background())
