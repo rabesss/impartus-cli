@@ -8,6 +8,7 @@ import (
 
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
+	"github.com/rabesss/impartus-cli/internal/selection"
 )
 
 // PlanJoinResult returns the final paths and containers that
@@ -31,7 +32,7 @@ func PlanJoinResult(cfg *config.Config, playlist client.ParsedPlaylist) (JoinRes
 	return result, nil
 }
 
-func normalizedPlanInput(cfg *config.Config) (string, string, error) {
+func normalizedPlanInput(cfg *config.Config) (string, selection.View, error) {
 	if cfg == nil {
 		return "", "", errors.New("download configuration is required")
 	}
@@ -39,8 +40,8 @@ func normalizedPlanInput(cfg *config.Config) (string, string, error) {
 	if strings.TrimSpace(location) == "" {
 		return "", "", errors.New("download location is required")
 	}
-	views := config.NormalizeViews(cfg.Views)
-	if views != "left" && views != "right" && views != "both" {
+	views, ok := selection.ParseView(cfg.Views)
+	if !ok {
 		return "", "", fmt.Errorf("unsupported views %q", cfg.Views)
 	}
 	return location, views, nil
@@ -59,19 +60,20 @@ func plannedMedia(cfg *config.Config) (string, string, error) {
 
 func planSelectedViews(
 	result *JoinResult,
-	location, base, extension, container, views string,
+	location, base, extension, container string,
+	views selection.View,
 	audioOnly bool,
 	playlist client.ParsedPlaylist,
 ) {
-	if views != "right" && len(playlist.FirstViewURLs) > 0 {
+	if views.Includes(selection.ViewLeft) && len(playlist.FirstViewURLs) > 0 {
 		result.LeftOutput = filepath.Join(location, fmt.Sprintf("%s LEFT VIEW.%s", base, extension))
 		result.LeftContainer = container
 	}
-	if views != "left" && len(playlist.SecondViewURLs) > 0 {
+	if views.Includes(selection.ViewRight) && len(playlist.SecondViewURLs) > 0 {
 		result.RightOutput = filepath.Join(location, fmt.Sprintf("%s RIGHT VIEW.%s", base, extension))
 		result.RightContainer = container
 	}
-	if views == "both" && result.LeftOutput != "" && result.RightOutput != "" {
+	if views == selection.ViewBoth && result.LeftOutput != "" && result.RightOutput != "" {
 		bothContainer := "mkv"
 		if audioOnly {
 			bothContainer = container
