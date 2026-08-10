@@ -56,13 +56,34 @@ type JoinResult struct {
 	BothContainer  string
 }
 
+// JoinOutput describes one published media output and its stable artifact
+// metadata. Outputs are ordered left, right, then both.
+type JoinOutput struct {
+	Path      string
+	View      string
+	Container string
+}
+
+// Outputs returns non-empty outputs with their view and container metadata.
+func (r JoinResult) Outputs() []JoinOutput {
+	outputs := make([]JoinOutput, 0, 3)
+	for _, output := range []JoinOutput{
+		{Path: r.LeftOutput, View: "left", Container: r.LeftContainer},
+		{Path: r.RightOutput, View: "right", Container: r.RightContainer},
+		{Path: r.BothOutput, View: "both", Container: r.BothContainer},
+	} {
+		if strings.TrimSpace(output.Path) != "" {
+			outputs = append(outputs, output)
+		}
+	}
+	return outputs
+}
+
 // OutputPaths returns the non-empty output file paths in left, right, both order.
 func (r JoinResult) OutputPaths() []string {
 	paths := make([]string, 0, 3)
-	for _, p := range []string{r.LeftOutput, r.RightOutput, r.BothOutput} {
-		if strings.TrimSpace(p) != "" {
-			paths = append(paths, p)
-		}
+	for _, output := range r.Outputs() {
+		paths = append(paths, output.Path)
 	}
 	return paths
 }

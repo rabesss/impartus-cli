@@ -463,31 +463,64 @@ func TestPlaybackWaitSurfacesProxyAuthorizationFailure(t *testing.T) {
 }
 
 type fakeLectureDownloader struct {
-	playlists []client.ParsedPlaylist
-	joined    downloader.JoinResult
-	err       error
-	afterJoin func()
+	playlists   []client.ParsedPlaylist
+	joined      downloader.JoinResult
+	fetchErr    error
+	downloadErr error
+	afterJoin   func()
 }
 
 func (fake *fakeLectureDownloader) FetchLecturePlaylists(context.Context, []client.Lecture) ([]client.ParsedPlaylist, error) {
-	return fake.playlists, fake.err
+	return fake.playlists, fake.fetchErr
 }
 
 func (fake *fakeLectureDownloader) DownloadAndJoin(context.Context, client.ParsedPlaylist) (downloader.JoinResult, error) {
 	if fake.afterJoin != nil {
 		fake.afterJoin()
 	}
-	return fake.joined, fake.err
+	return fake.joined, fake.downloadErr
 }
 
 type fakeArtifactStore struct {
 	recorded         []artifact.Manifest
 	record           error
 	recordContextErr error
+	created          []library.JobSpec
+	started          []string
+	failed           []string
+	canceled         []string
+	completed        []string
 }
 
 func (store *fakeArtifactStore) RecordManifest(ctx context.Context, manifest artifact.Manifest) error {
 	store.recordContextErr = ctx.Err()
+	store.recorded = append(store.recorded, manifest)
+	return store.record
+}
+
+func (store *fakeArtifactStore) CreateJob(_ context.Context, spec library.JobSpec) error {
+	store.created = append(store.created, spec)
+	return nil
+}
+
+func (store *fakeArtifactStore) StartJob(_ context.Context, jobID string) error {
+	store.started = append(store.started, jobID)
+	return nil
+}
+
+func (store *fakeArtifactStore) FailJob(_ context.Context, jobID string, _ error) error {
+	store.failed = append(store.failed, jobID)
+	return nil
+}
+
+func (store *fakeArtifactStore) CancelJob(_ context.Context, jobID string) error {
+	store.canceled = append(store.canceled, jobID)
+	return nil
+}
+
+func (store *fakeArtifactStore) CompleteJob(ctx context.Context, jobID string, manifest artifact.Manifest) error {
+	store.recordContextErr = ctx.Err()
+	store.completed = append(store.completed, jobID)
 	store.recorded = append(store.recorded, manifest)
 	return store.record
 }
@@ -499,7 +532,7 @@ func TestDownloadLectureFinishesArtifactCommitAfterPublishedMedia(t *testing.T) 
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	downloads := &fakeLectureDownloader{
-		playlists: []client.ParsedPlaylist{{ID: 12345}},
+		playlists: []client.ParsedPlaylist{{ID: 12345, SeqNo: 1, Title: "Published", FirstViewURLs: []string{"left"}}},
 		joined:    downloader.JoinResult{LeftOutput: output, LeftContainer: "mp4"},
 		afterJoin: cancel,
 	}
@@ -543,8 +576,11 @@ func TestDownloadLectureBuildsAndRecordsOneArtifact(t *testing.T) {
 		t.Fatalf("write output: %v", err)
 	}
 	downloads := &fakeLectureDownloader{
-		playlists: []client.ParsedPlaylist{{ID: 12345, InstituteID: 4, SubjectID: 67, SessionID: 8}},
-		joined:    downloader.JoinResult{LeftOutput: output, LeftContainer: "mp4"},
+		playlists: []client.ParsedPlaylist{{
+			ID: 12345, InstituteID: 4, SubjectID: 67, SessionID: 8, SeqNo: 7, Title: "Consensus",
+			FirstViewURLs: []string{"left"},
+		}},
+		joined: downloader.JoinResult{LeftOutput: output, LeftContainer: "mp4"},
 	}
 	store := &fakeArtifactStore{}
 	service := &Service{
@@ -572,11 +608,54 @@ func TestDownloadLectureBuildsAndRecordsOneArtifact(t *testing.T) {
 	if !result.LibraryRecorded || result.Warning != "" || len(store.recorded) != 1 {
 		t.Fatalf("download result = %+v, recorded=%d", result, len(store.recorded))
 	}
+	if len(store.created) != 1 || len(store.started) != 1 || len(store.completed) != 1 ||
+		store.created[0].ID != store.started[0] || store.started[0] != store.completed[0] {
+		t.Fatalf("durable job lifecycle: created=%+v started=%v completed=%v", store.created, store.started, store.completed)
+	}
 	if result.Manifest.Lecture.TTID != 12345 || result.Manifest.Files[0].Path != output || result.Manifest.Files[0].View != "left" {
 		t.Fatalf("manifest = %+v", result.Manifest)
 	}
 	records, err := service.Artifacts(context.Background())
 	if err != nil || len(records) != 1 || records[0].Manifest.ArtifactID != result.Manifest.ArtifactID {
 		t.Fatalf("Artifacts() = %+v, %v", records, err)
+	}
+}
+
+func TestDownloadLectureFinishesDurableJobOnDownloadFailure(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		cause      error
+		wantFailed int
+		wantCancel int
+	}{
+		{name: "failure", cause: errors.New("download failed"), wantFailed: 1},
+		{name: "cancellation", cause: context.Canceled, wantCancel: 1},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := &fakeArtifactStore{}
+			service := &Service{
+				config: &config.Config{DownloadLocation: t.TempDir(), Views: "left", Quality: "720"},
+				downloads: &fakeLectureDownloader{
+					playlists:   []client.ParsedPlaylist{{ID: 12345, SeqNo: 1, Title: "Failure", FirstViewURLs: []string{"left"}}},
+					downloadErr: test.cause,
+				},
+				library: store,
+			}
+
+			_, err := service.DownloadLecture(context.Background(), client.Lecture{
+				InstituteID: 1, SubjectID: 2, SessionID: 3, TTID: 12345, Topic: "Failure",
+			})
+			if !errors.Is(err, test.cause) {
+				t.Fatalf("DownloadLecture() error = %v, want %v", err, test.cause)
+			}
+			if len(store.created) != 1 || len(store.started) != 1 || len(store.failed) != test.wantFailed || len(store.canceled) != test.wantCancel {
+				t.Fatalf("durable job lifecycle: created=%d started=%d failed=%d canceled=%d", len(store.created), len(store.started), len(store.failed), len(store.canceled))
+			}
+		})
 	}
 }

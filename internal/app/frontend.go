@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/rabesss/impartus-cli/internal/artifact"
 	"github.com/rabesss/impartus-cli/internal/buildinfo"
@@ -191,13 +192,31 @@ func (service *Service) DownloadLecture(ctx context.Context, lecture client.Lect
 	if len(playlists) != 1 {
 		return DownloadResult{}, fmt.Errorf("expected one downloadable lecture, got %d", len(playlists))
 	}
+	producedAt := time.Now().UTC()
+	jobID := ""
+	if service.library != nil {
+		plan, planErr := downloader.PlanJoinResult(service.config, playlists[0])
+		if planErr != nil {
+			return DownloadResult{}, fmt.Errorf("plan downloaded lecture artifact: %w", planErr)
+		}
+		jobID = uuid.NewString()
+		expected := buildExpectedDownloadArtifact(lecture, service.config, plan, producedAt)
+		if createErr := service.library.CreateJob(context.WithoutCancel(ctx), library.JobSpec{ID: jobID, Kind: "download", Expected: expected}); createErr != nil {
+			return DownloadResult{}, fmt.Errorf("create durable download job: %w", createErr)
+		}
+		if startErr := service.library.StartJob(context.WithoutCancel(ctx), jobID); startErr != nil {
+			failErr := service.library.FailJob(context.WithoutCancel(ctx), jobID, startErr)
+			return DownloadResult{}, errors.Join(fmt.Errorf("start durable download job: %w", startErr), failErr)
+		}
+	}
 	joined, err := service.downloads.DownloadAndJoin(ctx, playlists[0])
 	if err != nil {
-		return DownloadResult{}, err
+		return DownloadResult{}, errors.Join(err, service.finishDownloadJob(ctx, jobID, err))
 	}
-	manifest, err := BuildDownloadArtifact(lecture, service.config, joined, time.Now().UTC())
+	manifest, err := BuildDownloadArtifact(lecture, service.config, joined, producedAt)
 	if err != nil {
-		return DownloadResult{}, fmt.Errorf("build downloaded lecture artifact: %w", err)
+		buildErr := fmt.Errorf("build downloaded lecture artifact: %w", err)
+		return DownloadResult{}, errors.Join(buildErr, service.finishDownloadJob(ctx, jobID, buildErr))
 	}
 	result := DownloadResult{Manifest: manifest}
 	if service.library == nil {
@@ -207,12 +226,22 @@ func (service *Service) DownloadLecture(ctx context.Context, lecture client.Lect
 	// Once final media is published, retain its artifact record even if the UI
 	// is closing. The TUI waits for this application command before closing the
 	// store, so this uncancelable commit cannot race library shutdown.
-	if err := service.library.RecordManifest(context.WithoutCancel(ctx), manifest); err != nil {
+	if err := service.library.CompleteJob(context.WithoutCancel(ctx), jobID, manifest); err != nil {
 		result.Warning = "download completed but the local library was not updated: " + secrets.ScrubError(err)
 		return result, nil
 	}
 	result.LibraryRecorded = true
 	return result, nil
+}
+
+func (service *Service) finishDownloadJob(ctx context.Context, jobID string, cause error) error {
+	if service.library == nil || jobID == "" || cause == nil {
+		return nil
+	}
+	if errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
+		return service.library.CancelJob(context.WithoutCancel(ctx), jobID)
+	}
+	return service.library.FailJob(context.WithoutCancel(ctx), jobID, cause)
 }
 
 // Artifacts returns the current durable local library for the TUI.
@@ -234,29 +263,41 @@ func BuildDownloadArtifact(lecture client.Lecture, cfg *config.Config, result do
 		role = "audio"
 	}
 	fileSpecs := make([]artifact.FileSpec, 0, 3)
-	for _, output := range []struct {
-		path      string
-		view      string
-		container string
-	}{
-		{path: result.LeftOutput, view: "left", container: result.LeftContainer},
-		{path: result.RightOutput, view: "right", container: result.RightContainer},
-		{path: result.BothOutput, view: "both", container: result.BothContainer},
-	} {
-		if strings.TrimSpace(output.path) == "" {
-			continue
-		}
-		fileSpecs = append(fileSpecs, artifact.FileSpec{Path: output.path, Role: role, View: output.view, Container: output.container})
+	for _, output := range result.Outputs() {
+		fileSpecs = append(fileSpecs, artifact.FileSpec{Path: output.Path, Role: role, View: output.View, Container: output.Container})
 	}
 	return artifact.Build(artifact.BuildInput{
-		Lecture: artifact.Lecture{
-			TTID: lecture.TTID, InstituteID: lecture.InstituteID, SubjectID: lecture.SubjectID,
-			SessionID: lecture.SessionID, SeqNo: lecture.SeqNo, Topic: lecture.Topic,
-			StartTime: lecture.StartTime, DurationSeconds: lecture.ActualDuration,
-			Professor: lecture.ProfessorName, Institute: lecture.Institute, NoAudio: lecture.NoAudio == 1,
-		},
-		Selection: artifact.Selection{Views: cfg.Views, Quality: cfg.Quality, AudioOnly: cfg.AudioOnly, AudioFormat: cfg.AudioFormat},
+		Lecture:   downloadArtifactLecture(lecture),
+		Selection: downloadArtifactSelection(cfg),
 		Files:     fileSpecs, ProducedAt: producedAt,
 		Producer: artifact.Producer{Name: "impartus", Version: buildinfo.Version},
 	})
+}
+
+func buildExpectedDownloadArtifact(lecture client.Lecture, cfg *config.Config, result downloader.JoinResult, producedAt time.Time) library.ExpectedArtifact {
+	role := "video"
+	if cfg.AudioOnly {
+		role = "audio"
+	}
+	files := make([]library.ExpectedFile, 0, len(result.Outputs()))
+	for _, output := range result.Outputs() {
+		files = append(files, library.ExpectedFile{Path: output.Path, Role: role, View: output.View, Container: output.Container})
+	}
+	return library.ExpectedArtifact{
+		Lecture: downloadArtifactLecture(lecture), Selection: downloadArtifactSelection(cfg), Files: files,
+		ProducedAt: producedAt, Producer: artifact.Producer{Name: "impartus", Version: buildinfo.Version},
+	}
+}
+
+func downloadArtifactLecture(lecture client.Lecture) artifact.Lecture {
+	return artifact.Lecture{
+		TTID: lecture.TTID, InstituteID: lecture.InstituteID, SubjectID: lecture.SubjectID,
+		SessionID: lecture.SessionID, SeqNo: lecture.SeqNo, Topic: lecture.Topic,
+		StartTime: lecture.StartTime, DurationSeconds: lecture.ActualDuration,
+		Professor: lecture.ProfessorName, Institute: lecture.Institute, NoAudio: lecture.NoAudio == 1,
+	}
+}
+
+func downloadArtifactSelection(cfg *config.Config) artifact.Selection {
+	return artifact.Selection{Views: cfg.Views, Quality: cfg.Quality, AudioOnly: cfg.AudioOnly, AudioFormat: cfg.AudioFormat}
 }
