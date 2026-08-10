@@ -20,10 +20,12 @@ func TestFilterLecturesInteractiveResolvesMixedInstituteScope(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(client.Lectures{
+		if err := json.NewEncoder(w).Encode(client.Lectures{
 			{InstituteID: 4, TTID: 1, SeqNo: 1, Topic: "Scoped"},
 			{TTID: 2, SeqNo: 2, Topic: "Missing scope"},
-		})
+		}); err != nil {
+			t.Errorf("encode lecture response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -35,7 +37,11 @@ func TestFilterLecturesInteractiveResolvesMixedInstituteScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open interactive input: %v", err)
 	}
-	defer func() { _ = input.Close() }()
+	t.Cleanup(func() {
+		if closeErr := input.Close(); closeErr != nil {
+			t.Errorf("close interactive input: %v", closeErr)
+		}
+	})
 	originalStdin := os.Stdin
 	os.Stdin = input
 	t.Cleanup(func() { os.Stdin = originalStdin })

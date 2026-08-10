@@ -70,8 +70,8 @@ func filterLecturesInteractive(ctx context.Context, cfg *config.Config, apiClien
 	if err != nil {
 		return nil, err
 	}
-	if err := client.ResolveLectureScope(ctx, cfg, apiClient, lectures, course.SubjectID, course.SessionID); err != nil {
-		return nil, err
+	if scopeErr := client.ResolveLectureScope(ctx, cfg, apiClient, lectures, course.SubjectID, course.SessionID); scopeErr != nil {
+		return nil, scopeErr
 	}
 
 	reversed := lectures.Reverse()
