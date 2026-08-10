@@ -94,6 +94,30 @@ func TestValidateRejectsInvalidViewsQualityAndMissingCredentials(t *testing.T) {
 	}
 }
 
+func TestValidateCanonicalizesSupportedViewInputs(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		" LEFT ": "left",
+		"SECOND": "right",
+		" both ": "both",
+	}
+	for input, want := range tests {
+		t.Run(input, func(t *testing.T) {
+			cfg := minimalValidConfig()
+			cfg.ApplyDefaults()
+			cfg.Views = input
+
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("Validate() error = %v", err)
+			}
+			if cfg.Views != want {
+				t.Fatalf("Views = %q, want canonical %q", cfg.Views, want)
+			}
+		})
+	}
+}
+
 func TestLoadResolvedUsesEnvOverConfigFileWithDeterministicPrecedence(t *testing.T) {
 	t.Setenv("IMPARTUS_USERNAME", "env-user")
 	t.Setenv("IMPARTUS_PASSWORD", "env-pass")

@@ -188,9 +188,11 @@ func (c *Config) validateMediaSettings() error {
 	if !selection.ValidQuality(c.Quality) {
 		return fmt.Errorf("quality must be one of: 144, 450, 720")
 	}
-	if _, ok := selection.ParseView(c.Views); !ok {
+	view, ok := selection.ParseView(c.Views)
+	if !ok {
 		return fmt.Errorf("views must be one of: first, second, both, left, right")
 	}
+	c.Views = string(view)
 	if c.AudioOnly && !selection.ValidAudioFormat(c.AudioFormat) {
 		return fmt.Errorf("audioFormat must be one of: mp3, m4a, aac, opus")
 	}
