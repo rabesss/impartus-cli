@@ -405,6 +405,38 @@ func TestEarlyPlaybackTerminationPreservesResumeCheckpoint(t *testing.T) {
 	}
 }
 
+func TestStaleEOFPropertyDoesNotCompletePlayback(t *testing.T) {
+	playback := &fakePlayback{events: make(chan player.Event, 2)}
+	backend := &fakeBackend{
+		courses:     client.Courses{{SubjectName: "Course", SubjectID: 11, SessionID: 22}},
+		lectures:    client.Lectures{{Topic: "Lecture", TTID: 101}},
+		resume:      library.PlaybackState{ArtifactID: "impartus:v1:test", PositionSeconds: 42, DurationSeconds: 120},
+		resumeFound: true,
+		playback:    playback,
+	}
+	model := tui.New(context.Background(), backend)
+	model = applyCommand(t, model, model.Init())
+	model, command := update(t, model, key(tea.KeyEnter, ""))
+	model = applyCommand(t, model, command)
+	model, command = update(t, model, key(tea.KeyEnter, ""))
+	model = applyCommand(t, model, command)
+	model, command = update(t, model, key('y', "y"))
+	model, eventCommand := applyCommandAndKeepNext(t, model, command)
+
+	playback.events <- player.Event{Name: "property-change", Property: "eof-reached", Data: json.RawMessage("true")}
+	model, eventCommand = applyCommandAndKeepNext(t, model, eventCommand)
+	if len(backend.recorded) != 0 || !strings.Contains(model.View().Content, "Playing Lecture") {
+		t.Fatalf("stale EOF ended playback: recorded=%+v view=\n%s", backend.recorded, model.View().Content)
+	}
+
+	playback.events <- player.Event{Name: "end-file", Reason: "stop"}
+	model, finishCommand := applyCommandAndKeepNext(t, model, eventCommand)
+	applyCommand(t, model, finishCommand)
+	if len(backend.recorded) != 1 || backend.recorded[0].Completed {
+		t.Fatalf("verified stop checkpoint = %+v, want one incomplete record", backend.recorded)
+	}
+}
+
 func TestPlaybackEventChannelClosureSurfacesWaitFailure(t *testing.T) {
 	playback := &fakePlayback{events: make(chan player.Event), waitErr: errors.New("mpv IPC disconnected")}
 	backend := &fakeBackend{

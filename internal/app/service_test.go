@@ -394,6 +394,19 @@ func TestStartLectureSurfacesFailureBeforeMediaReady(t *testing.T) {
 	}
 }
 
+func TestPlaybackReadinessIgnoresStaleEOFProperty(t *testing.T) {
+	t.Parallel()
+
+	ready, terminal, err := playbackReadiness(player.Event{
+		Name:     "property-change",
+		Property: "eof-reached",
+		Data:     []byte("true"),
+	})
+	if err != nil || ready || terminal {
+		t.Fatalf("playbackReadiness(stale EOF) = (%t, %t, %v), want non-terminal", ready, terminal, err)
+	}
+}
+
 func TestServicePlaysSequentiallyAndCleansEveryBoundary(t *testing.T) {
 	streams := &fakeStreams{playlists: []client.ParsedPlaylist{{ID: 1}, {ID: 2}}}
 	players := []*fakeManagedPlayer{{}, {}}

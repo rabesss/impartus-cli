@@ -266,12 +266,9 @@ func (model Model) applyPlaybackEvent(event player.Event) (Model, bool, bool) {
 	case "speed":
 		target = &model.speed
 	case "eof-reached":
-		var reached bool
-		if err := json.Unmarshal(event.Data, &reached); err != nil {
-			model.err = fmt.Errorf("decode playback property %s: %w", event.Property, err)
-			return model, false, false
-		}
-		return model, reached, reached
+		// eof-reached is observable telemetry, not a terminal lifecycle event.
+		// Only mpv's end-file event can prove completion or an early stop.
+		return model, false, false
 	default:
 		return model, false, false
 	}

@@ -125,15 +125,6 @@ func playbackReadiness(event player.Event) (ready, terminal bool, err error) {
 			return false, false, fmt.Errorf("decode playback duration: %w", err)
 		}
 		return duration > 0, false, nil
-	case "eof-reached":
-		if len(event.Data) == 0 || string(event.Data) == "null" {
-			return false, false, nil
-		}
-		var reached bool
-		if err := json.Unmarshal(event.Data, &reached); err != nil {
-			return false, false, fmt.Errorf("decode playback eof state: %w", err)
-		}
-		return false, reached, nil
 	default:
 		return false, false, nil
 	}
