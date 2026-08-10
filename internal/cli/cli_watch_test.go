@@ -494,6 +494,10 @@ func TestWatchCancellationMapsToExit130(t *testing.T) {
 	if got := watchCommandError(ordinary); !errors.Is(got, ordinary) || ExitCode(got) != 1 {
 		t.Fatalf("ordinary error = %v, exit = %d", got, ExitCode(got))
 	}
+	credentialFailure := errors.New("Proxy-Authorization: Custom proof=watch-secret")
+	if got := watchCommandError(credentialFailure); !errors.Is(got, credentialFailure) || strings.Contains(got.Error(), "watch-secret") {
+		t.Fatalf("credential error = %v, want redacted chain-preserving boundary", got)
+	}
 	if got := watchCommandError(nil); got != nil {
 		t.Fatalf("nil error = %v", got)
 	}

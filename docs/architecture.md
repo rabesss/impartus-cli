@@ -182,8 +182,11 @@ flowchart TD
   F -- yes --> G[Count committed skip]
   F -- no --> H{Within global cycle budget?}
   H -- no --> I[Count cycle-budget skip]
-  H -- yes --> J[Create or reuse durable watch job and emit lecture.started]
-  J --> K[Download and atomically publish final media]
+  H -- yes --> J[Consume attempt budget and resolve playlist]
+  J --> T{Dry run?}
+  T -- yes --> N
+  T -- no --> U[Create or reuse durable watch job and emit lecture.started]
+  U --> K[Download and atomically publish final media]
   K --> L[Atomic manifest plus completed-job transaction]
   L --> M[Emit lecture.progress and lecture.completed]
   G --> N[Finish cycle]

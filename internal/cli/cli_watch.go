@@ -149,13 +149,16 @@ func runWatch(args []string) error {
 }
 
 func watchCommandError(err error) error {
+	if err == nil {
+		return nil
+	}
 	if errors.Is(err, watch.ErrEventDelivery) || errors.Is(err, watch.ErrDurableState) {
-		return err
+		return events.RedactedError(err)
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return &exitCodeError{code: 130, err: err}
+		return &exitCodeError{code: 130, err: events.RedactedError(err)}
 	}
-	return err
+	return events.RedactedError(err)
 }
 
 func runWatchJSON(args []string) (watchResult, error) {
