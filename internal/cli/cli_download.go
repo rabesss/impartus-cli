@@ -67,6 +67,7 @@ type downloadExecutionDependencies struct {
 }
 
 var errDownloadEventDelivery = errors.New("download event delivery failed")
+var errDownloadLibraryCommit = errors.New("download library commit failed")
 
 type lectureDownloadRunner interface {
 	FetchLecturePlaylists(context.Context, []client.Lecture) ([]client.ParsedPlaylist, error)
@@ -94,7 +95,7 @@ func runDownload(args []string) error {
 }
 
 func downloadCommandError(err error) error {
-	if errors.Is(err, errDownloadEventDelivery) {
+	if errors.Is(err, errDownloadEventDelivery) || errors.Is(err, errDownloadLibraryCommit) {
 		return err
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {

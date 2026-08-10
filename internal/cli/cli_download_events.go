@@ -44,11 +44,11 @@ func (stream *downloadEventStream) start() error {
 }
 
 func (stream *downloadEventStream) finish(result downloadResult, cause error) error {
-	if cause != nil {
-		return stream.failResult(result, cause)
+	if !result.LibraryRecorded && (cause == nil || len(result.Artifacts) > 0) {
+		commitErr := errors.Join(errDownloadLibraryCommit, errors.New("download completed but the local library commit did not complete"))
+		return stream.failResult(result, errors.Join(cause, commitErr))
 	}
-	if !result.LibraryRecorded {
-		cause = errors.New("download completed but the local library commit did not complete")
+	if cause != nil {
 		return stream.failResult(result, cause)
 	}
 	if err := stream.writer.Emit(events.Event{
@@ -71,7 +71,7 @@ func (stream *downloadEventStream) fail(cause error) error {
 
 func (stream *downloadEventStream) failResult(result downloadResult, cause error) error {
 	event := events.Failure(stream.jobID, "download", cause, stream.now())
-	if errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
+	if !errors.Is(cause, errDownloadLibraryCommit) && (errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded)) {
 		event = events.Cancellation(stream.jobID, "download", cause, stream.now())
 	}
 	event.Outputs = artifactOutputPaths(result.Artifacts)

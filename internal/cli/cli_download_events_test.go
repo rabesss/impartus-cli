@@ -210,6 +210,29 @@ func TestDownloadEventsCancellationEmitsCanceledTerminalAndExit130(t *testing.T)
 	}
 }
 
+func TestDownloadEventsLibraryCommitFailureWinsOverCancellation(t *testing.T) {
+	t.Parallel()
+
+	manifest := artifact.Manifest{SchemaVersion: 1, ArtifactID: "impartus:v1:uncommitted", Files: []artifact.File{{Path: "/absolute/lecture.mp3"}}}
+	result := downloadResult{
+		Status: "failed", LectureCount: 1, Artifacts: []artifact.Manifest{manifest}, LibraryRecorded: false,
+	}
+	var output bytes.Buffer
+	err := emitDownloadResultEvents(&output, "job-library-failed", result, context.Canceled, func() time.Time {
+		return time.Unix(1, 0).UTC()
+	})
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, errDownloadLibraryCommit) {
+		t.Fatalf("finish error = %v, want cancellation plus library-commit failure", err)
+	}
+	if got := ExitCode(downloadCommandError(err)); got != 1 {
+		t.Fatalf("exit code = %d, want 1", got)
+	}
+	decoded := decodeCLIEvents(t, output.String())
+	if got := decoded[len(decoded)-1].Type; got != events.JobFailed {
+		t.Fatalf("terminal event = %s, want job.failed", got)
+	}
+}
+
 func TestDownloadEventsFinishLibraryCommitAfterPostMediaCancellation(t *testing.T) {
 	t.Parallel()
 
