@@ -87,6 +87,12 @@ type BuildInput struct {
 	Producer   Producer
 }
 
+type verifiedFile struct {
+	manifest File
+	handle   *os.File
+	info     os.FileInfo
+}
+
 // Build validates a completed output set and returns its versioned manifest.
 // It never emits a manifest for missing, partial, empty, or non-regular files.
 func Build(input BuildInput) (Manifest, error) {
@@ -117,12 +123,21 @@ func Build(input BuildInput) (Manifest, error) {
 	}
 
 	files := make([]File, 0, len(input.Files))
+	verified := make([]verifiedFile, 0, len(input.Files))
+	defer func() {
+		for _, completed := range verified {
+			closeErr := completed.handle.Close()
+			_ = closeErr
+		}
+	}()
 	seenPaths := make(map[string]struct{}, len(input.Files))
 	for _, spec := range input.Files {
-		file, fileErr := verifyFile(spec, normalized.AudioOnly, normalized.Views)
+		completed, fileErr := verifyFile(spec, normalized.AudioOnly, normalized.Views)
 		if fileErr != nil {
 			return Manifest{}, fileErr
 		}
+		verified = append(verified, completed)
+		file := completed.manifest
 		if _, exists := seenPaths[file.Path]; exists {
 			return Manifest{}, fmt.Errorf("duplicate output path %q", file.Path)
 		}
@@ -133,6 +148,11 @@ func Build(input BuildInput) (Manifest, error) {
 	id, err := NewID(normalized)
 	if err != nil {
 		return Manifest{}, err
+	}
+	for _, completed := range verified {
+		if err := validateStableCompletedFile(completed.manifest.Path, completed.handle, completed.info); err != nil {
+			return Manifest{}, err
+		}
 	}
 	return Manifest{
 		SchemaVersion: SchemaVersionV1,
@@ -164,33 +184,37 @@ func (manifest Manifest) Identity() Identity {
 	}
 }
 
-func verifyFile(spec FileSpec, audioOnly bool, selectedViews string) (File, error) {
+func verifyFile(spec FileSpec, audioOnly bool, selectedViews string) (verifiedFile, error) {
 	absolutePath, file, info, err := openCompletedFile(spec.Path)
 	if err != nil {
-		return File{}, err
+		return verifiedFile{}, err
 	}
-	defer func() {
-		closeErr := file.Close()
-		_ = closeErr
-	}()
 	role, view, container, sha256Hex, err := normalizeFileSpec(spec, audioOnly, selectedViews)
 	if err != nil {
-		return File{}, err
+		closeErr := file.Close()
+		_ = closeErr
+		return verifiedFile{}, err
 	}
 	size := info.Size()
 	if sha256Hex != "" {
 		size, err = verifySHA256(file, absolutePath, sha256Hex)
 		if err != nil {
-			return File{}, err
+			closeErr := file.Close()
+			_ = closeErr
+			return verifiedFile{}, err
 		}
 	}
-	return File{
-		Path:      absolutePath,
-		Role:      role,
-		View:      view,
-		Container: container,
-		Bytes:     size,
-		SHA256:    sha256Hex,
+	return verifiedFile{
+		manifest: File{
+			Path:      absolutePath,
+			Role:      role,
+			View:      view,
+			Container: container,
+			Bytes:     size,
+			SHA256:    sha256Hex,
+		},
+		handle: file,
+		info:   info,
 	}, nil
 }
 
@@ -260,6 +284,17 @@ func validateOpenedCompletedFile(path string, file *os.File, initial os.FileInfo
 		return nil, fmt.Errorf("output %q is empty", path)
 	}
 	return info, nil
+}
+
+func validateStableCompletedFile(path string, file *os.File, initial os.FileInfo) error {
+	info, err := validateOpenedCompletedFile(path, file, initial)
+	if err != nil {
+		return err
+	}
+	if info.Size() != initial.Size() || !info.ModTime().Equal(initial.ModTime()) {
+		return fmt.Errorf("output %q changed during validation or is not a regular file", path)
+	}
+	return nil
 }
 
 func normalizeFileSpec(spec FileSpec, audioOnly bool, selectedViews string) (string, string, string, string, error) {
