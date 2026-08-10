@@ -2,6 +2,8 @@ package library_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -50,7 +52,7 @@ func TestRecordManifestIsIdempotentAndKeepsEveryMaterializedPath(t *testing.T) {
 	}
 }
 
-func TestVerifyArtifactFillsHashAndMarksMissingWithoutDeleting(t *testing.T) {
+func TestVerifyArtifactRefreshesHashAndMarksMissingWithoutDeleting(t *testing.T) {
 	store := openTestStore(t)
 	path := filepath.Join(t.TempDir(), "lecture.mp4")
 	manifest := buildTestManifest(t, path, "verify")
@@ -69,15 +71,27 @@ func TestVerifyArtifactFillsHashAndMarksMissingWithoutDeleting(t *testing.T) {
 	if verified.Files[0].SHA256 != expectedSHA256 {
 		t.Fatalf("filled sha256 = %q, want %q", verified.Files[0].SHA256, expectedSHA256)
 	}
+	changedMedia := []byte{0, 0, 0, 24, 'f', 't', 'y', 'p', 'm', 'p', '4', '2'}
+	if writeErr := os.WriteFile(path, changedMedia, 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
 	if recordErr := store.RecordManifest(context.Background(), manifest); recordErr != nil {
-		t.Fatalf("RecordManifest() after hash verification error = %v", recordErr)
+		t.Fatalf("RecordManifest() after same-path replacement error = %v", recordErr)
 	}
 	recordedAgain, err := store.GetArtifact(context.Background(), manifest.ArtifactID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(recordedAgain.Files) != 1 || recordedAgain.Files[0].SHA256 != expectedSHA256 {
-		t.Fatalf("idempotent record cleared verified hash: %+v", recordedAgain.Files)
+	if len(recordedAgain.Files) != 1 || recordedAgain.Files[0].SHA256 != "" {
+		t.Fatalf("hashless re-record retained a stale verified hash: %+v", recordedAgain.Files)
+	}
+	refreshed, err := store.VerifyArtifact(context.Background(), manifest.ArtifactID, library.VerifyOptions{Hash: true})
+	if err != nil {
+		t.Fatalf("VerifyArtifact() after replacement error = %v", err)
+	}
+	wantChangedSHA := fmt.Sprintf("%x", sha256.Sum256(changedMedia))
+	if !refreshed.OK || len(refreshed.Files) != 1 || refreshed.Files[0].SHA256 != wantChangedSHA || refreshed.Files[0].SHA256 == expectedSHA256 {
+		t.Fatalf("replacement verification = %+v, want refreshed hash %q", refreshed, wantChangedSHA)
 	}
 
 	if removeErr := os.Remove(path); removeErr != nil {
@@ -94,7 +108,7 @@ func TestVerifyArtifactFillsHashAndMarksMissingWithoutDeleting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(record.Files) != 1 || record.Files[0].Present || record.Files[0].SHA256 != expectedSHA256 {
+	if len(record.Files) != 1 || record.Files[0].Present || record.Files[0].SHA256 != wantChangedSHA {
 		t.Fatalf("missing file row was deleted or lost metadata: %+v", record.Files)
 	}
 }

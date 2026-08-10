@@ -167,10 +167,7 @@ func recordManifestTx(ctx context.Context, tx *sql.Tx, manifest artifact.Manifes
 				view = excluded.view,
 				container = excluded.container,
 				bytes = excluded.bytes,
-				sha256 = CASE
-					WHEN excluded.sha256 <> '' THEN excluded.sha256
-					ELSE artifact_files.sha256
-				END,
+				sha256 = excluded.sha256,
 				present = 1,
 				last_verified_at = excluded.last_verified_at,
 				updated_at = excluded.updated_at`,
