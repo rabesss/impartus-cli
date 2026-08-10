@@ -154,6 +154,7 @@ func verifyArtifactFile(file ArtifactFile, options VerifyOptions) FileVerificati
 	}
 	if stableErr := validateStableArtifactFile(file.Path, opened, pathInfo); stableErr != nil {
 		result.Status = FileNotRegular
+		result.SHA256 = file.SHA256
 		result.Error = stableErr.Error()
 		return result
 	}
@@ -182,10 +183,11 @@ func (store *Store) recordVerification(ctx context.Context, result Verification)
 		updated, err := tx.ExecContext(ctx, `
 			UPDATE artifact_files
 			SET present = ?,
-				sha256 = CASE WHEN sha256 = '' AND ? <> '' THEN ? ELSE sha256 END,
+				sha256 = CASE WHEN ? AND sha256 = '' AND ? <> '' THEN ? ELSE sha256 END,
 				last_verified_at = ?,
 				updated_at = ?
 			WHERE artifact_id = ? AND path = ?`,
+			present,
 			present,
 			file.SHA256,
 			file.SHA256,

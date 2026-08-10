@@ -30,8 +30,11 @@ func TestVerifyArtifactFileRejectsPathSwapBeforePublication(t *testing.T) {
 	}
 	t.Cleanup(func() { validateStableArtifactFile = oldValidate })
 
-	result := verifyArtifactFile(ArtifactFile{Path: path, Bytes: int64(len(original))}, VerifyOptions{})
+	result := verifyArtifactFile(ArtifactFile{Path: path, Bytes: int64(len(original))}, VerifyOptions{Hash: true})
 	if result.Status != FileNotRegular {
 		t.Fatalf("verifyArtifactFile() = %+v, want path-swap rejection", result)
+	}
+	if result.SHA256 != "" {
+		t.Fatalf("verifyArtifactFile() SHA256 = %q, want no unpublished hash after path swap", result.SHA256)
 	}
 }

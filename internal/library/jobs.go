@@ -24,6 +24,11 @@ import (
 type JobStatus string
 
 const (
+	// JobKindDownload identifies interactive or one-shot download ownership.
+	JobKindDownload = "download"
+	// JobKindWatch identifies jobs owned by the process-wide watcher lock.
+	JobKindWatch = "watch"
+
 	// JobPending has durable metadata but has not begun an attempt.
 	JobPending JobStatus = "pending"
 	// JobRunning is actively producing its expected final outputs.
@@ -109,7 +114,7 @@ func (store *Store) CreateJob(ctx context.Context, spec JobSpec) error {
 	}
 	spec.ID = parsedID.String()
 	spec.Kind = strings.ToLower(strings.TrimSpace(spec.Kind))
-	if spec.Kind != "download" && spec.Kind != "watch" {
+	if spec.Kind != JobKindDownload && spec.Kind != JobKindWatch {
 		return errors.New("job kind must be download or watch")
 	}
 	expected, artifactID, err := normalizeExpectedArtifact(spec.Expected)
@@ -329,21 +334,26 @@ func (expected jobCompletionExpectation) matchesManifest(manifest artifact.Manif
 	return expected.expected.matchesManifest(manifest)
 }
 
-// RecoverInterruptedJobs marks orphaned running work recoverable, then commits
-// only output sets that already pass artifact validation. The caller must hold
-// the process-wide watcher lock and invoke recovery at startup before launching
-// workers; this method deliberately does not guess whether another owner lives.
-func (store *Store) RecoverInterruptedJobs(ctx context.Context) (RecoveryResult, error) {
+// RecoverInterruptedJobs marks orphaned running work of one producer kind
+// recoverable, then commits only output sets that already pass artifact
+// validation. The caller must hold the lock that excludes every live producer
+// of that kind; jobs owned by other producers are never claimed.
+func (store *Store) RecoverInterruptedJobs(ctx context.Context, kind string) (RecoveryResult, error) {
 	if store == nil || store.database == nil {
 		return RecoveryResult{}, errors.New("library store is closed")
 	}
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	if kind != JobKindDownload && kind != JobKindWatch {
+		return RecoveryResult{}, errors.New("recovery job kind must be download or watch")
+	}
 	now := formatDatabaseTime(time.Now())
 	if _, err := store.database.ExecContext(ctx, `
-		UPDATE jobs SET status = ?, error_summary = ?, updated_at = ? WHERE status = ?`,
+		UPDATE jobs SET status = ?, error_summary = ?, updated_at = ? WHERE status = ? AND kind = ?`,
 		JobRecoverable,
 		"interrupted before durable completion",
 		now,
 		JobRunning,
+		kind,
 	); err != nil {
 		return RecoveryResult{}, fmt.Errorf("mark interrupted jobs recoverable: %w", err)
 	}
@@ -353,6 +363,9 @@ func (store *Store) RecoverInterruptedJobs(ctx context.Context) (RecoveryResult,
 	}
 	result := RecoveryResult{Recovered: make([]string, 0), Pending: make([]string, 0), Skipped: make([]string, 0)}
 	for _, job := range jobs {
+		if job.Kind != kind {
+			continue
+		}
 		manifest, buildErr := job.Expected.buildManifest()
 		if buildErr != nil {
 			result.Pending = append(result.Pending, job.ID)

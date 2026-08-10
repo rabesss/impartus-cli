@@ -52,7 +52,7 @@ func TestRecoverInterruptedJobCommitsValidFinalOutputWithoutNetwork(t *testing.T
 			t.Errorf("Close() error = %v", closeErr)
 		}
 	})
-	first, err := store.RecoverInterruptedJobs(context.Background())
+	first, err := store.RecoverInterruptedJobs(context.Background(), library.JobKindWatch)
 	if err != nil {
 		t.Fatalf("RecoverInterruptedJobs() missing output error = %v", err)
 	}
@@ -63,7 +63,7 @@ func TestRecoverInterruptedJobCommitsValidFinalOutputWithoutNetwork(t *testing.T
 	if writeErr := os.WriteFile(outputPath, []byte("stale unrelated file"), 0o600); writeErr != nil {
 		t.Fatal(writeErr)
 	}
-	second, err := store.RecoverInterruptedJobs(context.Background())
+	second, err := store.RecoverInterruptedJobs(context.Background(), library.JobKindWatch)
 	if err != nil {
 		t.Fatalf("RecoverInterruptedJobs() stale output error = %v", err)
 	}
@@ -75,7 +75,7 @@ func TestRecoverInterruptedJobCommitsValidFinalOutputWithoutNetwork(t *testing.T
 	if writeErr := os.WriteFile(outputPath, validMP4, 0o600); writeErr != nil {
 		t.Fatal(writeErr)
 	}
-	third, err := store.RecoverInterruptedJobs(context.Background())
+	third, err := store.RecoverInterruptedJobs(context.Background(), library.JobKindWatch)
 	if err != nil {
 		t.Fatalf("RecoverInterruptedJobs() completed output error = %v", err)
 	}
@@ -91,6 +91,49 @@ func TestRecoverInterruptedJobCommitsValidFinalOutputWithoutNetwork(t *testing.T
 	}
 	if _, err := store.GetArtifact(context.Background(), job.CompletedArtifactID); err != nil {
 		t.Fatalf("recovered artifact missing: %v", err)
+	}
+}
+
+func TestRecoverInterruptedJobsDoesNotClaimAnotherProducerKind(t *testing.T) {
+	store := openTestStore(t)
+	expected := library.ExpectedArtifact{
+		Lecture:    artifact.Lecture{TTID: 41, InstituteID: 1, SubjectID: 2, SessionID: 3, SeqNo: 5, Topic: "Scoped recovery"},
+		Selection:  artifact.Selection{Views: "left", Quality: "720"},
+		Files:      []library.ExpectedFile{{Path: filepath.Join(t.TempDir(), "missing.mp4"), Role: "video", View: "left", Container: "mp4"}},
+		ProducedAt: time.Date(2026, time.August, 10, 10, 0, 0, 0, time.UTC),
+		Producer:   artifact.Producer{Name: "impartus", Version: "test"},
+	}
+	watchID := uuid.NewString()
+	downloadID := uuid.NewString()
+	for _, spec := range []library.JobSpec{
+		{ID: watchID, Kind: library.JobKindWatch, Expected: expected},
+		{ID: downloadID, Kind: library.JobKindDownload, Expected: expected},
+	} {
+		if err := store.CreateJob(context.Background(), spec); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.StartJob(context.Background(), spec.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	recovery, err := store.RecoverInterruptedJobs(context.Background(), library.JobKindWatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recovery.Pending) != 1 || recovery.Pending[0] != watchID {
+		t.Fatalf("watch recovery = %+v, want only %s pending", recovery, watchID)
+	}
+	watchJob, err := store.Job(context.Background(), watchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	downloadJob, err := store.Job(context.Background(), downloadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if watchJob.Status != library.JobRecoverable || downloadJob.Status != library.JobRunning {
+		t.Fatalf("statuses watch=%s download=%s, want recoverable/running", watchJob.Status, downloadJob.Status)
 	}
 }
 
