@@ -67,8 +67,8 @@ func TestExecuteJSONLibraryListAndVerify(t *testing.T) {
 		Data    []library.Verification `json:"data"`
 		Meta    jsonMeta               `json:"meta"`
 	}
-	if err := json.Unmarshal([]byte(output), &verified); err != nil {
-		t.Fatal(err)
+	if unmarshalErr := json.Unmarshal([]byte(output), &verified); unmarshalErr != nil {
+		t.Fatal(unmarshalErr)
 	}
 	if !verified.Success || verified.Meta.Command != "library.verify" || len(verified.Data) != 1 || !verified.Data[0].OK || verified.Data[0].Files[0].SHA256 == "" {
 		t.Fatalf("library verify envelope = %+v", verified)
