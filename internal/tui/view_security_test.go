@@ -36,11 +36,13 @@ func TestRenderRedactsCredentialsFromBackendErrors(t *testing.T) {
 	t.Parallel()
 
 	model := tui.New(context.Background(), &fakeBackend{coursesErr: errors.New(
-		`catalog failed https://example.test/list?token=url-secret auth=body-secret signature=signed-secret; Authorization: Digest username="alice", realm="lecture", response="digest-secret"`,
+		"catalog failed https://example.test/list?token=url-secret auth=body-secret signature=signed-secret\n" +
+			`auth: Digest username="alice", response="digest-secret"` + "\n" +
+			"X-Api-Key: api-secret",
 	)})
 	model = applyCommand(t, model, model.Init())
 	rendered := model.View().Content
-	for _, secret := range []string{"url-secret", "body-secret", "signed-secret", "digest-secret"} {
+	for _, secret := range []string{"url-secret", "body-secret", "signed-secret", "digest-secret", "api-secret"} {
 		if strings.Contains(rendered, secret) {
 			t.Fatalf("rendered backend error leaked %q:\n%s", secret, rendered)
 		}
