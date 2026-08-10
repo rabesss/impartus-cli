@@ -814,8 +814,8 @@ func TestWatcherReconcilesEveryRetryableSiblingForOneArtifact(t *testing.T) {
 	}
 	expected := expectedArtifact(lecture, cfg, plan, time.Now().UTC())
 	for range 2 {
-		if err := store.CreateJob(context.Background(), library.JobSpec{ID: uuid.NewString(), Kind: "watch", Expected: expected}); err != nil {
-			t.Fatal(err)
+		if createErr := store.CreateJob(context.Background(), library.JobSpec{ID: uuid.NewString(), Kind: "watch", Expected: expected}); createErr != nil {
+			t.Fatal(createErr)
 		}
 	}
 	source := &fakeSource{lectures: map[[2]int]client.Lectures{{target.SubjectID, target.SessionID}: {lecture}}, errors: map[[2]int]error{}}
