@@ -94,6 +94,7 @@ func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 		{name: "inline short token colon", input: "upstream access_token: z failed", secret: "z"},
 		{name: "inline short api key colon", input: "upstream api-key: q failed", secret: "q"},
 		{name: "inline short secret colon", input: "upstream secret: v failed", secret: "v"},
+		{name: "inline short password colon", input: "upstream password: hunter2 failed", secret: "hunter2"},
 		{name: "line token colon", input: "token: body-secret", secret: "body-secret"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -111,11 +112,19 @@ func TestScrub_PreservesOrdinaryParserDiagnostics(t *testing.T) {
 	for _, diagnostic := range []string{
 		"open /etc/auth: no such file or directory",
 		"open /etc/token: no such file or directory",
-		"login failed because password: expired",
 	} {
 		if got := Scrub(diagnostic); got != diagnostic {
 			t.Fatalf("Scrub(%q) = %q", diagnostic, got)
 		}
+	}
+}
+
+func TestScrub_RedactsAmbiguousPasswordValueButPreservesContext(t *testing.T) {
+	t.Parallel()
+
+	const diagnostic = "login failed because password: expired"
+	if got := Scrub(diagnostic); got != "login failed because password: REDACTED" {
+		t.Fatalf("Scrub(%q) = %q", diagnostic, got)
 	}
 }
 

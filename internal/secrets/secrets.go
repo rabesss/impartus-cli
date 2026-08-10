@@ -63,7 +63,7 @@ var tightBareSecretColon = regexp.MustCompile(
 	`(?i)(\b` + sensitiveColonAssignmentKey + `\s*:)[^\s,;}]+`,
 )
 var inlineStrongSecretColon = regexp.MustCompile(
-	`(?i)(^|[^/a-z0-9_-])((?:authorization|auth|[a-z0-9_-]*token|[a-z0-9_-]*secret|api[_-]?key)\s*:\s+)[^\s,;}]+`,
+	`(?i)(^|[^/a-z0-9_-])((?:authorization|auth|[a-z0-9_-]*(?:token|password|secret)|api[_-]?key)\s*:\s+)[^\s,;}]+`,
 )
 var inlineBareSecretColon = regexp.MustCompile(
 	`(?i)(\b` + sensitiveColonAssignmentKey + `\s*:\s+)[^\s,;}]{8,}`,
