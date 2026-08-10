@@ -410,13 +410,14 @@ func TestPlaybackEndResultClassifiesLifecycleEvents(t *testing.T) {
 		event     Event
 		ended     bool
 		errorText string
+		errorIs   error
 	}{
 		{name: "eof", event: Event{Name: "end-file", Reason: "eof"}, ended: true},
 		{name: "stop", event: Event{Name: "end-file", Reason: "stop"}, ended: true},
 		{name: "quit", event: Event{Name: "end-file", Reason: "quit"}, ended: true},
 		{name: "redirect", event: Event{Name: "end-file", Reason: "redirect"}},
 		{name: "error", event: Event{Name: "end-file", Reason: "error"}, ended: true, errorText: "playback failed"},
-		{name: "authorization error", event: Event{Name: "end-file", Reason: "error", FileError: "HTTP error 401"}, ended: true, errorText: "upstream authorization failed"},
+		{name: "authorization error", event: Event{Name: "end-file", Reason: "error", FileError: "HTTP error 401"}, ended: true, errorText: "upstream authorization failed", errorIs: ErrPlaybackAuthorization},
 		{name: "unexpected", event: Event{Name: "end-file", Reason: "unknown"}, ended: true, errorText: "ended unexpectedly"},
 		{name: "eof reached", event: Event{Name: "property-change", Property: "eof-reached", Data: json.RawMessage("true")}},
 		{name: "eof not reached", event: Event{Name: "property-change", Property: "eof-reached", Data: json.RawMessage("false")}},
@@ -433,6 +434,9 @@ func TestPlaybackEndResultClassifiesLifecycleEvents(t *testing.T) {
 			}
 			if test.errorText != "" && (err == nil || !strings.Contains(err.Error(), test.errorText)) {
 				t.Fatalf("error = %v, want %q", err, test.errorText)
+			}
+			if test.errorIs != nil && !errors.Is(err, test.errorIs) {
+				t.Fatalf("error = %v, want errors.Is(_, %v)", err, test.errorIs)
 			}
 		})
 	}

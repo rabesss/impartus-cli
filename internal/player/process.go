@@ -14,6 +14,10 @@ import (
 	"time"
 )
 
+// ErrPlaybackAuthorization classifies an upstream media authorization failure
+// regardless of whether it is first observed by mpv or the local HLS proxy.
+var ErrPlaybackAuthorization = errors.New("upstream authorization failed")
+
 const (
 	defaultConnectTimeout = 5 * time.Second
 	defaultQuitTimeout    = 2 * time.Second
@@ -425,7 +429,7 @@ func playbackEndResult(event Event) (bool, error) {
 			return false, nil
 		case "error":
 			if mpvFileErrorIsAuthorizationFailure(event.FileError) {
-				return true, errors.New("mpv playback failed: upstream authorization failed")
+				return true, fmt.Errorf("mpv playback failed: %w", ErrPlaybackAuthorization)
 			}
 			return true, errors.New("mpv playback failed")
 		default:

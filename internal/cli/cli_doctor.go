@@ -125,11 +125,8 @@ func checkTokenFile(path string) doctorCheck {
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return doctorCheck{Name: "token", Status: doctorStatusFail, Detail: fmt.Sprintf("%s must be a regular file, not a symlink", path)}
 	}
-	detail, permissionErr := validateDoctorPrivateFilePermissions(runtime.GOOS, path, "contains a bearer token", info)
-	if permissionErr != nil {
-		return doctorCheck{Name: "token", Status: doctorStatusFail, Detail: permissionErr.Error()}
-	}
-	return doctorCheck{Name: "token", Status: doctorStatusPass, Detail: detail}
+	privacy := assessDoctorPrivateFilePermissions(runtime.GOOS, path, "contains a bearer token", info)
+	return doctorCheck{Name: "token", Status: privacy.Status, Detail: privacy.Detail}
 }
 
 func checkExecutable(lookPath func(string) (string, error), name string) doctorCheck {
@@ -154,11 +151,8 @@ func checkConfigFile(path string) doctorCheck {
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return doctorCheck{Name: "config", Status: doctorStatusFail, Detail: fmt.Sprintf("%s must be a regular file, not a symlink", path)}
 	}
-	detail, permissionErr := validateDoctorPrivateFilePermissions(runtime.GOOS, path, "contains credentials", info)
-	if permissionErr != nil {
-		return doctorCheck{Name: "config", Status: doctorStatusFail, Detail: permissionErr.Error()}
-	}
-	return doctorCheck{Name: "config", Status: doctorStatusPass, Detail: detail}
+	privacy := assessDoctorPrivateFilePermissions(runtime.GOOS, path, "contains credentials", info)
+	return doctorCheck{Name: "config", Status: privacy.Status, Detail: privacy.Detail}
 }
 
 func checkWritableStateDirectory(path string) doctorCheck {
@@ -174,9 +168,9 @@ func checkWritableStateDirectory(path string) doctorCheck {
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return doctorCheck{Name: "state", Status: doctorStatusFail, Detail: fmt.Sprintf("%s must be a directory, not a symlink", path)}
 	}
-	privacyDetail, permissionErr := validateDoctorPrivateDirectoryPermissions(runtime.GOOS, path, info)
-	if permissionErr != nil {
-		return doctorCheck{Name: "state", Status: doctorStatusFail, Detail: permissionErr.Error()}
+	privacy := assessDoctorPrivateDirectoryPermissions(runtime.GOOS, path, info)
+	if privacy.Status == doctorStatusFail {
+		return doctorCheck{Name: "state", Status: doctorStatusFail, Detail: privacy.Detail}
 	}
 	if ownerErr := validateDoctorStateDirectoryOwner(absolute, info); ownerErr != nil {
 		return doctorCheck{Name: "state", Status: doctorStatusFail, Detail: ownerErr.Error()}
@@ -186,10 +180,11 @@ func checkWritableStateDirectory(path string) doctorCheck {
 		return doctorCheck{Name: "state", Status: doctorStatusFail, Detail: fmt.Sprintf("%s is not writable: %v", path, err)}
 	}
 	probeName := probe.Name()
-	if chmodErr := probe.Chmod(0o600); chmodErr != nil {
+	probePrivacy := assessDoctorProbePrivacy(probe)
+	if probePrivacy.Status == doctorStatusFail {
 		// #nosec G703 -- probeName was returned by os.CreateTemp in the validated directory.
 		cleanupErr := errors.Join(probe.Close(), os.Remove(probeName))
-		detail := fmt.Sprintf("cannot secure files in %s: %v", path, chmodErr)
+		detail := probePrivacy.Detail
 		if cleanupErr != nil {
 			detail += fmt.Sprintf("; cleanup also failed: %v", cleanupErr)
 		}
@@ -201,27 +196,76 @@ func checkWritableStateDirectory(path string) doctorCheck {
 	if closeErr != nil || removeErr != nil {
 		return doctorCheck{Name: "state", Status: doctorStatusFail, Detail: fmt.Sprintf("write probe cleanup failed in %s: %v", path, errors.Join(closeErr, removeErr))}
 	}
-	return doctorCheck{Name: "state", Status: doctorStatusPass, Detail: fmt.Sprintf("%s is writable; %s", path, privacyDetail)}
+	status := privacy.Status
+	if probePrivacy.Status == doctorStatusWarn {
+		status = doctorStatusWarn
+	}
+	return doctorCheck{
+		Name:   "state",
+		Status: status,
+		Detail: fmt.Sprintf("%s is writable; %s; %s", path, privacy.Detail, probePrivacy.Detail),
+	}
 }
 
-func validateDoctorPrivateFilePermissions(goos, path, contents string, info os.FileInfo) (string, error) {
+type doctorPrivacyAssessment struct {
+	Status string
+	Detail string
+}
+
+type doctorACLEntry struct {
+	Allowed bool
+	Trusted bool
+	Mask    uint32
+}
+
+const (
+	doctorACLReadData       uint32 = 0x00000001
+	doctorACLWriteData      uint32 = 0x00000002
+	doctorACLAppendData     uint32 = 0x00000004
+	doctorACLExecute        uint32 = 0x00000020
+	doctorACLDeleteChild    uint32 = 0x00000040
+	doctorACLReadAttributes uint32 = 0x00000080
+	doctorACLDelete         uint32 = 0x00010000
+	doctorACLGenericAll     uint32 = 0x10000000
+	doctorACLGenericExecute uint32 = 0x20000000
+	doctorACLGenericWrite   uint32 = 0x40000000
+	doctorACLGenericRead    uint32 = 0x80000000
+)
+
+const doctorACLContentAccess = doctorACLReadData | doctorACLWriteData | doctorACLAppendData |
+	doctorACLExecute | doctorACLDeleteChild | doctorACLDelete | doctorACLGenericAll |
+	doctorACLGenericExecute | doctorACLGenericWrite | doctorACLGenericRead
+
+func assessDoctorACLEntries(ownerIsCurrent bool, entries []doctorACLEntry) doctorPrivacyAssessment {
+	if !ownerIsCurrent {
+		return doctorPrivacyAssessment{Status: doctorStatusFail, Detail: "Windows ACL owner is not the current user"}
+	}
+	for _, entry := range entries {
+		if entry.Allowed && !entry.Trusted && entry.Mask&doctorACLContentAccess != 0 {
+			return doctorPrivacyAssessment{Status: doctorStatusFail, Detail: "Windows ACL grants file content access to another principal"}
+		}
+	}
+	return doctorPrivacyAssessment{Status: doctorStatusPass, Detail: "Windows ACL is private to the current user and trusted system principals"}
+}
+
+func assessDoctorPrivateFilePermissions(goos, path, contents string, info os.FileInfo) doctorPrivacyAssessment {
 	if goos == "windows" {
-		return fmt.Sprintf("%s is a regular file; privacy is managed by Windows ACLs", path), nil
+		return inspectDoctorWindowsACL(path)
 	}
 	if info.Mode().Perm()&0o077 != 0 {
-		return "", fmt.Errorf("%s %s and must use mode 0600 or stricter; got %04o", path, contents, info.Mode().Perm())
+		return doctorPrivacyAssessment{Status: doctorStatusFail, Detail: fmt.Sprintf("%s %s and must use mode 0600 or stricter; got %04o", path, contents, info.Mode().Perm())}
 	}
-	return fmt.Sprintf("%s permissions are private (%04o)", path, info.Mode().Perm()), nil
+	return doctorPrivacyAssessment{Status: doctorStatusPass, Detail: fmt.Sprintf("%s permissions are private (%04o)", path, info.Mode().Perm())}
 }
 
-func validateDoctorPrivateDirectoryPermissions(goos, path string, info os.FileInfo) (string, error) {
+func assessDoctorPrivateDirectoryPermissions(goos, path string, info os.FileInfo) doctorPrivacyAssessment {
 	if goos == "windows" {
-		return "privacy is managed by Windows ACLs", nil
+		return inspectDoctorWindowsACL(path)
 	}
 	if info.Mode().Perm() != 0o700 {
-		return "", fmt.Errorf("%s must be a private directory with mode 0700; got %04o", path, info.Mode().Perm())
+		return doctorPrivacyAssessment{Status: doctorStatusFail, Detail: fmt.Sprintf("%s must be a private directory with mode 0700; got %04o", path, info.Mode().Perm())}
 	}
-	return fmt.Sprintf("permissions are private (%04o)", info.Mode().Perm()), nil
+	return doctorPrivacyAssessment{Status: doctorStatusPass, Detail: fmt.Sprintf("permissions are private (%04o)", info.Mode().Perm())}
 }
 
 func prepareDoctorStateDirectory(path string) (string, error) {

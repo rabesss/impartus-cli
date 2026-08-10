@@ -207,21 +207,52 @@ func playOnePlaylistLegacy(ctx context.Context, cfg *config.Config, d *downloade
 	fmt.Printf("[INFO] Playing Lec %03d: %s\n", playlist.SeqNo, playlist.Title)
 	fmt.Printf("[INFO] Views: %s (Press '_' in mpv to cycle views, 'q' to exit/next)\n", cfg.Views)
 
-	playURL, cleanup, err := d.StartPlayServer(ctx, playlist)
+	stream, err := d.StartPlaybackStream(ctx, playlist)
 	if err != nil {
 		return fmt.Errorf("failed to start local playback server: %w", err)
 	}
-	defer cleanup()
+	defer stream.Cleanup()
 
-	cmd := exec.CommandContext(ctx, "mpv", playURL) // #nosec G204
+	cmd := exec.CommandContext(ctx, "mpv", stream.URL) // #nosec G204
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	if runErr := cmd.Run(); runErr != nil {
+	if startErr := cmd.Start(); startErr != nil {
+		return fmt.Errorf("start mpv: %w", startErr)
+	}
+	finished := make(chan error, 1)
+	go func() { finished <- cmd.Wait() }()
+	return waitLegacyPlayback(ctx, stream.Failures, finished, func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		return cmd.Process.Kill()
+	})
+}
+
+func waitLegacyPlayback(ctx context.Context, failures <-chan error, finished <-chan error, kill func() error) error {
+	select {
+	case failure := <-failures:
+		if kill != nil {
+			_ = kill() //nolint:errcheck // failure is reported below; finished reaps the process
+		}
+		<-finished
+		return fmt.Errorf("legacy playback failed: %w", failure)
+	case runErr := <-finished:
+		select {
+		case failure := <-failures:
+			return fmt.Errorf("legacy playback failed: %w", failure)
+		default:
+		}
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
+		if runErr == nil {
+			return nil
+		}
 		return fmt.Errorf("mpv execution failed: %w", runErr)
 	}
-	return nil
 }
 
 func ensureMpv() error {

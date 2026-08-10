@@ -144,6 +144,27 @@ func TestValidateFlagOverrides(t *testing.T) {
 	}
 }
 
+func TestWaitLegacyPlaybackPreservesProxyFailure(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("upstream authorization failed")
+	failures := make(chan error, 1)
+	finished := make(chan error, 1)
+	failures <- sentinel
+	killed := false
+	err := waitLegacyPlayback(context.Background(), failures, finished, func() error {
+		killed = true
+		finished <- errors.New("process exited")
+		return nil
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("waitLegacyPlayback() error = %v, want proxy failure", err)
+	}
+	if !killed {
+		t.Fatal("waitLegacyPlayback() did not stop the player after proxy failure")
+	}
+}
+
 func TestExecutePlayDelegates(t *testing.T) {
 	restoreCLIState(t)
 	called := false

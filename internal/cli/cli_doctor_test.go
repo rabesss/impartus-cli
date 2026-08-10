@@ -90,7 +90,7 @@ func TestCollectDoctorReportFailsUnsafeConfigAndMissingDependency(t *testing.T) 
 	}
 }
 
-func TestDoctorPermissionPolicyDefersToWindowsACLs(t *testing.T) {
+func TestDoctorPermissionPolicyWarnsWhenWindowsACLsCannotBeInspected(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -102,18 +102,43 @@ func TestDoctorPermissionPolicyDefersToWindowsACLs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fileDetail, err := validateDoctorPrivateFilePermissions("windows", filePath, "contains credentials", fileInfo)
-	if err != nil || !strings.Contains(fileDetail, "Windows ACLs") {
-		t.Fatalf("Windows file policy = (%q, %v), want ACL-managed pass", fileDetail, err)
+	fileAssessment := assessDoctorPrivateFilePermissions("windows", filePath, "contains credentials", fileInfo)
+	if fileAssessment.Status != doctorStatusWarn || !strings.Contains(fileAssessment.Detail, "could not be verified") {
+		t.Fatalf("Windows file policy = %+v, want explicit unverified-ACL warning", fileAssessment)
 	}
 
 	directoryInfo, err := os.Stat(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	directoryDetail, err := validateDoctorPrivateDirectoryPermissions("windows", root, directoryInfo)
-	if err != nil || !strings.Contains(directoryDetail, "Windows ACLs") {
-		t.Fatalf("Windows directory policy = (%q, %v), want ACL-managed pass", directoryDetail, err)
+	directoryAssessment := assessDoctorPrivateDirectoryPermissions("windows", root, directoryInfo)
+	if directoryAssessment.Status != doctorStatusWarn || !strings.Contains(directoryAssessment.Detail, "could not be verified") {
+		t.Fatalf("Windows directory policy = %+v, want explicit unverified-ACL warning", directoryAssessment)
+	}
+}
+
+func TestDoctorWindowsACLPolicyRejectsBroadContentAccess(t *testing.T) {
+	t.Parallel()
+
+	assessment := assessDoctorACLEntries(true, []doctorACLEntry{
+		{Allowed: true, Trusted: true, Mask: doctorACLReadData},
+		{Allowed: true, Trusted: false, Mask: doctorACLReadData},
+	})
+	if assessment.Status != doctorStatusFail {
+		t.Fatalf("broad ACL policy = %+v, want fail", assessment)
+	}
+
+	assessment = assessDoctorACLEntries(true, []doctorACLEntry{
+		{Allowed: true, Trusted: true, Mask: doctorACLReadData | doctorACLWriteData},
+		{Allowed: true, Trusted: false, Mask: doctorACLReadAttributes},
+	})
+	if assessment.Status != doctorStatusPass {
+		t.Fatalf("private ACL policy = %+v, want pass", assessment)
+	}
+
+	assessment = assessDoctorACLEntries(false, nil)
+	if assessment.Status != doctorStatusFail {
+		t.Fatalf("foreign owner policy = %+v, want fail", assessment)
 	}
 }
 

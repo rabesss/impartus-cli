@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rabesss/impartus-cli/internal/client"
+	"github.com/rabesss/impartus-cli/internal/player"
 	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
@@ -27,7 +28,7 @@ type playbackKey struct {
 
 // ErrPlaybackAuthorization is reported when the private playback proxy receives
 // an authentication or authorization rejection from the upstream media host.
-var ErrPlaybackAuthorization = errors.New("upstream authorization failed")
+var ErrPlaybackAuthorization = player.ErrPlaybackAuthorization
 
 // PlaybackStream owns one private HLS capability and its asynchronous failures.
 type PlaybackStream struct {
