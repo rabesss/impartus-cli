@@ -198,6 +198,17 @@ func TestPipelineFinalizationCancellationPrecedence(t *testing.T) {
 			totalChunks: 2,
 			wantErr:     context.Canceled,
 		},
+		{
+			name: "mixed complete failures keep parent cancellation identity",
+			result: PipelineResult{
+				Failures: []ChunkFailure{
+					{ChunkID: 0, View: "first", Detail: "upstream failed"},
+					{ChunkID: 1, View: "first", Detail: "context canceled", Canceled: true},
+				},
+			},
+			totalChunks: 2,
+			wantErr:     context.Canceled,
+		},
 	}
 
 	for _, tt := range tests {
@@ -207,6 +218,17 @@ func TestPipelineFinalizationCancellationPrecedence(t *testing.T) {
 				t.Fatalf("pipelineCancellationError() = %v, want %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestPipelineFailureErrorPreservesMixedCancellationDiagnostics(t *testing.T) {
+	failures := []ChunkFailure{
+		{ChunkID: 0, View: "first", Detail: "upstream failed"},
+		{ChunkID: 1, View: "first", Detail: "context canceled", Canceled: true},
+	}
+	err := errors.Join(context.Canceled, pipelineFailureError(failures))
+	if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "upstream failed") {
+		t.Fatalf("mixed pipeline error = %v", err)
 	}
 }
 

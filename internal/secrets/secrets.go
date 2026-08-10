@@ -49,9 +49,7 @@ const sensitiveAssignmentKey = `(?:authorization|auth|[a-z0-9_-]*(?:token|passwo
 const sensitiveColonAssignmentKey = `(?:authorization|auth|[a-z0-9_-]+token|[a-z0-9_-]*(?:password|secret)|api[_-]?key)`
 
 var authorizationEqualsValue = regexp.MustCompile(`(?i)(\bauthorization\s*=\s*)[^,;\r\n]+`)
-var fieldAuthorizationColon = regexp.MustCompile(
-	`(?im)(^|[\r\n{,;]\s*)(authorization\s*:\s*)[^,;\r\n}]+`,
-)
+var authorizationColonValue = regexp.MustCompile(`(?i)(\bauthorization\s*:\s*)[^,;\r\n]+`)
 var quotedSecretValue = regexp.MustCompile(
 	`(?i)(\b` + sensitiveAssignmentKey + `"\s*:\s*")((?:\\.|[^"\\])*)`,
 )
@@ -63,6 +61,9 @@ var fieldBareSecretColon = regexp.MustCompile(
 )
 var tightBareSecretColon = regexp.MustCompile(
 	`(?i)(\b` + sensitiveColonAssignmentKey + `\s*:)[^\s,;}]+`,
+)
+var inlineBareSecretColon = regexp.MustCompile(
+	`(?i)(\b` + sensitiveColonAssignmentKey + `\s*:\s+)[^\s,;}]{8,}`,
 )
 var lineTokenColon = regexp.MustCompile(`(?im)(^\s*token\s*:\s*)[^\s,;]+`)
 
@@ -162,10 +163,11 @@ func Scrub(s string) string {
 	scrubbed := urlTokenRe.ReplaceAllStringFunc(s, RedactURL)
 	scrubbed = quotedSecretValue.ReplaceAllString(scrubbed, "${1}REDACTED")
 	scrubbed = authorizationEqualsValue.ReplaceAllString(scrubbed, "${1}REDACTED")
-	scrubbed = fieldAuthorizationColon.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
+	scrubbed = authorizationColonValue.ReplaceAllString(scrubbed, "${1}REDACTED")
 	scrubbed = bareSecretEquals.ReplaceAllString(scrubbed, "${1}REDACTED")
 	scrubbed = fieldBareSecretColon.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
 	scrubbed = tightBareSecretColon.ReplaceAllString(scrubbed, "${1}REDACTED")
+	scrubbed = inlineBareSecretColon.ReplaceAllString(scrubbed, "${1}REDACTED")
 	return lineTokenColon.ReplaceAllString(scrubbed, "${1}REDACTED")
 }
 
