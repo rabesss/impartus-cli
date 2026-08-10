@@ -122,7 +122,7 @@ func TestDownloadChunkScrubsUpstreamErrorBodyAtSource(t *testing.T) {
 
 	const secret = "body-secret-value"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "auth="+secret, http.StatusServiceUnavailable)
+		http.Error(w, `Authorization: Digest username="alice", realm="lecture", response="`+secret+`"`, http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
 
@@ -134,7 +134,7 @@ func TestDownloadChunkScrubsUpstreamErrorBodyAtSource(t *testing.T) {
 	if path != "" || data != nil || written != 0 {
 		t.Fatalf("failed download returned path=%q data=%v written=%d", path, data, written)
 	}
-	if strings.Contains(err.Error(), secret) || !strings.Contains(err.Error(), "auth=REDACTED") {
+	if strings.Contains(err.Error(), secret) || !strings.Contains(err.Error(), "Authorization: REDACTED") {
 		t.Fatalf("doDownloadChunkWithLimit() leaked upstream credential: %v", err)
 	}
 }
