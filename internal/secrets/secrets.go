@@ -41,31 +41,23 @@ var sensitiveQueryRe = buildSensitiveQueryRe()
 // URL strings, including those url.Parse cannot interpret.
 var userinfoRe = regexp.MustCompile(`(?i)(https?://)[^/\s:@]+:[^/\s@]+@`)
 
-// These patterns cover credentials embedded in free-form upstream response
-// bodies rather than URLs. A standalone colon-delimited "token" is matched
-// only at the start of a line so parser diagnostics such as
-// "unexpected token: EOF" remain useful.
-const sensitiveAssignmentKey = `(?:authorization|auth|key|[a-z0-9_-]*(?:token|password|secret)|api[_-]?key)`
-const sensitiveColonAssignmentKey = `(?:authorization|auth|key|[a-z0-9_-]+token|[a-z0-9_-]*(?:password|secret)|api[_-]?key)`
-
-var authorizationEqualsValue = regexp.MustCompile(`(?i)(\bauthorization\s*=\s*)[^,;\r\n]+`)
-var authorizationColonValue = regexp.MustCompile(`(?i)(\bauthorization\s*:\s*)[^,;\r\n]+`)
+// Free-form response bodies use the same exact credential keys as URL query
+// redaction, plus common suffix forms such as refresh_token and client_secret.
+// Building the regex from sensitiveParams keeps sig/signature and future keys
+// from drifting between URL and body sanitization.
+var sensitiveAssignmentKey = buildSensitiveAssignmentKey()
 var quotedSecretValue = regexp.MustCompile(
 	`(?i)(\b` + sensitiveAssignmentKey + `"\s*:\s*")((?:\\.|[^"\\])*)`,
 )
+var schemeSecretAssignment = regexp.MustCompile(
+	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*[:=]\s*)(?:bearer|basic|token|apikey|oauth)\s+[^\s,;}]+`,
+)
 var bareSecretEquals = regexp.MustCompile(
-	`(?i)(\b` + sensitiveAssignmentKey + `\s*=\s*)[^\s,;]+`,
+	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*=\s*)[^\s,;}]+`,
 )
-var fieldBareSecretColon = regexp.MustCompile(
-	`(?im)(^|[\r\n{,;]\s*)(` + sensitiveColonAssignmentKey + `\s*:\s*)[^\s,;}]+`,
+var bareSecretColon = regexp.MustCompile(
+	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*:\s*)[^\s,;}]+`,
 )
-var tightBareSecretColon = regexp.MustCompile(
-	`(?i)(\b` + sensitiveColonAssignmentKey + `\s*:)[^\s,;}]+`,
-)
-var inlineStrongSecretColon = regexp.MustCompile(
-	`(?i)(^|[^/a-z0-9_-])((?:authorization|auth|key|[a-z0-9_-]*(?:token|password|secret)|api[_-]?key)\s*:\s+)[^\s,;}]+`,
-)
-var lineTokenColon = regexp.MustCompile(`(?im)(^\s*token\s*:\s*)[^\s,;]+`)
 
 func buildSensitiveQueryRe() *regexp.Regexp {
 	keys := make([]string, 0, len(sensitiveParams))
@@ -74,6 +66,16 @@ func buildSensitiveQueryRe() *regexp.Regexp {
 	}
 	sort.Strings(keys)
 	return regexp.MustCompile(`(?i)([?&])(` + strings.Join(keys, "|") + `)=[^&#\s]*`)
+}
+
+func buildSensitiveAssignmentKey() string {
+	keys := make([]string, 0, len(sensitiveParams)+3)
+	for key := range sensitiveParams {
+		keys = append(keys, regexp.QuoteMeta(key))
+	}
+	keys = append(keys, "authorization", "password", `api[_-]?key`, `[a-z0-9_-]+(?:token|password|secret|signature)`)
+	sort.Strings(keys)
+	return `(?:` + strings.Join(keys, "|") + `)`
 }
 
 func isSensitiveParam(key string) bool {
@@ -154,21 +156,18 @@ func SanitizeError(err error) error {
 	return errors.New(scrubbed)
 }
 
-// Scrub redacts sensitive URLs, authorization values, and common secret
-// assignments from free-form text.
+// Scrub redacts sensitive URLs and credential assignments from free-form text.
+// It is the shared defense-in-depth boundary for logs, terminal output, and
+// durable error summaries.
 func Scrub(s string) string {
 	if s == "" {
 		return s
 	}
 	scrubbed := urlTokenRe.ReplaceAllStringFunc(s, RedactURL)
 	scrubbed = quotedSecretValue.ReplaceAllString(scrubbed, "${1}REDACTED")
-	scrubbed = authorizationEqualsValue.ReplaceAllString(scrubbed, "${1}REDACTED")
-	scrubbed = authorizationColonValue.ReplaceAllString(scrubbed, "${1}REDACTED")
-	scrubbed = bareSecretEquals.ReplaceAllString(scrubbed, "${1}REDACTED")
-	scrubbed = fieldBareSecretColon.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
-	scrubbed = tightBareSecretColon.ReplaceAllString(scrubbed, "${1}REDACTED")
-	scrubbed = inlineStrongSecretColon.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
-	return lineTokenColon.ReplaceAllString(scrubbed, "${1}REDACTED")
+	scrubbed = schemeSecretAssignment.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
+	scrubbed = bareSecretEquals.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
+	return bareSecretColon.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
 }
 
 // ScrubError returns the error's message with embedded credentials scrubbed.

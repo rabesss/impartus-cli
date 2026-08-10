@@ -99,6 +99,11 @@ func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 		{name: "inline short key colon", input: "upstream key: q7 failed", secret: "q7"},
 		{name: "inline short password colon", input: "upstream password: hunter2 failed", secret: "hunter2"},
 		{name: "line token colon", input: "token: body-secret", secret: "body-secret"},
+		{name: "auth bearer", input: "upstream auth: Bearer body-secret", secret: "body-secret"},
+		{name: "token bearer", input: "upstream token=Bearer body-secret", secret: "body-secret"},
+		{name: "signature equals", input: "upstream signature=body-secret failed", secret: "body-secret"},
+		{name: "short sig colon", input: "upstream sig: q failed", secret: "q"},
+		{name: "json signature", input: `{"signature":"body-secret"}`, secret: "body-secret"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got := Scrub(test.input)
@@ -106,6 +111,39 @@ func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 				t.Fatalf("Scrub(%q) = %q", test.input, got)
 			}
 		})
+	}
+}
+
+func TestScrub_FreeFormCoverageTracksEverySensitiveQueryKey(t *testing.T) {
+	t.Parallel()
+
+	for key := range sensitiveParams {
+		for _, input := range []string{
+			fmt.Sprintf("upstream %s=body-secret failed", key),
+			fmt.Sprintf("upstream %s: body-secret failed", key),
+			fmt.Sprintf(`{"%s":"body-secret"}`, key),
+		} {
+			if got := Scrub(input); strings.Contains(got, "body-secret") || !strings.Contains(got, "REDACTED") {
+				t.Fatalf("Scrub(%q) = %q for sensitive key %q", input, got, key)
+			}
+		}
+	}
+}
+
+func TestScrub_RedactsMultipleAssignmentsWithoutDiscardingTheirKeys(t *testing.T) {
+	t.Parallel()
+
+	input := "token=secret-value refresh_token=refresh-value auth: Bearer auth-value signature=signed-value"
+	got := Scrub(input)
+	for _, secret := range []string{"secret-value", "refresh-value", "auth-value", "signed-value"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("Scrub(%q) leaked %q: %q", input, secret, got)
+		}
+	}
+	for _, key := range []string{"token=REDACTED", "refresh_token=REDACTED", "auth: REDACTED", "signature=REDACTED"} {
+		if !strings.Contains(got, key) {
+			t.Fatalf("Scrub(%q) lost diagnostic key %q: %q", input, key, got)
+		}
 	}
 }
 
