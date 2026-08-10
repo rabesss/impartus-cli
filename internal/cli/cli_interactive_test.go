@@ -14,7 +14,7 @@ import (
 	"github.com/rabesss/impartus-cli/internal/config"
 )
 
-func TestFilterLecturesInteractiveResolvesMixedInstituteScope(t *testing.T) {
+func TestFilterLecturesInteractiveAllowsUnresolvedInstituteForPlayback(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/subjects/67/lectures/8" {
 			http.NotFound(w, r)
@@ -55,10 +55,8 @@ func TestFilterLecturesInteractiveResolvesMixedInstituteScope(t *testing.T) {
 	if len(lectures) != 2 {
 		t.Fatalf("lectures = %d, want 2", len(lectures))
 	}
-	for _, lecture := range lectures {
-		if lecture.InstituteID != 4 || lecture.SubjectID != 67 || lecture.SessionID != 8 {
-			t.Fatalf("lecture scope = institute=%d subject=%d session=%d, want 4/67/8", lecture.InstituteID, lecture.SubjectID, lecture.SessionID)
-		}
+	if lectures[0].InstituteID != 0 || lectures[1].InstituteID != 4 {
+		t.Fatalf("filter changed institute scope: %+v", lectures)
 	}
 }
 

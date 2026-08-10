@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
@@ -367,23 +366,6 @@ func validateSelectedPlaylistCoverage(playlists []client.ParsedPlaylist, lecture
 		seen[key] = struct{}{}
 	}
 
-	missing := make([]string, 0, len(lecturesByScope)-len(seen))
-	for key := range lecturesByScope {
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		missing = append(missing, fmt.Sprintf(
-			"institute=%d subject=%d session=%d ttid=%d",
-			key.instituteID,
-			key.subjectID,
-			key.sessionID,
-			key.ttid,
-		))
-	}
-	if len(missing) > 0 {
-		sort.Strings(missing)
-		return fmt.Errorf("no playlist available for selected lecture(s): %s", strings.Join(missing, ", "))
-	}
 	return nil
 }
 

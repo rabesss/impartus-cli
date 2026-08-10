@@ -67,7 +67,7 @@ func (f *fakeLectureDownloadRunner) DownloadAndJoinPlaylist(_ context.Context, _
 	return result, nil
 }
 
-func TestDownloadRejectsSelectedLectureWithoutPlaylistBeforeMediaWork(t *testing.T) {
+func TestDownloadSkipsSelectedLectureWithoutPlaylist(t *testing.T) {
 	t.Parallel()
 
 	outputDir := t.TempDir()
@@ -79,16 +79,16 @@ func TestDownloadRejectsSelectedLectureWithoutPlaylistBeforeMediaWork(t *testing
 		{InstituteID: 1, SubjectID: 2, SessionID: 3, TTID: 10},
 		{InstituteID: 1, SubjectID: 2, SessionID: 3, TTID: 11},
 	}
-	_, err := downloadLecturesWithRunner(context.Background(), &config.Config{
+	result, err := downloadLecturesWithRunner(context.Background(), &config.Config{
 		DownloadLocation: outputDir,
 		Views:            "left",
 		Quality:          "720",
 	}, runner, lectures, quietDownloadPresentation())
-	if err == nil || !strings.Contains(err.Error(), "ttid=11") || !strings.Contains(err.Error(), "no playlist") {
-		t.Fatalf("downloadLecturesWithRunner() error = %v, want missing TTID context", err)
+	if err != nil {
+		t.Fatalf("downloadLecturesWithRunner() error = %v", err)
 	}
-	if runner.downloads != 0 {
-		t.Fatalf("downloads = %d, want no partial media work", runner.downloads)
+	if runner.downloads != 1 || result.LectureCount != 1 || len(result.Artifacts) != 1 {
+		t.Fatalf("partial batch result = %+v, downloads = %d", result, runner.downloads)
 	}
 }
 
