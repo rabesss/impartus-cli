@@ -226,6 +226,8 @@ const (
 	doctorACLDeleteChild    uint32 = 0x00000040
 	doctorACLReadAttributes uint32 = 0x00000080
 	doctorACLDelete         uint32 = 0x00010000
+	doctorACLWriteDAC       uint32 = 0x00040000
+	doctorACLWriteOwner     uint32 = 0x00080000
 	doctorACLGenericAll     uint32 = 0x10000000
 	doctorACLGenericExecute uint32 = 0x20000000
 	doctorACLGenericWrite   uint32 = 0x40000000
@@ -233,7 +235,8 @@ const (
 )
 
 const doctorACLContentAccess = doctorACLReadData | doctorACLWriteData | doctorACLAppendData |
-	doctorACLExecute | doctorACLDeleteChild | doctorACLDelete | doctorACLGenericAll |
+	doctorACLExecute | doctorACLDeleteChild | doctorACLDelete | doctorACLWriteDAC |
+	doctorACLWriteOwner | doctorACLGenericAll |
 	doctorACLGenericExecute | doctorACLGenericWrite | doctorACLGenericRead
 
 func assessDoctorACLEntries(ownerIsCurrent bool, entries []doctorACLEntry) doctorPrivacyAssessment {

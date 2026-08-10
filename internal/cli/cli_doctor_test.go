@@ -140,6 +140,13 @@ func TestDoctorWindowsACLPolicyRejectsBroadContentAccess(t *testing.T) {
 	if assessment.Status != doctorStatusFail {
 		t.Fatalf("foreign owner policy = %+v, want fail", assessment)
 	}
+
+	for _, mask := range []uint32{doctorACLWriteDAC, doctorACLWriteOwner} {
+		assessment = assessDoctorACLEntries(true, []doctorACLEntry{{Allowed: true, Trusted: false, Mask: mask}})
+		if assessment.Status != doctorStatusFail {
+			t.Fatalf("ACL ownership-control mask %#x = %+v, want fail", mask, assessment)
+		}
+	}
 }
 
 func TestCollectDoctorReportAllowsMissingConfig(t *testing.T) {
