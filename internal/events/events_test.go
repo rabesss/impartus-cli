@@ -203,12 +203,12 @@ func TestRedactErrorCoversAnyAuthorizationScheme(t *testing.T) {
 	}
 }
 
-func TestRedactErrorPreservesParserTokenDetails(t *testing.T) {
+func TestRedactErrorPreservesParserContextWhileRedactingTokenValue(t *testing.T) {
 	t.Parallel()
 
 	const message = "decode response: unexpected token: EOF"
-	if got := RedactError(errors.New(message)); got != message {
-		t.Fatalf("RedactError() = %q, want %q", got, message)
+	if got := RedactError(errors.New(message)); got != "decode response: unexpected token: REDACTED" {
+		t.Fatalf("RedactError() = %q, want parser context with redacted token value", got)
 	}
 }
 

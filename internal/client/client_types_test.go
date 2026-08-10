@@ -1,6 +1,7 @@
 package client
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -139,5 +140,14 @@ func TestLecturesSelectForDownload(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLecturesSelectForDownloadClassifiesAllFilteredResult(t *testing.T) {
+	t.Parallel()
+
+	selected, filtered, err := (Lectures{{SeqNo: 1, NoAudio: 1}}).SelectForDownload(0, 0, true)
+	if selected != nil || filtered != 1 || !errors.Is(err, ErrNoLecturesAfterFiltering) {
+		t.Fatalf("SelectForDownload() = (%+v, %d, %v), want typed all-filtered result", selected, filtered, err)
 	}
 }
