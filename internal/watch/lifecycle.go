@@ -127,21 +127,23 @@ func (watcher *Watcher) downloadLecture(ctx context.Context, target config.Watch
 		failErr := durableStateError("fail watch job after manifest validation", watcher.store.FailJob(context.WithoutCancel(ctx), jobID, err))
 		return artifact.Manifest{}, watcher.lectureFailure(target, lecture, jobID, errors.Join(err, failErr))
 	}
+	progressErr := watcher.emitLecture(events.LectureProgress, target, lecture, artifactID, map[string]any{
+		"libraryJobId": jobID, "stage": "media_published", "outputs": manifestPaths(manifest),
+	})
 	if err := watcher.store.CompleteJob(context.WithoutCancel(ctx), jobID, manifest); err != nil {
-		return artifact.Manifest{}, watcher.lectureFailure(target, lecture, jobID, durableStateError("commit durable watch artifact", err))
+		commitErr := durableStateError("commit durable watch artifact", err)
+		return artifact.Manifest{}, watcher.lectureFailure(target, lecture, jobID, errors.Join(commitErr, progressErr))
 	}
-	if err := watcher.emitCompletedLecture(target, lecture, jobID, artifactID, manifest); err != nil {
+	if progressErr != nil {
+		return manifest, progressErr
+	}
+	if err := watcher.emitLectureCompleted(target, lecture, jobID, artifactID, manifest); err != nil {
 		return manifest, err
 	}
 	return manifest, nil
 }
 
-func (watcher *Watcher) emitCompletedLecture(target config.WatchTarget, lecture client.Lecture, jobID, artifactID string, manifest artifact.Manifest) error {
-	if err := watcher.emitLecture(events.LectureProgress, target, lecture, artifactID, map[string]any{
-		"libraryJobId": jobID, "stage": "media_published", "outputs": manifestPaths(manifest),
-	}); err != nil {
-		return err
-	}
+func (watcher *Watcher) emitLectureCompleted(target config.WatchTarget, lecture client.Lecture, jobID, artifactID string, manifest artifact.Manifest) error {
 	if err := watcher.emit(events.Event{
 		Type:       events.LectureCompleted,
 		Target:     &events.Target{SubjectID: target.SubjectID, SessionID: target.SessionID, Label: target.Label},

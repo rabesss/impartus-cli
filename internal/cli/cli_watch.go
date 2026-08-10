@@ -279,20 +279,7 @@ func ensureWatchTerminal(writer *events.Writer, jobID string, cycle watch.CycleR
 	if writer == nil || writer.TerminalAttempted() {
 		return events.RedactedError(cause)
 	}
-	var emitErr error
-	if cause != nil {
-		if (errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded)) &&
-			!errors.Is(cause, watch.ErrEventDelivery) && !errors.Is(cause, watch.ErrDurableState) {
-			emitErr = writer.Emit(events.Cancellation(jobID, "watch", cause, now()))
-		} else {
-			emitErr = writer.Emit(events.Failure(jobID, "watch", cause, now()))
-		}
-	} else {
-		emitErr = writer.Emit(events.Event{
-			Type: events.JobCompleted, JobID: jobID, Command: "watch", Status: "completed",
-			Timestamp: now().UTC(), Outputs: append([]string(nil), cycle.Outputs...), Details: cycle,
-		})
-	}
+	emitErr := writer.Emit(watch.TerminalEvent(jobID, cause, cycle, now()))
 	if emitErr != nil {
 		return errors.Join(events.RedactedError(cause), watch.ErrEventDelivery, events.RedactedError(emitErr))
 	}

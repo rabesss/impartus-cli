@@ -38,6 +38,32 @@ func TestDurableStateErrorDoesNotPromoteContextCancellation(t *testing.T) {
 	}
 }
 
+func TestTerminalEventPreservesPartialCycleForFailureAndCancellation(t *testing.T) {
+	t.Parallel()
+
+	manifest := artifact.Manifest{SchemaVersion: 1, ArtifactID: "impartus:v1:partial"}
+	cycle := CycleResult{Downloaded: 1, Outputs: []string{"/absolute/partial.mp3"}, Artifacts: []artifact.Manifest{manifest}}
+	for _, test := range []struct {
+		name      string
+		cause     error
+		wantEvent string
+	}{
+		{name: "failure", cause: errors.Join(ErrDurableState, errors.New("commit failed")), wantEvent: events.JobFailed},
+		{name: "cancellation", cause: context.Canceled, wantEvent: events.JobCanceled},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			event := TerminalEvent("job-test", test.cause, cycle, time.Unix(1, 0).UTC())
+			if event.Type != test.wantEvent || len(event.Outputs) != 1 || len(event.Artifacts) != 1 || event.Artifacts[0].ArtifactID != manifest.ArtifactID {
+				t.Fatalf("TerminalEvent() = %+v", event)
+			}
+			if details, ok := event.Details.(CycleResult); !ok || details.Downloaded != 1 {
+				t.Fatalf("TerminalEvent() details = %#v", event.Details)
+			}
+		})
+	}
+}
+
 func TestWatcherCompletesPredownloadTransitionsBeforeHonoringCancellation(t *testing.T) {
 	t.Parallel()
 
@@ -344,26 +370,31 @@ func TestWatcherAttemptsFailedTerminalAfterStartedEventDeliveryFails(t *testing.
 	}
 }
 
-func TestWatcherPreservesCommittedOutcomeWhenCompletedEventDeliveryFails(t *testing.T) {
+func TestWatcherPreservesCommittedOutcomeWhenPostMediaEventDeliveryFails(t *testing.T) {
 	t.Parallel()
 
-	store := openWatchStore(t)
-	cfg := watchTestConfig(t)
-	target := cfg.Watch.Targets[0]
-	lecture := watchLecture(target, 62, 3, "Committed despite event failure")
-	source := &fakeSource{lectures: map[[2]int]client.Lectures{{target.SubjectID, target.SessionID}: {lecture}}, errors: map[[2]int]error{}}
-	producer := &fakeProducer{cfg: cfg, fetchErrors: map[int]error{}, downloadErrors: map[int]error{}}
-	emitter := &recordingEmitter{failType: events.LectureCompleted, failures: 1}
+	for _, failType := range []string{events.LectureProgress, events.LectureCompleted} {
+		t.Run(failType, func(t *testing.T) {
+			t.Parallel()
+			store := openWatchStore(t)
+			cfg := watchTestConfig(t)
+			target := cfg.Watch.Targets[0]
+			lecture := watchLecture(target, 62, 3, "Committed despite event failure")
+			source := &fakeSource{lectures: map[[2]int]client.Lectures{{target.SubjectID, target.SessionID}: {lecture}}, errors: map[[2]int]error{}}
+			producer := &fakeProducer{cfg: cfg, fetchErrors: map[int]error{}, downloadErrors: map[int]error{}}
+			emitter := &recordingEmitter{failType: failType, failures: 1}
 
-	cycle, err := New(cfg, source, producer, store, Options{Once: true, Emitter: emitter}).Run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "event sink failed") {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if cycle.Downloaded != 1 || len(cycle.Artifacts) != 1 {
-		t.Fatalf("cycle = %+v", cycle)
-	}
-	if _, getErr := store.GetArtifact(context.Background(), cycle.Artifacts[0].ArtifactID); getErr != nil {
-		t.Fatalf("committed artifact missing: %v", getErr)
+			cycle, err := New(cfg, source, producer, store, Options{Once: true, Emitter: emitter}).Run(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "event sink failed") {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if cycle.Downloaded != 1 || len(cycle.Artifacts) != 1 {
+				t.Fatalf("cycle = %+v", cycle)
+			}
+			if _, getErr := store.GetArtifact(context.Background(), cycle.Artifacts[0].ArtifactID); getErr != nil {
+				t.Fatalf("committed artifact missing: %v", getErr)
+			}
+		})
 	}
 }
 

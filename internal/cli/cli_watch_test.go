@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rabesss/impartus-cli/internal/artifact"
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/events"
@@ -355,6 +356,10 @@ func TestWatchEventsCancellationEmitsCanceledTerminal(t *testing.T) {
 
 	store := openCLIWatchStore(t)
 	cfg := cliWatchConfig(t)
+	partial := artifact.Manifest{
+		SchemaVersion: 1, ArtifactID: "impartus:v1:partial",
+		Files: []artifact.File{{Path: "/absolute/lecture.mp3"}},
+	}
 	deps := watchExecutionDependencies{
 		loadConfig:         func() (*config.Config, error) { return cfg, nil },
 		defaultLibraryPath: func() (string, error) { return filepath.Join(t.TempDir(), "library.db"), nil },
@@ -366,7 +371,7 @@ func TestWatchEventsCancellationEmitsCanceledTerminal(t *testing.T) {
 		ensureFFmpeg: func() error { return nil },
 		login:        func(context.Context, *config.Config) (*client.Client, error) { return &client.Client{}, nil },
 		run: func(context.Context, *config.Config, *client.Client, *library.Store, watch.Options) (watch.CycleResult, error) {
-			return watch.CycleResult{Downloaded: 1, Outputs: []string{"lecture.mp3"}}, context.Canceled
+			return watch.CycleResult{Downloaded: 1, Outputs: []string{"/absolute/lecture.mp3"}, Artifacts: []artifact.Manifest{partial}}, context.Canceled
 		},
 		now: func() time.Time { return time.Unix(4, 0).UTC() },
 	}
@@ -381,6 +386,15 @@ func TestWatchEventsCancellationEmitsCanceledTerminal(t *testing.T) {
 	decoded := decodeCLIEvents(t, output.String())
 	if len(decoded) != 1 || decoded[0].Type != events.JobCanceled || decoded[0].Status != "canceled" {
 		t.Fatalf("events = %+v", decoded)
+	}
+	terminal := decoded[0]
+	if len(terminal.Outputs) != 1 || terminal.Outputs[0] != "/absolute/lecture.mp3" ||
+		len(terminal.Artifacts) != 1 || terminal.Artifacts[0].ArtifactID != partial.ArtifactID {
+		t.Fatalf("canceled terminal partial completion = %+v", terminal)
+	}
+	details, ok := terminal.Details.(map[string]any)
+	if !ok || details["downloaded"] != float64(1) {
+		t.Fatalf("canceled terminal details = %#v", terminal.Details)
 	}
 }
 

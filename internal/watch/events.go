@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/rabesss/impartus-cli/internal/artifact"
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/events"
@@ -15,16 +17,29 @@ func (watcher *Watcher) finish(cause error, result CycleResult) error {
 	if watcher.options.DeferTerminal {
 		return safeCause
 	}
-	event := events.Event{Type: events.JobCompleted, Status: "completed", Outputs: append([]string(nil), result.Outputs...), Details: result}
-	if cause != nil {
-		if (errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded)) && !isFatalCycleError(cause) {
-			event = events.Cancellation(watcher.options.JobID, "watch", cause, watcher.options.Now())
-		} else {
-			event = events.Failure(watcher.options.JobID, "watch", cause, watcher.options.Now())
-		}
+	return errors.Join(safeCause, watcher.emit(TerminalEvent(watcher.options.JobID, cause, result, watcher.options.Now())))
+}
+
+// TerminalEvent builds the single aggregate watch terminal for both package
+// and CLI ownership paths without duplicating failure classification or losing
+// partial committed artifacts.
+func TerminalEvent(jobID string, cause error, result CycleResult, at time.Time) events.Event {
+	event := events.Event{
+		Type: events.JobCompleted, JobID: jobID, Command: "watch", Status: "completed", Timestamp: at.UTC(),
+		Outputs: append([]string(nil), result.Outputs...), Artifacts: append([]artifact.Manifest(nil), result.Artifacts...), Details: result,
 	}
+	if cause == nil {
+		return event
+	}
+	if (errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded)) && !isFatalCycleError(cause) {
+		event = events.Cancellation(jobID, "watch", cause, at)
+	} else {
+		event = events.Failure(jobID, "watch", cause, at)
+	}
+	event.Outputs = append([]string(nil), result.Outputs...)
+	event.Artifacts = append([]artifact.Manifest(nil), result.Artifacts...)
 	event.Details = result
-	return errors.Join(safeCause, watcher.emit(event))
+	return event
 }
 
 func (watcher *Watcher) emit(event events.Event) error {

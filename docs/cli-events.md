@@ -36,7 +36,7 @@ command exits 1 and does not loop trying to write another terminal record.
 Watch can emit:
 
 - `lecture.started`
-- `lecture.progress` after published media is durably committed
+- `lecture.progress` after final media is published and validated
 - `lecture.completed` with the validated manifest and output paths
 - `lecture.failed`
 
