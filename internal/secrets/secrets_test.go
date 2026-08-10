@@ -85,6 +85,7 @@ func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 		{name: "equals token", input: "upstream token=body-secret failed"},
 		{name: "json token", input: `{"refresh_token":"body-secret"}`},
 		{name: "password colon", input: "password:body-secret"},
+		{name: "inline tight auth colon", input: "upstream auth:body-secret failed"},
 		{name: "line token colon", input: "token: body-secret"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -99,9 +100,14 @@ func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 func TestScrub_PreservesOrdinaryParserDiagnostics(t *testing.T) {
 	t.Parallel()
 
-	const diagnostic = "decode failed: unexpected token: EOF"
-	if got := Scrub(diagnostic); got != diagnostic {
-		t.Fatalf("Scrub(%q) = %q", diagnostic, got)
+	for _, diagnostic := range []string{
+		"decode failed: unexpected token: EOF",
+		"open /etc/auth: no such file or directory",
+		"login failed because password: expired",
+	} {
+		if got := Scrub(diagnostic); got != diagnostic {
+			t.Fatalf("Scrub(%q) = %q", diagnostic, got)
+		}
 	}
 }
 

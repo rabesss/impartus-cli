@@ -48,15 +48,21 @@ var userinfoRe = regexp.MustCompile(`(?i)(https?://)[^/\s:@]+:[^/\s@]+@`)
 const sensitiveAssignmentKey = `(?:authorization|auth|[a-z0-9_-]*(?:token|password|secret)|api[_-]?key)`
 const sensitiveColonAssignmentKey = `(?:authorization|auth|[a-z0-9_-]+token|[a-z0-9_-]*(?:password|secret)|api[_-]?key)`
 
-var authorizationValue = regexp.MustCompile(`(?i)(\bauthorization\s*[:=]\s*)[^,;\r\n]+`)
+var authorizationEqualsValue = regexp.MustCompile(`(?i)(\bauthorization\s*=\s*)[^,;\r\n]+`)
+var fieldAuthorizationColon = regexp.MustCompile(
+	`(?im)(^|[\r\n{,;]\s*)(authorization\s*:\s*)[^,;\r\n}]+`,
+)
 var quotedSecretValue = regexp.MustCompile(
 	`(?i)(\b` + sensitiveAssignmentKey + `"\s*:\s*")((?:\\.|[^"\\])*)`,
 )
 var bareSecretEquals = regexp.MustCompile(
 	`(?i)(\b` + sensitiveAssignmentKey + `\s*=\s*)[^\s,;]+`,
 )
-var bareSecretColon = regexp.MustCompile(
-	`(?i)(\b` + sensitiveColonAssignmentKey + `\s*:\s*)[^\s,;]+`,
+var fieldBareSecretColon = regexp.MustCompile(
+	`(?im)(^|[\r\n{,;]\s*)(` + sensitiveColonAssignmentKey + `\s*:\s*)[^\s,;}]+`,
+)
+var tightBareSecretColon = regexp.MustCompile(
+	`(?i)(\b` + sensitiveColonAssignmentKey + `\s*:)[^\s,;}]+`,
 )
 var lineTokenColon = regexp.MustCompile(`(?im)(^\s*token\s*:\s*)[^\s,;]+`)
 
@@ -154,10 +160,12 @@ func Scrub(s string) string {
 		return s
 	}
 	scrubbed := urlTokenRe.ReplaceAllStringFunc(s, RedactURL)
-	scrubbed = authorizationValue.ReplaceAllString(scrubbed, "${1}REDACTED")
 	scrubbed = quotedSecretValue.ReplaceAllString(scrubbed, "${1}REDACTED")
+	scrubbed = authorizationEqualsValue.ReplaceAllString(scrubbed, "${1}REDACTED")
+	scrubbed = fieldAuthorizationColon.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
 	scrubbed = bareSecretEquals.ReplaceAllString(scrubbed, "${1}REDACTED")
-	scrubbed = bareSecretColon.ReplaceAllString(scrubbed, "${1}REDACTED")
+	scrubbed = fieldBareSecretColon.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
+	scrubbed = tightBareSecretColon.ReplaceAllString(scrubbed, "${1}REDACTED")
 	return lineTokenColon.ReplaceAllString(scrubbed, "${1}REDACTED")
 }
 

@@ -240,9 +240,22 @@ func (d *Downloader) downloadPlaylistPipelined(ctx context.Context, playlist cli
 
 func pipelineCancellationError(ctx context.Context, result PipelineResult, totalChunks int) error {
 	// Once every submitted chunk has a terminal result, collection is complete:
-	// preserve that success or detailed chunk failure even if cancellation races
-	// with finalization. Cancellation wins only when collection stopped early.
+	// preserve that success or a genuine detailed chunk failure even if
+	// cancellation races with finalization. A complete result made solely of
+	// cancellation failures still represents the parent's cancellation.
 	if len(result.FirstViewChunks)+len(result.SecondViewChunks)+len(result.Failures) == totalChunks {
+		if ctx.Err() != nil && len(result.Failures) > 0 {
+			allCanceled := true
+			for _, failure := range result.Failures {
+				if !failure.Canceled {
+					allCanceled = false
+					break
+				}
+			}
+			if allCanceled {
+				return ctx.Err()
+			}
+		}
 		return nil
 	}
 	return ctx.Err()

@@ -187,6 +187,17 @@ func TestPipelineFinalizationCancellationPrecedence(t *testing.T) {
 			},
 			totalChunks: 2,
 		},
+		{
+			name: "complete cancellation failures keep parent cancellation identity",
+			result: PipelineResult{
+				Failures: []ChunkFailure{
+					{ChunkID: 0, View: "first", Detail: "context canceled", Canceled: true},
+					{ChunkID: 1, View: "first", Detail: "context canceled", Canceled: true},
+				},
+			},
+			totalChunks: 2,
+			wantErr:     context.Canceled,
+		},
 	}
 
 	for _, tt := range tests {
@@ -196,6 +207,24 @@ func TestPipelineFinalizationCancellationPrecedence(t *testing.T) {
 				t.Fatalf("pipelineCancellationError() = %v, want %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestLecturePipelineCollectClassifiesCancellationFailure(t *testing.T) {
+	pipeline := NewLecturePipeline(PipelineConfig{
+		Context:         t.Context(),
+		DownloadWorkers: 1,
+		DecryptWorkers:  1,
+	}, nil)
+	pipeline.decryptedChunks <- DecryptedChunk{ChunkID: 0, View: "first", Err: context.Canceled}
+	close(pipeline.decryptedChunks)
+
+	result := pipeline.Collect()
+	if len(result.Failures) != 1 {
+		t.Fatalf("Collect() failures = %d, want 1", len(result.Failures))
+	}
+	if !result.Failures[0].Canceled {
+		t.Fatal("Collect() did not classify context cancellation")
 	}
 }
 

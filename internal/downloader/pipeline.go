@@ -77,9 +77,10 @@ type PipelineResult struct {
 // ChunkFailure retains sortable chunk identity separately from its scrubbed
 // root cause so concurrent completion order cannot leak into user output.
 type ChunkFailure struct {
-	ChunkID int
-	View    string
-	Detail  string
+	ChunkID  int
+	View     string
+	Detail   string
+	Canceled bool
 }
 
 // LecturePipeline manages concurrent download and decrypt workers for a single lecture.
@@ -308,6 +309,8 @@ func (p *LecturePipeline) Collect() PipelineResult {
 				ChunkID: decrypted.ChunkID,
 				View:    decrypted.View,
 				Detail:  secrets.ScrubError(decrypted.Err),
+				Canceled: errors.Is(decrypted.Err, context.Canceled) ||
+					errors.Is(decrypted.Err, context.DeadlineExceeded),
 			})
 			p.failedCount.Add(1)
 		} else if decrypted.View == "first" {
