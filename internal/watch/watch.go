@@ -277,9 +277,6 @@ func (watcher *Watcher) RunCycle(ctx context.Context) (CycleResult, error) {
 			if err := ctx.Err(); err != nil {
 				return result, err
 			}
-			if err := watcher.emitLecture(events.LectureDiscovered, target, lecture, "", nil); err != nil {
-				return result, err
-			}
 			outcome, processErr := watcher.inspectAndProcess(ctx, target, lecture, remaining > 0)
 			result.New += outcome.New
 			result.Skipped += outcome.Skipped
@@ -318,7 +315,13 @@ func (watcher *Watcher) targetLectures(ctx context.Context, target config.WatchT
 	if err != nil {
 		return nil, fmt.Errorf("list lectures for %s: %w", targetLabel(target), err)
 	}
-	selected := lectures.Reverse().FilterNoAudio()
+	if len(lectures) == 0 {
+		return client.Lectures{}, nil
+	}
+	selected, _, selectionErr := lectures.SelectForDownload(0, 0, watcher.cfg.SkipNoAudio)
+	if selectionErr != nil {
+		return nil, fmt.Errorf("select lectures for %s: %w", targetLabel(target), selectionErr)
+	}
 	var catalog client.CourseCatalog
 	if source, ok := watcher.source.(CourseSource); ok {
 		catalog = retryingCourseCatalog{watcher: watcher, source: source}
@@ -340,6 +343,9 @@ func (watcher *Watcher) inspectAndProcess(ctx context.Context, target config.Wat
 	artifactID, identityErr := watcher.artifactIDForLecture(target, lecture)
 	if identityErr != nil {
 		return lectureOutcome{}, watcher.lectureFailure(target, lecture, "", identityErr)
+	}
+	if err := watcher.emitLecture(events.LectureDiscovered, target, lecture, artifactID, nil); err != nil {
+		return lectureOutcome{}, err
 	}
 	skipped, skipErr := watcher.skipCommitted(ctx, target, lecture, artifactID)
 	if skipped {

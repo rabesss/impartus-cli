@@ -12,7 +12,7 @@ Every record contains:
 | Field | Type | Meaning |
 |-------|------|---------|
 | `schemaVersion` | integer | `1` |
-| `type` | string | Lifecycle event name |
+| `event` | string | Lifecycle event name |
 | `jobId` | string | Opaque `job-` identifier for this command run |
 | `command` | string | `download` or `watch` |
 | `timestamp` | string | UTC RFC 3339 timestamp |
@@ -37,12 +37,16 @@ Watch can emit:
 
 - `lecture.discovered`
 - `lecture.started`
+- `lecture.progress` after published media is durably committed
+- `lecture.completed` with the validated manifest and output paths
 - `lecture.skipped` with `artifact_committed` or `cycle_budget`
 - `lecture.failed`
 - `artifact.committed`
 - `cycle.completed`
 
-One-shot download emits `artifact.committed` only after the manifest batch has
+Every lecture event carries its canonical top-level `artifactId`. One-shot
+download emits `lecture.started`, `lecture.progress`, and `lecture.completed`
+while producing each lecture, then emits `artifact.committed` only after the manifest batch has
 been recorded in the local library. If media was published but that commit did
 not complete, events mode fails closed with `job.failed`; the existing human and
 single-envelope JSON compatibility modes retain their warning behavior.
@@ -56,7 +60,7 @@ same verified paths without waiting for or repeating an Impartus download.
 ## Committed artifact example
 
 ```json
-{"schemaVersion":1,"type":"artifact.committed","jobId":"job-...","command":"watch","timestamp":"2026-08-09T12:00:00Z","target":{"subjectId":123,"sessionId":456},"lecture":{"ttid":789,"seqNo":4,"topic":"Graph traversal"},"artifact":{"schemaVersion":1,"artifactId":"impartus:v1:...","lecture":{"ttid":789,"instituteId":10,"subjectId":123,"sessionId":456,"seqNo":4,"topic":"Graph traversal","startTime":"2026-08-09T09:00:00Z","durationSeconds":3600,"professor":"Ada","institute":"Example Institute","noAudio":false},"selection":{"views":"left","quality":"144","audioOnly":true,"audioFormat":"mp3"},"files":[{"path":"/home/user/lectures/Graph traversal.mp3","role":"audio","view":"left","container":"mp3","bytes":1048576}],"producedAt":"2026-08-09T12:00:00Z","producer":{"name":"impartus","version":"dev"}}}
+{"schemaVersion":1,"event":"artifact.committed","jobId":"job-...","command":"watch","timestamp":"2026-08-09T12:00:00Z","target":{"subjectId":123,"sessionId":456},"lecture":{"ttid":789,"seqNo":4,"topic":"Graph traversal"},"artifactId":"impartus:v1:...","artifact":{"schemaVersion":1,"artifactId":"impartus:v1:...","lecture":{"ttid":789,"instituteId":10,"subjectId":123,"sessionId":456,"seqNo":4,"topic":"Graph traversal","startTime":"2026-08-09T09:00:00Z","durationSeconds":3600,"professor":"Ada","institute":"Example Institute","noAudio":false},"selection":{"views":"left","quality":"144","audioOnly":true,"audioFormat":"mp3"},"files":[{"path":"/home/user/lectures/Graph traversal.mp3","role":"audio","view":"left","container":"mp3","bytes":1048576}],"producedAt":"2026-08-09T12:00:00Z","producer":{"name":"impartus","version":"dev"}}}
 ```
 
 Consumers should treat `artifact.artifactId` as the logical identity and each

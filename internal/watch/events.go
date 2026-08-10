@@ -42,17 +42,11 @@ func (watcher *Watcher) emit(event events.Event) error {
 
 func (watcher *Watcher) emitLecture(eventType string, target config.WatchTarget, lecture client.Lecture, artifactID string, details any) error {
 	event := events.Event{
-		Type:    eventType,
-		Target:  &events.Target{SubjectID: target.SubjectID, SessionID: target.SessionID, Label: target.Label},
-		Lecture: &events.Lecture{TTID: lecture.TTID, SeqNo: lecture.SeqNo, Topic: lecture.Topic},
-		Details: details,
-	}
-	if artifactID != "" {
-		if values, ok := details.(map[string]any); ok {
-			values["artifactId"] = artifactID
-		} else {
-			event.Details = map[string]any{"artifactId": artifactID}
-		}
+		Type:       eventType,
+		Target:     &events.Target{SubjectID: target.SubjectID, SessionID: target.SessionID, Label: target.Label},
+		Lecture:    &events.Lecture{TTID: lecture.TTID, SeqNo: lecture.SeqNo, Topic: lecture.Topic},
+		ArtifactID: artifactID,
+		Details:    details,
 	}
 	return watcher.emit(event)
 }
@@ -62,7 +56,11 @@ func (watcher *Watcher) lectureFailure(target config.WatchTarget, lecture client
 	if jobID != "" {
 		details["libraryJobId"] = jobID
 	}
-	if err := watcher.emitLecture(events.LectureFailed, target, lecture, "", details); err != nil {
+	artifactID, identityErr := watcher.artifactIDForLecture(target, lecture)
+	if identityErr != nil {
+		return events.RedactedError(cause)
+	}
+	if err := watcher.emitLecture(events.LectureFailed, target, lecture, artifactID, details); err != nil {
 		return errors.Join(events.RedactedError(cause), err)
 	}
 	return events.RedactedError(cause)

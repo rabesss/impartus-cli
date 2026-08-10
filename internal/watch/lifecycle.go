@@ -45,7 +45,8 @@ func (watcher *Watcher) emitRecoveredArtifacts(recovered []library.RecoveredArti
 	for _, item := range recovered {
 		manifest := item.Manifest
 		if err := watcher.emit(events.Event{
-			Type: events.ArtifactCommitted,
+			Type:       events.ArtifactCommitted,
+			ArtifactID: manifest.ArtifactID,
 			Target: &events.Target{
 				SubjectID: manifest.Lecture.SubjectID,
 				SessionID: manifest.Lecture.SessionID,
@@ -128,15 +129,40 @@ func (watcher *Watcher) downloadLecture(ctx context.Context, target config.Watch
 	if err := watcher.store.CompleteJob(context.WithoutCancel(ctx), jobID, manifest); err != nil {
 		return artifact.Manifest{}, watcher.lectureFailure(target, lecture, jobID, durableStateError("commit durable watch artifact", err))
 	}
-	if err := watcher.emit(events.Event{
-		Type:     events.ArtifactCommitted,
-		Target:   &events.Target{SubjectID: target.SubjectID, SessionID: target.SessionID, Label: target.Label},
-		Lecture:  &events.Lecture{TTID: lecture.TTID, SeqNo: lecture.SeqNo, Topic: lecture.Topic},
-		Artifact: &manifest, Details: map[string]any{"libraryJobId": jobID, "artifactId": manifest.ArtifactID},
-	}); err != nil {
+	if err := watcher.emitCompletedLecture(target, lecture, jobID, artifactID, manifest); err != nil {
 		return manifest, err
 	}
 	return manifest, nil
+}
+
+func (watcher *Watcher) emitCompletedLecture(target config.WatchTarget, lecture client.Lecture, jobID, artifactID string, manifest artifact.Manifest) error {
+	if err := watcher.emitLecture(events.LectureProgress, target, lecture, artifactID, map[string]any{
+		"libraryJobId": jobID, "stage": "media_published", "outputs": manifestPaths(manifest),
+	}); err != nil {
+		return err
+	}
+	if err := watcher.emit(events.Event{
+		Type:       events.LectureCompleted,
+		Target:     &events.Target{SubjectID: target.SubjectID, SessionID: target.SessionID, Label: target.Label},
+		Lecture:    &events.Lecture{TTID: lecture.TTID, SeqNo: lecture.SeqNo, Topic: lecture.Topic},
+		ArtifactID: artifactID,
+		Artifact:   &manifest,
+		Outputs:    manifestPaths(manifest),
+		Details:    map[string]any{"libraryJobId": jobID},
+	}); err != nil {
+		return err
+	}
+	if err := watcher.emit(events.Event{
+		Type:       events.ArtifactCommitted,
+		Target:     &events.Target{SubjectID: target.SubjectID, SessionID: target.SessionID, Label: target.Label},
+		Lecture:    &events.Lecture{TTID: lecture.TTID, SeqNo: lecture.SeqNo, Topic: lecture.Topic},
+		ArtifactID: manifest.ArtifactID,
+		Artifact:   &manifest,
+		Details:    map[string]any{"libraryJobId": jobID},
+	}); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (watcher *Watcher) committed(ctx context.Context, artifactID string) (bool, error) {

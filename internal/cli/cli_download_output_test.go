@@ -34,6 +34,7 @@ type fakeLectureDownloadRunner struct {
 	next         int
 	downloadErr  error
 	downloadErrs []error
+	failAt       int
 }
 
 func (f *fakeLectureDownloadRunner) FetchLecturePlaylists(_ context.Context, lectures []client.Lecture) ([]client.ParsedPlaylist, error) {
@@ -60,7 +61,7 @@ func (f *fakeLectureDownloadRunner) DownloadAndJoinPlaylist(_ context.Context, _
 	f.progress = append(f.progress, progress)
 	f.trackers = append(f.trackers, tracker)
 	f.downloads++
-	if f.downloadErr != nil {
+	if f.downloadErr != nil && (f.failAt == 0 || f.downloads == f.failAt) {
 		return downloader.JoinResult{}, f.downloadErr
 	}
 	index := f.next
@@ -70,6 +71,35 @@ func (f *fakeLectureDownloadRunner) DownloadAndJoinPlaylist(_ context.Context, _
 	}
 	result := f.results[index]
 	return result, nil
+}
+
+func TestDownloadReturnsValidatedPartialResultWhenLaterLectureFails(t *testing.T) {
+	t.Parallel()
+
+	outputDir := t.TempDir()
+	lectures := client.Lectures{
+		{InstituteID: 1, SubjectID: 2, SessionID: 3, TTID: 10, SeqNo: 1, Topic: "First"},
+		{InstituteID: 1, SubjectID: 2, SessionID: 3, TTID: 11, SeqNo: 2, Topic: "Second"},
+	}
+	runner := &fakeLectureDownloadRunner{
+		playlists: []client.ParsedPlaylist{
+			{InstituteID: 1, SubjectID: 2, SessionID: 3, ID: 10},
+			{InstituteID: 1, SubjectID: 2, SessionID: 3, ID: 11},
+		},
+		results:     materializeJoinResults(t, outputDir, []downloader.JoinResult{{LeftOutput: "first.mp4"}}),
+		downloadErr: errors.New("second failed"),
+		failAt:      2,
+	}
+
+	result, err := downloadLecturesWithRunner(context.Background(), &config.Config{
+		DownloadLocation: outputDir, Views: "left", Quality: "720",
+	}, runner, lectures, quietDownloadPresentation())
+	if err == nil || !strings.Contains(err.Error(), "second failed") {
+		t.Fatalf("downloadLecturesWithRunner() error = %v", err)
+	}
+	if result.LectureCount != 1 || len(result.Artifacts) != 1 || len(result.OutputPaths) != 1 {
+		t.Fatalf("partial result = %+v, want one validated lecture", result)
+	}
 }
 
 func TestDownloadSkipsSelectedLectureWithoutPlaylist(t *testing.T) {

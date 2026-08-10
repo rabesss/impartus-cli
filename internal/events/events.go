@@ -23,6 +23,8 @@ const (
 	JobStarted        = "job.started"
 	LectureDiscovered = "lecture.discovered"
 	LectureStarted    = "lecture.started"
+	LectureProgress   = "lecture.progress"
+	LectureCompleted  = "lecture.completed"
 	LectureSkipped    = "lecture.skipped"
 	LectureFailed     = "lecture.failed"
 	ArtifactCommitted = "artifact.committed"
@@ -36,7 +38,7 @@ var (
 	// ErrTerminalEvent reports a second terminal event or any event after one.
 	ErrTerminalEvent = errors.New("event stream already emitted a terminal event")
 	validTypes       = map[string]bool{
-		JobStarted: true, LectureDiscovered: true, LectureStarted: true,
+		JobStarted: true, LectureDiscovered: true, LectureStarted: true, LectureProgress: true, LectureCompleted: true,
 		LectureSkipped: true, LectureFailed: true, ArtifactCommitted: true,
 		CycleCompleted: true, JobCompleted: true, JobFailed: true, JobCanceled: true,
 	}
@@ -58,18 +60,20 @@ type Lecture struct {
 
 // Event is one self-contained NDJSON lifecycle record.
 type Event struct {
-	SchemaVersion int                `json:"schemaVersion"`
-	Type          string             `json:"type"`
-	JobID         string             `json:"jobId"`
-	Command       string             `json:"command"`
-	Status        string             `json:"status,omitempty"`
-	Timestamp     time.Time          `json:"timestamp"`
-	Target        *Target            `json:"target,omitempty"`
-	Lecture       *Lecture           `json:"lecture,omitempty"`
-	Artifact      *artifact.Manifest `json:"artifact,omitempty"`
-	Outputs       []string           `json:"outputs,omitempty"`
-	Details       any                `json:"details,omitempty"`
-	Error         string             `json:"error,omitempty"`
+	SchemaVersion int                 `json:"schemaVersion"`
+	Type          string              `json:"event"`
+	JobID         string              `json:"jobId"`
+	Command       string              `json:"command"`
+	Status        string              `json:"status,omitempty"`
+	Timestamp     time.Time           `json:"timestamp"`
+	Target        *Target             `json:"target,omitempty"`
+	Lecture       *Lecture            `json:"lecture,omitempty"`
+	ArtifactID    string              `json:"artifactId,omitempty"`
+	Artifact      *artifact.Manifest  `json:"artifact,omitempty"`
+	Artifacts     []artifact.Manifest `json:"artifacts,omitempty"`
+	Outputs       []string            `json:"outputs,omitempty"`
+	Details       any                 `json:"details,omitempty"`
+	Error         string              `json:"error,omitempty"`
 }
 
 // Emitter synchronously publishes a lifecycle event.
@@ -162,7 +166,19 @@ func validate(event Event) error {
 	if event.Timestamp.IsZero() {
 		return errors.New("event timestamp is required")
 	}
+	if isLectureLifecycle(event.Type) && strings.TrimSpace(event.ArtifactID) == "" {
+		return fmt.Errorf("event %s artifactId is required", event.Type)
+	}
 	return nil
+}
+
+func isLectureLifecycle(eventType string) bool {
+	switch eventType {
+	case LectureDiscovered, LectureStarted, LectureProgress, LectureCompleted, LectureSkipped, LectureFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 // IsTerminal reports whether eventType closes an event stream.

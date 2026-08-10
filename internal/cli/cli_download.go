@@ -62,6 +62,7 @@ type downloadPresentationOptions struct {
 	progressOutput   io.Writer
 	warningOutput    io.Writer
 	diagnosticOutput io.Writer
+	eventStream      *downloadEventStream
 }
 
 func humanDownloadPresentation() downloadPresentationOptions {
@@ -193,20 +194,20 @@ func (stream *downloadEventStream) start() error {
 
 func (stream *downloadEventStream) finish(result downloadResult, cause error) error {
 	if cause != nil {
-		return stream.fail(cause)
+		return stream.failResult(result, cause)
 	}
 	if !result.LibraryRecorded {
 		cause = errors.New("download completed but the local library commit did not complete")
-		return stream.fail(cause)
+		return stream.failResult(result, cause)
 	}
 	for index := range result.Artifacts {
 		manifest := result.Artifacts[index]
 		if err := stream.writer.Emit(events.Event{
-			Type: events.ArtifactCommitted, JobID: stream.jobID, Command: "download",
+			Type: events.ArtifactCommitted, JobID: stream.jobID, Command: "download", ArtifactID: manifest.ArtifactID,
 			Status: "completed", Timestamp: stream.now().UTC(), Artifact: &manifest,
 			Outputs: manifestOutputPaths(manifest),
 		}); err != nil {
-			return stream.fail(err)
+			return stream.failResult(result, err)
 		}
 	}
 	if err := stream.writer.Emit(events.Event{
@@ -217,15 +218,25 @@ func (stream *downloadEventStream) finish(result downloadResult, cause error) er
 			"filteredCount": result.FilteredCount, "totalLectures": result.TotalLectures,
 		},
 	}); err != nil {
-		return stream.fail(err)
+		return stream.failResult(result, err)
 	}
 	return nil
 }
 
 func (stream *downloadEventStream) fail(cause error) error {
+	return stream.failResult(downloadResult{}, cause)
+}
+
+func (stream *downloadEventStream) failResult(result downloadResult, cause error) error {
 	event := events.Failure(stream.jobID, "download", cause, stream.now())
 	if errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
 		event = events.Cancellation(stream.jobID, "download", cause, stream.now())
+	}
+	event.Outputs = artifactOutputPaths(result.Artifacts)
+	event.Artifacts = append([]artifact.Manifest(nil), result.Artifacts...)
+	event.Details = map[string]any{
+		"lectureCount": result.LectureCount, "libraryRecorded": result.LibraryRecorded,
+		"filteredCount": result.FilteredCount, "totalLectures": result.TotalLectures,
 	}
 	emitErr := stream.writer.Emit(event)
 	if emitErr != nil {
@@ -234,12 +245,29 @@ func (stream *downloadEventStream) fail(cause error) error {
 	return events.RedactedError(cause)
 }
 
+func (stream *downloadEventStream) lecture(eventType string, lecture client.Lecture, artifactID string, manifest *artifact.Manifest, outputs []string, details any) error {
+	if stream == nil {
+		return nil
+	}
+	event := events.Event{
+		Type: eventType, JobID: stream.jobID, Command: "download", Timestamp: stream.now().UTC(),
+		Lecture:    &events.Lecture{TTID: lecture.TTID, SeqNo: lecture.SeqNo, Topic: lecture.Topic},
+		ArtifactID: artifactID, Artifact: manifest, Outputs: append([]string(nil), outputs...), Details: details,
+	}
+	if err := stream.writer.Emit(event); err != nil {
+		return errors.Join(errDownloadEventDelivery, events.RedactedError(err))
+	}
+	return nil
+}
+
 func runDownloadEventsWithDependenciesContext(ctx context.Context, args []string, output io.Writer, deps downloadExecutionDependencies, now func() time.Time, jobID string) error {
 	stream := newDownloadEventStream(output, jobID, now)
 	if err := stream.start(); err != nil {
 		return stream.fail(err)
 	}
-	result, err := executeDownloadWithDependenciesContext(ctx, args, quietDownloadPresentation(), deps)
+	presentation := quietDownloadPresentation()
+	presentation.eventStream = stream
+	result, err := executeDownloadWithDependenciesContext(ctx, args, presentation, deps)
 	return stream.finish(result, err)
 }
 
@@ -368,17 +396,16 @@ func executeDownloadWithDependenciesContext(ctx context.Context, args []string, 
 	warnNoAudioLectures(presentation.warningOutput, selected, cfg.SkipNoAudio)
 
 	result, err := deps.downloadLectures(ctx, cfg, apiClient, selected, presentation)
-	if err != nil {
-		return downloadResult{}, err
-	}
 	// Once media has been published, finish the durable library commit even if
 	// a signal races with this short post-download transition. The event stream
 	// must not report completed media as an unrecorded hard failure merely
 	// because its request context was canceled after the producer returned.
-	result = applyLibraryRecording(context.WithoutCancel(ctx), result, presentation, deps.recordArtifacts)
+	if err == nil || len(result.Artifacts) > 0 {
+		result = applyLibraryRecording(context.WithoutCancel(ctx), result, presentation, deps.recordArtifacts)
+	}
 	result.FilteredCount = filteredCount
 	result.TotalLectures = totalLectures
-	return result, nil
+	return result, err
 }
 
 func recordDownloadedArtifacts(ctx context.Context, manifests []artifact.Manifest) error {
@@ -508,9 +535,11 @@ func downloadLecturesWithRunner(ctx context.Context, cfg *config.Config, d lectu
 		defer tracker.Stop()
 	}
 
-	outputPaths, artifacts, completedLectures, err := completeLectureDownloads(ctx, cfg, d, playlists, lecturesByScope, p, tracker)
+	outputPaths, artifacts, completedLectures, err := completeLectureDownloads(ctx, cfg, d, playlists, lecturesByScope, p, tracker, presentation.eventStream)
+	result := downloadResult{Status: "completed", OutputPaths: outputPaths, LectureCount: completedLectures, Artifacts: artifacts}
 	if err != nil {
-		return downloadResult{}, err
+		result.Status = "failed"
+		return result, err
 	}
 
 	if tracker != nil {
@@ -520,7 +549,7 @@ func downloadLecturesWithRunner(ctx context.Context, cfg *config.Config, d lectu
 	if p != nil {
 		p.Wait()
 	}
-	return downloadResult{Status: "completed", OutputPaths: outputPaths, LectureCount: completedLectures, Artifacts: artifacts}, nil
+	return result, nil
 }
 
 func completeLectureDownloads(
@@ -531,6 +560,7 @@ func completeLectureDownloads(
 	lecturesByScope map[scopedLectureKey]client.Lecture,
 	progress *mpb.Progress,
 	tracker *downloader.ProgressTracker,
+	stream *downloadEventStream,
 ) ([]string, []artifact.Manifest, int, error) {
 	outputPaths := make([]string, 0, len(playlists))
 	artifacts := make([]artifact.Manifest, 0, len(playlists))
@@ -543,7 +573,7 @@ func completeLectureDownloads(
 		}
 		lecture, exists := lecturesByScope[key]
 		if !exists {
-			return nil, nil, 0, fmt.Errorf(
+			return outputPaths, artifacts, len(artifacts), fmt.Errorf(
 				"playlist is missing from selected scoped lectures: institute=%d subject=%d session=%d ttid=%d",
 				key.instituteID,
 				key.subjectID,
@@ -551,17 +581,28 @@ func completeLectureDownloads(
 				key.ttid,
 			)
 		}
+		artifactID, identityErr := downloadArtifactID(lecture, cfg)
+		if identityErr != nil {
+			return outputPaths, artifacts, len(artifacts), identityErr
+		}
+		if emitErr := stream.lecture(events.LectureStarted, lecture, artifactID, nil, nil, nil); emitErr != nil {
+			return outputPaths, artifacts, len(artifacts), emitErr
+		}
+
 		// Route through the shared DownloadAndJoinPlaylist (the same method the
 		// server job runner uses) so per-lecture download+join logic has one home.
 		joinResult, err := d.DownloadAndJoinPlaylist(ctx, playlist, progress, tracker)
 		if err != nil {
 			if errors.Is(err, downloader.ErrNoSelectedMedia) {
+				if emitErr := stream.lecture(events.LectureSkipped, lecture, artifactID, nil, nil, map[string]any{"reason": "no selected media"}); emitErr != nil {
+					return outputPaths, artifacts, len(artifacts), emitErr
+				}
 				if tracker != nil {
 					downloader.LectureCompleted(tracker)
 				}
 				continue
 			}
-			return nil, nil, 0, fmt.Errorf(
+			downloadErr := fmt.Errorf(
 				"download and join lecture institute=%d subject=%d session=%d ttid=%d: %w",
 				key.instituteID,
 				key.subjectID,
@@ -569,23 +610,38 @@ func completeLectureDownloads(
 				key.ttid,
 				err,
 			)
+			emitErr := stream.lecture(events.LectureFailed, lecture, artifactID, nil, nil, map[string]any{"error": events.RedactError(downloadErr)})
+			return outputPaths, artifacts, len(artifacts), errors.Join(downloadErr, emitErr)
+		}
+		if emitErr := stream.lecture(events.LectureProgress, lecture, artifactID, nil, joinResult.OutputPaths(), map[string]any{"stage": "media_published"}); emitErr != nil {
+			return outputPaths, artifacts, len(artifacts), emitErr
 		}
 		paths := joinResult.OutputPaths()
 		if len(paths) == 0 {
-			return nil, nil, 0, fmt.Errorf(
+			contractErr := fmt.Errorf(
 				"download and join lecture institute=%d subject=%d session=%d ttid=%d returned no outputs",
 				key.instituteID,
 				key.subjectID,
 				key.sessionID,
 				key.ttid,
 			)
+			emitErr := stream.lecture(events.LectureFailed, lecture, artifactID, nil, nil, map[string]any{"error": events.RedactError(contractErr)})
+			return outputPaths, artifacts, len(artifacts), errors.Join(contractErr, emitErr)
 		}
 		manifest, err := buildDownloadArtifact(lecture, cfg, joinResult, time.Now().UTC())
 		if err != nil {
-			return nil, nil, 0, fmt.Errorf("build artifact manifest for lecture %d: %w", lecture.TTID, err)
+			manifestErr := fmt.Errorf("build artifact manifest for lecture %d: %w", lecture.TTID, err)
+			emitErr := stream.lecture(events.LectureFailed, lecture, artifactID, nil, nil, map[string]any{"error": events.RedactError(manifestErr)})
+			return outputPaths, artifacts, len(artifacts), errors.Join(manifestErr, emitErr)
 		}
+		// A successfully built manifest is a fully validated partial result. Add
+		// it before event delivery so a later sink or lecture failure cannot
+		// discard media that is already safe to record in the local library.
 		outputPaths = append(outputPaths, paths...)
 		artifacts = append(artifacts, manifest)
+		if emitErr := stream.lecture(events.LectureCompleted, lecture, artifactID, &manifest, manifestOutputPaths(manifest), nil); emitErr != nil {
+			return outputPaths, artifacts, len(artifacts), emitErr
+		}
 		if tracker != nil {
 			downloader.LectureCompleted(tracker)
 		}
@@ -658,21 +714,25 @@ func indexLecturesForArtifacts(lectures client.Lectures, cfg *config.Config) (ma
 				key.ttid,
 			)
 		}
-		if _, err := artifact.NewID(artifact.Identity{
-			InstituteID: lecture.InstituteID,
-			SubjectID:   lecture.SubjectID,
-			SessionID:   lecture.SessionID,
-			TTID:        lecture.TTID,
-			AudioOnly:   cfg.AudioOnly,
-			Views:       cfg.Views,
-			Quality:     cfg.Quality,
-			AudioFormat: cfg.AudioFormat,
-		}); err != nil {
+		if _, err := downloadArtifactID(lecture, cfg); err != nil {
 			return nil, fmt.Errorf("invalid artifact identity for lecture %d: %w", lecture.TTID, err)
 		}
 		byScope[key] = lecture
 	}
 	return byScope, nil
+}
+
+func downloadArtifactID(lecture client.Lecture, cfg *config.Config) (string, error) {
+	return artifact.NewID(artifact.Identity{
+		InstituteID: lecture.InstituteID,
+		SubjectID:   lecture.SubjectID,
+		SessionID:   lecture.SessionID,
+		TTID:        lecture.TTID,
+		AudioOnly:   cfg.AudioOnly,
+		Views:       cfg.Views,
+		Quality:     cfg.Quality,
+		AudioFormat: cfg.AudioFormat,
+	})
 }
 
 func buildDownloadArtifact(lecture client.Lecture, cfg *config.Config, result downloader.JoinResult, producedAt time.Time) (artifact.Manifest, error) {

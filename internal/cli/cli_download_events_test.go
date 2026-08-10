@@ -15,6 +15,7 @@ import (
 	"github.com/rabesss/impartus-cli/internal/artifact"
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
+	"github.com/rabesss/impartus-cli/internal/downloader"
 	"github.com/rabesss/impartus-cli/internal/events"
 )
 
@@ -54,6 +55,54 @@ func TestDownloadEventsEmitCommittedArtifactsAndOneTerminal(t *testing.T) {
 	}
 }
 
+func TestDownloadEventsEmitOriginalPerLectureLifecycleWithArtifactID(t *testing.T) {
+	t.Parallel()
+
+	outputDir := t.TempDir()
+	lecture := client.Lecture{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 123, SeqNo: 5, Topic: "Lifecycle"}
+	runner := &fakeLectureDownloadRunner{
+		playlists: []client.ParsedPlaylist{{InstituteID: 4, SubjectID: 67, SessionID: 8, ID: 123}},
+		results:   materializeJoinResults(t, outputDir, []downloader.JoinResult{{LeftOutput: "lecture.mp4"}}),
+	}
+	var output bytes.Buffer
+	stream := newDownloadEventStream(&output, "job-lifecycle", func() time.Time { return time.Unix(1, 0).UTC() })
+	if err := stream.start(); err != nil {
+		t.Fatal(err)
+	}
+	result, err := downloadLecturesWithRunner(context.Background(), &config.Config{
+		DownloadLocation: outputDir, Views: "left", Quality: "720",
+	}, runner, client.Lectures{lecture}, downloadPresentationOptions{eventStream: stream})
+	if err != nil {
+		t.Fatalf("downloadLecturesWithRunner() error = %v", err)
+	}
+	result.LibraryRecorded = true
+	if err := stream.finish(result, nil); err != nil {
+		t.Fatalf("finish() error = %v", err)
+	}
+
+	decoded := decodeCLIEvents(t, output.String())
+	wantTypes := []string{
+		events.JobStarted, events.LectureStarted, events.LectureProgress, events.LectureCompleted,
+		events.ArtifactCommitted, events.JobCompleted,
+	}
+	if len(decoded) != len(wantTypes) {
+		t.Fatalf("events = %+v, want types %v", decoded, wantTypes)
+	}
+	for index, wantType := range wantTypes {
+		if decoded[index].Type != wantType {
+			t.Fatalf("event[%d].Type = %q, want %q", index, decoded[index].Type, wantType)
+		}
+	}
+	for _, event := range decoded[1:4] {
+		if event.ArtifactID == "" {
+			t.Fatalf("lecture event %q has no artifactId: %+v", event.Type, event)
+		}
+	}
+	if decoded[3].Artifact == nil || decoded[3].Artifact.ArtifactID != decoded[3].ArtifactID || len(decoded[3].Outputs) != 1 {
+		t.Fatalf("lecture.completed = %+v", decoded[3])
+	}
+}
+
 func TestDownloadEventsFailClosedWhenLibraryCommitDidNotComplete(t *testing.T) {
 	t.Parallel()
 
@@ -78,7 +127,9 @@ func TestDownloadEventsFailureStillEmitsOneFailedTerminal(t *testing.T) {
 
 	var output bytes.Buffer
 	cause := errors.New("download failed")
-	err := emitDownloadResultEvents(&output, "job-test", downloadResult{}, cause, func() time.Time { return time.Unix(1, 0).UTC() })
+	manifest := artifact.Manifest{SchemaVersion: 1, ArtifactID: "impartus:v1:partial", Files: []artifact.File{{Path: "/absolute/partial.mp3"}}}
+	result := downloadResult{Status: "failed", LectureCount: 1, Artifacts: []artifact.Manifest{manifest}, LibraryRecorded: true}
+	err := emitDownloadResultEvents(&output, "job-test", result, cause, func() time.Time { return time.Unix(1, 0).UTC() })
 	if !errors.Is(err, cause) {
 		t.Fatalf("error = %v, want cause", err)
 	}
@@ -94,6 +145,10 @@ func TestDownloadEventsFailureStillEmitsOneFailedTerminal(t *testing.T) {
 	}
 	if terminals != 1 {
 		t.Fatalf("terminal events = %d: %s", terminals, output.String())
+	}
+	terminal := decoded[len(decoded)-1]
+	if len(terminal.Artifacts) != 1 || terminal.Artifacts[0].ArtifactID != manifest.ArtifactID || len(terminal.Outputs) != 1 {
+		t.Fatalf("failed terminal partial completion = %+v", terminal)
 	}
 }
 

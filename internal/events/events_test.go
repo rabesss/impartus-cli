@@ -69,6 +69,28 @@ func TestWriterEmitsValidNDJSONAndExactlyOneTerminal(t *testing.T) {
 	}
 }
 
+func TestEventV1UsesOriginalWireFieldAndLectureLifecycleNames(t *testing.T) {
+	t.Parallel()
+
+	for _, eventType := range []string{LectureProgress, LectureCompleted} {
+		var output bytes.Buffer
+		event := Event{Type: eventType, JobID: "job-1", Command: "download", ArtifactID: "impartus:v1:test", Timestamp: time.Unix(1, 0).UTC()}
+		if err := NewWriter(&output).Emit(event); err != nil {
+			t.Fatalf("Emit(%s) error = %v", eventType, err)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(output.Bytes(), &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if decoded["event"] != eventType {
+			t.Fatalf("wire event = %#v, want %q", decoded["event"], eventType)
+		}
+		if _, exists := decoded["type"]; exists {
+			t.Fatalf("event v1 unexpectedly serialized legacy type field: %s", output.String())
+		}
+	}
+}
+
 func TestWriterRejectsInvalidEventsBeforeOutput(t *testing.T) {
 	t.Parallel()
 
@@ -77,6 +99,7 @@ func TestWriterRejectsInvalidEventsBeforeOutput(t *testing.T) {
 		{Type: "unknown", JobID: "job-1", Timestamp: time.Now()},
 		{Type: JobStarted, Timestamp: time.Now()},
 		{Type: JobStarted, JobID: "job-1"},
+		{Type: LectureStarted, JobID: "job-1", Command: "download", Timestamp: time.Now()},
 	}
 	for _, event := range tests {
 		var output bytes.Buffer
