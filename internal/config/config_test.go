@@ -47,6 +47,13 @@ func TestValidateRejectsInvalidViewsQualityAndMissingCredentials(t *testing.T) {
 			wantErr: "quality must be one of",
 		},
 		{
+			name: "noncanonical quality",
+			mutate: func(cfg *Config) {
+				cfg.Quality = " 720 "
+			},
+			wantErr: "quality must be one of",
+		},
+		{
 			name: "invalid views",
 			mutate: func(cfg *Config) {
 				cfg.Views = "sideways"
@@ -59,6 +66,14 @@ func TestValidateRejectsInvalidViewsQualityAndMissingCredentials(t *testing.T) {
 				cfg.Username = ""
 			},
 			wantErr: "username and password are required",
+		},
+		{
+			name: "noncanonical audio format",
+			mutate: func(cfg *Config) {
+				cfg.AudioOnly = true
+				cfg.AudioFormat = " M4A "
+			},
+			wantErr: "audioFormat must be one of",
 		},
 	}
 

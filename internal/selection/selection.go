@@ -46,7 +46,7 @@ func (view View) Includes(output View) bool {
 
 // ValidQuality reports whether value is a supported video quality.
 func ValidQuality(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
+	switch value {
 	case "144", "450", "720":
 		return true
 	default:
@@ -56,7 +56,7 @@ func ValidQuality(value string) bool {
 
 // ValidAudioFormat reports whether value is a supported audio-only format.
 func ValidAudioFormat(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
+	switch value {
 	case "mp3", "m4a", "aac", "opus":
 		return true
 	default:

@@ -32,10 +32,10 @@ func TestViewIncludes(t *testing.T) {
 func TestSelectionEnums(t *testing.T) {
 	t.Parallel()
 
-	if !ValidQuality(" 720 ") || ValidQuality("1080") {
+	if !ValidQuality("720") || ValidQuality(" 720 ") || ValidQuality("1080") {
 		t.Fatal("quality allow-list mismatch")
 	}
-	if !ValidAudioFormat(" M4A ") || ValidAudioFormat("wav") {
+	if !ValidAudioFormat("m4a") || ValidAudioFormat(" M4A ") || ValidAudioFormat("wav") {
 		t.Fatal("audio-format allow-list mismatch")
 	}
 }
