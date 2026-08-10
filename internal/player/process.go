@@ -388,6 +388,9 @@ func playbackEndResult(event Event) (bool, error) {
 			// continues playback after this event.
 			return false, nil
 		case "error":
+			if mpvFileErrorIsAuthorizationFailure(event.FileError) {
+				return true, errors.New("mpv playback failed: upstream authorization failed")
+			}
 			return true, errors.New("mpv playback failed")
 		default:
 			return true, errors.New("mpv playback ended unexpectedly")
@@ -398,6 +401,16 @@ func playbackEndResult(event Event) (bool, error) {
 	}
 	var reached bool
 	return json.Unmarshal(event.Data, &reached) == nil && reached, nil
+}
+
+func mpvFileErrorIsAuthorizationFailure(raw string) bool {
+	for _, field := range strings.Fields(raw) {
+		switch strings.Trim(field, ":,;()[]{}") {
+		case "401", "403":
+			return true
+		}
+	}
+	return false
 }
 
 func (session *Session) closeOnLifecycleCancellation(ctx context.Context) {

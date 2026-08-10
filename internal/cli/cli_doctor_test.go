@@ -107,6 +107,25 @@ func TestCollectDoctorReportAllowsMissingConfig(t *testing.T) {
 	}
 }
 
+func TestCollectDoctorReportAllowsLegacyModeWithoutIPCRuntime(t *testing.T) {
+	root := t.TempDir()
+	report := collectDoctorReport(doctorOptions{
+		lookPath:     func(name string) (string, error) { return "/usr/bin/" + name, nil },
+		configPath:   filepath.Join(root, "missing.json"),
+		tokenPath:    filepath.Join(root, "missing.token"),
+		stateDir:     filepath.Join(root, "state"),
+		mpvMode:      "legacy",
+		checkRuntime: func() error { return errors.New("IPC unsupported") },
+	})
+	if !report.OK {
+		t.Fatalf("legacy mode should not require IPC runtime: %+v", report)
+	}
+	check := doctorCheckNamed(t, report, "runtime")
+	if check.Status != doctorStatusWarn || !strings.Contains(check.Detail, "legacy") {
+		t.Fatalf("runtime check = %+v, want legacy warning", check)
+	}
+}
+
 func TestCollectDoctorReportAllowsSymlinkedStateAncestor(t *testing.T) {
 	realParent := t.TempDir()
 	linkedParent := filepath.Join(t.TempDir(), "state-link")

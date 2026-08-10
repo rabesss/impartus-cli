@@ -90,14 +90,14 @@ func TestClientEmitsPropertyEvent(t *testing.T) {
 	cleanupClient(t, client)
 
 	go func() {
-		if _, err := serverConn.Write([]byte("{\"event\":\"property-change\",\"id\":7,\"name\":\"pause\",\"data\":true}\n")); err != nil {
+		if _, err := serverConn.Write([]byte("{\"event\":\"property-change\",\"id\":7,\"name\":\"pause\",\"data\":true,\"file_error\":\"HTTP error 401\"}\n")); err != nil {
 			t.Errorf("write property event: %v", err)
 		}
 	}()
 
 	select {
 	case event := <-client.Events():
-		if event.Name != "property-change" || event.Property != "pause" || event.ID != 7 || string(event.Data) != "true" {
+		if event.Name != "property-change" || event.Property != "pause" || event.ID != 7 || string(event.Data) != "true" || event.FileError != "HTTP error 401" {
 			t.Fatalf("event = %+v", event)
 		}
 	case <-time.After(time.Second):

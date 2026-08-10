@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -384,11 +385,32 @@ func TestPlayServerSurfacesUpstreamAuthorizationFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read response: %v", err)
 	}
-	if resp.StatusCode != http.StatusBadGateway {
-		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadGateway)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
 	}
 	if !strings.Contains(string(body), "upstream authorization failed") {
 		t.Fatalf("body = %q, want actionable authorization failure", body)
+	}
+}
+
+func TestStartPlayServerPreservesKeyFetchCancellation(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	d := New(&config.Config{Views: "left"}, client.New(nil, nil))
+	_, cleanup, err := d.StartPlayServer(ctx, client.ParsedPlaylist{
+		KeyURL:        "https://example.invalid/key?token=do-not-leak",
+		FirstViewURLs: []string{"https://example.invalid/segment"},
+	})
+	if cleanup != nil {
+		t.Fatal("cleanup should be nil when startup fails")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("StartPlayServer() error = %v, want context cancellation", err)
+	}
+	if strings.Contains(err.Error(), "do-not-leak") {
+		t.Fatalf("StartPlayServer() leaked key URL token: %v", err)
 	}
 }
 

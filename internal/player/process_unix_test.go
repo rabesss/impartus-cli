@@ -380,6 +380,7 @@ func TestPlaybackEndResultClassifiesLifecycleEvents(t *testing.T) {
 		{name: "quit", event: Event{Name: "end-file", Reason: "quit"}, ended: true},
 		{name: "redirect", event: Event{Name: "end-file", Reason: "redirect"}},
 		{name: "error", event: Event{Name: "end-file", Reason: "error"}, ended: true, errorText: "playback failed"},
+		{name: "authorization error", event: Event{Name: "end-file", Reason: "error", FileError: "HTTP error 401"}, ended: true, errorText: "upstream authorization failed"},
 		{name: "unexpected", event: Event{Name: "end-file", Reason: "unknown"}, ended: true, errorText: "ended unexpectedly"},
 		{name: "eof reached", event: Event{Name: "property-change", Property: "eof-reached", Data: json.RawMessage("true")}, ended: true},
 		{name: "eof not reached", event: Event{Name: "property-change", Property: "eof-reached", Data: json.RawMessage("false")}},
@@ -398,6 +399,14 @@ func TestPlaybackEndResultClassifiesLifecycleEvents(t *testing.T) {
 				t.Fatalf("error = %v, want %q", err, test.errorText)
 			}
 		})
+	}
+}
+
+func TestPlaybackEndResultDoesNotEchoUntrustedFileError(t *testing.T) {
+	const secret = "do-not-echo"
+	_, err := playbackEndResult(Event{Name: "end-file", Reason: "error", FileError: "HTTP error 500: " + secret})
+	if err == nil || strings.Contains(err.Error(), secret) {
+		t.Fatalf("playbackEndResult() error = %v", err)
 	}
 }
 

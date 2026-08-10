@@ -37,11 +37,12 @@ type ClientOptions struct {
 
 // Event is one newline-delimited event emitted by mpv.
 type Event struct {
-	Name     string
-	Property string
-	ID       int64
-	Data     json.RawMessage
-	Reason   string
+	Name      string
+	Property  string
+	ID        int64
+	Data      json.RawMessage
+	Reason    string
+	FileError string
 }
 
 type commandResult struct {
@@ -57,6 +58,7 @@ type wireMessage struct {
 	Name      string          `json:"name"`
 	ID        int64           `json:"id"`
 	Reason    string          `json:"reason"`
+	FileError string          `json:"file_error"`
 }
 
 type wireRequest struct {
@@ -269,11 +271,12 @@ func (client *Client) readLoop() {
 		}
 		if message.Event != "" {
 			client.publishEvent(Event{
-				Name:     message.Event,
-				Property: message.Name,
-				ID:       message.ID,
-				Data:     append(json.RawMessage(nil), message.Data...),
-				Reason:   message.Reason,
+				Name:      message.Event,
+				Property:  message.Name,
+				ID:        message.ID,
+				Data:      append(json.RawMessage(nil), message.Data...),
+				Reason:    message.Reason,
+				FileError: message.FileError,
 			})
 			continue
 		}

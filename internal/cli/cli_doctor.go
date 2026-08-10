@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/rabesss/impartus-cli/internal/config"
@@ -34,6 +35,7 @@ type doctorOptions struct {
 	configPath   string
 	tokenPath    string
 	stateDir     string
+	mpvMode      string
 	checkRuntime func() error
 }
 
@@ -47,6 +49,7 @@ func defaultDoctorOptions() (doctorOptions, error) {
 		configPath:   config.ConfigLocation,
 		tokenPath:    ".token",
 		stateDir:     stateDir,
+		mpvMode:      defaultMPVModeForOS(runtime.GOOS),
 		checkRuntime: func() error { return player.CheckRuntime("") },
 	}, nil
 }
@@ -96,7 +99,7 @@ func collectDoctorReport(options doctorOptions) doctorReport {
 	checks = append(checks, checkConfigFile(options.configPath))
 	checks = append(checks, checkTokenFile(options.tokenPath))
 	checks = append(checks, checkWritableStateDirectory(options.stateDir))
-	checks = append(checks, checkRuntimeDirectory(options.checkRuntime))
+	checks = append(checks, checkRuntimeDirectory(options.checkRuntime, options.mpvMode))
 
 	report := doctorReport{OK: true, Checks: checks}
 	for _, check := range checks {
@@ -195,7 +198,10 @@ func checkWritableStateDirectory(path string) doctorCheck {
 	return doctorCheck{Name: "state", Status: doctorStatusPass, Detail: fmt.Sprintf("%s is private and writable", path)}
 }
 
-func checkRuntimeDirectory(check func() error) doctorCheck {
+func checkRuntimeDirectory(check func() error, mpvMode string) doctorCheck {
+	if strings.TrimSpace(mpvMode) == "legacy" {
+		return doctorCheck{Name: "runtime", Status: doctorStatusWarn, Detail: "legacy mpv mode does not require a private IPC runtime"}
+	}
 	if check == nil {
 		return doctorCheck{Name: "runtime", Status: doctorStatusFail, Detail: "runtime checker is unavailable"}
 	}

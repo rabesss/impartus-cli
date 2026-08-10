@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -56,7 +57,7 @@ func (d *Downloader) StartPlayServer(ctx context.Context, playlist client.Parsed
 
 	decryptionKey, err := d.fetchDecryptionKey(ctx, playlist.KeyURL)
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to fetch decryption key: %s", secrets.ScrubError(err))
+		return "", nil, fmt.Errorf("failed to fetch decryption key: %w", sanitizedPlaybackError(err))
 	}
 	keyStore := newPlaybackKey(decryptionKey)
 	keyOwned := true
@@ -198,7 +199,7 @@ func (d *Downloader) handleSegment(playlist client.ParsedPlaylist, keyStore *pla
 		defer resp.Body.Close() //nolint:errcheck
 
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			http.Error(w, "upstream authorization failed", http.StatusBadGateway)
+			http.Error(w, "upstream authorization failed", resp.StatusCode)
 			return
 		}
 		if resp.StatusCode != http.StatusOK {
@@ -234,6 +235,23 @@ func (d *Downloader) handleSegment(playlist client.ParsedPlaylist, keyStore *pla
 		w.Header().Set("Content-Length", strconv.Itoa(len(decryptedBytes)))
 		_, _ = w.Write(decryptedBytes) //nolint:errcheck
 	}
+}
+
+func sanitizedPlaybackError(err error) error {
+	if err == nil {
+		return nil
+	}
+	safe := errors.New(secrets.ScrubError(err))
+	for _, identity := range []error{context.Canceled, context.DeadlineExceeded} {
+		if !errors.Is(err, identity) {
+			continue
+		}
+		if safe.Error() == identity.Error() {
+			return identity
+		}
+		return errors.Join(safe, identity)
+	}
+	return safe
 }
 
 func resolveSegmentSource(playlist client.ParsedPlaylist, token, requestPath string) (string, int, string) {
