@@ -208,9 +208,35 @@ func prepareStateDirectory(parent string, readOnly bool) error {
 		return errors.New("library state path must end in a real directory")
 	}
 	if permissionErr := validatePrivateDirectoryPermissions(parent, parentInfo); permissionErr != nil {
+		if !readOnly && !created {
+			return waitForConcurrentStateDirectoryPrivacy(parent)
+		}
 		return permissionErr
 	}
 	return nil
+}
+
+func waitForConcurrentStateDirectoryPrivacy(path string) error {
+	deadline := time.Now().Add(250 * time.Millisecond)
+	var lastErr error
+	for {
+		info, err := os.Lstat(path)
+		if err == nil {
+			if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+				return errors.New("library state path must end in a real directory")
+			}
+			lastErr = validatePrivateDirectoryPermissions(path, info)
+			if lastErr == nil {
+				return nil
+			}
+		} else {
+			lastErr = fmt.Errorf("inspect concurrently secured library state directory: %w", err)
+		}
+		if !time.Now().Before(deadline) {
+			return lastErr
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
 }
 
 func prepareDatabaseFile(path string, readOnly bool) error {
