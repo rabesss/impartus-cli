@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/rabesss/impartus-cli/internal/selection"
 )
 
 const artifactIDPrefix = "impartus:v1:"
@@ -83,21 +85,14 @@ func normalizeIdentity(identity Identity) (Identity, error) {
 		}
 	}
 
-	identity.Views = strings.ToLower(strings.TrimSpace(identity.Views))
-	switch identity.Views {
-	case "first":
-		identity.Views = "left"
-	case "second":
-		identity.Views = "right"
-	case "left", "right", "both":
-	default:
+	view, ok := selection.ParseView(identity.Views)
+	if !ok {
 		return Identity{}, fmt.Errorf("unsupported views %q", identity.Views)
 	}
+	identity.Views = string(view)
 
 	identity.Quality = strings.ToLower(strings.TrimSpace(identity.Quality))
-	switch identity.Quality {
-	case "144", "450", "720":
-	default:
+	if !selection.ValidQuality(identity.Quality) {
 		return Identity{}, fmt.Errorf("unsupported quality %q", identity.Quality)
 	}
 
@@ -106,14 +101,13 @@ func normalizeIdentity(identity Identity) (Identity, error) {
 		identity.AudioFormat = ""
 		return identity, nil
 	}
-	switch identity.AudioFormat {
-	case "mp3", "m4a", "aac", "opus":
+	if selection.ValidAudioFormat(identity.AudioFormat) {
 		return identity, nil
-	case "":
-		return Identity{}, errors.New("audioFormat is required for audio-only artifacts")
-	default:
-		return Identity{}, fmt.Errorf("unsupported audioFormat %q", identity.AudioFormat)
 	}
+	if identity.AudioFormat == "" {
+		return Identity{}, errors.New("audioFormat is required for audio-only artifacts")
+	}
+	return Identity{}, fmt.Errorf("unsupported audioFormat %q", identity.AudioFormat)
 }
 
 func appendCanonicalText(destination []byte, value string) []byte {

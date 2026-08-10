@@ -253,8 +253,8 @@ func downloadLecturesWithRunner(ctx context.Context, cfg *config.Config, d lectu
 	if len(playlists) == 0 {
 		return downloadResult{}, errors.New("no playlists available for selected lectures")
 	}
-	if coverageErr := validateSelectedPlaylistCoverage(playlists, lecturesByScope); coverageErr != nil {
-		return downloadResult{}, coverageErr
+	if associationErr := validatePlaylistAssociations(playlists, lecturesByScope); associationErr != nil {
+		return downloadResult{}, associationErr
 	}
 
 	p, tracker, err := newDownloadProgress(cfg, presentation, len(playlists), countChunks(playlists, cfg.Views))
@@ -311,8 +311,6 @@ func completeLectureDownloads(
 				key.ttid,
 			)
 		}
-		delete(lecturesByScope, key)
-
 		// Route through the shared DownloadAndJoinPlaylist (the same method the
 		// server job runner uses) so per-lecture download+join logic has one home.
 		joinResult, err := d.DownloadAndJoinPlaylist(ctx, playlist, progress, tracker)
@@ -339,7 +337,11 @@ func completeLectureDownloads(
 	return outputPaths, artifacts, len(artifacts), nil
 }
 
-func validateSelectedPlaylistCoverage(playlists []client.ParsedPlaylist, lecturesByScope map[scopedLectureKey]client.Lecture) error {
+// validatePlaylistAssociations rejects unselected and duplicate playlists. The
+// server may intentionally omit a selected lecture when it has no playable
+// media, so absence is not treated as a coverage failure; LectureCount reports
+// the number actually completed.
+func validatePlaylistAssociations(playlists []client.ParsedPlaylist, lecturesByScope map[scopedLectureKey]client.Lecture) error {
 	seen := make(map[scopedLectureKey]struct{}, len(playlists))
 	for _, playlist := range playlists {
 		key := scopedLectureKey{

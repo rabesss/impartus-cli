@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/rabesss/impartus-cli/internal/selection"
 )
 
 // SchemaVersionV1 is the first stable download-manifest schema.
@@ -89,28 +91,6 @@ type verifiedFile struct {
 	manifest File
 	handle   *os.File
 	info     os.FileInfo
-}
-
-type outputView string
-
-const (
-	outputViewLeft  outputView = "left"
-	outputViewRight outputView = "right"
-	outputViewBoth  outputView = "both"
-)
-
-func parseOutputView(value string) (outputView, bool) {
-	view := outputView(strings.ToLower(strings.TrimSpace(value)))
-	switch view {
-	case outputViewLeft, outputViewRight, outputViewBoth:
-		return view, true
-	default:
-		return "", false
-	}
-}
-
-func (selection outputView) includes(view outputView) bool {
-	return selection == outputViewBoth || selection == view
 }
 
 // Build validates a completed output set and returns its versioned manifest.
@@ -326,11 +306,12 @@ func normalizeFileSpec(spec FileSpec, audioOnly bool, selectedViews string) (str
 	if role != wantRole {
 		return "", "", "", "", fmt.Errorf("output role %q does not match selection role %q", role, wantRole)
 	}
-	view, ok := parseOutputView(spec.View)
+	selectedView, selectedOK := selection.ParseView(selectedViews)
+	view, ok := selection.ParseView(spec.View)
 	if !ok {
 		return "", "", "", "", fmt.Errorf("unsupported output view %q", strings.ToLower(strings.TrimSpace(spec.View)))
 	}
-	if !outputView(selectedViews).includes(view) {
+	if !selectedOK || !selectedView.Includes(view) {
 		return "", "", "", "", fmt.Errorf("output view %q is outside selected views %q", view, selectedViews)
 	}
 	container := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(spec.Container)), ".")
