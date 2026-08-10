@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/rabesss/impartus-cli/internal/config"
 )
 
 // SchemaVersionV1 is the first stable download-manifest schema.
@@ -239,7 +241,7 @@ func normalizeFileSpec(spec FileSpec, audioOnly bool, selectedViews string) (str
 	default:
 		return "", "", "", "", fmt.Errorf("unsupported output view %q", view)
 	}
-	if selectedViews != "both" && view != selectedViews {
+	if !config.IncludesOutputView(selectedViews, view) {
 		return "", "", "", "", fmt.Errorf("output view %q is outside selected views %q", view, selectedViews)
 	}
 	container := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(spec.Container)), ".")

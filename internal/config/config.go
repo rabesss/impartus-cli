@@ -148,6 +148,17 @@ func (c *Config) IncludesRight() bool { return c.Views != "left" }
 // HasBothViews reports whether both camera views are configured.
 func (c *Config) HasBothViews() bool { return c.Views == "both" }
 
+// IncludesOutputView reports whether an artifact output view is valid for a
+// selected view set. Both inputs accept the same first/second aliases as Views.
+func IncludesOutputView(selectedViews, outputView string) bool {
+	selected := NormalizeViews(selectedViews)
+	output := NormalizeViews(outputView)
+	if !OneOf(output, "left", "right", "both") {
+		return false
+	}
+	return selected == "both" || selected == output
+}
+
 // Validate checks the configuration for errors and returns the first one found.
 func (c *Config) Validate() error {
 	if err := c.validateCore(); err != nil {

@@ -232,6 +232,30 @@ func TestNormalizeViewsMapsAliasesToCanonicalNames(t *testing.T) {
 	}
 }
 
+func TestIncludesOutputView(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		selected string
+		output   string
+		want     bool
+	}{
+		{selected: "left", output: "left", want: true},
+		{selected: "left", output: "right", want: false},
+		{selected: "right", output: "right", want: true},
+		{selected: "both", output: "left", want: true},
+		{selected: "both", output: "right", want: true},
+		{selected: "both", output: "both", want: true},
+		{selected: "first", output: "left", want: true},
+	}
+
+	for _, test := range tests {
+		if got := IncludesOutputView(test.selected, test.output); got != test.want {
+			t.Errorf("IncludesOutputView(%q, %q) = %v, want %v", test.selected, test.output, got, test.want)
+		}
+	}
+}
+
 func TestOneOfMatchesCorrectly(t *testing.T) {
 	if !OneOf("450", "144", "450", "720") {
 		t.Error("expected 450 to be in set")
