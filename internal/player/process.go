@@ -371,8 +371,6 @@ func (session *Session) WaitForEnd(ctx context.Context) error {
 			case endErr := <-session.playbackEnd:
 				return playbackTerminalResult(ctx, endErr)
 			case <-session.client.readDone:
-			case <-ctx.Done():
-				return playbackCancellationResult(ctx, session.playbackEnd)
 			}
 			select {
 			case endErr := <-session.playbackEnd:
@@ -387,9 +385,18 @@ func (session *Session) WaitForEnd(ctx context.Context) error {
 			}
 			return session.client.Err()
 		case <-ctx.Done():
-			return playbackCancellationResult(ctx, session.playbackEnd)
+			return session.cancellationResult(ctx)
 		}
 	}
+}
+
+func (session *Session) cancellationResult(ctx context.Context) error {
+	select {
+	case <-session.client.Done():
+		<-session.client.readDone
+	default:
+	}
+	return playbackCancellationResult(ctx, session.playbackEnd)
 }
 
 func playbackCancellationResult(ctx context.Context, playbackEnd <-chan error) error {
