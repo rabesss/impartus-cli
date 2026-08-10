@@ -1,6 +1,7 @@
 package library
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -8,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -599,6 +602,9 @@ func validateExpectedFile(selection artifact.Selection, file ExpectedFile) error
 func (expected ExpectedArtifact) buildManifest() (artifact.Manifest, error) {
 	files := make([]artifact.FileSpec, 0, len(expected.Files))
 	for _, file := range expected.Files {
+		if err := validateExpectedContainerSignature(file); err != nil {
+			return artifact.Manifest{}, err
+		}
 		files = append(files, artifact.FileSpec{
 			Path:      file.Path,
 			Role:      file.Role,
@@ -614,6 +620,40 @@ func (expected ExpectedArtifact) buildManifest() (artifact.Manifest, error) {
 		ProducedAt: expected.ProducedAt,
 		Producer:   expected.Producer,
 	})
+}
+
+func validateExpectedContainerSignature(expected ExpectedFile) error {
+	file, err := os.Open(expected.Path) // #nosec G304 -- path is the normalized durable job expectation
+	if err != nil {
+		return fmt.Errorf("open expected output %q: %w", expected.Path, err)
+	}
+	defer func() { _ = file.Close() }() //nolint:errcheck
+
+	header := make([]byte, 12)
+	n, readErr := io.ReadFull(file, header)
+	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+		return fmt.Errorf("read expected output %q: %w", expected.Path, readErr)
+	}
+	header = header[:n]
+	valid := false
+	switch expected.Container {
+	case "mp4", "m4a":
+		valid = len(header) >= 8 && bytes.Equal(header[4:8], []byte("ftyp"))
+	case "mkv":
+		valid = bytes.HasPrefix(header, []byte{0x1a, 0x45, 0xdf, 0xa3})
+	case "mp3":
+		valid = bytes.HasPrefix(header, []byte("ID3")) ||
+			(len(header) >= 2 && header[0] == 0xff && header[1]&0xe0 == 0xe0)
+	case "aac":
+		valid = bytes.HasPrefix(header, []byte("ADIF")) ||
+			(len(header) >= 2 && header[0] == 0xff && header[1]&0xf6 == 0xf0)
+	case "opus":
+		valid = bytes.HasPrefix(header, []byte("OggS"))
+	}
+	if !valid {
+		return fmt.Errorf("expected output %q does not match container %q", expected.Path, expected.Container)
+	}
+	return nil
 }
 
 func (expected ExpectedArtifact) matchesManifest(manifest artifact.Manifest) error {

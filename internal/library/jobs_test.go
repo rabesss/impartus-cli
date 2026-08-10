@@ -58,15 +58,27 @@ func TestRecoverInterruptedJobCommitsValidFinalOutputWithoutNetwork(t *testing.T
 		t.Fatalf("missing-output recovery = %+v", first)
 	}
 
-	if writeErr := os.WriteFile(outputPath, []byte("completed media"), 0o600); writeErr != nil {
+	if writeErr := os.WriteFile(outputPath, []byte("stale unrelated file"), 0o600); writeErr != nil {
 		t.Fatal(writeErr)
 	}
 	second, err := store.RecoverInterruptedJobs(context.Background())
 	if err != nil {
+		t.Fatalf("RecoverInterruptedJobs() stale output error = %v", err)
+	}
+	if len(second.Recovered) != 0 || len(second.Pending) != 1 || second.Pending[0] != jobID {
+		t.Fatalf("stale-output recovery = %+v", second)
+	}
+
+	validMP4 := []byte{0, 0, 0, 24, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm', 0, 0, 0, 0, 'i', 's', 'o', 'm', 'm', 'p', '4', '2'}
+	if writeErr := os.WriteFile(outputPath, validMP4, 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	third, err := store.RecoverInterruptedJobs(context.Background())
+	if err != nil {
 		t.Fatalf("RecoverInterruptedJobs() completed output error = %v", err)
 	}
-	if len(second.Recovered) != 1 || second.Recovered[0] != jobID || len(second.Pending) != 0 {
-		t.Fatalf("completed-output recovery = %+v", second)
+	if len(third.Recovered) != 1 || third.Recovered[0] != jobID || len(third.Pending) != 0 {
+		t.Fatalf("completed-output recovery = %+v", third)
 	}
 	job, err := store.Job(context.Background(), jobID)
 	if err != nil {
