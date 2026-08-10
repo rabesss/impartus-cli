@@ -37,15 +37,23 @@ func TestAcceptEventIgnoresIdleEOFUntilLoadedMediaLeavesEOF(t *testing.T) {
 	}
 	session.acceptEvent(Event{Name: "property-change", Property: "eof-reached", Data: []byte("true")})
 	assertNoPlaybackEnd(t, session.playbackEnd)
+	assertNoPublicEvent(t, session.events)
+	session.acceptEvent(Event{Name: "property-change", Property: "eof-reached", Data: []byte("false")})
+	assertNoPlaybackEnd(t, session.playbackEnd)
+	assertNoPublicEvent(t, session.events)
 
 	session.eventMutex.Lock()
 	session.loadStarted = true
 	session.eventMutex.Unlock()
 	session.acceptEvent(Event{Name: "property-change", Property: "eof-reached", Data: []byte("true")})
 	assertNoPlaybackEnd(t, session.playbackEnd)
+	assertNoPublicEvent(t, session.events)
 
 	session.acceptEvent(Event{Name: "property-change", Property: "eof-reached", Data: []byte("false")})
 	assertNoPlaybackEnd(t, session.playbackEnd)
+	if event := <-session.events; string(event.Data) != "false" {
+		t.Fatalf("armed public EOF event = %s, want false", event.Data)
+	}
 	session.acceptEvent(Event{Name: "property-change", Property: "eof-reached", Data: []byte("true")})
 	select {
 	case err := <-session.playbackEnd:
@@ -55,6 +63,9 @@ func TestAcceptEventIgnoresIdleEOFUntilLoadedMediaLeavesEOF(t *testing.T) {
 	default:
 		t.Fatal("post-load EOF did not end playback")
 	}
+	if event := <-session.events; string(event.Data) != "true" {
+		t.Fatalf("terminal public EOF event = %s, want true", event.Data)
+	}
 }
 
 func assertNoPlaybackEnd(t *testing.T, playbackEnd <-chan error) {
@@ -62,6 +73,15 @@ func assertNoPlaybackEnd(t *testing.T, playbackEnd <-chan error) {
 	select {
 	case err := <-playbackEnd:
 		t.Fatalf("unexpected playback end: %v", err)
+	default:
+	}
+}
+
+func assertNoPublicEvent(t *testing.T, events <-chan Event) {
+	t.Helper()
+	select {
+	case event := <-events:
+		t.Fatalf("unexpected public event: %+v", event)
 	default:
 	}
 }

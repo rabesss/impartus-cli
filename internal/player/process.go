@@ -306,7 +306,7 @@ func (session *Session) Events() <-chan Event { return session.events }
 func (session *Session) acceptEvent(event Event) {
 	session.eventMutex.Lock()
 	defer session.eventMutex.Unlock()
-	ended, endErr := session.playbackEventResult(event)
+	ended, publish, endErr := session.playbackEventResult(event)
 	if ended {
 		session.loadStarted = false
 		session.eofArmed = false
@@ -315,30 +315,32 @@ func (session *Session) acceptEvent(event Event) {
 		default:
 		}
 	}
-	if session.eventsClosed {
+	if session.eventsClosed || !publish {
 		return
 	}
 	publishNewestEvent(session.events, event)
 }
 
-func (session *Session) playbackEventResult(event Event) (bool, error) {
+func (session *Session) playbackEventResult(event Event) (bool, bool, error) {
 	if event.Name != "property-change" || event.Property != "eof-reached" {
-		return playbackEndResult(event)
+		ended, err := playbackEndResult(event)
+		return ended, true, err
 	}
 	var reached bool
 	if json.Unmarshal(event.Data, &reached) != nil {
-		return false, nil
+		return false, true, nil
 	}
 	if !reached {
-		if session.loadStarted {
-			session.eofArmed = true
+		if !session.loadStarted {
+			return false, false, nil
 		}
-		return false, nil
+		session.eofArmed = true
+		return false, true, nil
 	}
 	if !session.loadStarted || !session.eofArmed {
-		return false, nil
+		return false, false, nil
 	}
-	return true, nil
+	return true, true, nil
 }
 
 func (session *Session) closeEventsOnDisconnect() {
