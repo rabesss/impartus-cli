@@ -127,13 +127,13 @@ func (watcher *Watcher) downloadLecture(ctx context.Context, target config.Watch
 		failErr := durableStateError("fail watch job after manifest validation", watcher.store.FailJob(context.WithoutCancel(ctx), jobID, err))
 		return artifact.Manifest{}, watcher.lectureFailure(target, lecture, jobID, errors.Join(err, failErr))
 	}
+	if err := watcher.store.CompleteJob(context.WithoutCancel(ctx), jobID, manifest); err != nil {
+		commitErr := durableStateError("commit durable watch artifact", err)
+		return artifact.Manifest{}, watcher.lectureFailure(target, lecture, jobID, commitErr)
+	}
 	progressErr := watcher.emitLecture(events.LectureProgress, target, lecture, artifactID, map[string]any{
 		"libraryJobId": jobID, "stage": "media_published", "outputs": manifestPaths(manifest),
 	})
-	if err := watcher.store.CompleteJob(context.WithoutCancel(ctx), jobID, manifest); err != nil {
-		commitErr := durableStateError("commit durable watch artifact", err)
-		return artifact.Manifest{}, watcher.lectureFailure(target, lecture, jobID, errors.Join(commitErr, progressErr))
-	}
 	if progressErr != nil {
 		return manifest, progressErr
 	}

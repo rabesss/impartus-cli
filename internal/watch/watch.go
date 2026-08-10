@@ -309,12 +309,12 @@ func (watcher *Watcher) targetLectures(ctx context.Context, target config.WatchT
 	if err != nil {
 		return nil, fmt.Errorf("list lectures for %s: %w", targetLabel(target), err)
 	}
-	if len(lectures) == 0 {
-		return client.Lectures{}, nil
+	selected := lectures
+	if watcher.cfg.SkipNoAudio {
+		selected = selected.FilterNoAudio()
 	}
-	selected, _, selectionErr := lectures.SelectForDownload(0, 0, watcher.cfg.SkipNoAudio)
-	if selectionErr != nil {
-		return nil, fmt.Errorf("select lectures for %s: %w", targetLabel(target), selectionErr)
+	if len(selected) == 0 {
+		return client.Lectures{}, nil
 	}
 	var catalog client.CourseCatalog
 	if source, ok := watcher.source.(CourseSource); ok {

@@ -157,6 +157,56 @@ func TestWatcherEmitsRequiredLectureLifecycleWithArtifactID(t *testing.T) {
 	}
 }
 
+func TestWatcherCommitsArtifactBeforePublishingMediaProgress(t *testing.T) {
+	t.Parallel()
+
+	store := openWatchStore(t)
+	cfg := watchTestConfig(t)
+	target := cfg.Watch.Targets[0]
+	lecture := watchLecture(target, 402, 2, "Durable before progress")
+	source := &fakeSource{lectures: map[[2]int]client.Lectures{{target.SubjectID, target.SessionID}: {lecture}}, errors: map[[2]int]error{}}
+	producer := &fakeProducer{cfg: cfg, fetchErrors: map[int]error{}, downloadErrors: map[int]error{}}
+	committed := false
+	progressBeforeCommit := false
+	emitter := &recordingEmitter{before: func(event events.Event) {
+		if event.Type == events.LectureProgress && !committed {
+			progressBeforeCommit = true
+		}
+	}}
+
+	wrappedStore := completeThenFailStore{Store: store, afterComplete: func() { committed = true }}
+	if _, err := New(cfg, source, producer, wrappedStore, Options{Once: true, Emitter: emitter}).Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if progressBeforeCommit || !committed {
+		t.Fatalf("progressBeforeCommit=%t committed=%t, want durable commit first", progressBeforeCommit, committed)
+	}
+}
+
+func TestWatcherIdlesWhenSkipNoAudioFiltersEveryLecture(t *testing.T) {
+	t.Parallel()
+
+	store := openWatchStore(t)
+	cfg := watchTestConfig(t)
+	cfg.SkipNoAudio = true
+	target := cfg.Watch.Targets[0]
+	lecture := watchLecture(target, 403, 3, "Silent lecture")
+	lecture.NoAudio = 1
+	source := &fakeSource{lectures: map[[2]int]client.Lectures{{target.SubjectID, target.SessionID}: {lecture}}, errors: map[[2]int]error{}}
+	producer := &fakeProducer{cfg: cfg, fetchErrors: map[int]error{}, downloadErrors: map[int]error{}}
+
+	cycle, err := New(cfg, source, producer, store, Options{Once: true}).Run(context.Background())
+	if err != nil || cycle.Failed != 0 || cycle.Listed != 0 || cycle.Downloaded != 0 {
+		t.Fatalf("Run() cycle = %+v, error = %v; want a successful idle cycle", cycle, err)
+	}
+	producer.mu.Lock()
+	downloads := producer.downloads
+	producer.mu.Unlock()
+	if downloads != 0 {
+		t.Fatalf("download calls = %d, want 0", downloads)
+	}
+}
+
 func TestWatcherResolvesMissingInstituteFromCourseCatalog(t *testing.T) {
 	t.Parallel()
 

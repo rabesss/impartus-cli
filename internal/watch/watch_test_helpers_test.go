@@ -77,6 +77,7 @@ type recordingEmitter struct {
 	events   []events.Event
 	failType string
 	failures int
+	before   func(events.Event)
 }
 
 type completeThenFailStore struct {
@@ -98,6 +99,9 @@ func (store completeThenFailStore) CompleteJob(ctx context.Context, jobID string
 func (emitter *recordingEmitter) Emit(event events.Event) error {
 	emitter.mu.Lock()
 	defer emitter.mu.Unlock()
+	if emitter.before != nil {
+		emitter.before(event)
+	}
 	emitter.events = append(emitter.events, event)
 	if event.Type == emitter.failType && emitter.failures > 0 {
 		emitter.failures--
