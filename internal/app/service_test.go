@@ -73,6 +73,27 @@ func TestServiceCleansProxyWhenPlayerStartFails(t *testing.T) {
 	}
 }
 
+func TestPlaybackWaitResultPrefersCancellationOverCleanExit(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := playbackWaitResult(ctx, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("playbackWaitResult() error = %v, want context cancellation", err)
+	}
+}
+
+func TestPlaybackWaitResultPreservesPlayerFailure(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("player failed")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := playbackWaitResult(ctx, sentinel); !errors.Is(err, sentinel) {
+		t.Fatalf("playbackWaitResult() error = %v, want player failure", err)
+	}
+}
+
 func TestServicePassesExplicitPlayerOptions(t *testing.T) {
 	streams := &fakeStreams{playlists: []client.ParsedPlaylist{{ID: 1}}}
 	fakePlayer := &fakeManagedPlayer{}

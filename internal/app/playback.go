@@ -93,11 +93,21 @@ func (playback *Playback) WaitForEnd(ctx context.Context) error {
 		case failure := <-playback.failures:
 			return failure
 		default:
-			return err
+			return playbackWaitResult(ctx, err)
 		}
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func playbackWaitResult(ctx context.Context, playerErr error) error {
+	if playerErr != nil {
+		return playerErr
+	}
+	if contextErr := ctx.Err(); contextErr != nil {
+		return contextErr
+	}
+	return nil
 }
 
 // Pause controls playback pause state.

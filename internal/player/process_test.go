@@ -49,6 +49,27 @@ func TestAcceptEventPublishesEOFPropertiesWithoutEndingPlayback(t *testing.T) {
 	}
 }
 
+func TestPlaybackTerminalResultPrefersCancellationOverCleanExit(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := playbackTerminalResult(ctx, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("playbackTerminalResult() error = %v, want context cancellation", err)
+	}
+}
+
+func TestPlaybackTerminalResultPreservesPlaybackFailure(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("playback failed")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := playbackTerminalResult(ctx, sentinel); !errors.Is(err, sentinel) {
+		t.Fatalf("playbackTerminalResult() error = %v, want playback failure", err)
+	}
+}
+
 func TestAcceptEventRemovesUntrustedPeerTextFromPublicEvents(t *testing.T) {
 	t.Parallel()
 

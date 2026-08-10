@@ -361,18 +361,18 @@ func (session *Session) WaitForEnd(ctx context.Context) error {
 	for {
 		select {
 		case endErr := <-session.playbackEnd:
-			return endErr
+			return playbackTerminalResult(ctx, endErr)
 		case <-session.client.Done():
 			select {
 			case endErr := <-session.playbackEnd:
-				return endErr
+				return playbackTerminalResult(ctx, endErr)
 			case <-session.client.readDone:
 			case <-ctx.Done():
 				return ctx.Err()
 			}
 			select {
 			case endErr := <-session.playbackEnd:
-				return endErr
+				return playbackTerminalResult(ctx, endErr)
 			default:
 			}
 			if contextErr := ctx.Err(); contextErr != nil {
@@ -386,6 +386,16 @@ func (session *Session) WaitForEnd(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
+}
+
+func playbackTerminalResult(ctx context.Context, endErr error) error {
+	if endErr != nil {
+		return endErr
+	}
+	if contextErr := ctx.Err(); contextErr != nil {
+		return contextErr
+	}
+	return nil
 }
 
 func (session *Session) processCompletion(ctx context.Context) error {
