@@ -484,9 +484,11 @@ func TestWatchPreflightCleanupFailureIsDurableAndFailedWhenLoginCanceled(t *test
 func TestWatchCancellationMapsToExit130(t *testing.T) {
 	t.Parallel()
 
-	err := watchCommandError(fmt.Errorf("watch interrupted: %w", context.Canceled))
-	if !errors.Is(err, context.Canceled) || ExitCode(err) != 130 {
-		t.Fatalf("watchCommandError() = %v, exit = %d", err, ExitCode(err))
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		err := watchCommandError(fmt.Errorf("watch interrupted: %w", cause))
+		if !errors.Is(err, cause) || ExitCode(err) != 130 {
+			t.Fatalf("watchCommandError(%v) = %v, exit = %d", cause, err, ExitCode(err))
+		}
 	}
 	ordinary := errors.New("ordinary failure")
 	if got := watchCommandError(ordinary); !errors.Is(got, ordinary) || ExitCode(got) != 1 {

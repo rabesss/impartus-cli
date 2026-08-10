@@ -152,7 +152,7 @@ func watchCommandError(err error) error {
 	if errors.Is(err, watch.ErrEventDelivery) || errors.Is(err, watch.ErrDurableState) {
 		return err
 	}
-	if errors.Is(err, context.Canceled) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return &exitCodeError{code: 130, err: err}
 	}
 	return err

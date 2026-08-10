@@ -103,6 +103,32 @@ func TestDownloadEventsEmitOriginalPerLectureLifecycleWithArtifactID(t *testing.
 	}
 }
 
+func TestDownloadEventsPreservePublishedMediaWhenProgressDeliveryFails(t *testing.T) {
+	t.Parallel()
+
+	outputDir := t.TempDir()
+	lecture := client.Lecture{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 123, SeqNo: 5, Topic: "Published media"}
+	runner := &fakeLectureDownloadRunner{
+		playlists: []client.ParsedPlaylist{{InstituteID: 4, SubjectID: 67, SessionID: 8, ID: 123}},
+		results:   materializeJoinResults(t, outputDir, []downloader.JoinResult{{LeftOutput: "lecture.mp4"}}),
+	}
+	output := &failWriteOnce{failAt: 3} // job.started, lecture.started, then lecture.progress
+	stream := newDownloadEventStream(output, "job-progress-failure", func() time.Time { return time.Unix(1, 0).UTC() })
+	if err := stream.start(); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := downloadLecturesWithRunner(context.Background(), &config.Config{
+		DownloadLocation: outputDir, Views: "left", Quality: "720",
+	}, runner, client.Lectures{lecture}, downloadPresentationOptions{eventStream: stream})
+	if !errors.Is(err, errDownloadEventDelivery) {
+		t.Fatalf("downloadLecturesWithRunner() error = %v, want event delivery failure", err)
+	}
+	if len(result.OutputPaths) != 1 || len(result.Artifacts) != 1 || result.LectureCount != 1 {
+		t.Fatalf("published partial result = %+v, want one validated artifact", result)
+	}
+}
+
 func TestDownloadEventsFailClosedWhenLibraryCommitDidNotComplete(t *testing.T) {
 	t.Parallel()
 

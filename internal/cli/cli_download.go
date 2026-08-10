@@ -384,9 +384,6 @@ func completeLectureDownloads(
 			emitErr := stream.lecture(events.LectureFailed, lecture, artifactID, nil, nil, map[string]any{"error": events.RedactError(downloadErr)})
 			return outputPaths, artifacts, len(artifacts), errors.Join(downloadErr, emitErr)
 		}
-		if emitErr := stream.lecture(events.LectureProgress, lecture, artifactID, nil, joinResult.OutputPaths(), map[string]any{"stage": "media_published"}); emitErr != nil {
-			return outputPaths, artifacts, len(artifacts), emitErr
-		}
 		paths := joinResult.OutputPaths()
 		if len(paths) == 0 {
 			contractErr := fmt.Errorf(
@@ -410,6 +407,9 @@ func completeLectureDownloads(
 		// discard media that is already safe to record in the local library.
 		outputPaths = append(outputPaths, paths...)
 		artifacts = append(artifacts, manifest)
+		if emitErr := stream.lecture(events.LectureProgress, lecture, artifactID, nil, joinResult.OutputPaths(), map[string]any{"stage": "media_published"}); emitErr != nil {
+			return outputPaths, artifacts, len(artifacts), emitErr
+		}
 		if emitErr := stream.lecture(events.LectureCompleted, lecture, artifactID, &manifest, manifestOutputPaths(manifest), nil); emitErr != nil {
 			return outputPaths, artifacts, len(artifacts), emitErr
 		}
