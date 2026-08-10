@@ -618,6 +618,7 @@ func TestDownloadLectureBuildsAndCompletesOneArtifact(t *testing.T) {
 			DownloadLocation: t.TempDir(),
 			Views:            "left",
 			Quality:          "720",
+			AudioFormat:      "mp3",
 		},
 		downloads: downloads,
 		library:   store,
@@ -642,12 +643,45 @@ func TestDownloadLectureBuildsAndCompletesOneArtifact(t *testing.T) {
 		store.created[0].ID != store.started[0] || store.started[0] != store.completed[0] {
 		t.Fatalf("durable job lifecycle: created=%+v started=%v completed=%v", store.created, store.started, store.completed)
 	}
+	if store.created[0].Expected.Selection.AudioFormat != "" || result.Manifest.Selection.AudioFormat != "" {
+		t.Fatalf("video selection retained irrelevant audio format: expected=%+v manifest=%+v", store.created[0].Expected.Selection, result.Manifest.Selection)
+	}
 	if result.Manifest.Lecture.TTID != 12345 || result.Manifest.Files[0].Path != output || result.Manifest.Files[0].View != "left" {
 		t.Fatalf("manifest = %+v", result.Manifest)
 	}
 	records, err := service.Artifacts(context.Background())
 	if err != nil || len(records) != 1 || records[0].Manifest.ArtifactID != result.Manifest.ArtifactID {
 		t.Fatalf("Artifacts() = %+v, %v", records, err)
+	}
+}
+
+func TestDownloadLectureCompletionFailureTerminalizesDurableJob(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "lecture.mp4")
+	if err := os.WriteFile(output, []byte("media"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	commitErr := errors.New("library commit failed")
+	store := &fakeArtifactStore{record: commitErr}
+	service := &Service{
+		config: &config.Config{DownloadLocation: t.TempDir(), Views: "left", Quality: "720"},
+		downloads: &fakeLectureDownloader{
+			playlists: []client.ParsedPlaylist{{ID: 12345, SeqNo: 1, Title: "Commit failure", FirstViewURLs: []string{"left"}}},
+			joined:    downloader.JoinResult{LeftOutput: output, LeftContainer: "mp4"},
+		},
+		library: store,
+	}
+
+	result, err := service.DownloadLecture(context.Background(), client.Lecture{
+		InstituteID: 1, SubjectID: 2, SessionID: 3, TTID: 12345, Topic: "Commit failure",
+	})
+	if err != nil {
+		t.Fatalf("DownloadLecture() error = %v", err)
+	}
+	if result.LibraryRecorded || result.Warning == "" {
+		t.Fatalf("DownloadLecture() result = %+v, want soft commit warning", result)
+	}
+	if len(store.failed) != 1 || len(store.started) != 1 || store.failed[0] != store.started[0] {
+		t.Fatalf("durable job lifecycle: started=%v failed=%v", store.started, store.failed)
 	}
 }
 

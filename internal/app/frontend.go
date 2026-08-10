@@ -293,7 +293,8 @@ func (service *Service) DownloadLecture(ctx context.Context, lecture client.Lect
 	// is closing. The TUI waits for this application command before closing the
 	// store, so this uncancelable commit cannot race library shutdown.
 	if err := service.library.CompleteJob(context.WithoutCancel(ctx), jobID, manifest); err != nil {
-		result.Warning = "download completed but the local library was not updated: " + secrets.ScrubError(err)
+		terminalErr := service.finishDownloadJob(ctx, jobID, err)
+		result.Warning = "download completed but the local library was not updated: " + secrets.ScrubError(errors.Join(err, terminalErr))
 		return result, nil
 	}
 	result.LibraryRecorded = true
@@ -365,5 +366,9 @@ func downloadArtifactLecture(lecture client.Lecture) artifact.Lecture {
 }
 
 func downloadArtifactSelection(cfg *config.Config) artifact.Selection {
-	return artifact.Selection{Views: cfg.Views, Quality: cfg.Quality, AudioOnly: cfg.AudioOnly, AudioFormat: cfg.AudioFormat}
+	selected := artifact.Selection{Views: cfg.Views, Quality: cfg.Quality, AudioOnly: cfg.AudioOnly, AudioFormat: cfg.AudioFormat}
+	if !selected.AudioOnly {
+		selected.AudioFormat = ""
+	}
+	return selected
 }
