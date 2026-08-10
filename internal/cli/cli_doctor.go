@@ -172,6 +172,9 @@ func checkWritableStateDirectory(path string) doctorCheck {
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || info.Mode().Perm() != 0o700 {
 		return doctorCheck{Name: "state", Status: doctorStatusFail, Detail: fmt.Sprintf("%s must be a private directory with mode 0700; got %04o", path, info.Mode().Perm())}
 	}
+	if ownerErr := validateDoctorStateDirectoryOwner(absolute, info); ownerErr != nil {
+		return doctorCheck{Name: "state", Status: doctorStatusFail, Detail: ownerErr.Error()}
+	}
 	probe, err := os.CreateTemp(absolute, ".doctor-write-")
 	if err != nil {
 		return doctorCheck{Name: "state", Status: doctorStatusFail, Detail: fmt.Sprintf("%s is not writable: %v", path, err)}
@@ -190,7 +193,7 @@ func checkWritableStateDirectory(path string) doctorCheck {
 	// #nosec G703 -- probeName was returned by os.CreateTemp in the validated directory.
 	removeErr := os.Remove(probeName)
 	if closeErr != nil || removeErr != nil {
-		return doctorCheck{Name: "state", Status: doctorStatusFail, Detail: fmt.Sprintf("write probe cleanup failed in %s", path)}
+		return doctorCheck{Name: "state", Status: doctorStatusFail, Detail: fmt.Sprintf("write probe cleanup failed in %s: %v", path, errors.Join(closeErr, removeErr))}
 	}
 	return doctorCheck{Name: "state", Status: doctorStatusPass, Detail: fmt.Sprintf("%s is private and writable", path)}
 }

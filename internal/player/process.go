@@ -183,6 +183,9 @@ func Start(ctx context.Context, options Options) (*Session, error) {
 	go session.reapProcess()
 	if isolationErr := verifyProcessIsolation(command.Process.Pid); isolationErr != nil {
 		killErr := command.Process.Kill()
+		if errors.Is(killErr, os.ErrProcessDone) {
+			killErr = nil
+		}
 		<-session.processDone
 		return nil, errors.Join(isolationErr, killErr, runtime.cleanup())
 	}
