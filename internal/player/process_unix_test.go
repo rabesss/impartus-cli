@@ -272,11 +272,25 @@ func TestStartTimesOutAndReapsWhenSocketNeverAppears(t *testing.T) {
 func TestStartCancellationReapsChildAndCleansSocket(t *testing.T) {
 	options := fakeMPVOptions(t, "no-socket", filepath.Join(t.TempDir(), "argv.txt"), filepath.Join(t.TempDir(), "load.txt"))
 	options.ConnectTimeout = time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	cancelComplete := make(chan struct{})
+	go func() {
+		defer close(cancelComplete)
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, statErr := os.Stat(options.testPIDFile); statErr == nil {
+				cancel()
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		cancel()
+	}()
 	_, err := Start(ctx, options)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Start() error = %v, want context deadline", err)
+	<-cancelComplete
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Start() error = %v, want context cancellation", err)
 	}
 	pidText, readErr := os.ReadFile(options.testPIDFile)
 	if readErr != nil {
