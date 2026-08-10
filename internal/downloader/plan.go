@@ -25,9 +25,6 @@ func PlanJoinResult(cfg *config.Config, playlist client.ParsedPlaylist) (JoinRes
 	base := fmt.Sprintf("LEC %03d %s", playlist.SeqNo, sanitizeFilename(playlist.Title))
 	result := JoinResult{}
 	planSelectedViews(&result, location, base, extension, container, views, cfg.AudioOnly, playlist)
-	if views == "both" && (result.LeftOutput == "" || result.RightOutput == "") {
-		return JoinResult{}, fmt.Errorf("selected both views are unavailable for lecture %d", playlist.ID)
-	}
 	if len(result.OutputPaths()) == 0 {
 		return JoinResult{}, fmt.Errorf("selected %s view is unavailable for lecture %d", views, playlist.ID)
 	}
