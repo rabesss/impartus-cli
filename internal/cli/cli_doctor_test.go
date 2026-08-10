@@ -178,6 +178,7 @@ func TestCollectDoctorReportAllowsLegacyModeWithoutIPCRuntime(t *testing.T) {
 		stateDir:     filepath.Join(root, "state"),
 		mpvMode:      "legacy",
 		checkRuntime: func() error { return errors.New("IPC unsupported") },
+		checkLibrary: func() error { return nil },
 	})
 	if !report.OK {
 		t.Fatalf("legacy mode should not require IPC runtime: %+v", report)
