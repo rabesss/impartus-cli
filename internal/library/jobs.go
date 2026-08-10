@@ -501,13 +501,7 @@ func parseOptionalTime(value sql.NullString) (*time.Time, error) {
 }
 
 func normalizeExpectedArtifact(expected ExpectedArtifact) (ExpectedArtifact, string, error) {
-	expected.Selection.Views = strings.ToLower(strings.TrimSpace(expected.Selection.Views))
-	switch expected.Selection.Views {
-	case "first":
-		expected.Selection.Views = "left"
-	case "second":
-		expected.Selection.Views = "right"
-	}
+	expected.Selection.Views = selection.NormalizeView(expected.Selection.Views)
 	expected.Selection.Quality = strings.ToLower(strings.TrimSpace(expected.Selection.Quality))
 	expected.Selection.AudioFormat = strings.ToLower(strings.TrimSpace(expected.Selection.AudioFormat))
 	artifactID, err := artifact.NewID(artifact.Identity{
