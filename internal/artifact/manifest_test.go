@@ -67,28 +67,42 @@ func TestBuildManifestStatsFileAndNormalizesSelection(t *testing.T) {
 }
 
 func TestManifestJSONShapeGoldens(t *testing.T) {
+	type goldenFile struct {
+		view      string
+		container string
+	}
 	tests := []struct {
 		name        string
 		selection   Selection
 		role        string
-		view        string
-		container   string
+		files       []goldenFile
 		artifactID  string
 		selectionJS string
 	}{
-		{name: "video left", selection: Selection{Views: "left", Quality: "720"}, role: "video", view: "left", container: "mp4", artifactID: "impartus:v1:OmjgyXZ3VyTBtD3opzsftJ6MiZiB4O6_DkOPw5HcBe4", selectionJS: `{"views":"left","quality":"720","audioOnly":false,"audioFormat":""}`},
-		{name: "video right", selection: Selection{Views: "right", Quality: "720"}, role: "video", view: "right", container: "mp4", artifactID: "impartus:v1:VQcftOrE3sbx2E10r2SuuNlu6it5oK6EHYc-ud6s2PI", selectionJS: `{"views":"right","quality":"720","audioOnly":false,"audioFormat":""}`},
-		{name: "video both", selection: Selection{Views: "both", Quality: "720"}, role: "video", view: "both", container: "mkv", artifactID: "impartus:v1:CmQ1iLsQw_Aarxg3Rp4svvDdKX4sJ6R0KFWXn3keTn4", selectionJS: `{"views":"both","quality":"720","audioOnly":false,"audioFormat":""}`},
-		{name: "audio mp3", selection: Selection{Views: "right", Quality: "450", AudioOnly: true, AudioFormat: "mp3"}, role: "audio", view: "right", container: "mp3", artifactID: "impartus:v1:IeKFWkvGsIoG0eyBLkNNEg6Ddigcskn0AONuJTNlQIw", selectionJS: `{"views":"right","quality":"450","audioOnly":true,"audioFormat":"mp3"}`},
-		{name: "audio m4a", selection: Selection{Views: "right", Quality: "450", AudioOnly: true, AudioFormat: "m4a"}, role: "audio", view: "right", container: "m4a", artifactID: "impartus:v1:_7AvSYrU1pgamSKk1V7t6B-loL65foinleulSvQld40", selectionJS: `{"views":"right","quality":"450","audioOnly":true,"audioFormat":"m4a"}`},
-		{name: "audio aac", selection: Selection{Views: "right", Quality: "450", AudioOnly: true, AudioFormat: "aac"}, role: "audio", view: "right", container: "aac", artifactID: "impartus:v1:srEiZLbxhGT-VPAEJvOxNkboZAbuB6_HBC48R1K9YxA", selectionJS: `{"views":"right","quality":"450","audioOnly":true,"audioFormat":"aac"}`},
-		{name: "audio opus", selection: Selection{Views: "right", Quality: "450", AudioOnly: true, AudioFormat: "opus"}, role: "audio", view: "right", container: "opus", artifactID: "impartus:v1:xvEhsXNQP7_RlGHs7IK0VAAFdJ-s54EmAqplHbocPIE", selectionJS: `{"views":"right","quality":"450","audioOnly":true,"audioFormat":"opus"}`},
+		{name: "video left", selection: Selection{Views: "left", Quality: "720"}, role: "video", files: []goldenFile{{view: "left", container: "mp4"}}, artifactID: "impartus:v1:OmjgyXZ3VyTBtD3opzsftJ6MiZiB4O6_DkOPw5HcBe4", selectionJS: `{"views":"left","quality":"720","audioOnly":false,"audioFormat":""}`},
+		{name: "video right", selection: Selection{Views: "right", Quality: "720"}, role: "video", files: []goldenFile{{view: "right", container: "mp4"}}, artifactID: "impartus:v1:VQcftOrE3sbx2E10r2SuuNlu6it5oK6EHYc-ud6s2PI", selectionJS: `{"views":"right","quality":"720","audioOnly":false,"audioFormat":""}`},
+		{name: "video both", selection: Selection{Views: "both", Quality: "720"}, role: "video", files: []goldenFile{{view: "left", container: "mp4"}, {view: "right", container: "mp4"}, {view: "both", container: "mkv"}}, artifactID: "impartus:v1:CmQ1iLsQw_Aarxg3Rp4svvDdKX4sJ6R0KFWXn3keTn4", selectionJS: `{"views":"both","quality":"720","audioOnly":false,"audioFormat":""}`},
+		{name: "audio mp3", selection: Selection{Views: "right", Quality: "450", AudioOnly: true, AudioFormat: "mp3"}, role: "audio", files: []goldenFile{{view: "right", container: "mp3"}}, artifactID: "impartus:v1:IeKFWkvGsIoG0eyBLkNNEg6Ddigcskn0AONuJTNlQIw", selectionJS: `{"views":"right","quality":"450","audioOnly":true,"audioFormat":"mp3"}`},
+		{name: "audio m4a", selection: Selection{Views: "right", Quality: "450", AudioOnly: true, AudioFormat: "m4a"}, role: "audio", files: []goldenFile{{view: "right", container: "m4a"}}, artifactID: "impartus:v1:_7AvSYrU1pgamSKk1V7t6B-loL65foinleulSvQld40", selectionJS: `{"views":"right","quality":"450","audioOnly":true,"audioFormat":"m4a"}`},
+		{name: "audio aac", selection: Selection{Views: "right", Quality: "450", AudioOnly: true, AudioFormat: "aac"}, role: "audio", files: []goldenFile{{view: "right", container: "m4a"}}, artifactID: "impartus:v1:srEiZLbxhGT-VPAEJvOxNkboZAbuB6_HBC48R1K9YxA", selectionJS: `{"views":"right","quality":"450","audioOnly":true,"audioFormat":"aac"}`},
+		{name: "audio opus", selection: Selection{Views: "right", Quality: "450", AudioOnly: true, AudioFormat: "opus"}, role: "audio", files: []goldenFile{{view: "right", container: "opus"}}, artifactID: "impartus:v1:xvEhsXNQP7_RlGHs7IK0VAAFdJ-s54EmAqplHbocPIE", selectionJS: `{"views":"right","quality":"450","audioOnly":true,"audioFormat":"opus"}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			outputPath := filepath.Join(t.TempDir(), "课程-λέξη."+test.container)
-			if err := os.WriteFile(outputPath, []byte("media"), 0o600); err != nil {
-				t.Fatalf("write output fixture: %v", err)
+			directory := t.TempDir()
+			fileSpecs := make([]FileSpec, 0, len(test.files))
+			fileJSON := make([]string, 0, len(test.files))
+			for _, output := range test.files {
+				outputPath := filepath.Join(directory, "课程-λέξη-"+output.view+"."+output.container)
+				if err := os.WriteFile(outputPath, []byte("media"), 0o600); err != nil {
+					t.Fatalf("write output fixture: %v", err)
+				}
+				fileSpecs = append(fileSpecs, FileSpec{Path: outputPath, Role: test.role, View: output.view, Container: output.container})
+				pathJSON, err := json.Marshal(outputPath)
+				if err != nil {
+					t.Fatalf("marshal path: %v", err)
+				}
+				fileJSON = append(fileJSON, `{"path":`+string(pathJSON)+`,"role":"`+test.role+`","view":"`+output.view+`","container":"`+output.container+`","bytes":5}`)
 			}
 			manifest, err := Build(BuildInput{
 				Lecture: Lecture{
@@ -104,7 +118,7 @@ func TestManifestJSONShapeGoldens(t *testing.T) {
 					Institute:       "Institute",
 				},
 				Selection:  test.selection,
-				Files:      []FileSpec{{Path: outputPath, Role: test.role, View: test.view, Container: test.container}},
+				Files:      fileSpecs,
 				ProducedAt: time.Date(2026, time.August, 8, 4, 5, 6, 0, time.UTC),
 				Producer:   Producer{Name: "impartus", Version: "0.1.20"},
 			})
@@ -116,11 +130,7 @@ func TestManifestJSONShapeGoldens(t *testing.T) {
 			if err != nil {
 				t.Fatalf("json.Marshal() error = %v", err)
 			}
-			pathJSON, err := json.Marshal(outputPath)
-			if err != nil {
-				t.Fatalf("marshal path: %v", err)
-			}
-			want := `{"schemaVersion":1,"artifactId":"` + test.artifactID + `","lecture":{"ttid":12345,"instituteId":4,"subjectId":67,"sessionId":8,"seqNo":12,"topic":"Topic","startTime":"upstream value","durationSeconds":3600,"professor":"Name","institute":"Institute","noAudio":false},"selection":` + test.selectionJS + `,"files":[{"path":` + string(pathJSON) + `,"role":"` + test.role + `","view":"` + test.view + `","container":"` + test.container + `","bytes":5}],"producedAt":"2026-08-08T04:05:06Z","producer":{"name":"impartus","version":"0.1.20"}}`
+			want := `{"schemaVersion":1,"artifactId":"` + test.artifactID + `","lecture":{"ttid":12345,"instituteId":4,"subjectId":67,"sessionId":8,"seqNo":12,"topic":"Topic","startTime":"upstream value","durationSeconds":3600,"professor":"Name","institute":"Institute","noAudio":false},"selection":` + test.selectionJS + `,"files":[` + strings.Join(fileJSON, ",") + `],"producedAt":"2026-08-08T04:05:06Z","producer":{"name":"impartus","version":"0.1.20"}}`
 			if string(encoded) != want {
 				t.Fatalf("manifest JSON mismatch\n got: %s\nwant: %s", encoded, want)
 			}

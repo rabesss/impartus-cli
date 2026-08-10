@@ -91,6 +91,28 @@ type verifiedFile struct {
 	info     os.FileInfo
 }
 
+type outputView string
+
+const (
+	outputViewLeft  outputView = "left"
+	outputViewRight outputView = "right"
+	outputViewBoth  outputView = "both"
+)
+
+func parseOutputView(value string) (outputView, bool) {
+	view := outputView(strings.ToLower(strings.TrimSpace(value)))
+	switch view {
+	case outputViewLeft, outputViewRight, outputViewBoth:
+		return view, true
+	default:
+		return "", false
+	}
+}
+
+func (selection outputView) includes(view outputView) bool {
+	return selection == outputViewBoth || selection == view
+}
+
 // Build validates a completed output set and returns its versioned manifest.
 // It never emits a manifest for missing, partial, empty, or non-regular files.
 func Build(input BuildInput) (Manifest, error) {
@@ -225,7 +247,7 @@ func openCompletedFile(rawPath string) (string, *os.File, os.FileInfo, error) {
 	if err != nil {
 		return "", nil, nil, err
 	}
-	file, err := os.Open(absolutePath) // #nosec G304 -- path was explicitly supplied by the caller
+	file, err := openCompletedFileDescriptor(absolutePath)
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("stat output %q: %w", absolutePath, err)
 	}
@@ -304,13 +326,11 @@ func normalizeFileSpec(spec FileSpec, audioOnly bool, selectedViews string) (str
 	if role != wantRole {
 		return "", "", "", "", fmt.Errorf("output role %q does not match selection role %q", role, wantRole)
 	}
-	view := strings.ToLower(strings.TrimSpace(spec.View))
-	switch view {
-	case "left", "right", "both":
-	default:
-		return "", "", "", "", fmt.Errorf("unsupported output view %q", view)
+	view, ok := parseOutputView(spec.View)
+	if !ok {
+		return "", "", "", "", fmt.Errorf("unsupported output view %q", strings.ToLower(strings.TrimSpace(spec.View)))
 	}
-	if selectedViews != "both" && view != selectedViews {
+	if !outputView(selectedViews).includes(view) {
 		return "", "", "", "", fmt.Errorf("output view %q is outside selected views %q", view, selectedViews)
 	}
 	container := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(spec.Container)), ".")
@@ -322,7 +342,7 @@ func normalizeFileSpec(spec FileSpec, audioOnly bool, selectedViews string) (str
 	if sha256Hex != "" && !validSHA256Hex(sha256Hex) {
 		return "", "", "", "", errors.New("sha256 must be 64 lowercase hexadecimal characters")
 	}
-	return role, view, container, sha256Hex, nil
+	return role, string(view), container, sha256Hex, nil
 }
 
 func verifySHA256(file *os.File, path, expected string) (int64, error) {

@@ -1,8 +1,8 @@
 # Consolidated Impartus lecture product: approved execution plan
 
-Status: proposed for external review  
-Owner: Impartus maintainers  
-Planned from: `origin/main` at `70401a18765dcadb1cdba9201863564abd13014c`  
+Status: proposed for external review
+Owner: Impartus maintainers
+Planned from: `origin/main` at `70401a18765dcadb1cdba9201863564abd13014c`
 Supersedes: the product boundary in PR #139 and untracked Plan 001 on that branch
 
 ## Outcome
