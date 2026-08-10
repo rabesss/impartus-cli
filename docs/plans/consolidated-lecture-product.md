@@ -163,6 +163,12 @@ fields.
 }
 ```
 
+`selection` is the normalized request and logical identity, while `files` is
+the authoritative list of outputs that were actually materialized. In
+particular, a `both` request may contain one camera file when the upstream
+lecture exposes only that playable view; consumers must not infer a missing
+file from selection alone.
+
 Canonical `artifactId` input is a length-delimited, versioned encoding of:
 
 `instituteId, subjectId, sessionId, ttid, audioOnly, normalized views,

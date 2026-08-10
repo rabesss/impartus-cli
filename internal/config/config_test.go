@@ -271,6 +271,32 @@ func TestNormalizeViewsMapsAliasesToCanonicalNames(t *testing.T) {
 	}
 }
 
+func TestViewMembershipUsesCanonicalSelectionPolicy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		views             string
+		left, right, both bool
+	}{
+		{views: " LEFT ", left: true},
+		{views: "SECOND", right: true},
+		{views: "both", left: true, right: true, both: true},
+		{views: "invalid"},
+	}
+	for _, test := range tests {
+		cfg := Config{Views: test.views}
+		if got := cfg.IncludesLeft(); got != test.left {
+			t.Errorf("IncludesLeft(%q) = %t, want %t", test.views, got, test.left)
+		}
+		if got := cfg.IncludesRight(); got != test.right {
+			t.Errorf("IncludesRight(%q) = %t, want %t", test.views, got, test.right)
+		}
+		if got := cfg.HasBothViews(); got != test.both {
+			t.Errorf("HasBothViews(%q) = %t, want %t", test.views, got, test.both)
+		}
+	}
+}
+
 func TestOneOfMatchesCorrectly(t *testing.T) {
 	if !OneOf("450", "144", "450", "720") {
 		t.Error("expected 450 to be in set")

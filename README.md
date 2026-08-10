@@ -265,6 +265,12 @@ scoped IDs, normalized media selection, verified absolute files, byte sizes,
 and a stable `impartus:v1:` logical identity. Existing automation can continue
 using the legacy fields unchanged.
 
+`selection.views` records the normalized requested view set used for logical
+identity. `files` is the authoritative materialization list: an upstream
+lecture can expose only one playable camera even when `both` was requested, so
+consumers must use each file's `view` rather than infer output completeness from
+the selection alone.
+
 ### Command Reference
 
 | Command | Description |

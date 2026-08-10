@@ -133,15 +133,24 @@ func NormalizeViews(views string) string {
 }
 
 // IncludesLeft reports whether the configured view set includes the left
-// (first) camera view. Assumes Views is normalized ("both" | "left" | "right").
-func (c *Config) IncludesLeft() bool { return c.Views != "right" }
+// (first) camera view.
+func (c *Config) IncludesLeft() bool {
+	view, ok := selection.ParseView(c.Views)
+	return ok && view.Includes(selection.ViewLeft)
+}
 
 // IncludesRight reports whether the configured view set includes the right
-// (second) camera view. Assumes Views is normalized ("both" | "left" | "right").
-func (c *Config) IncludesRight() bool { return c.Views != "left" }
+// (second) camera view.
+func (c *Config) IncludesRight() bool {
+	view, ok := selection.ParseView(c.Views)
+	return ok && view.Includes(selection.ViewRight)
+}
 
 // HasBothViews reports whether both camera views are configured.
-func (c *Config) HasBothViews() bool { return c.Views == "both" }
+func (c *Config) HasBothViews() bool {
+	view, ok := selection.ParseView(c.Views)
+	return ok && view == selection.ViewBoth
+}
 
 // Validate checks the configuration for errors and returns the first one found.
 func (c *Config) Validate() error {
