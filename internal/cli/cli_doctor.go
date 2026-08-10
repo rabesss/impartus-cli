@@ -142,7 +142,7 @@ func checkDefaultLibrary() error {
 	if err != nil {
 		return err
 	}
-	return errors.Join(store.Check(ctx), store.Close())
+	return finishCommittedLibraryOperation(store.Check(ctx), store.Close)
 }
 
 func checkLibraryDatabase(check func() error) doctorCheck {

@@ -196,7 +196,7 @@ func recordDownloadedArtifacts(ctx context.Context, manifests []artifact.Manifes
 		return err
 	}
 	recordErr := store.RecordManifests(ctx, manifests)
-	return errors.Join(recordErr, store.Close())
+	return finishCommittedLibraryOperation(recordErr, store.Close)
 }
 
 func applyLibraryRecording(

@@ -84,6 +84,16 @@ func closeLibraryStore(store *library.Store) {
 	}
 }
 
+func finishCommittedLibraryOperation(operationErr error, closeStore func() error) error {
+	closeErr := closeStore()
+	if operationErr == nil {
+		// A close-only acknowledgment failure cannot roll back an already
+		// committed SQLite transaction or invalidate a completed health query.
+		return nil
+	}
+	return errors.Join(operationErr, closeErr)
+}
+
 func executeLibraryVerify(ctx context.Context, store *library.Store, command string, args []string) (string, any, error) {
 	flags := flag.NewFlagSet("library verify", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)

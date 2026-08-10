@@ -49,6 +49,20 @@ func TestCollectDoctorReportChecksDependenciesAndPaths(t *testing.T) {
 	}
 }
 
+func TestFinishCommittedLibraryOperationDoesNotRewriteSuccessfulOutcome(t *testing.T) {
+	t.Parallel()
+
+	closeErr := errors.New("close acknowledgment failed")
+	if err := finishCommittedLibraryOperation(nil, func() error { return closeErr }); err != nil {
+		t.Fatalf("finishCommittedLibraryOperation(success) error = %v, want nil", err)
+	}
+	operationErr := errors.New("operation failed")
+	err := finishCommittedLibraryOperation(operationErr, func() error { return closeErr })
+	if !errors.Is(err, operationErr) || !errors.Is(err, closeErr) {
+		t.Fatalf("finishCommittedLibraryOperation(failure) error = %v, want operation and close causes", err)
+	}
+}
+
 func TestCollectDoctorReportFailsUnsafeConfigAndMissingDependency(t *testing.T) {
 	root := t.TempDir()
 	configPath := filepath.Join(root, "config.json")
