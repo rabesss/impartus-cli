@@ -206,6 +206,16 @@ func openCompletedFile(rawPath string) (string, *os.File, os.FileInfo, error) {
 	if strings.HasSuffix(strings.ToLower(absolutePath), ".part") {
 		return "", nil, nil, fmt.Errorf("output %q is still partial", absolutePath)
 	}
+	pathInfo, err := os.Lstat(absolutePath)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("stat output %q: %w", absolutePath, err)
+	}
+	if pathInfo.Mode()&os.ModeSymlink != 0 {
+		return "", nil, nil, fmt.Errorf("output %q is a symlink", absolutePath)
+	}
+	if !pathInfo.Mode().IsRegular() {
+		return "", nil, nil, fmt.Errorf("output %q is not a regular file", absolutePath)
+	}
 	file, err := os.Open(absolutePath) // #nosec G304 -- path was explicitly supplied by the caller
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("stat output %q: %w", absolutePath, err)
@@ -215,9 +225,19 @@ func openCompletedFile(rawPath string) (string, *os.File, os.FileInfo, error) {
 		_ = file.Close() //nolint:errcheck // preserve the primary stat failure
 		return "", nil, nil, fmt.Errorf("stat output %q: %w", absolutePath, err)
 	}
-	if !info.Mode().IsRegular() {
+	currentPathInfo, err := os.Lstat(absolutePath)
+	if err != nil {
+		_ = file.Close() //nolint:errcheck // preserve the primary validation failure
+		return "", nil, nil, fmt.Errorf("restat output %q: %w", absolutePath, err)
+	}
+	if currentPathInfo.Mode()&os.ModeSymlink != 0 {
 		_ = file.Close() //nolint:errcheck // validation failure is the actionable error
-		return "", nil, nil, fmt.Errorf("output %q is not a regular file", absolutePath)
+		return "", nil, nil, fmt.Errorf("output %q is a symlink", absolutePath)
+	}
+	if !info.Mode().IsRegular() || !currentPathInfo.Mode().IsRegular() ||
+		!os.SameFile(pathInfo, info) || !os.SameFile(currentPathInfo, info) {
+		_ = file.Close() //nolint:errcheck // validation failure is the actionable error
+		return "", nil, nil, fmt.Errorf("output %q changed during validation or is not a regular file", absolutePath)
 	}
 	if info.Size() <= 0 {
 		_ = file.Close() //nolint:errcheck // validation failure is the actionable error

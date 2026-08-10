@@ -133,6 +133,18 @@ func TestBuildRejectsIncompleteOutputs(t *testing.T) {
 			}
 			return path
 		}, want: "is empty"},
+		{name: "symlink", prepare: func(t *testing.T) string {
+			directory := t.TempDir()
+			target := filepath.Join(directory, "target.mp4")
+			if err := os.WriteFile(target, []byte("media"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(directory, "lecture.mp4")
+			if err := os.Symlink(target, path); err != nil {
+				t.Skipf("create output symlink: %v", err)
+			}
+			return path
+		}, want: "is a symlink"},
 		{name: "non-regular", prepare: func(t *testing.T) string { return t.TempDir() }, want: "not a regular file"},
 	}
 	for _, test := range tests {
