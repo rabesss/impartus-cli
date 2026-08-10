@@ -29,11 +29,12 @@ type resumeLoadedMsg struct {
 }
 
 type playbackStartedMsg struct {
-	lecture  client.Lecture
-	resume   library.PlaybackState
-	playback app.PlaybackSession
-	lease    uint64
-	err      error
+	lecture       client.Lecture
+	resume        library.PlaybackState
+	playback      app.PlaybackSession
+	lease         uint64
+	initialEvents []player.Event
+	err           error
 }
 
 type playbackControlMsg struct {

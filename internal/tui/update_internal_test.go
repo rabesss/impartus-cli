@@ -32,13 +32,17 @@ func TestPlaybackStartedResetsTransportDefaults(t *testing.T) {
 	updated, _ := model.updatePlaybackStarted(playbackStartedMsg{
 		playback: &updatePlaybackStub{events: make(chan player.Event)},
 		resume:   library.PlaybackState{PositionSeconds: 12, DurationSeconds: 120},
+		initialEvents: []player.Event{
+			{Name: "property-change", Property: "volume", Data: []byte("80")},
+			{Name: "property-change", Property: "duration", Data: []byte("130")},
+		},
 	})
 	got, ok := updated.(Model)
 	if !ok {
 		t.Fatalf("updated model type = %T, want tui.Model", updated)
 	}
-	if got.paused || got.muted || got.volume != 100 || got.speed != 1 {
-		t.Fatalf("transport state = paused:%v muted:%v volume:%v speed:%v, want fresh mpv defaults", got.paused, got.muted, got.volume, got.speed)
+	if got.paused || got.muted || got.volume != 80 || got.speed != 1 || got.duration != 130 {
+		t.Fatalf("transport state = paused:%v muted:%v volume:%v speed:%v duration:%v, want defaults plus initial telemetry", got.paused, got.muted, got.volume, got.speed, got.duration)
 	}
 }
 

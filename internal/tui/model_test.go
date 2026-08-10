@@ -99,7 +99,7 @@ func (backend *fakeBackend) Lectures(_ context.Context, course client.Course) (c
 	return append(client.Lectures(nil), backend.lectures...), backend.lecturesErr
 }
 
-func (backend *fakeBackend) StartLecture(ctx context.Context, lecture client.Lecture, resume float64) (app.PlaybackSession, error) {
+func (backend *fakeBackend) StartLecture(ctx context.Context, lecture client.Lecture, resume float64) (app.PlaybackStart, error) {
 	backend.startedLecture = lecture
 	backend.startedAt = resume
 	if backend.startStarted != nil {
@@ -108,7 +108,7 @@ func (backend *fakeBackend) StartLecture(ctx context.Context, lecture client.Lec
 	if backend.startAfterCancel {
 		<-ctx.Done()
 	}
-	return backend.playback, nil
+	return app.PlaybackStart{Session: backend.playback}, nil
 }
 
 func (backend *fakeBackend) DownloadLecture(ctx context.Context, lecture client.Lecture) (app.DownloadResult, error) {

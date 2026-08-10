@@ -121,6 +121,13 @@ func (model Model) updatePlaybackStarted(message playbackStartedMsg) (tea.Model,
 	model.position = message.resume.PositionSeconds
 	model.duration = message.resume.DurationSeconds
 	model.status = "Playback started in mpv"
+	for _, event := range message.initialEvents {
+		var terminal, completed bool
+		model, terminal, completed = model.applyPlaybackEvent(event)
+		if terminal {
+			return model.beginPlaybackFinish(completed, true)
+		}
+	}
 	return model, model.waitPlaybackEvent()
 }
 

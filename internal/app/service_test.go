@@ -354,37 +354,44 @@ func TestServiceCatalogHonorsSkipNoAudio(t *testing.T) {
 
 func TestStartLectureResolvesOnePlaylistAndAppliesResume(t *testing.T) {
 	streams := &fakeStreams{playlists: []client.ParsedPlaylist{{ID: 91}}}
-	fakePlayer := &fakeManagedPlayer{events: make(chan player.Event, 2)}
+	fakePlayer := &fakeManagedPlayer{events: make(chan player.Event, 10)}
 	wantEvents := []player.Event{
-		{Name: "property-change", Property: "volume", Data: []byte("80")},
+		{Name: "property-change", Property: "volume", Data: []byte("90")},
 		{Name: "property-change", Property: "duration", Data: []byte("120")},
 	}
-	for _, event := range wantEvents {
+	for _, event := range []player.Event{
+		{Name: "property-change", Property: "time-pos", Data: []byte("null")},
+		{Name: "property-change", Property: "duration", Data: []byte("null")},
+		{Name: "property-change", Property: "time-pos", Data: []byte("0")},
+		{Name: "property-change", Property: "volume", Data: []byte("80")},
+		{Name: "property-change", Property: "pause", Data: []byte("null")},
+		{Name: "property-change", Property: "volume", Data: []byte("90")},
+		{Name: "property-change", Property: "duration", Data: []byte("120")},
+	} {
 		fakePlayer.events <- event
 	}
 	service := newService(&config.Config{}, &fakeCatalog{}, streams, func(context.Context, player.Options) (managedPlayer, error) {
 		return fakePlayer, nil
 	})
 
-	playback, err := service.StartLecture(context.Background(), client.Lecture{TTID: 91}, 42.5)
+	started, err := service.StartLecture(context.Background(), client.Lecture{TTID: 91}, 42.5)
 	if err != nil {
 		t.Fatalf("StartLecture() error = %v", err)
 	}
+	playback := started.Session
 	if len(streams.starts) != 1 || streams.starts[0] != 91 {
 		t.Fatalf("started playlists = %v, want [91]", streams.starts)
 	}
 	if len(fakePlayer.seeks) != 0 || !reflect.DeepEqual(fakePlayer.absoluteSeeks, []float64{42.5}) {
 		t.Fatalf("resume relative=%v absolute=%v, want readiness-gated absolute [42.5]", fakePlayer.seeks, fakePlayer.absoluteSeeks)
 	}
-	for _, want := range wantEvents {
-		select {
-		case got := <-playback.Events():
-			if !reflect.DeepEqual(got, want) {
-				t.Fatalf("replayed event = %+v, want %+v", got, want)
-			}
-		default:
-			t.Fatalf("readiness event %+v was consumed before the caller subscribed", want)
-		}
+	if !reflect.DeepEqual(started.InitialEvents, wantEvents) {
+		t.Fatalf("initial events = %+v, want %+v", started.InitialEvents, wantEvents)
+	}
+	select {
+	case got := <-playback.Events():
+		t.Fatalf("unexpected stale pre-seek event left on live stream: %+v", got)
+	default:
 	}
 	if closeErr := playback.Close(context.Background()); closeErr != nil {
 		t.Fatalf("Close() error = %v", closeErr)
@@ -401,9 +408,9 @@ func TestStartLectureSurfacesFailureBeforeMediaReady(t *testing.T) {
 		return fakePlayer, nil
 	})
 
-	playback, err := service.StartLecture(context.Background(), client.Lecture{TTID: 91}, 42.5)
-	if playback != nil || !errors.Is(err, sentinel) {
-		t.Fatalf("StartLecture() = (%v, %v), want readiness failure", playback, err)
+	started, err := service.StartLecture(context.Background(), client.Lecture{TTID: 91}, 42.5)
+	if started.Session != nil || !errors.Is(err, sentinel) {
+		t.Fatalf("StartLecture() = (%v, %v), want readiness failure", started, err)
 	}
 	if fakePlayer.closed != 1 || streams.cleanups != 1 {
 		t.Fatalf("readiness failure cleanup player=%d proxy=%d, want one each", fakePlayer.closed, streams.cleanups)

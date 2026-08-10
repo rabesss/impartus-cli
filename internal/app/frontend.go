@@ -46,84 +46,53 @@ type DownloadResult struct {
 	Warning         string
 }
 
+// PlaybackStart hands terminal frontends the owned playback session together
+// with the small, coalesced set of safe property events consumed while a
+// resume seek waited for mpv readiness. Live events remain on Session.Events.
+type PlaybackStart struct {
+	Session       PlaybackSession
+	InitialEvents []player.Event
+}
+
 // StartLecture resolves one live lecture and starts supervised playback. A
 // positive resume position is applied only after the capability URL is loaded.
-func (service *Service) StartLecture(ctx context.Context, lecture client.Lecture, resumeSeconds float64) (PlaybackSession, error) {
+func (service *Service) StartLecture(ctx context.Context, lecture client.Lecture, resumeSeconds float64) (PlaybackStart, error) {
 	if service == nil || service.streams == nil {
-		return nil, errors.New("application playback service is not configured")
+		return PlaybackStart{}, errors.New("application playback service is not configured")
 	}
 	if resumeSeconds < 0 || math.IsNaN(resumeSeconds) || math.IsInf(resumeSeconds, 0) {
-		return nil, errors.New("resume position must be finite and non-negative")
+		return PlaybackStart{}, errors.New("resume position must be finite and non-negative")
 	}
 	playlists, err := service.streams.FetchLecturePlaylists(ctx, client.Lectures{lecture})
 	if err != nil {
-		return nil, fmt.Errorf("resolve lecture playlist: %w", err)
+		return PlaybackStart{}, fmt.Errorf("resolve lecture playlist: %w", err)
 	}
 	if len(playlists) != 1 {
-		return nil, fmt.Errorf("expected one playable lecture, got %d", len(playlists))
+		return PlaybackStart{}, fmt.Errorf("expected one playable lecture, got %d", len(playlists))
 	}
 	startedPlayback, err := service.StartPlayback(ctx, playlists[0])
 	if err != nil {
-		return nil, err
+		return PlaybackStart{}, err
 	}
 	var playback PlaybackSession = startedPlayback
+	result := PlaybackStart{Session: playback}
 	if resumeSeconds > 0 {
 		readinessEvents, readyErr := waitForPlaybackReady(ctx, playback)
 		if readyErr != nil {
 			closeErr := playback.Close(context.Background())
-			return nil, errors.Join(fmt.Errorf("resume lecture playback: wait for media readiness: %w", readyErr), closeErr)
+			return PlaybackStart{}, errors.Join(fmt.Errorf("resume lecture playback: wait for media readiness: %w", readyErr), closeErr)
 		}
-		playback = replayPlaybackEvents(playback, readinessEvents)
 		if err := playback.SeekAbsolute(ctx, resumeSeconds); err != nil {
 			closeErr := playback.Close(context.Background())
-			return nil, errors.Join(fmt.Errorf("resume lecture playback: %w", err), closeErr)
+			return PlaybackStart{}, errors.Join(fmt.Errorf("resume lecture playback: %w", err), closeErr)
 		}
+		result.InitialEvents = drainResumeTelemetry(playback.Events(), readinessEvents)
 	}
-	return playback, nil
-}
-
-type replayedPlaybackSession struct {
-	PlaybackSession
-	events <-chan player.Event
-	cancel context.CancelFunc
-}
-
-func (session *replayedPlaybackSession) Events() <-chan player.Event { return session.events }
-
-func (session *replayedPlaybackSession) Close(ctx context.Context) error {
-	session.cancel()
-	return session.PlaybackSession.Close(ctx)
-}
-
-func replayPlaybackEvents(playback PlaybackSession, initial []player.Event) PlaybackSession {
-	ctx, cancel := context.WithCancel(context.Background())
-	events := make(chan player.Event, len(initial)+1)
-	for _, event := range initial {
-		events <- event
-	}
-	go func() {
-		defer close(events)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case event, open := <-playback.Events():
-				if !open {
-					return
-				}
-				select {
-				case events <- event:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}
-	}()
-	return &replayedPlaybackSession{PlaybackSession: playback, events: events, cancel: cancel}
+	return result, nil
 }
 
 func waitForPlaybackReady(ctx context.Context, playback PlaybackSession) ([]player.Event, error) {
-	observed := make([]player.Event, 0, 4)
+	observed := make([]player.Event, 0, 6)
 	for {
 		select {
 		case event, open := <-playback.Events():
@@ -133,11 +102,11 @@ func waitForPlaybackReady(ctx context.Context, playback PlaybackSession) ([]play
 				}
 				return nil, errors.New("playback ended before media became ready")
 			}
-			observed = append(observed, event)
 			ready, terminal, eventErr := playbackReadiness(event)
 			if eventErr != nil {
 				return nil, eventErr
 			}
+			observed = retainResumeTelemetry(observed, event, ready)
 			if ready {
 				return observed, nil
 			}
@@ -150,6 +119,67 @@ func waitForPlaybackReady(ctx context.Context, playback PlaybackSession) ([]play
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
+	}
+}
+
+const maxResumeTelemetryDrain = 128
+
+func drainResumeTelemetry(events <-chan player.Event, observed []player.Event) []player.Event {
+	for range maxResumeTelemetryDrain {
+		select {
+		case event, open := <-events:
+			if !open {
+				return observed
+			}
+			ready, _, err := playbackReadiness(event)
+			if err == nil {
+				observed = retainResumeTelemetry(observed, event, ready)
+			}
+		default:
+			return observed
+		}
+	}
+	return observed
+}
+
+func retainResumeTelemetry(observed []player.Event, event player.Event, ready bool) []player.Event {
+	key := ""
+	if event.Name == "end-file" {
+		key = "end-file"
+	} else if event.Name == "property-change" && replayableResumeProperty(event, ready) {
+		key = event.Property
+	}
+	if key == "" {
+		return observed
+	}
+	for index := range observed {
+		existingKey := observed[index].Property
+		if observed[index].Name == "end-file" {
+			existingKey = "end-file"
+		}
+		if existingKey == key {
+			observed[index] = event
+			return observed
+		}
+	}
+	return append(observed, event)
+}
+
+func replayableResumeProperty(event player.Event, ready bool) bool {
+	switch event.Property {
+	case "pause", "mute":
+		var value bool
+		return json.Unmarshal(event.Data, &value) == nil && string(event.Data) != "null"
+	case "volume", "speed":
+		var value float64
+		return json.Unmarshal(event.Data, &value) == nil && !math.IsNaN(value) && !math.IsInf(value, 0) && string(event.Data) != "null"
+	case "duration":
+		return ready
+	default:
+		// A pre-seek time-pos is stale by construction and must never be
+		// replayed after SeekAbsolute. Unknown properties are irrelevant to
+		// the TUI and are deliberately not retained.
+		return false
 	}
 }
 

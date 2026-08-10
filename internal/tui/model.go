@@ -24,7 +24,7 @@ import (
 type Backend interface {
 	Courses(context.Context) (client.Courses, error)
 	Lectures(context.Context, client.Course) (client.Lectures, error)
-	StartLecture(context.Context, client.Lecture, float64) (app.PlaybackSession, error)
+	StartLecture(context.Context, client.Lecture, float64) (app.PlaybackStart, error)
 	DownloadLecture(context.Context, client.Lecture) (app.DownloadResult, error)
 	Artifacts(context.Context) ([]library.ArtifactRecord, error)
 	ResumeLecture(context.Context, client.Lecture) (library.PlaybackState, bool, error)
@@ -286,9 +286,10 @@ func (model Model) loadResume(lecture client.Lecture) tea.Cmd {
 
 func (model Model) startLecture(lecture client.Lecture, state library.PlaybackState) tea.Cmd {
 	return model.command(func() tea.Msg {
-		playback, err := model.backend.StartLecture(model.ctx, lecture, state.PositionSeconds)
+		started, err := model.backend.StartLecture(model.ctx, lecture, state.PositionSeconds)
+		playback := started.Session
 		if nilPlaybackSession(playback) {
-			return playbackStartedMsg{lecture: lecture, resume: state, playback: playback, err: err}
+			return playbackStartedMsg{lecture: lecture, resume: state, playback: playback, initialEvents: started.InitialEvents, err: err}
 		}
 		if err != nil {
 			closeErr := playback.Close(context.Background())
@@ -303,7 +304,7 @@ func (model Model) startLecture(lecture client.Lecture, state library.PlaybackSt
 			closeErr := model.playbacks.close(lease)
 			return playbackStartedMsg{lecture: lecture, resume: state, err: errors.Join(contextErr, closeErr)}
 		}
-		return playbackStartedMsg{lecture: lecture, resume: state, playback: playback, lease: lease}
+		return playbackStartedMsg{lecture: lecture, resume: state, playback: playback, lease: lease, initialEvents: started.InitialEvents}
 	})
 }
 
