@@ -8,6 +8,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
 var (
@@ -33,7 +35,7 @@ func (model Model) render() string {
 	if model.loading {
 		body.WriteString("Loading…")
 	} else if model.err != nil {
-		body.WriteString(errorStyle.Render(terminalText(model.err.Error())))
+		body.WriteString(errorStyle.Render(terminalText(secrets.ScrubError(model.err))))
 	} else if model.screen == screenResume {
 		appendf(&body, "Resume %s from %s?\n", terminalText(model.lecture.Topic), formatClock(model.resume.PositionSeconds))
 		body.WriteString("y/enter resume • n restart • esc back")
@@ -44,7 +46,7 @@ func (model Model) render() string {
 		} else {
 			appendf(&body, "Playing %s in mpv\n", terminalText(model.lecture.Topic))
 			appendf(&body, "%s / %s  •  volume %.0f%%  •  speed %.2fx\n", formatClock(model.position), formatClock(model.duration), model.volume, model.speed)
-			body.WriteString("space pause • ←/→ seek • m mute • v camera • esc stop")
+			body.WriteString("space pause • ←/→ seek • m mute • +/- volume • [/] speed • v camera • esc stop")
 		}
 	} else if model.screen == screenDetails {
 		appendf(&body, "Topic: %s\n", terminalText(model.lecture.Topic))

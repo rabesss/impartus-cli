@@ -21,7 +21,7 @@ func newKeyMap() keyMap {
 	return keyMap{
 		Navigate: key.NewBinding(key.WithKeys("up", "down", "k", "j"), key.WithHelp("↑/↓", "move")),
 		Select:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select/play")),
-		Play:     key.NewBinding(key.WithKeys("space", "left", "right", "m", "v"), key.WithHelp("space/←/→", "control mpv")),
+		Play:     key.NewBinding(key.WithKeys("space", "left", "right", "m", "v", "+", "=", "-", "[", "]"), key.WithHelp("space/←/→/+/-/[]", "control mpv")),
 		Download: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "download")),
 		Library:  key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "library")),
 		Filter:   key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
