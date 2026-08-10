@@ -3,18 +3,15 @@ package cli
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
 	"sort"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/vbauerster/mpb/v8"
 
 	"github.com/rabesss/impartus-cli/internal/app"
@@ -27,21 +24,6 @@ import (
 	"github.com/rabesss/impartus-cli/internal/paths"
 	"github.com/rabesss/impartus-cli/internal/secrets"
 )
-
-type downloadFlags struct {
-	subject        int
-	session        int
-	start          int
-	end            int
-	quality        string
-	views          string
-	audioOnly      bool
-	format         string
-	output         string
-	skipNoAudio    bool
-	includeNoAudio bool
-	events         bool
-}
 
 type downloadResult struct {
 	Status          string              `json:"status"`
@@ -130,208 +112,6 @@ func runDownloadJSONWithDependencies(args []string, deps downloadExecutionDepend
 		return downloadResult{}, errors.New("cannot combine --json and --events")
 	}
 	return executeDownloadWithDependencies(args, quietDownloadPresentation(), deps)
-}
-
-func parseDownloadFlags(args []string) (downloadFlags, error) {
-	fs := flag.NewFlagSet("download", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	var f downloadFlags
-	fs.IntVar(&f.subject, "subject", 0, "Subject ID")
-	fs.IntVar(&f.subject, "s", 0, "Subject ID")
-	fs.IntVar(&f.session, "session", 0, "Session ID")
-	fs.IntVar(&f.session, "S", 0, "Session ID")
-	fs.IntVar(&f.start, "start", 0, "Start lecture index (1-based)")
-	fs.IntVar(&f.end, "end", 0, "End lecture index (1-based)")
-	fs.StringVar(&f.quality, "quality", "", "Video quality override")
-	fs.StringVar(&f.views, "views", "", "Views override: left/right/both or first/second/both")
-	fs.BoolVar(&f.audioOnly, "audio-only", false, "Enable audio-only mode")
-	fs.StringVar(&f.format, "format", "", "Audio format override")
-	fs.StringVar(&f.output, "output", "", "Output directory override")
-	fs.StringVar(&f.output, "o", "", "Output directory override")
-	fs.BoolVar(&f.skipNoAudio, "skip-no-audio", false, "Skip lectures with no audio track")
-	fs.BoolVar(&f.includeNoAudio, "include-noaudio", false, "Include lectures with no audio track (overrides --skip-no-audio)")
-	fs.BoolVar(&f.events, "events", false, "Emit newline-delimited JSON lifecycle events")
-
-	if err := fs.Parse(args); err != nil {
-		return downloadFlags{}, err
-	}
-	if fs.NArg() > 0 {
-		return downloadFlags{}, errors.New("download does not accept positional arguments")
-	}
-	if f.subject <= 0 || f.session <= 0 {
-		return downloadFlags{}, errors.New("download requires --subject/-s and --session/-S")
-	}
-	return f, nil
-}
-
-type downloadEventStream struct {
-	writer  *events.Writer
-	jobID   string
-	now     func() time.Time
-	started bool
-}
-
-func newDownloadEventStream(output io.Writer, jobID string, now func() time.Time) *downloadEventStream {
-	if strings.TrimSpace(jobID) == "" {
-		jobID = "job-" + uuid.NewString()
-	}
-	if now == nil {
-		now = time.Now
-	}
-	return &downloadEventStream{writer: events.NewWriter(output), jobID: jobID, now: now}
-}
-
-func (stream *downloadEventStream) start() error {
-	if stream.started {
-		return nil
-	}
-	stream.started = true
-	return stream.writer.Emit(events.Event{
-		Type: events.JobStarted, JobID: stream.jobID, Command: "download",
-		Status: "running", Timestamp: stream.now().UTC(),
-	})
-}
-
-func (stream *downloadEventStream) finish(result downloadResult, cause error) error {
-	if cause != nil {
-		return stream.failResult(result, cause)
-	}
-	if !result.LibraryRecorded {
-		cause = errors.New("download completed but the local library commit did not complete")
-		return stream.failResult(result, cause)
-	}
-	if err := stream.writer.Emit(events.Event{
-		Type: events.JobCompleted, JobID: stream.jobID, Command: "download",
-		Status: "completed", Timestamp: stream.now().UTC(), Outputs: artifactOutputPaths(result.Artifacts),
-		Artifacts: append([]artifact.Manifest(nil), result.Artifacts...),
-		Details: map[string]any{
-			"lectureCount": result.LectureCount, "libraryRecorded": result.LibraryRecorded,
-			"filteredCount": result.FilteredCount, "totalLectures": result.TotalLectures,
-		},
-	}); err != nil {
-		return stream.failResult(result, err)
-	}
-	return nil
-}
-
-func (stream *downloadEventStream) fail(cause error) error {
-	return stream.failResult(downloadResult{}, cause)
-}
-
-func (stream *downloadEventStream) failResult(result downloadResult, cause error) error {
-	event := events.Failure(stream.jobID, "download", cause, stream.now())
-	if errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
-		event = events.Cancellation(stream.jobID, "download", cause, stream.now())
-	}
-	event.Outputs = artifactOutputPaths(result.Artifacts)
-	event.Artifacts = append([]artifact.Manifest(nil), result.Artifacts...)
-	event.Details = map[string]any{
-		"lectureCount": result.LectureCount, "libraryRecorded": result.LibraryRecorded,
-		"filteredCount": result.FilteredCount, "totalLectures": result.TotalLectures,
-	}
-	emitErr := stream.writer.Emit(event)
-	if emitErr != nil {
-		return errors.Join(events.RedactedError(cause), errDownloadEventDelivery, events.RedactedError(emitErr))
-	}
-	return events.RedactedError(cause)
-}
-
-func (stream *downloadEventStream) lecture(eventType string, lecture client.Lecture, artifactID string, manifest *artifact.Manifest, outputs []string, details any) error {
-	if stream == nil {
-		return nil
-	}
-	event := events.Event{
-		Type: eventType, JobID: stream.jobID, Command: "download", Timestamp: stream.now().UTC(),
-		Lecture:    &events.Lecture{TTID: lecture.TTID, SeqNo: lecture.SeqNo, Topic: lecture.Topic},
-		ArtifactID: artifactID, Artifact: manifest, Outputs: append([]string(nil), outputs...), Details: details,
-	}
-	if err := stream.writer.Emit(event); err != nil {
-		return errors.Join(errDownloadEventDelivery, events.RedactedError(err))
-	}
-	return nil
-}
-
-func runDownloadEventsWithDependenciesContext(ctx context.Context, args []string, output io.Writer, deps downloadExecutionDependencies, now func() time.Time, jobID string) error {
-	stream := newDownloadEventStream(output, jobID, now)
-	if err := stream.start(); err != nil {
-		return stream.fail(err)
-	}
-	presentation := quietDownloadPresentation()
-	presentation.eventStream = stream
-	result, err := executeDownloadWithDependenciesContext(ctx, args, presentation, deps)
-	return stream.finish(result, err)
-}
-
-func emitDownloadResultEvents(output io.Writer, jobID string, result downloadResult, cause error, now func() time.Time) error {
-	stream := newDownloadEventStream(output, jobID, now)
-	if err := stream.start(); err != nil {
-		return stream.fail(err)
-	}
-	return stream.finish(result, cause)
-}
-
-func requestedEvents(args []string) bool {
-	enabled := false
-	valueFlags := map[string]bool{
-		"--subject": true, "-subject": true, "-s": true,
-		"--session": true, "-session": true, "-S": true,
-		"--start": true, "-start": true, "--end": true, "-end": true,
-		"--quality": true, "-quality": true, "--views": true, "-views": true,
-		"--format": true, "-format": true, "--output": true, "-output": true, "-o": true,
-		"--interval": true, "-interval": true,
-	}
-	for index := 0; index < len(args); index++ {
-		argument := args[index]
-		if argument == "--" {
-			break
-		}
-		if valueFlags[argument] {
-			index++
-			continue
-		}
-		// flag.FlagSet stops parsing immediately before the first positional
-		// argument. Keep this pre-parser aligned so a later --events token cannot
-		// change the output mode of a parse error the real parser never reached.
-		if argument == "" || argument == "-" || !strings.HasPrefix(argument, "-") {
-			break
-		}
-		if argument == "--events" || argument == "-events" {
-			enabled = true
-			continue
-		}
-		prefix := "--events="
-		if strings.HasPrefix(argument, "-events=") && !strings.HasPrefix(argument, prefix) {
-			prefix = "-events="
-		}
-		if !strings.HasPrefix(argument, prefix) {
-			continue
-		}
-		value, err := strconv.ParseBool(strings.TrimPrefix(argument, prefix))
-		if err == nil {
-			enabled = value
-		}
-	}
-	return enabled
-}
-
-func manifestOutputPaths(manifest artifact.Manifest) []string {
-	paths := make([]string, 0, len(manifest.Files))
-	for _, file := range manifest.Files {
-		paths = append(paths, file.Path)
-	}
-	return paths
-}
-
-func artifactOutputPaths(manifests []artifact.Manifest) []string {
-	count := 0
-	for _, manifest := range manifests {
-		count += len(manifest.Files)
-	}
-	output := make([]string, 0, count)
-	for _, manifest := range manifests {
-		output = append(output, manifestOutputPaths(manifest)...)
-	}
-	return output
 }
 
 func executeDownload(args []string, presentation downloadPresentationOptions) (downloadResult, error) {
@@ -728,34 +508,4 @@ func downloadArtifactID(lecture client.Lecture, cfg *config.Config) (string, err
 
 func buildDownloadArtifact(lecture client.Lecture, cfg *config.Config, result downloader.JoinResult, producedAt time.Time) (artifact.Manifest, error) {
 	return app.BuildDownloadArtifact(lecture, cfg, result, producedAt)
-}
-
-func newDownloadProgress(cfg *config.Config, presentation downloadPresentationOptions, totalLectures, totalChunks int) (*mpb.Progress, *downloader.ProgressTracker, error) {
-	if !presentation.showProgress || !cfg.ProgressTracking.Enabled {
-		return nil, nil, nil
-	}
-
-	progressOptions := []mpb.ContainerOption{mpb.WithWidth(70)}
-	if presentation.progressOutput != nil {
-		progressOptions = append(progressOptions, mpb.WithOutput(presentation.progressOutput))
-	}
-	p := mpb.New(progressOptions...)
-
-	var updateInterval time.Duration
-	if cfg.ProgressTracking.UpdateInterval != "" {
-		var err error
-		updateInterval, err = time.ParseDuration(cfg.ProgressTracking.UpdateInterval)
-		if err != nil {
-			p.Shutdown()
-			return nil, nil, fmt.Errorf("invalid progressTracking.updateInterval: %w", err)
-		}
-	}
-
-	tracker := downloader.NewProgressTrackerWithOptions(totalLectures, totalChunks, p, downloader.ProgressTrackerOptions{
-		ShowSpeed:       cfg.ProgressTracking.ShowSpeed,
-		ShowETA:         cfg.ProgressTracking.ShowETA,
-		SampleInterval:  updateInterval,
-		SpeedWindowSize: cfg.ProgressTracking.SpeedWindowSize,
-	})
-	return p, tracker, nil
 }
