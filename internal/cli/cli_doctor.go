@@ -160,16 +160,11 @@ func checkConfigFile(path string) doctorCheck {
 }
 
 func checkWritableStateDirectory(path string) doctorCheck {
-	if strings.TrimSpace(path) == "" {
-		return doctorCheck{Name: "state", Status: doctorStatusFail, Detail: "state directory path is empty"}
-	}
-	if err := os.MkdirAll(path, 0o700); err != nil {
-		return doctorCheck{Name: "state", Status: doctorStatusFail, Detail: fmt.Sprintf("cannot create %s: %v", path, err)}
-	}
-	absolute, err := filepath.Abs(filepath.Clean(path))
+	absolute, err := prepareDoctorStateDirectory(path)
 	if err != nil {
-		return doctorCheck{Name: "state", Status: doctorStatusFail, Detail: fmt.Sprintf("cannot resolve %s: %v", path, err)}
+		return doctorCheck{Name: "state", Status: doctorStatusFail, Detail: err.Error()}
 	}
+	// #nosec G703 -- absolute is the normalized application state path returned by the preparer.
 	info, err := os.Lstat(absolute)
 	if err != nil {
 		return doctorCheck{Name: "state", Status: doctorStatusFail, Detail: fmt.Sprintf("cannot inspect %s: %v", path, err)}
@@ -183,6 +178,7 @@ func checkWritableStateDirectory(path string) doctorCheck {
 	}
 	probeName := probe.Name()
 	if chmodErr := probe.Chmod(0o600); chmodErr != nil {
+		// #nosec G703 -- probeName was returned by os.CreateTemp in the validated directory.
 		cleanupErr := errors.Join(probe.Close(), os.Remove(probeName))
 		detail := fmt.Sprintf("cannot secure files in %s: %v", path, chmodErr)
 		if cleanupErr != nil {
@@ -191,11 +187,39 @@ func checkWritableStateDirectory(path string) doctorCheck {
 		return doctorCheck{Name: "state", Status: doctorStatusFail, Detail: detail}
 	}
 	closeErr := probe.Close()
+	// #nosec G703 -- probeName was returned by os.CreateTemp in the validated directory.
 	removeErr := os.Remove(probeName)
 	if closeErr != nil || removeErr != nil {
 		return doctorCheck{Name: "state", Status: doctorStatusFail, Detail: fmt.Sprintf("write probe cleanup failed in %s", path)}
 	}
 	return doctorCheck{Name: "state", Status: doctorStatusPass, Detail: fmt.Sprintf("%s is private and writable", path)}
+}
+
+func prepareDoctorStateDirectory(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", errors.New("state directory path is empty")
+	}
+	absolute, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve %s: %w", path, err)
+	}
+	// #nosec G703 -- absolute is the configured application state path normalized above.
+	_, inspectErr := os.Lstat(absolute)
+	created := errors.Is(inspectErr, os.ErrNotExist)
+	if inspectErr != nil && !created {
+		return "", fmt.Errorf("cannot inspect %s: %w", path, inspectErr)
+	}
+	// #nosec G703 -- absolute is the configured application state path normalized above.
+	if err := os.MkdirAll(absolute, 0o700); err != nil {
+		return "", fmt.Errorf("cannot create %s: %w", path, err)
+	}
+	if created {
+		// #nosec G302,G703 -- this is a normalized application state directory and must be private.
+		if err := os.Chmod(absolute, 0o700); err != nil {
+			return "", fmt.Errorf("cannot secure %s: %w", path, err)
+		}
+	}
+	return absolute, nil
 }
 
 func checkRuntimeDirectory(check func() error, mpvMode string) doctorCheck {

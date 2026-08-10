@@ -2,7 +2,6 @@ package player
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -79,6 +78,7 @@ func (reservation *runtimeReservation) cleanup() error {
 }
 
 func removeRuntimePath(path string) error {
+	// #nosec G703 -- callers pass an internally reserved runtime directory or socket path.
 	err := os.Remove(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -99,8 +99,6 @@ type Session struct {
 	playbackEnd  chan error
 	eventMutex   sync.Mutex
 	eventsClosed bool
-	loadStarted  bool
-	eofArmed     bool
 
 	waitMutex sync.Mutex
 	waitErr   error
@@ -276,15 +274,7 @@ func (session *Session) Load(ctx context.Context, playbackURL string) error {
 	if !validPlaybackURL(playbackURL) {
 		return errors.New("invalid loopback playback URL")
 	}
-	session.eventMutex.Lock()
-	session.loadStarted = true
-	session.eofArmed = false
-	session.eventMutex.Unlock()
 	if _, err := session.client.Command(ctx, "loadfile", playbackURL, "replace"); err != nil {
-		session.eventMutex.Lock()
-		session.loadStarted = false
-		session.eofArmed = false
-		session.eventMutex.Unlock()
 		return fmt.Errorf("load playback URL through mpv IPC: %w", err)
 	}
 	return nil
@@ -306,41 +296,30 @@ func (session *Session) Events() <-chan Event { return session.events }
 func (session *Session) acceptEvent(event Event) {
 	session.eventMutex.Lock()
 	defer session.eventMutex.Unlock()
-	ended, publish, endErr := session.playbackEventResult(event)
+	ended, endErr := playbackEndResult(event)
 	if ended {
-		session.loadStarted = false
-		session.eofArmed = false
 		select {
 		case session.playbackEnd <- endErr:
 		default:
 		}
 	}
-	if session.eventsClosed || !publish {
+	if session.eventsClosed {
 		return
 	}
-	publishNewestEvent(session.events, event)
+	publishNewestEvent(session.events, safePublicEvent(event))
 }
 
-func (session *Session) playbackEventResult(event Event) (bool, bool, error) {
-	if event.Name != "property-change" || event.Property != "eof-reached" {
-		ended, err := playbackEndResult(event)
-		return ended, true, err
+func safePublicEvent(event Event) Event {
+	event.FileError = ""
+	if event.Name != "end-file" {
+		return event
 	}
-	var reached bool
-	if json.Unmarshal(event.Data, &reached) != nil {
-		return false, true, nil
+	switch event.Reason {
+	case "eof", "stop", "quit", "redirect", "error":
+	default:
+		event.Reason = "unknown"
 	}
-	if !reached {
-		if !session.loadStarted {
-			return false, false, nil
-		}
-		session.eofArmed = true
-		return false, true, nil
-	}
-	if !session.loadStarted || !session.eofArmed {
-		return false, false, nil
-	}
-	return true, true, nil
+	return event
 }
 
 func (session *Session) closeEventsOnDisconnect() {
@@ -431,11 +410,7 @@ func playbackEndResult(event Event) (bool, error) {
 			return true, errors.New("mpv playback ended unexpectedly")
 		}
 	}
-	if event.Name != "property-change" || event.Property != "eof-reached" {
-		return false, nil
-	}
-	var reached bool
-	return json.Unmarshal(event.Data, &reached) == nil && reached, nil
+	return false, nil
 }
 
 func mpvFileErrorIsAuthorizationFailure(raw string) bool {

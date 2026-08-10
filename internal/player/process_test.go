@@ -28,43 +28,39 @@ func TestAcceptEventRecordsTerminalAfterPublicEventsClose(t *testing.T) {
 	}
 }
 
-func TestAcceptEventIgnoresIdleEOFUntilLoadedMediaLeavesEOF(t *testing.T) {
+func TestAcceptEventPublishesEOFPropertiesWithoutEndingPlayback(t *testing.T) {
 	t.Parallel()
 
 	session := &Session{
-		events:      make(chan Event, 4),
+		events:      make(chan Event, 2),
 		playbackEnd: make(chan error, 1),
 	}
-	session.acceptEvent(Event{Name: "property-change", Property: "eof-reached", Data: []byte("true")})
-	assertNoPlaybackEnd(t, session.playbackEnd)
-	assertNoPublicEvent(t, session.events)
-	session.acceptEvent(Event{Name: "property-change", Property: "eof-reached", Data: []byte("false")})
-	assertNoPlaybackEnd(t, session.playbackEnd)
-	assertNoPublicEvent(t, session.events)
-
-	session.eventMutex.Lock()
-	session.loadStarted = true
-	session.eventMutex.Unlock()
-	session.acceptEvent(Event{Name: "property-change", Property: "eof-reached", Data: []byte("true")})
-	assertNoPlaybackEnd(t, session.playbackEnd)
-	assertNoPublicEvent(t, session.events)
-
-	session.acceptEvent(Event{Name: "property-change", Property: "eof-reached", Data: []byte("false")})
-	assertNoPlaybackEnd(t, session.playbackEnd)
-	if event := <-session.events; string(event.Data) != "false" {
-		t.Fatalf("armed public EOF event = %s, want false", event.Data)
-	}
-	session.acceptEvent(Event{Name: "property-change", Property: "eof-reached", Data: []byte("true")})
-	select {
-	case err := <-session.playbackEnd:
-		if err != nil {
-			t.Fatalf("playbackEnd error = %v", err)
+	for _, value := range []string{"false", "true"} {
+		session.acceptEvent(Event{Name: "property-change", Property: "eof-reached", Data: []byte(value)})
+		assertNoPlaybackEnd(t, session.playbackEnd)
+		select {
+		case event := <-session.events:
+			if string(event.Data) != value {
+				t.Fatalf("public EOF event = %s, want %s", event.Data, value)
+			}
+		default:
+			t.Fatalf("EOF property %s was not published", value)
 		}
-	default:
-		t.Fatal("post-load EOF did not end playback")
 	}
-	if event := <-session.events; string(event.Data) != "true" {
-		t.Fatalf("terminal public EOF event = %s, want true", event.Data)
+}
+
+func TestAcceptEventRemovesUntrustedPeerTextFromPublicEvents(t *testing.T) {
+	t.Parallel()
+
+	session := &Session{events: make(chan Event, 1), playbackEnd: make(chan error, 1)}
+	session.acceptEvent(Event{
+		Name:      "end-file",
+		Reason:    "error",
+		FileError: "loading http://127.0.0.1:1234/private-token/master.m3u8 failed",
+	})
+	event := <-session.events
+	if event.Reason != "error" || event.FileError != "" {
+		t.Fatalf("public terminal event = %+v, want allowlisted reason without file_error", event)
 	}
 }
 
@@ -73,15 +69,6 @@ func assertNoPlaybackEnd(t *testing.T, playbackEnd <-chan error) {
 	select {
 	case err := <-playbackEnd:
 		t.Fatalf("unexpected playback end: %v", err)
-	default:
-	}
-}
-
-func assertNoPublicEvent(t *testing.T, events <-chan Event) {
-	t.Helper()
-	select {
-	case event := <-events:
-		t.Fatalf("unexpected public event: %+v", event)
 	default:
 	}
 }

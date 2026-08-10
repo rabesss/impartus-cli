@@ -60,8 +60,17 @@ func prepareRuntimeDirectory(optionBase string) (string, bool, error) {
 	}
 	directory := filepath.Join(canonicalBase, "impartus")
 	// #nosec G703 -- base was resolved, ownership-checked, symlink-rejected, and mode-checked above.
-	if err := os.Mkdir(directory, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+	created := false
+	if err := os.Mkdir(directory, 0o700); err == nil { // #nosec G703 -- directory is beneath the validated private runtime base.
+		created = true
+	} else if !errors.Is(err, os.ErrExist) {
 		return "", false, fmt.Errorf("create Impartus runtime directory: %w", err)
+	}
+	if created {
+		// #nosec G302,G703 -- this directory was created above beneath the validated base and requires mode 0700.
+		if err := os.Chmod(directory, 0o700); err != nil {
+			return "", false, errors.Join(fmt.Errorf("secure Impartus runtime directory: %w", err), removeRuntimePath(directory))
+		}
 	}
 	// The XDG child is shared by concurrent sessions; keep the empty 0700
 	// directory and remove only each session's socket.

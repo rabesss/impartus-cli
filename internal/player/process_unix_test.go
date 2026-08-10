@@ -93,6 +93,28 @@ func TestReserveRuntimeRejectsUnsafePaths(t *testing.T) {
 	})
 }
 
+func TestPrepareRuntimeDirectorySecuresNewXDGChildUnderRestrictiveUmask(t *testing.T) {
+	const helperEnv = "IMPARTUS_TEST_RESTRICTIVE_RUNTIME_UMASK"
+	if os.Getenv(helperEnv) == "1" {
+		syscall.Umask(0o277)
+		if _, _, err := prepareRuntimeDirectory(os.Getenv("IMPARTUS_TEST_RUNTIME_BASE")); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
+	base := t.TempDir()
+	if err := os.Chmod(base, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestPrepareRuntimeDirectorySecuresNewXDGChildUnderRestrictiveUmask$")
+	command.Env = append(os.Environ(), helperEnv+"=1", "IMPARTUS_TEST_RUNTIME_BASE="+base)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("restrictive-umask helper failed: %v\n%s", err, output)
+	}
+}
+
 func TestGeneratedRuntimePathFitsTypicalMacOSTempDirectory(t *testing.T) {
 	typicalBase := filepath.Join("/private/var/folders/zz", strings.Repeat("a", 30), "T")
 	socketName, err := privateSocketName("")
@@ -382,7 +404,7 @@ func TestPlaybackEndResultClassifiesLifecycleEvents(t *testing.T) {
 		{name: "error", event: Event{Name: "end-file", Reason: "error"}, ended: true, errorText: "playback failed"},
 		{name: "authorization error", event: Event{Name: "end-file", Reason: "error", FileError: "HTTP error 401"}, ended: true, errorText: "upstream authorization failed"},
 		{name: "unexpected", event: Event{Name: "end-file", Reason: "unknown"}, ended: true, errorText: "ended unexpectedly"},
-		{name: "eof reached", event: Event{Name: "property-change", Property: "eof-reached", Data: json.RawMessage("true")}, ended: true},
+		{name: "eof reached", event: Event{Name: "property-change", Property: "eof-reached", Data: json.RawMessage("true")}},
 		{name: "eof not reached", event: Event{Name: "property-change", Property: "eof-reached", Data: json.RawMessage("false")}},
 		{name: "unrelated", event: Event{Name: "property-change", Property: "pause", Data: json.RawMessage("true")}},
 	}
