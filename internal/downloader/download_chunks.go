@@ -55,7 +55,7 @@ func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, i
 		if readErr != nil {
 			return "", nil, 0, fmt.Errorf("chunk request failed with status %d and unreadable error body: %w", resp.StatusCode, readErr)
 		}
-		message := strings.TrimSpace(string(body))
+		message := secrets.Scrub(strings.TrimSpace(string(body)))
 		if message == "" {
 			return "", nil, 0, fmt.Errorf("chunk request failed with status %d for URL %s", resp.StatusCode, secrets.RedactURL(url))
 		}

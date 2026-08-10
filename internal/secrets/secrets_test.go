@@ -81,6 +81,7 @@ func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 		input string
 	}{
 		{name: "authorization header", input: "Authorization: Bearer body-secret"},
+		{name: "auth equals", input: "upstream auth=body-secret failed"},
 		{name: "equals token", input: "upstream token=body-secret failed"},
 		{name: "json token", input: `{"refresh_token":"body-secret"}`},
 		{name: "password colon", input: "password:body-secret"},

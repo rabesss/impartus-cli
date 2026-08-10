@@ -45,8 +45,8 @@ var userinfoRe = regexp.MustCompile(`(?i)(https?://)[^/\s:@]+:[^/\s@]+@`)
 // bodies rather than URLs. A standalone colon-delimited "token" is matched
 // only at the start of a line so parser diagnostics such as
 // "unexpected token: EOF" remain useful.
-const sensitiveAssignmentKey = `(?:authorization|[a-z0-9_-]*(?:token|password|secret)|api[_-]?key)`
-const sensitiveColonAssignmentKey = `(?:authorization|[a-z0-9_-]+token|[a-z0-9_-]*(?:password|secret)|api[_-]?key)`
+const sensitiveAssignmentKey = `(?:authorization|auth|[a-z0-9_-]*(?:token|password|secret)|api[_-]?key)`
+const sensitiveColonAssignmentKey = `(?:authorization|auth|[a-z0-9_-]+token|[a-z0-9_-]*(?:password|secret)|api[_-]?key)`
 
 var authorizationValue = regexp.MustCompile(`(?i)(\bauthorization\s*[:=]\s*)[^,;\r\n]+`)
 var quotedSecretValue = regexp.MustCompile(

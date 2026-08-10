@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/rabesss/impartus-cli/internal/client"
@@ -114,6 +115,28 @@ func TestDownloadURLWithLimitRemovesInterruptedPartial(t *testing.T) {
 		t.Fatalf("failed download returned path=%q data=%v written=%d", path, data, written)
 	}
 	assertNoChunkPartial(t, tempDir)
+}
+
+func TestDownloadChunkScrubsUpstreamErrorBodyAtSource(t *testing.T) {
+	t.Parallel()
+
+	const secret = "body-secret-value"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "auth="+secret, http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	d := testLimitDownloader(t.TempDir(), client.New(server.Client(), nil))
+	path, data, written, err := d.doDownloadChunkWithLimit(t.Context(), server.URL+"/chunk.ts", 1, 0, "left", true, 8)
+	if err == nil {
+		t.Fatal("doDownloadChunkWithLimit() error = nil")
+	}
+	if path != "" || data != nil || written != 0 {
+		t.Fatalf("failed download returned path=%q data=%v written=%d", path, data, written)
+	}
+	if strings.Contains(err.Error(), secret) || !strings.Contains(err.Error(), "auth=REDACTED") {
+		t.Fatalf("doDownloadChunkWithLimit() leaked upstream credential: %v", err)
+	}
 }
 
 func testLimitDownloader(tempDir string, apiClient *client.Client) *Downloader {
