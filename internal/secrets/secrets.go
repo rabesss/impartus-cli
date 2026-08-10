@@ -49,11 +49,14 @@ var sensitiveAssignmentKey = buildSensitiveAssignmentKey()
 var quotedSecretValue = regexp.MustCompile(
 	`(?i)(\b` + sensitiveAssignmentKey + `"\s*:\s*")((?:\\.|[^"\\])*)`,
 )
+var schemeSecretAssignment = regexp.MustCompile(
+	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*[:=]\s*)(?:bearer|basic|token|apikey|oauth)\s+[^\s,;}]+`,
+)
 var bareSecretEquals = regexp.MustCompile(
-	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*=\s*)[^,;}\r\n]+`,
+	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*=\s*)[^\s,;}]+`,
 )
 var bareSecretColon = regexp.MustCompile(
-	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*:\s*)[^,;}\r\n]+`,
+	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*:\s*)[^\s,;}]+`,
 )
 
 func buildSensitiveQueryRe() *regexp.Regexp {
@@ -162,6 +165,7 @@ func Scrub(s string) string {
 	}
 	scrubbed := urlTokenRe.ReplaceAllStringFunc(s, RedactURL)
 	scrubbed = quotedSecretValue.ReplaceAllString(scrubbed, "${1}REDACTED")
+	scrubbed = schemeSecretAssignment.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
 	scrubbed = bareSecretEquals.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
 	return bareSecretColon.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
 }

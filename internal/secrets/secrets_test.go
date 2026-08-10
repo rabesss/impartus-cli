@@ -115,6 +115,23 @@ func TestScrub_FreeFormCoverageTracksEverySensitiveQueryKey(t *testing.T) {
 	}
 }
 
+func TestScrub_RedactsMultipleAssignmentsWithoutDiscardingTheirKeys(t *testing.T) {
+	t.Parallel()
+
+	input := "token=secret-value refresh_token=refresh-value auth: Bearer auth-value signature=signed-value"
+	got := Scrub(input)
+	for _, secret := range []string{"secret-value", "refresh-value", "auth-value", "signed-value"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("Scrub(%q) leaked %q: %q", input, secret, got)
+		}
+	}
+	for _, key := range []string{"token=REDACTED", "refresh_token=REDACTED", "auth: REDACTED", "signature=REDACTED"} {
+		if !strings.Contains(got, key) {
+			t.Fatalf("Scrub(%q) lost diagnostic key %q: %q", input, key, got)
+		}
+	}
+}
+
 func TestScrub_PreservesPathDiagnostics(t *testing.T) {
 	t.Parallel()
 
