@@ -62,15 +62,18 @@ func (service *Service) StartLecture(ctx context.Context, lecture client.Lecture
 	if len(playlists) != 1 {
 		return nil, fmt.Errorf("expected one playable lecture, got %d", len(playlists))
 	}
-	playback, err := service.StartPlayback(ctx, playlists[0])
+	startedPlayback, err := service.StartPlayback(ctx, playlists[0])
 	if err != nil {
 		return nil, err
 	}
+	var playback PlaybackSession = startedPlayback
 	if resumeSeconds > 0 {
-		if err := waitForPlaybackReady(ctx, playback); err != nil {
+		readinessEvents, readyErr := waitForPlaybackReady(ctx, playback)
+		if readyErr != nil {
 			closeErr := playback.Close(context.Background())
-			return nil, errors.Join(fmt.Errorf("resume lecture playback: wait for media readiness: %w", err), closeErr)
+			return nil, errors.Join(fmt.Errorf("resume lecture playback: wait for media readiness: %w", readyErr), closeErr)
 		}
+		playback = replayPlaybackEvents(playback, readinessEvents)
 		if err := playback.SeekAbsolute(ctx, resumeSeconds); err != nil {
 			closeErr := playback.Close(context.Background())
 			return nil, errors.Join(fmt.Errorf("resume lecture playback: %w", err), closeErr)
@@ -79,31 +82,73 @@ func (service *Service) StartLecture(ctx context.Context, lecture client.Lecture
 	return playback, nil
 }
 
-func waitForPlaybackReady(ctx context.Context, playback PlaybackSession) error {
+type replayedPlaybackSession struct {
+	PlaybackSession
+	events <-chan player.Event
+	cancel context.CancelFunc
+}
+
+func (session *replayedPlaybackSession) Events() <-chan player.Event { return session.events }
+
+func (session *replayedPlaybackSession) Close(ctx context.Context) error {
+	session.cancel()
+	return session.PlaybackSession.Close(ctx)
+}
+
+func replayPlaybackEvents(playback PlaybackSession, initial []player.Event) PlaybackSession {
+	ctx, cancel := context.WithCancel(context.Background())
+	events := make(chan player.Event, len(initial)+1)
+	for _, event := range initial {
+		events <- event
+	}
+	go func() {
+		defer close(events)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case event, open := <-playback.Events():
+				if !open {
+					return
+				}
+				select {
+				case events <- event:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	return &replayedPlaybackSession{PlaybackSession: playback, events: events, cancel: cancel}
+}
+
+func waitForPlaybackReady(ctx context.Context, playback PlaybackSession) ([]player.Event, error) {
+	observed := make([]player.Event, 0, 4)
 	for {
 		select {
 		case event, open := <-playback.Events():
 			if !open {
 				if waitErr := playback.WaitForEnd(ctx); waitErr != nil {
-					return waitErr
+					return nil, waitErr
 				}
-				return errors.New("playback ended before media became ready")
+				return nil, errors.New("playback ended before media became ready")
 			}
+			observed = append(observed, event)
 			ready, terminal, eventErr := playbackReadiness(event)
 			if eventErr != nil {
-				return eventErr
+				return nil, eventErr
 			}
 			if ready {
-				return nil
+				return observed, nil
 			}
 			if terminal {
 				if waitErr := playback.WaitForEnd(ctx); waitErr != nil {
-					return waitErr
+					return nil, waitErr
 				}
-				return errors.New("playback ended before media became ready")
+				return nil, errors.New("playback ended before media became ready")
 			}
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
 	}
 }

@@ -354,8 +354,14 @@ func TestServiceCatalogHonorsSkipNoAudio(t *testing.T) {
 
 func TestStartLectureResolvesOnePlaylistAndAppliesResume(t *testing.T) {
 	streams := &fakeStreams{playlists: []client.ParsedPlaylist{{ID: 91}}}
-	fakePlayer := &fakeManagedPlayer{events: make(chan player.Event, 1)}
-	fakePlayer.events <- player.Event{Name: "property-change", Property: "duration", Data: []byte("120")}
+	fakePlayer := &fakeManagedPlayer{events: make(chan player.Event, 2)}
+	wantEvents := []player.Event{
+		{Name: "property-change", Property: "volume", Data: []byte("80")},
+		{Name: "property-change", Property: "duration", Data: []byte("120")},
+	}
+	for _, event := range wantEvents {
+		fakePlayer.events <- event
+	}
 	service := newService(&config.Config{}, &fakeCatalog{}, streams, func(context.Context, player.Options) (managedPlayer, error) {
 		return fakePlayer, nil
 	})
@@ -369,6 +375,16 @@ func TestStartLectureResolvesOnePlaylistAndAppliesResume(t *testing.T) {
 	}
 	if len(fakePlayer.seeks) != 0 || !reflect.DeepEqual(fakePlayer.absoluteSeeks, []float64{42.5}) {
 		t.Fatalf("resume relative=%v absolute=%v, want readiness-gated absolute [42.5]", fakePlayer.seeks, fakePlayer.absoluteSeeks)
+	}
+	for _, want := range wantEvents {
+		select {
+		case got := <-playback.Events():
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("replayed event = %+v, want %+v", got, want)
+			}
+		default:
+			t.Fatalf("readiness event %+v was consumed before the caller subscribed", want)
+		}
 	}
 	if closeErr := playback.Close(context.Background()); closeErr != nil {
 		t.Fatalf("Close() error = %v", closeErr)
