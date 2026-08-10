@@ -234,6 +234,44 @@ func TestCompleteJobEnforcesExpectedSHA256(t *testing.T) {
 	}
 }
 
+func TestCompleteJobCanonicalizesIrrelevantVideoAudioFormat(t *testing.T) {
+	store := openTestStore(t)
+	outputPath := filepath.Join(t.TempDir(), "expected.mp4")
+	if err := os.WriteFile(outputPath, validMP4Fixture, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expected := library.ExpectedArtifact{
+		Lecture:    artifact.Lecture{TTID: 54, InstituteID: 1, SubjectID: 2, SessionID: 3},
+		Selection:  artifact.Selection{Views: "left", Quality: "720", AudioFormat: "mp3"},
+		Files:      []library.ExpectedFile{{Path: outputPath, Role: "video", View: "left", Container: "mp4"}},
+		ProducedAt: time.Date(2026, time.August, 9, 10, 0, 0, 0, time.UTC),
+		Producer:   artifact.Producer{Name: "impartus", Version: "test"},
+	}
+	jobID := uuid.NewString()
+	if err := store.CreateJob(context.Background(), library.JobSpec{ID: jobID, Kind: library.JobKindDownload, Expected: expected}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StartJob(context.Background(), jobID); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := artifact.Build(artifact.BuildInput{
+		Lecture:    expected.Lecture,
+		Selection:  expected.Selection,
+		Files:      []artifact.FileSpec{{Path: outputPath, Role: "video", View: "left", Container: "mp4"}},
+		ProducedAt: expected.ProducedAt,
+		Producer:   expected.Producer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Selection.AudioFormat != "" {
+		t.Fatalf("built video manifest audio format = %q, want canonical empty value", manifest.Selection.AudioFormat)
+	}
+	if err := store.CompleteJob(context.Background(), jobID, manifest); err != nil {
+		t.Fatalf("CompleteJob() error = %v", err)
+	}
+}
+
 func TestCompleteJobRejectsPendingLifecycleState(t *testing.T) {
 	store := openTestStore(t)
 	outputPath := filepath.Join(t.TempDir(), "pending.mp4")

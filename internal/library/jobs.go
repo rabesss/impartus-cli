@@ -525,6 +525,9 @@ func normalizeExpectedArtifact(expected ExpectedArtifact) (ExpectedArtifact, str
 	expected.Selection.Views = selection.NormalizeView(expected.Selection.Views)
 	expected.Selection.Quality = strings.ToLower(strings.TrimSpace(expected.Selection.Quality))
 	expected.Selection.AudioFormat = strings.ToLower(strings.TrimSpace(expected.Selection.AudioFormat))
+	if !expected.Selection.AudioOnly {
+		expected.Selection.AudioFormat = ""
+	}
 	artifactID, err := artifact.NewID(artifact.Identity{
 		InstituteID: expected.Lecture.InstituteID,
 		SubjectID:   expected.Lecture.SubjectID,
