@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime"
 	"syscall"
 
 	"github.com/rabesss/impartus-cli/internal/app"
@@ -95,7 +96,7 @@ func parsePlayFlags(args []string) (playFlags, error) {
 	fs.StringVar(&f.views, "views", "", "Views override: left/right/both or first/second/both")
 	fs.BoolVar(&f.skipNoAudio, "skip-no-audio", false, "Skip lectures with no audio track")
 	fs.BoolVar(&f.includeNoAudio, "include-noaudio", false, "Include lectures with no audio track (overrides --skip-no-audio)")
-	fs.StringVar(&f.mpvMode, "mpv-mode", "ipc", "mpv control mode: ipc or legacy")
+	fs.StringVar(&f.mpvMode, "mpv-mode", defaultMPVModeForOS(runtime.GOOS), "mpv control mode: ipc or legacy")
 
 	if err := fs.Parse(args); err != nil {
 		return playFlags{}, err
@@ -110,6 +111,13 @@ func parsePlayFlags(args []string) (playFlags, error) {
 	}
 
 	return f, nil
+}
+
+func defaultMPVModeForOS(goos string) string {
+	if goos == "windows" {
+		return "legacy"
+	}
+	return "ipc"
 }
 
 func validatePlayFlags(f playFlags) error {

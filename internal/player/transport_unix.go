@@ -19,6 +19,7 @@ import (
 // 103 bytes is safe across the Unix platforms supported by Go and leaves room
 // for the terminating NUL in sockaddr_un.
 const maxUnixSocketPathBytes = 103
+const temporaryRuntimePrefix = "i-"
 
 func reserveRuntime(options Options) (*runtimeReservation, error) {
 	directory, removeDir, err := prepareRuntimeDirectory(options.RuntimeBase)
@@ -43,7 +44,7 @@ func prepareRuntimeDirectory(optionBase string) (string, bool, error) {
 		base = strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR"))
 	}
 	if base == "" {
-		created, err := os.MkdirTemp("", "impartus-runtime-")
+		created, err := os.MkdirTemp("", temporaryRuntimePrefix)
 		if err != nil {
 			return "", false, fmt.Errorf("create private mpv runtime directory: %w", err)
 		}
@@ -87,7 +88,7 @@ func privateSocketName(testName string) (string, error) {
 	if _, err := rand.Read(random); err != nil {
 		return "", fmt.Errorf("generate private mpv socket name: %w", err)
 	}
-	return fmt.Sprintf("mpv-%d-%s.sock", os.Getpid(), hex.EncodeToString(random)), nil
+	return fmt.Sprintf("p-%x-%s", os.Getpid(), hex.EncodeToString(random)), nil
 }
 
 func validateReservedSocketPath(socketPath string) error {

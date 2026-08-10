@@ -329,6 +329,21 @@ func TestParsePlayFlags(t *testing.T) {
 	}
 }
 
+func TestDefaultMPVModeForOS(t *testing.T) {
+	for _, test := range []struct {
+		goos string
+		want string
+	}{
+		{goos: "linux", want: "ipc"},
+		{goos: "darwin", want: "ipc"},
+		{goos: "windows", want: "legacy"},
+	} {
+		if got := defaultMPVModeForOS(test.goos); got != test.want {
+			t.Fatalf("defaultMPVModeForOS(%q) = %q, want %q", test.goos, got, test.want)
+		}
+	}
+}
+
 type fakeSequentialPlayer struct {
 	lectures client.Lectures
 	started  []int

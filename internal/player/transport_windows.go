@@ -10,7 +10,7 @@ import (
 )
 
 func reserveRuntime(Options) (*runtimeReservation, error) {
-	return nil, errors.New("supervised mpv JSON IPC is not supported on Windows yet")
+	return nil, errors.New("supervised mpv JSON IPC is not supported on Windows yet; use --mpv-mode legacy")
 }
 
 func configureProcess(*exec.Cmd) {}

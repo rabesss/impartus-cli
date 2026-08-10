@@ -117,7 +117,7 @@ func showHelp(version, date string) {
 	fmt.Println("  --output,-o         Output directory (download only)")
 	fmt.Println("  --skip-no-audio     Skip lectures with no audio track")
 	fmt.Println("  --include-noaudio   Include noaudio lectures (overrides --skip-no-audio)")
-	fmt.Println("  --mpv-mode          Playback mode: ipc (default) or legacy (play only)")
+	fmt.Println("  --mpv-mode          Playback mode: ipc by default, legacy on Windows (play only)")
 	fmt.Println("\nNo command starts interactive download mode (or interactive play mode if 'play' is used without flags).")
 }
 

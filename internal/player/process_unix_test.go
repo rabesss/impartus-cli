@@ -93,6 +93,18 @@ func TestReserveRuntimeRejectsUnsafePaths(t *testing.T) {
 	})
 }
 
+func TestGeneratedRuntimePathFitsTypicalMacOSTempDirectory(t *testing.T) {
+	typicalBase := filepath.Join("/private/var/folders/zz", strings.Repeat("a", 30), "T")
+	socketName, err := privateSocketName("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	socketPath := filepath.Join(typicalBase, temporaryRuntimePrefix+strings.Repeat("0", 10), socketName)
+	if err := validateReservedSocketPath(socketPath); err != nil {
+		t.Fatalf("generated socket path %q (%d bytes) is not portable: %v", socketPath, len([]byte(socketPath)), err)
+	}
+}
+
 func TestStartLoadsCapabilityOnlyOverIPC(t *testing.T) {
 	argvPath := filepath.Join(t.TempDir(), "argv.txt")
 	loadPath := filepath.Join(t.TempDir(), "load.txt")

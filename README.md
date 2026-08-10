@@ -304,7 +304,7 @@ the selection alone.
 | `--start` | | Start lecture index (1-based) | Both |
 | `--end` | | End lecture index (1-based, inclusive) | Both |
 | `--lecture` | `-l` | Specific lecture index (shortcut for start & end) | Play Only |
-| `--mpv-mode` | | `ipc` (supervised default) or explicit compatibility mode `legacy` | Play Only |
+| `--mpv-mode` | | `ipc` (supervised default; `legacy` defaults on Windows) or explicit compatibility mode `legacy` | Play Only |
 | `--quality` | | Quality: `144`, `450`, `720` | Both |
 | `--views` | | Views: `left`, `right`, `both`, `first`, `second` | Both |
 | `--audio-only` | | Audio-only mode | Download Only |
