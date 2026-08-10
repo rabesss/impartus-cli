@@ -235,6 +235,8 @@ func (d *Downloader) downloadPlaylistPipelined(ctx context.Context, playlist cli
 	return downloadedPlaylist, nil
 }
 
+var errPipelineIncomplete = errors.New("pipeline collection incomplete")
+
 func pipelineCancellationError(ctx context.Context, result PipelineResult, totalChunks int) error {
 	// Once every submitted chunk has a terminal result, collection is complete:
 	// preserve that success or a genuine detailed chunk failure even if
@@ -251,7 +253,11 @@ func pipelineCancellationError(ctx context.Context, result PipelineResult, total
 		}
 		return nil
 	}
-	return ctx.Err()
+	collected := len(result.FirstViewChunks) + len(result.SecondViewChunks) + len(result.Failures)
+	return errors.Join(
+		ctx.Err(),
+		fmt.Errorf("%w: collected %d of %d terminal chunk results", errPipelineIncomplete, collected, totalChunks),
+	)
 }
 
 func pipelineFailureError(failures []ChunkFailure) error {

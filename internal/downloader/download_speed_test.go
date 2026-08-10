@@ -221,6 +221,19 @@ func TestPipelineFinalizationCancellationPrecedence(t *testing.T) {
 	}
 }
 
+func TestPipelineFinalizationRejectsIncompleteResultWithoutCancellation(t *testing.T) {
+	t.Parallel()
+
+	err := pipelineCancellationError(
+		t.Context(),
+		PipelineResult{FirstViewChunks: []string{"first-0.ts"}},
+		2,
+	)
+	if !errors.Is(err, errPipelineIncomplete) {
+		t.Fatalf("pipelineCancellationError() = %v, want errPipelineIncomplete", err)
+	}
+}
+
 func TestPipelineFailureErrorPreservesMixedCancellationDiagnostics(t *testing.T) {
 	failures := []ChunkFailure{
 		{ChunkID: 0, View: "first", Detail: "upstream failed"},
