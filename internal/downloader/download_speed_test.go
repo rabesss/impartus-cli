@@ -200,6 +200,8 @@ func TestPipelineFinalizationCancellationPrecedence(t *testing.T) {
 }
 
 func TestDownloadPlaylistPipelineUsesDownloaderRetryLimit(t *testing.T) {
+	const bodySecret = "body-secret-value"
+
 	key := []byte("0123456789abcdef")
 	var chunkRequests atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -208,7 +210,7 @@ func TestDownloadPlaylistPipelineUsesDownloaderRetryLimit(t *testing.T) {
 			return
 		}
 		chunkRequests.Add(1)
-		http.Error(w, "temporary upstream failure", http.StatusServiceUnavailable)
+		http.Error(w, `Authorization: Bearer `+bodySecret+` token=`+bodySecret, http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
 
@@ -239,6 +241,9 @@ func TestDownloadPlaylistPipelineUsesDownloaderRetryLimit(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "must-not-leak") {
 		t.Fatalf("DownloadPlaylist failure detail leaked URL secret: %v", err)
+	}
+	if strings.Contains(err.Error(), bodySecret) || !strings.Contains(err.Error(), "REDACTED") {
+		t.Fatalf("DownloadPlaylist failure detail did not scrub response-body credentials: %v", err)
 	}
 	if got := chunkRequests.Load(); got != 1 {
 		t.Fatalf("chunk requests = %d, want 1 configured attempt", got)

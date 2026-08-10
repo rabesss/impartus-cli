@@ -41,6 +41,25 @@ var sensitiveQueryRe = buildSensitiveQueryRe()
 // URL strings, including those url.Parse cannot interpret.
 var userinfoRe = regexp.MustCompile(`(?i)(https?://)[^/\s:@]+:[^/\s@]+@`)
 
+// These patterns cover credentials embedded in free-form upstream response
+// bodies rather than URLs. A standalone colon-delimited "token" is matched
+// only at the start of a line so parser diagnostics such as
+// "unexpected token: EOF" remain useful.
+const sensitiveAssignmentKey = `(?:authorization|[a-z0-9_-]*(?:token|password|secret)|api[_-]?key)`
+const sensitiveColonAssignmentKey = `(?:authorization|[a-z0-9_-]+token|[a-z0-9_-]*(?:password|secret)|api[_-]?key)`
+
+var authorizationValue = regexp.MustCompile(`(?i)(\bauthorization\s*[:=]\s*)[^,;\r\n]+`)
+var quotedSecretValue = regexp.MustCompile(
+	`(?i)(\b` + sensitiveAssignmentKey + `"\s*:\s*")((?:\\.|[^"\\])*)`,
+)
+var bareSecretEquals = regexp.MustCompile(
+	`(?i)(\b` + sensitiveAssignmentKey + `\s*=\s*)[^\s,;]+`,
+)
+var bareSecretColon = regexp.MustCompile(
+	`(?i)(\b` + sensitiveColonAssignmentKey + `\s*:\s*)[^\s,;]+`,
+)
+var lineTokenColon = regexp.MustCompile(`(?im)(^\s*token\s*:\s*)[^\s,;]+`)
+
 func buildSensitiveQueryRe() *regexp.Regexp {
 	keys := make([]string, 0, len(sensitiveParams))
 	for k := range sensitiveParams {
@@ -128,18 +147,22 @@ func SanitizeError(err error) error {
 	return errors.New(scrubbed)
 }
 
-// Scrub redacts sensitive data from every http(s) URL embedded in free-form
-// text (e.g. an arbitrary error string). It is a defense-in-depth layer for log
-// paths that receive pre-formatted error messages.
+// Scrub redacts sensitive URLs, authorization values, and common secret
+// assignments from free-form text.
 func Scrub(s string) string {
 	if s == "" {
 		return s
 	}
-	return urlTokenRe.ReplaceAllStringFunc(s, RedactURL)
+	scrubbed := urlTokenRe.ReplaceAllStringFunc(s, RedactURL)
+	scrubbed = authorizationValue.ReplaceAllString(scrubbed, "${1}REDACTED")
+	scrubbed = quotedSecretValue.ReplaceAllString(scrubbed, "${1}REDACTED")
+	scrubbed = bareSecretEquals.ReplaceAllString(scrubbed, "${1}REDACTED")
+	scrubbed = bareSecretColon.ReplaceAllString(scrubbed, "${1}REDACTED")
+	return lineTokenColon.ReplaceAllString(scrubbed, "${1}REDACTED")
 }
 
-// ScrubError returns the error's message with any embedded URLs scrubbed. It
-// returns "" for a nil error.
+// ScrubError returns the error's message with embedded credentials scrubbed.
+// It returns "" for a nil error.
 func ScrubError(err error) string {
 	if err == nil {
 		return ""

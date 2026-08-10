@@ -73,6 +73,37 @@ func TestScrubError_StripsEmbeddedURLs(t *testing.T) {
 	}
 }
 
+func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name  string
+		input string
+	}{
+		{name: "authorization header", input: "Authorization: Bearer body-secret"},
+		{name: "equals token", input: "upstream token=body-secret failed"},
+		{name: "json token", input: `{"refresh_token":"body-secret"}`},
+		{name: "password colon", input: "password:body-secret"},
+		{name: "line token colon", input: "token: body-secret"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := Scrub(test.input)
+			if strings.Contains(got, "body-secret") || !strings.Contains(got, "REDACTED") {
+				t.Fatalf("Scrub(%q) = %q", test.input, got)
+			}
+		})
+	}
+}
+
+func TestScrub_PreservesOrdinaryParserDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	const diagnostic = "decode failed: unexpected token: EOF"
+	if got := Scrub(diagnostic); got != diagnostic {
+		t.Fatalf("Scrub(%q) = %q", diagnostic, got)
+	}
+}
+
 // TestSanitizeError_NilSafe ensures the helper tolerates nil.
 func TestSanitizeError_NilSafe(t *testing.T) {
 	if got := SanitizeError(nil); got != nil {
