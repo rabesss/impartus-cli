@@ -248,7 +248,7 @@ func TestHandleSegmentErrorPaths(t *testing.T) {
 	}
 	key := []byte("0123456789abcdef") // 16-byte AES key
 
-	handler := d.handleSegment(playlist, newPlaybackKey(key), "token")
+	handler := d.handleSegment(playlist, newPlaybackKey(key), nil, "token")
 
 	tests := []struct {
 		name       string
@@ -393,6 +393,41 @@ func TestPlayServerSurfacesUpstreamAuthorizationFailure(t *testing.T) {
 	}
 }
 
+func TestPlaybackStreamReportsUpstreamAuthorizationFailure(t *testing.T) {
+	key := []byte("0123456789abcdef")
+	upstream := newPlayTestUpstream(t, key, http.StatusForbidden)
+	defer upstream.Close()
+
+	d := New(&config.Config{Views: "left"}, client.New(nil, nil))
+	stream, err := d.StartPlaybackStream(context.Background(), client.ParsedPlaylist{
+		KeyURL:        upstream.URL + "/key",
+		FirstViewURLs: []string{upstream.URL + "/segment"},
+	})
+	if err != nil {
+		t.Fatalf("StartPlaybackStream() error = %v", err)
+	}
+	defer stream.Cleanup()
+
+	segmentURL := strings.TrimSuffix(stream.URL, "master.m3u8") + "segment/left/0"
+	resp, err := http.Get(segmentURL) //nolint:noctx // test-only local request
+	if err != nil {
+		t.Fatalf("request segment: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusForbidden)
+	}
+
+	select {
+	case failure := <-stream.Failures:
+		if !errors.Is(failure, ErrPlaybackAuthorization) {
+			t.Fatalf("playback failure = %v, want ErrPlaybackAuthorization", failure)
+		}
+	default:
+		t.Fatal("playback stream did not report authorization failure")
+	}
+}
+
 func TestStartPlayServerPreservesKeyFetchCancellation(t *testing.T) {
 	t.Parallel()
 
@@ -459,7 +494,7 @@ func TestHandleSegmentRefusesKeyAfterConcurrentShutdown(t *testing.T) {
 	d := New(&config.Config{Views: "left"}, client.New(nil, nil))
 	key := []byte("0123456789abcdef")
 	keyStore := newPlaybackKey(key)
-	handler := d.handleSegment(client.ParsedPlaylist{FirstViewURLs: []string{upstream.URL}}, keyStore, "token")
+	handler := d.handleSegment(client.ParsedPlaylist{FirstViewURLs: []string{upstream.URL}}, keyStore, nil, "token")
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "http://localhost/token/segment/left/0", nil)
 	done := make(chan struct{})

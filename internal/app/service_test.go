@@ -8,6 +8,7 @@ import (
 
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
+	"github.com/rabesss/impartus-cli/internal/downloader"
 	"github.com/rabesss/impartus-cli/internal/player"
 )
 
@@ -28,15 +29,20 @@ type fakeStreams struct {
 	playlists []client.ParsedPlaylist
 	cleanups  int
 	starts    []int
+	failures  chan error
 }
 
 func (fake *fakeStreams) FetchLecturePlaylists(context.Context, []client.Lecture) ([]client.ParsedPlaylist, error) {
 	return fake.playlists, nil
 }
 
-func (fake *fakeStreams) StartPlayServer(_ context.Context, playlist client.ParsedPlaylist) (string, func(), error) {
+func (fake *fakeStreams) StartPlaybackStream(_ context.Context, playlist client.ParsedPlaylist) (downloader.PlaybackStream, error) {
 	fake.starts = append(fake.starts, playlist.ID)
-	return "http://127.0.0.1:1234/token/master.m3u8", func() { fake.cleanups++ }, nil
+	return downloader.PlaybackStream{
+		URL:      "http://127.0.0.1:1234/token/master.m3u8",
+		Failures: fake.failures,
+		Cleanup:  func() { fake.cleanups++ },
+	}, nil
 }
 
 type fakeManagedPlayer struct {
@@ -177,5 +183,27 @@ func TestServiceClosesPlayerAndProxyWhenPlaybackFails(t *testing.T) {
 	}
 	if streams.cleanups != 1 || fakePlayer.closed != 1 || len(streams.starts) != 1 {
 		t.Fatalf("failed playback leaked resources: proxy=%d player=%d starts=%v", streams.cleanups, fakePlayer.closed, streams.starts)
+	}
+}
+
+func TestPlaybackWaitSurfacesProxyAuthorizationFailure(t *testing.T) {
+	failures := make(chan error, 1)
+	failures <- downloader.ErrPlaybackAuthorization
+	streams := &fakeStreams{failures: failures}
+	fakePlayer := &fakeManagedPlayer{wait: errors.New("mpv playback failed")}
+	service := newService(&config.Config{}, &fakeCatalog{}, streams, func(context.Context, player.Options) (managedPlayer, error) {
+		return fakePlayer, nil
+	})
+
+	playback, err := service.StartPlayback(context.Background(), client.ParsedPlaylist{ID: 1})
+	if err != nil {
+		t.Fatalf("StartPlayback() error = %v", err)
+	}
+	defer func() {
+		closeErr := playback.Close(context.Background())
+		_ = closeErr
+	}()
+	if err := playback.WaitForEnd(context.Background()); !errors.Is(err, downloader.ErrPlaybackAuthorization) {
+		t.Fatalf("WaitForEnd() error = %v, want ErrPlaybackAuthorization", err)
 	}
 }

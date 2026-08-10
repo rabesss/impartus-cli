@@ -13,6 +13,7 @@ import (
 // Playback owns one mpv session and its corresponding loopback stream proxy.
 type Playback struct {
 	player       managedPlayer
+	failures     <-chan error
 	cleanupProxy func()
 	closeOnce    sync.Once
 	closeErr     error
@@ -24,17 +25,17 @@ func (service *Service) StartPlayback(ctx context.Context, playlist client.Parse
 	if service == nil || service.streams == nil || service.startPlayer == nil {
 		return nil, errors.New("application playback service is not configured")
 	}
-	playbackURL, cleanup, err := service.streams.StartPlayServer(ctx, playlist)
+	stream, err := service.streams.StartPlaybackStream(ctx, playlist)
 	if err != nil {
 		return nil, fmt.Errorf("start local playback stream: %w", err)
 	}
 	managed, err := service.startPlayer(ctx, service.playerOptions)
 	if err != nil {
-		cleanup()
+		stream.Cleanup()
 		return nil, fmt.Errorf("start supervised mpv: %w", err)
 	}
-	playback := &Playback{player: managed, cleanupProxy: cleanup}
-	if err := managed.Load(ctx, playbackURL); err != nil {
+	playback := &Playback{player: managed, failures: stream.Failures, cleanupProxy: stream.Cleanup}
+	if err := managed.Load(ctx, stream.URL); err != nil {
 		closeErr := playback.Close(context.Background())
 		return nil, errors.Join(fmt.Errorf("load lecture in mpv: %w", err), closeErr)
 	}
@@ -76,7 +77,27 @@ func (playback *Playback) Events() <-chan player.Event { return playback.player.
 
 // WaitForEnd waits for media completion or player/process failure.
 func (playback *Playback) WaitForEnd(ctx context.Context) error {
-	return playback.player.WaitForEnd(ctx)
+	select {
+	case failure := <-playback.failures:
+		return failure
+	default:
+	}
+
+	playerResult := make(chan error, 1)
+	go func() { playerResult <- playback.player.WaitForEnd(ctx) }()
+	select {
+	case failure := <-playback.failures:
+		return failure
+	case err := <-playerResult:
+		select {
+		case failure := <-playback.failures:
+			return failure
+		default:
+			return err
+		}
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Pause controls playback pause state.

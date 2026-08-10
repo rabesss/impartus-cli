@@ -17,7 +17,7 @@ type catalogClient interface {
 
 type playbackStreams interface {
 	FetchLecturePlaylists(context.Context, []client.Lecture) ([]client.ParsedPlaylist, error)
-	StartPlayServer(context.Context, client.ParsedPlaylist) (string, func(), error)
+	StartPlaybackStream(context.Context, client.ParsedPlaylist) (downloader.PlaybackStream, error)
 }
 
 type managedPlayer interface {
