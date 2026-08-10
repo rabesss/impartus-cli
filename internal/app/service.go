@@ -29,7 +29,6 @@ type lectureDownloads interface {
 }
 
 type artifactLibrary interface {
-	RecordManifest(context.Context, artifact.Manifest) error
 	CreateJob(context.Context, library.JobSpec) error
 	StartJob(context.Context, string) error
 	FailJob(context.Context, string, error) error

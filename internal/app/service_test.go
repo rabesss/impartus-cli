@@ -492,12 +492,6 @@ type fakeArtifactStore struct {
 	completed        []string
 }
 
-func (store *fakeArtifactStore) RecordManifest(ctx context.Context, manifest artifact.Manifest) error {
-	store.recordContextErr = ctx.Err()
-	store.recorded = append(store.recorded, manifest)
-	return store.record
-}
-
 func (store *fakeArtifactStore) CreateJob(_ context.Context, spec library.JobSpec) error {
 	store.created = append(store.created, spec)
 	return nil
@@ -570,7 +564,7 @@ func (store *fakeArtifactStore) GetArtifact(_ context.Context, artifactID string
 	return library.ArtifactRecord{}, library.ErrArtifactNotFound
 }
 
-func TestDownloadLectureBuildsAndRecordsOneArtifact(t *testing.T) {
+func TestDownloadLectureBuildsAndCompletesOneArtifact(t *testing.T) {
 	output := filepath.Join(t.TempDir(), "lecture.mp4")
 	if err := os.WriteFile(output, []byte("media"), 0o600); err != nil {
 		t.Fatalf("write output: %v", err)

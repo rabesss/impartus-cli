@@ -175,8 +175,8 @@ func (service *Service) ResumeLecture(ctx context.Context, lecture client.Lectur
 	return library.PlaybackState{ArtifactID: artifactID}, false, nil
 }
 
-// DownloadLecture downloads, decrypts, and joins exactly one selected lecture,
-// then best-effort commits its completed artifact to the local library.
+// DownloadLecture downloads, decrypts, and joins exactly one selected lecture
+// through a durable local-library job when persistence is available.
 func (service *Service) DownloadLecture(ctx context.Context, lecture client.Lecture) (DownloadResult, error) {
 	if service == nil || service.config == nil || service.downloads == nil {
 		return DownloadResult{}, errors.New("application download service is not configured")
