@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -272,7 +273,21 @@ func waitForConcurrentDatabaseCreation(path string) error {
 }
 
 func sqliteDSN(path string, busyTimeout time.Duration, readOnly bool) string {
-	uri := &url.URL{Scheme: "file", Path: filepath.ToSlash(path)}
+	return sqliteDSNForOS(path, busyTimeout, readOnly, runtime.GOOS)
+}
+
+func sqliteDSNForOS(path string, busyTimeout time.Duration, readOnly bool, targetOS string) string {
+	uriPath := filepath.ToSlash(path)
+	if targetOS == "windows" {
+		// Keep this normalization explicit so the URI contract remains
+		// cross-platform testable. filepath.ToSlash performs the same rewrite
+		// when the binary itself is running on Windows.
+		uriPath = strings.ReplaceAll(uriPath, `\`, "/")
+		if isWindowsDrivePath(uriPath) {
+			uriPath = "/" + uriPath
+		}
+	}
+	uri := &url.URL{Scheme: "file", Path: uriPath}
 	query := url.Values{}
 	mode := "rwc"
 	if readOnly {
@@ -288,6 +303,14 @@ func sqliteDSN(path string, busyTimeout time.Duration, readOnly bool) string {
 	query.Add("_pragma", "synchronous(FULL)")
 	uri.RawQuery = query.Encode()
 	return uri.String()
+}
+
+func isWindowsDrivePath(path string) bool {
+	if len(path) < 3 || path[1] != ':' || path[2] != '/' {
+		return false
+	}
+	letter := path[0]
+	return letter >= 'A' && letter <= 'Z' || letter >= 'a' && letter <= 'z'
 }
 
 // Path returns the absolute database path without opening another connection.
