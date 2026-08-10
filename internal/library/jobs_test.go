@@ -303,7 +303,7 @@ func TestJobFailureAndCancellationAreDurableTerminalStates(t *testing.T) {
 		t.Fatal(err)
 	}
 	secret := "https://example.test/media?token=do-not-store"
-	if err := store.FailJob(context.Background(), failedID, errors.New("download failed: "+secret+" upstream auth=body-secret signature=signed-secret")); err != nil {
+	if err := store.FailJob(context.Background(), failedID, errors.New(`download failed: `+secret+` upstream auth=body-secret signature=signed-secret; Authorization: Digest username="alice", realm="lecture", response="digest-secret"`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.CancelJob(context.Background(), canceledID); err != nil {
@@ -318,7 +318,7 @@ func TestJobFailureAndCancellationAreDurableTerminalStates(t *testing.T) {
 		t.Fatal(err)
 	}
 	if failed.Status != library.JobFailed || strings.Contains(failed.ErrorSummary, "do-not-store") ||
-		strings.Contains(failed.ErrorSummary, "body-secret") || strings.Contains(failed.ErrorSummary, "signed-secret") ||
+		strings.Contains(failed.ErrorSummary, "body-secret") || strings.Contains(failed.ErrorSummary, "signed-secret") || strings.Contains(failed.ErrorSummary, "digest-secret") ||
 		!strings.Contains(failed.ErrorSummary, "REDACTED") {
 		t.Fatalf("failed job = %+v", failed)
 	}
