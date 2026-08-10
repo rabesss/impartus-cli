@@ -73,4 +73,21 @@ func TestExecuteJSONLibraryListAndVerify(t *testing.T) {
 	if !verified.Success || verified.Meta.Command != "library.verify" || len(verified.Data) != 1 || !verified.Data[0].OK || verified.Data[0].Files[0].SHA256 == "" {
 		t.Fatalf("library verify envelope = %+v", verified)
 	}
+
+	os.Args = []string{"impartus", "library", "verify", manifest.ArtifactID, "--hash", "--json"}
+	output, err = captureStdout(t, func() error { return Execute("dev", "") })
+	if err != nil {
+		t.Fatalf("Execute(library verify with trailing flag) error = %v", err)
+	}
+	verified = struct {
+		Success bool                   `json:"success"`
+		Data    []library.Verification `json:"data"`
+		Meta    jsonMeta               `json:"meta"`
+	}{}
+	if err := json.Unmarshal([]byte(output), &verified); err != nil {
+		t.Fatal(err)
+	}
+	if !verified.Success || len(verified.Data) != 1 || !verified.Data[0].OK || verified.Data[0].Files[0].SHA256 == "" {
+		t.Fatalf("library verify trailing-flag envelope = %+v", verified)
+	}
 }

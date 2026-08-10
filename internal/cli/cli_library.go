@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/rabesss/impartus-cli/internal/library"
@@ -87,15 +88,16 @@ func executeLibraryVerify(ctx context.Context, store *library.Store, command str
 	flags := flag.NewFlagSet("library verify", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	withHash := flags.Bool("hash", false, "compute or recheck SHA-256")
-	if err := flags.Parse(args); err != nil {
+	flagArgs, positional := partitionLibraryVerifyArgs(args)
+	if err := flags.Parse(flagArgs); err != nil {
 		return command, nil, err
 	}
-	if flags.NArg() > 1 {
+	if len(positional) > 1 {
 		return command, nil, errors.New("library verify accepts at most one artifact ID")
 	}
 	options := library.VerifyOptions{Hash: *withHash}
-	if flags.NArg() == 1 {
-		verified, err := store.VerifyArtifact(ctx, flags.Arg(0), options)
+	if len(positional) == 1 {
+		verified, err := store.VerifyArtifact(ctx, positional[0], options)
 		if err != nil {
 			return command, nil, err
 		}
@@ -103,6 +105,24 @@ func executeLibraryVerify(ctx context.Context, store *library.Store, command str
 	}
 	verified, err := store.VerifyAll(ctx, options)
 	return command, verified, err
+}
+
+func partitionLibraryVerifyArgs(args []string) ([]string, []string) {
+	flagArgs := make([]string, 0, len(args))
+	positional := make([]string, 0, 1)
+	literal := false
+	for _, argument := range args {
+		if !literal && argument == "--" {
+			literal = true
+			continue
+		}
+		if !literal && strings.HasPrefix(argument, "-") {
+			flagArgs = append(flagArgs, argument)
+			continue
+		}
+		positional = append(positional, argument)
+	}
+	return flagArgs, positional
 }
 
 func libraryCommandName(args []string) string {
