@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rabesss/impartus-cli/internal/artifact"
+	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
@@ -580,7 +581,7 @@ func validateExpectedFile(selection artifact.Selection, file ExpectedFile) error
 	if file.View != "left" && file.View != "right" && file.View != "both" {
 		return fmt.Errorf("unsupported expected output view %q", file.View)
 	}
-	if selection.Views != "both" && file.View != selection.Views {
+	if !config.IncludesOutputView(selection.Views, file.View) {
 		return fmt.Errorf("expected output view %q is outside selected views %q", file.View, selection.Views)
 	}
 	if !allowedContainers[file.Container] {
