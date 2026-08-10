@@ -28,6 +28,44 @@ func TestAcceptEventRecordsTerminalAfterPublicEventsClose(t *testing.T) {
 	}
 }
 
+func TestAcceptEventIgnoresIdleEOFUntilLoadedMediaLeavesEOF(t *testing.T) {
+	t.Parallel()
+
+	session := &Session{
+		events:      make(chan Event, 4),
+		playbackEnd: make(chan error, 1),
+	}
+	session.acceptEvent(Event{Name: "property-change", Property: "eof-reached", Data: []byte("true")})
+	assertNoPlaybackEnd(t, session.playbackEnd)
+
+	session.eventMutex.Lock()
+	session.loadStarted = true
+	session.eventMutex.Unlock()
+	session.acceptEvent(Event{Name: "property-change", Property: "eof-reached", Data: []byte("true")})
+	assertNoPlaybackEnd(t, session.playbackEnd)
+
+	session.acceptEvent(Event{Name: "property-change", Property: "eof-reached", Data: []byte("false")})
+	assertNoPlaybackEnd(t, session.playbackEnd)
+	session.acceptEvent(Event{Name: "property-change", Property: "eof-reached", Data: []byte("true")})
+	select {
+	case err := <-session.playbackEnd:
+		if err != nil {
+			t.Fatalf("playbackEnd error = %v", err)
+		}
+	default:
+		t.Fatal("post-load EOF did not end playback")
+	}
+}
+
+func assertNoPlaybackEnd(t *testing.T, playbackEnd <-chan error) {
+	t.Helper()
+	select {
+	case err := <-playbackEnd:
+		t.Fatalf("unexpected playback end: %v", err)
+	default:
+	}
+}
+
 func TestWaitForEndWaitsForInFlightTerminalHandlerAfterDisconnect(t *testing.T) {
 	t.Parallel()
 

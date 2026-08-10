@@ -99,6 +99,8 @@ type Session struct {
 	playbackEnd  chan error
 	eventMutex   sync.Mutex
 	eventsClosed bool
+	loadStarted  bool
+	eofArmed     bool
 
 	waitMutex sync.Mutex
 	waitErr   error
@@ -274,7 +276,15 @@ func (session *Session) Load(ctx context.Context, playbackURL string) error {
 	if !validPlaybackURL(playbackURL) {
 		return errors.New("invalid loopback playback URL")
 	}
+	session.eventMutex.Lock()
+	session.loadStarted = true
+	session.eofArmed = false
+	session.eventMutex.Unlock()
 	if _, err := session.client.Command(ctx, "loadfile", playbackURL, "replace"); err != nil {
+		session.eventMutex.Lock()
+		session.loadStarted = false
+		session.eofArmed = false
+		session.eventMutex.Unlock()
 		return fmt.Errorf("load playback URL through mpv IPC: %w", err)
 	}
 	return nil
@@ -296,7 +306,10 @@ func (session *Session) Events() <-chan Event { return session.events }
 func (session *Session) acceptEvent(event Event) {
 	session.eventMutex.Lock()
 	defer session.eventMutex.Unlock()
-	if ended, endErr := playbackEndResult(event); ended {
+	ended, endErr := session.playbackEventResult(event)
+	if ended {
+		session.loadStarted = false
+		session.eofArmed = false
 		select {
 		case session.playbackEnd <- endErr:
 		default:
@@ -306,6 +319,26 @@ func (session *Session) acceptEvent(event Event) {
 		return
 	}
 	publishNewestEvent(session.events, event)
+}
+
+func (session *Session) playbackEventResult(event Event) (bool, error) {
+	if event.Name != "property-change" || event.Property != "eof-reached" {
+		return playbackEndResult(event)
+	}
+	var reached bool
+	if json.Unmarshal(event.Data, &reached) != nil {
+		return false, nil
+	}
+	if !reached {
+		if session.loadStarted {
+			session.eofArmed = true
+		}
+		return false, nil
+	}
+	if !session.loadStarted || !session.eofArmed {
+		return false, nil
+	}
+	return true, nil
 }
 
 func (session *Session) closeEventsOnDisconnect() {

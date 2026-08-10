@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -230,10 +231,9 @@ func TestParsePlayFlags(t *testing.T) {
 		wantMPVMode   string
 	}{
 		{
-			name:        "empty args gives all defaults",
-			args:        []string{},
-			wantErr:     false,
-			wantMPVMode: "ipc",
+			name:    "empty args gives all defaults",
+			args:    []string{},
+			wantErr: false,
 		},
 		{
 			name:        "-s 1 -S 2 sets subject and session",
@@ -268,7 +268,6 @@ func TestParsePlayFlags(t *testing.T) {
 			name:          "--include-noaudio sets flag",
 			args:          []string{"--include-noaudio"},
 			wantIncludeNA: true,
-			wantMPVMode:   "ipc",
 		},
 		{
 			name:        "--mpv-mode legacy is explicit",
@@ -320,7 +319,7 @@ func TestParsePlayFlags(t *testing.T) {
 			}
 			wantMPVMode := tt.wantMPVMode
 			if wantMPVMode == "" {
-				wantMPVMode = "ipc"
+				wantMPVMode = defaultMPVModeForOS(runtime.GOOS)
 			}
 			if f.mpvMode != wantMPVMode {
 				t.Errorf("mpvMode = %q, want %q", f.mpvMode, wantMPVMode)
