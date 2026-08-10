@@ -90,6 +90,7 @@ func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 		{name: "inline tight auth colon", input: "upstream auth:body-secret failed", secret: "body-secret"},
 		{name: "inline spaced auth colon", input: "upstream auth: body-secret failed", secret: "body-secret"},
 		{name: "inline short auth colon", input: "upstream auth: abc123 failed", secret: "abc123"},
+		{name: "inline short bare token colon", input: "upstream token: z failed", secret: "z"},
 		{name: "inline short token colon", input: "upstream access_token: z failed", secret: "z"},
 		{name: "inline short api key colon", input: "upstream api-key: q failed", secret: "q"},
 		{name: "inline short secret colon", input: "upstream secret: v failed", secret: "v"},
@@ -108,13 +109,22 @@ func TestScrub_PreservesOrdinaryParserDiagnostics(t *testing.T) {
 	t.Parallel()
 
 	for _, diagnostic := range []string{
-		"decode failed: unexpected token: EOF",
 		"open /etc/auth: no such file or directory",
+		"open /etc/token: no such file or directory",
 		"login failed because password: expired",
 	} {
 		if got := Scrub(diagnostic); got != diagnostic {
 			t.Fatalf("Scrub(%q) = %q", diagnostic, got)
 		}
+	}
+}
+
+func TestScrub_RedactsAmbiguousParserTokenValueButPreservesContext(t *testing.T) {
+	t.Parallel()
+
+	const diagnostic = "decode failed: unexpected token: EOF"
+	if got := Scrub(diagnostic); got != "decode failed: unexpected token: REDACTED" {
+		t.Fatalf("Scrub(%q) = %q", diagnostic, got)
 	}
 }
 
