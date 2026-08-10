@@ -2,9 +2,59 @@ package cli
 
 import (
 	"bufio"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/rabesss/impartus-cli/internal/client"
+	"github.com/rabesss/impartus-cli/internal/config"
 )
+
+func TestFilterLecturesInteractiveResolvesMixedInstituteScope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/subjects/67/lectures/8" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(client.Lectures{
+			{InstituteID: 4, TTID: 1, SeqNo: 1, Topic: "Scoped"},
+			{TTID: 2, SeqNo: 2, Topic: "Missing scope"},
+		})
+	}))
+	defer server.Close()
+
+	inputPath := t.TempDir() + "/stdin"
+	if err := os.WriteFile(inputPath, []byte("1\n2\nn\nn\n"), 0o600); err != nil {
+		t.Fatalf("write interactive input: %v", err)
+	}
+	input, err := os.Open(inputPath)
+	if err != nil {
+		t.Fatalf("open interactive input: %v", err)
+	}
+	defer func() { _ = input.Close() }()
+	originalStdin := os.Stdin
+	os.Stdin = input
+	t.Cleanup(func() { os.Stdin = originalStdin })
+
+	cfg := &config.Config{BaseURL: server.URL, Token: "test-token"}
+	course := &client.Course{SubjectID: 67, SessionID: 8}
+	lectures, err := filterLecturesInteractive(context.Background(), cfg, client.New(server.Client(), nil), course)
+	if err != nil {
+		t.Fatalf("filterLecturesInteractive: %v", err)
+	}
+	if len(lectures) != 2 {
+		t.Fatalf("lectures = %d, want 2", len(lectures))
+	}
+	for _, lecture := range lectures {
+		if lecture.InstituteID != 4 || lecture.SubjectID != 67 || lecture.SessionID != 8 {
+			t.Fatalf("lecture scope = institute=%d subject=%d session=%d, want 4/67/8", lecture.InstituteID, lecture.SubjectID, lecture.SessionID)
+		}
+	}
+}
 
 func TestPromptInt(t *testing.T) {
 	tests := []struct {

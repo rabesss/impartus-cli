@@ -32,8 +32,8 @@ func TestResolveDownloadLectureScopeUsesSelectedBatchInstitute(t *testing.T) {
 		{InstituteID: 4, TTID: 1},
 		{InstituteID: 0, TTID: 2},
 	}
-	if err := resolveDownloadLectureScope(context.Background(), &config.Config{}, catalog, lectures, 67, 8); err != nil {
-		t.Fatalf("resolveDownloadLectureScope() error = %v", err)
+	if err := client.ResolveLectureScope(context.Background(), &config.Config{}, catalog, lectures, 67, 8); err != nil {
+		t.Fatalf("ResolveLectureScope() error = %v", err)
 	}
 	if catalog.calls != 0 {
 		t.Fatalf("catalog calls = %d, want 0", catalog.calls)
@@ -52,8 +52,8 @@ func TestResolveDownloadLectureScopeFallsBackToExactCourse(t *testing.T) {
 		{InstituteID: 4, SubjectID: 67, SessionID: 8},
 	}}
 	lectures := client.Lectures{{TTID: 1}, {TTID: 2}}
-	if err := resolveDownloadLectureScope(context.Background(), &config.Config{}, catalog, lectures, 67, 8); err != nil {
-		t.Fatalf("resolveDownloadLectureScope() error = %v", err)
+	if err := client.ResolveLectureScope(context.Background(), &config.Config{}, catalog, lectures, 67, 8); err != nil {
+		t.Fatalf("ResolveLectureScope() error = %v", err)
 	}
 	if catalog.calls != 1 || lectures[0].InstituteID != 4 || lectures[1].InstituteID != 4 {
 		t.Fatalf("catalog calls=%d lectures=%+v", catalog.calls, lectures)
@@ -85,7 +85,7 @@ func TestResolveDownloadLectureScopeRejectsAmbiguousInstitute(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			catalog := &fakeCourseCatalog{courses: test.courses}
-			err := resolveDownloadLectureScope(context.Background(), &config.Config{}, catalog, test.lectures, 67, 8)
+			err := client.ResolveLectureScope(context.Background(), &config.Config{}, catalog, test.lectures, 67, 8)
 			if err == nil || !strings.Contains(err.Error(), "ambiguous institute") {
 				t.Fatalf("resolveDownloadLectureScope() error = %v, want ambiguity", err)
 			}
@@ -95,7 +95,7 @@ func TestResolveDownloadLectureScopeRejectsAmbiguousInstitute(t *testing.T) {
 
 func TestResolveDownloadLectureScopeRejectsMissingInstituteMatch(t *testing.T) {
 	catalog := &fakeCourseCatalog{courses: client.Courses{{InstituteID: 4, SubjectID: 1, SessionID: 2}}}
-	err := resolveDownloadLectureScope(context.Background(), &config.Config{}, catalog, client.Lectures{{TTID: 1}}, 67, 8)
+	err := client.ResolveLectureScope(context.Background(), &config.Config{}, catalog, client.Lectures{{TTID: 1}}, 67, 8)
 	if err == nil || !strings.Contains(err.Error(), "cannot resolve institute scope") {
 		t.Fatalf("resolveDownloadLectureScope() error = %v, want missing-scope failure", err)
 	}
@@ -104,7 +104,7 @@ func TestResolveDownloadLectureScopeRejectsMissingInstituteMatch(t *testing.T) {
 func TestResolveDownloadLectureScopePreservesCatalogFailure(t *testing.T) {
 	sentinel := errors.New("catalog unavailable")
 	catalog := &fakeCourseCatalog{err: sentinel}
-	err := resolveDownloadLectureScope(context.Background(), &config.Config{}, catalog, client.Lectures{{TTID: 1}}, 67, 8)
+	err := client.ResolveLectureScope(context.Background(), &config.Config{}, catalog, client.Lectures{{TTID: 1}}, 67, 8)
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("resolveDownloadLectureScope() error = %v, want wrapped sentinel", err)
 	}
