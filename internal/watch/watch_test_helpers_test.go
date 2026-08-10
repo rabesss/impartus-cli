@@ -170,7 +170,7 @@ func (producer *fakeProducer) DownloadAndJoinPlaylist(ctx context.Context, playl
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return downloader.JoinResult{}, err
 		}
-		if err := os.WriteFile(path, []byte("completed media"), 0o600); err != nil {
+		if err := os.WriteFile(path, []byte("ID3completed media"), 0o600); err != nil {
 			return downloader.JoinResult{}, err
 		}
 	}
