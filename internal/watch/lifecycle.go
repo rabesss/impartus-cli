@@ -22,7 +22,7 @@ func (watcher *Watcher) recover(ctx context.Context) (library.RecoveryResult, er
 		return library.RecoveryResult{}, nil
 	}
 	if watcher.options.StartupRecovery == nil {
-		recovery, err := watcher.store.RecoverInterruptedJobs(context.WithoutCancel(ctx))
+		recovery, err := watcher.store.RecoverInterruptedJobs(context.WithoutCancel(ctx), library.JobKindWatch)
 		return cloneRecoveryResult(recovery), durableStateError("recover interrupted watch jobs", err)
 	}
 	return cloneRecoveryResult(*watcher.options.StartupRecovery), nil

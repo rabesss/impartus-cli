@@ -50,7 +50,7 @@ type Producer interface {
 
 // JobStore is the durable artifact and local-job boundary used by the watcher.
 type JobStore interface {
-	RecoverInterruptedJobs(context.Context) (library.RecoveryResult, error)
+	RecoverInterruptedJobs(context.Context, string) (library.RecoveryResult, error)
 	ListJobs(context.Context) ([]library.Job, error)
 	CreateJob(context.Context, library.JobSpec) error
 	StartJob(context.Context, string) error

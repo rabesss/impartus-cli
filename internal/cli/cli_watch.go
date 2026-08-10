@@ -88,7 +88,7 @@ func defaultWatchExecutionDependencies() watchExecutionDependencies {
 		},
 		openLibrary: library.Open,
 		recoverJobs: func(ctx context.Context, store *library.Store) (library.RecoveryResult, error) {
-			return store.RecoverInterruptedJobs(ctx)
+			return store.RecoverInterruptedJobs(ctx, library.JobKindWatch)
 		},
 		ensureFFmpeg: ensureFFmpeg,
 		login:        newLoggedInFn,
