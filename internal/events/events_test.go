@@ -195,6 +195,10 @@ func TestRedactErrorCoversAnyAuthorizationScheme(t *testing.T) {
 		"Authorization: Token secret-value",
 		"authorization: ApiKey secret-value",
 		"Authorization: OAuth secret-value",
+		`Authorization: Digest username="alice", realm="lecture", response="secret-value"`,
+		"Authorization: Negotiate secret-value",
+		"authorization=AWS4-HMAC-SHA256 Credential=secret-value SignedHeaders=host",
+		"Authorization: Custom secret-value",
 	} {
 		got := RedactError(errors.New(input))
 		if strings.Contains(got, "secret-value") || !strings.Contains(got, "REDACTED") {

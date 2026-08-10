@@ -226,7 +226,7 @@ func TestWatchEventsRedactReturnedLoginFailure(t *testing.T) {
 		},
 		ensureFFmpeg: func() error { return nil },
 		login: func(context.Context, *config.Config) (*client.Client, error) {
-			return nil, errors.New("Authorization: Token secret-value")
+			return nil, errors.New("Authorization: Negotiate secret-value")
 		},
 		now: func() time.Time { return time.Unix(1, 0).UTC() },
 	}

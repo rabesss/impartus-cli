@@ -545,7 +545,7 @@ func TestWatcherRedactsLectureFailureDetails(t *testing.T) {
 	source := &fakeSource{lectures: map[[2]int]client.Lectures{{target.SubjectID, target.SessionID}: {lecture}}, errors: map[[2]int]error{}}
 	producer := &fakeProducer{
 		cfg: cfg, downloadErrors: map[int]error{},
-		fetchErrors: map[int]error{lecture.TTID: errors.New("Authorization: Token abc token=secret-value")},
+		fetchErrors: map[int]error{lecture.TTID: errors.New(`Authorization: Digest username="alice", realm="lecture", response="digest-secret"; token=secret-value`)},
 	}
 	var output bytes.Buffer
 
@@ -553,7 +553,7 @@ func TestWatcherRedactsLectureFailureDetails(t *testing.T) {
 	if err == nil {
 		t.Fatal("Run() error = nil")
 	}
-	if strings.Contains(err.Error(), "Token abc") || strings.Contains(err.Error(), "secret-value") {
+	if strings.Contains(err.Error(), "digest-secret") || strings.Contains(err.Error(), "secret-value") {
 		t.Fatalf("Run() returned a secret-bearing error: %v", err)
 	}
 	for _, event := range decodeEvents(t, output.String()) {
@@ -561,7 +561,7 @@ func TestWatcherRedactsLectureFailureDetails(t *testing.T) {
 			continue
 		}
 		encoded := fmt.Sprint(event.Details)
-		if strings.Contains(encoded, "Bearer abc") || strings.Contains(encoded, "secret-value") {
+		if strings.Contains(encoded, "digest-secret") || strings.Contains(encoded, "secret-value") {
 			t.Fatalf("lecture.failed leaked secret: %s", encoded)
 		}
 		if !strings.Contains(encoded, "REDACTED") {
