@@ -349,21 +349,21 @@ func (watcher *Watcher) inspectAndProcess(ctx context.Context, target config.Wat
 		return lectureOutcome{}, skipErr
 	}
 	outcome := lectureOutcome{New: 1}
-	if !watcher.options.DryRun && !withinBudget {
+	if !withinBudget {
 		outcome.Skipped = 1
 		return outcome, nil
 	}
+	outcome.Attempted = true
 	lecture, playlist, expected, resolvedArtifactID, resolveErr := watcher.resolveLecture(ctx, target, lecture)
 	if resolveErr != nil {
-		return lectureOutcome{}, watcher.lectureFailure(target, lecture, "", resolveErr)
+		return outcome, watcher.lectureFailure(target, lecture, "", resolveErr)
 	}
 	if resolvedArtifactID != artifactID {
-		return lectureOutcome{}, watcher.lectureFailure(target, lecture, "", errors.New("resolved playlist changed lecture artifact identity"))
+		return outcome, watcher.lectureFailure(target, lecture, "", errors.New("resolved playlist changed lecture artifact identity"))
 	}
 	if watcher.options.DryRun {
 		return outcome, nil
 	}
-	outcome.Attempted = true
 	manifest, downloadErr := watcher.downloadLecture(ctx, target, lecture, playlist, expected, artifactID)
 	if manifest.ArtifactID != "" {
 		outcome.Downloaded = 1
