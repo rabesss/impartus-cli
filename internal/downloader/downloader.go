@@ -226,11 +226,12 @@ func (d *Downloader) downloadPlaylistPipelined(ctx context.Context, playlist cli
 	if submitErr != nil {
 		return downloadedPlaylist, submitErr
 	}
-	if len(result.FailedChunks) > 0 {
-		if len(result.FailureDetails) > 0 {
-			return downloadedPlaylist, fmt.Errorf("%d chunks failed to download: %s", len(result.FailedChunks), strings.Join(result.FailureDetails, "; "))
+	if len(result.Failures) > 0 {
+		details := make([]string, 0, len(result.Failures))
+		for _, failure := range result.Failures {
+			details = append(details, fmt.Sprintf("%s view chunk %d: %s", failure.View, failure.ChunkID, failure.Detail))
 		}
-		return downloadedPlaylist, fmt.Errorf("%d chunks failed to download: %v", len(result.FailedChunks), result.FailedChunks)
+		return downloadedPlaylist, fmt.Errorf("%d chunks failed to download: %s", len(result.Failures), strings.Join(details, "; "))
 	}
 	downloadedPlaylist.FirstViewChunks = result.FirstViewChunks
 	downloadedPlaylist.SecondViewChunks = result.SecondViewChunks
@@ -241,7 +242,7 @@ func pipelineCancellationError(ctx context.Context, result PipelineResult, total
 	// Once every submitted chunk has a terminal result, collection is complete:
 	// preserve that success or detailed chunk failure even if cancellation races
 	// with finalization. Cancellation wins only when collection stopped early.
-	if len(result.FirstViewChunks)+len(result.SecondViewChunks)+len(result.FailedChunks) == totalChunks {
+	if len(result.FirstViewChunks)+len(result.SecondViewChunks)+len(result.Failures) == totalChunks {
 		return nil
 	}
 	return ctx.Err()

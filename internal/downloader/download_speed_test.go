@@ -183,8 +183,7 @@ func TestPipelineFinalizationCancellationPrecedence(t *testing.T) {
 			name: "complete failure set keeps detailed pipeline error precedence",
 			result: PipelineResult{
 				FirstViewChunks: []string{"first-0.ts"},
-				FailedChunks:    []int{1},
-				FailureDetails:  []string{"first view chunk 1: upstream failed"},
+				Failures:        []ChunkFailure{{ChunkID: 1, View: "first", Detail: "upstream failed"}},
 			},
 			totalChunks: 2,
 		},
@@ -243,6 +242,49 @@ func TestDownloadPlaylistPipelineUsesDownloaderRetryLimit(t *testing.T) {
 	}
 	if got := chunkRequests.Load(); got != 1 {
 		t.Fatalf("chunk requests = %d, want 1 configured attempt", got)
+	}
+}
+
+func TestDownloadPlaylistPipelineOrdersFailureDetailsByChunkNumber(t *testing.T) {
+	const chunkCount = 11
+
+	key := []byte("0123456789abcdef")
+	encryptedChunks := downloadSpeedEncryptedChunks(t, key, chunkCount)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/key" {
+			writeDownloadSpeedResponse(w, fakeKeyResponse(key))
+			return
+		}
+		view, index, ok := parseBenchmarkChunkPath(r.URL.Path)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		if index == 2 || index == 10 {
+			http.Error(w, "upstream failed", http.StatusServiceUnavailable)
+			return
+		}
+		writeDownloadSpeedResponse(w, encryptedChunks[fmt.Sprintf("%s/%d", view, index)])
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Token: "test-token", TempDirLocation: t.TempDir(), Views: "left", EnablePipeline: true,
+		DownloadWorkersPerLecture: 3, DecryptWorkersPerLecture: 2, RateLimit: 100, APIRateLimit: 20,
+	}
+	d := New(cfg, client.New(server.Client(), nil))
+	d.maxRetries = 1
+	playlist := downloadSpeedPlaylist(server.URL, chunkCount)
+	playlist.SecondViewURLs = nil
+
+	_, err := d.DownloadPlaylist(t.Context(), playlist, nil, nil)
+	if err == nil {
+		t.Fatal("DownloadPlaylist returned nil error")
+	}
+	message := err.Error()
+	chunk2, chunk10 := strings.Index(message, "chunk 2:"), strings.Index(message, "chunk 10:")
+	if chunk2 < 0 || chunk10 < 0 || chunk2 > chunk10 {
+		t.Fatalf("DownloadPlaylist failure order = %q, want chunk 2 before chunk 10", message)
 	}
 }
 
@@ -372,6 +414,21 @@ func BenchmarkDownloadPlaylistLatency(b *testing.B) {
 
 func loadDownloadSpeedConfig(t *testing.T, serverURL, tempDir string) *config.Config {
 	t.Helper()
+	previousPipeline, pipelineWasSet := os.LookupEnv("IMPARTUS_ENABLE_PIPELINE")
+	if err := os.Unsetenv("IMPARTUS_ENABLE_PIPELINE"); err != nil {
+		t.Fatalf("Unsetenv IMPARTUS_ENABLE_PIPELINE: %v", err)
+	}
+	t.Cleanup(func() {
+		if pipelineWasSet {
+			if err := os.Setenv("IMPARTUS_ENABLE_PIPELINE", previousPipeline); err != nil {
+				t.Errorf("restore IMPARTUS_ENABLE_PIPELINE: %v", err)
+			}
+			return
+		}
+		if err := os.Unsetenv("IMPARTUS_ENABLE_PIPELINE"); err != nil {
+			t.Errorf("clear IMPARTUS_ENABLE_PIPELINE: %v", err)
+		}
+	})
 	body := map[string]any{
 		"username":                  "user",
 		"password":                  "pass",
