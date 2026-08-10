@@ -3,6 +3,8 @@ package cli
 import (
 	"encoding/json"
 	"os"
+
+	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
 type jsonEnvelope struct {
@@ -84,7 +86,7 @@ func newErrorEnvelope(command string, err error) jsonEnvelope {
 	return jsonEnvelope{
 		Success: false,
 		Data:    nil,
-		Error:   &jsonErr{Message: err.Error()},
+		Error:   &jsonErr{Message: secrets.ScrubError(err)},
 		Meta: jsonMeta{
 			Command: command,
 			Mode:    "json",

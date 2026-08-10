@@ -606,6 +606,29 @@ func TestJSONDownloadFailureStreamSuppressesDownloaderLogs(t *testing.T) {
 	}
 }
 
+func TestHumanDownloadRedactsReturnedCredentialErrors(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("Proxy-Authorization: Custom proof=proxy-secret\nauth: Digest response=auth-secret\nX-Api-Key: api-secret")
+	err := runDownloadWithDependencies([]string{"-s", "1", "-S", "2"}, downloadExecutionDependencies{
+		ensureFFmpeg: func() error { return nil },
+		initClient: func(context.Context) (*config.Config, *client.Client, error) {
+			return nil, nil, sentinel
+		},
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("runDownloadWithDependencies() lost error identity: %v", err)
+	}
+	for _, secret := range []string{"proxy-secret", "auth-secret", "api-secret"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("human download error leaked %q: %v", secret, err)
+		}
+	}
+	if !strings.Contains(err.Error(), "REDACTED") {
+		t.Fatalf("human download error omitted redaction marker: %v", err)
+	}
+}
+
 func TestConcurrentJSONAndHumanDownloadDiagnosticsStayIsolated(t *testing.T) {
 	restoreCLIState(t)
 	reachedFailure := make(chan struct{}, 2)

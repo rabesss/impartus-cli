@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/rabesss/impartus-cli/internal/selection"
 )
 
 // WatchTarget identifies one Impartus course to poll. It deliberately carries
@@ -77,13 +79,13 @@ func (c *Config) validateWatch() error {
 	if c.Watch.MaxRetries < 1 {
 		return errorsWatch("maxRetries", "must be >= 1")
 	}
-	if !OneOf(c.Watch.Quality, "144", "450", "720") {
+	if !selection.ValidQuality(c.Watch.Quality) {
 		return errorsWatch("quality", "must be one of: 144, 450, 720")
 	}
-	if !OneOf(c.Watch.Views, "left", "right", "both") {
+	if _, ok := selection.ParseView(c.Watch.Views); !ok {
 		return errorsWatch("views", "must be one of: left, right, both")
 	}
-	if !OneOf(c.Watch.AudioFormat, "mp3", "m4a", "aac", "opus") {
+	if !selection.ValidAudioFormat(c.Watch.AudioFormat) {
 		return errorsWatch("audioFormat", "must be one of: mp3, m4a, aac, opus")
 	}
 	if len(c.Watch.Targets) == 0 {

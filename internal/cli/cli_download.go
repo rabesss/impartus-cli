@@ -82,24 +82,31 @@ func defaultDownloadExecutionDependencies() downloadExecutionDependencies {
 }
 
 func runDownload(args []string) error {
+	return runDownloadWithDependencies(args, defaultDownloadExecutionDependencies())
+}
+
+func runDownloadWithDependencies(args []string, deps downloadExecutionDependencies) error {
 	if requestedEvents(args) {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		err := runDownloadEventsWithDependenciesContext(ctx, args, os.Stdout, defaultDownloadExecutionDependencies(), time.Now, "")
+		err := runDownloadEventsWithDependenciesContext(ctx, args, os.Stdout, deps, time.Now, "")
 		return downloadCommandError(err)
 	}
-	_, err := executeDownload(args, humanDownloadPresentation())
-	return err
+	_, err := executeDownloadWithDependencies(args, humanDownloadPresentation(), deps)
+	return downloadCommandError(err)
 }
 
 func downloadCommandError(err error) error {
+	if err == nil {
+		return nil
+	}
 	if errors.Is(err, errDownloadEventDelivery) || errors.Is(err, errDownloadLibraryCommit) {
-		return err
+		return events.RedactedError(err)
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return &exitCodeError{code: 130, err: err}
+		return &exitCodeError{code: 130, err: events.RedactedError(err)}
 	}
-	return err
+	return events.RedactedError(err)
 }
 
 func runDownloadJSON(args []string) (downloadResult, error) {
@@ -111,10 +118,6 @@ func runDownloadJSONWithDependencies(args []string, deps downloadExecutionDepend
 		return downloadResult{}, errors.New("cannot combine --json and --events")
 	}
 	return executeDownloadWithDependencies(args, quietDownloadPresentation(), deps)
-}
-
-func executeDownload(args []string, presentation downloadPresentationOptions) (downloadResult, error) {
-	return executeDownloadWithDependencies(args, presentation, defaultDownloadExecutionDependencies())
 }
 
 func executeDownloadWithDependencies(args []string, presentation downloadPresentationOptions, deps downloadExecutionDependencies) (downloadResult, error) {

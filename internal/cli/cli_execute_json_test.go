@@ -327,6 +327,26 @@ func TestExecuteJSONDownloadIncludesLibraryWarningInMeta(t *testing.T) {
 	}
 }
 
+func TestExecuteJSONDownloadRedactsCredentialErrors(t *testing.T) {
+	restoreCLIState(t)
+	runDownloadJSONFn = func([]string) (downloadResult, error) {
+		return downloadResult{}, errors.New("Proxy-Authorization: Custom proof=proxy-secret\nauth: Digest response=auth-secret\nX-Api-Key: api-secret")
+	}
+
+	err := executeJSONDownload(nil)
+	if err == nil {
+		t.Fatal("executeJSONDownload() error = nil")
+	}
+	for _, secret := range []string{"proxy-secret", "auth-secret", "api-secret"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("JSON download envelope leaked %q: %v", secret, err)
+		}
+	}
+	if !strings.Contains(err.Error(), "REDACTED") {
+		t.Fatalf("JSON download envelope omitted redaction marker: %v", err)
+	}
+}
+
 func TestExecuteJSONPlayRejects(t *testing.T) {
 	restoreCLIState(t)
 	os.Args = []string{"impartus", "play", "--json"}
