@@ -90,6 +90,33 @@ func TestCollectDoctorReportFailsUnsafeConfigAndMissingDependency(t *testing.T) 
 	}
 }
 
+func TestDoctorPermissionPolicyDefersToWindowsACLs(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	filePath := filepath.Join(root, "credentials.json")
+	if err := os.WriteFile(filePath, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileDetail, err := validateDoctorPrivateFilePermissions("windows", filePath, "contains credentials", fileInfo)
+	if err != nil || !strings.Contains(fileDetail, "Windows ACLs") {
+		t.Fatalf("Windows file policy = (%q, %v), want ACL-managed pass", fileDetail, err)
+	}
+
+	directoryInfo, err := os.Stat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directoryDetail, err := validateDoctorPrivateDirectoryPermissions("windows", root, directoryInfo)
+	if err != nil || !strings.Contains(directoryDetail, "Windows ACLs") {
+		t.Fatalf("Windows directory policy = (%q, %v), want ACL-managed pass", directoryDetail, err)
+	}
+}
+
 func TestCollectDoctorReportAllowsMissingConfig(t *testing.T) {
 	root := t.TempDir()
 	report := collectDoctorReport(doctorOptions{
