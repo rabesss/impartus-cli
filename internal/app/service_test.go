@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
@@ -46,10 +47,12 @@ func (fake *fakeStreams) StartPlaybackStream(_ context.Context, playlist client.
 }
 
 type fakeManagedPlayer struct {
-	loaded []string
-	load   error
-	wait   error
-	closed int
+	loaded      []string
+	load        error
+	wait        error
+	waitStarted chan struct{}
+	waitRelease <-chan struct{}
+	closed      int
 }
 
 func (fake *fakeManagedPlayer) Load(_ context.Context, playbackURL string) error {
@@ -128,6 +131,37 @@ func TestPlaybackCancellationResultPreservesReadyFailures(t *testing.T) {
 	}
 }
 
+func TestPlaybackWaitForEndDrainsInFlightPlayerFailureAfterCancellation(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sentinel := errors.New("player failed during cancellation")
+	started := make(chan struct{})
+	release := make(chan struct{})
+	fakePlayer := &fakeManagedPlayer{
+		wait:        sentinel,
+		waitStarted: started,
+		waitRelease: release,
+	}
+	playback := &Playback{player: fakePlayer}
+	result := make(chan error, 1)
+	go func() { result <- playback.WaitForEnd(ctx) }()
+
+	<-started
+	cancel()
+	select {
+	case err := <-result:
+		t.Fatalf("WaitForEnd() returned before the in-flight player result: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	if err := <-result; !errors.Is(err, sentinel) {
+		t.Fatalf("WaitForEnd() error = %v, want player failure", err)
+	}
+}
+
 func TestServicePassesExplicitPlayerOptions(t *testing.T) {
 	streams := &fakeStreams{playlists: []client.ParsedPlaylist{{ID: 1}}}
 	fakePlayer := &fakeManagedPlayer{}
@@ -166,7 +200,15 @@ func TestServiceCleansPlayerAndProxyWhenLoadFails(t *testing.T) {
 	}
 }
 
-func (fake *fakeManagedPlayer) WaitForEnd(context.Context) error { return fake.wait }
+func (fake *fakeManagedPlayer) WaitForEnd(context.Context) error {
+	if fake.waitStarted != nil {
+		close(fake.waitStarted)
+	}
+	if fake.waitRelease != nil {
+		<-fake.waitRelease
+	}
+	return fake.wait
+}
 func (fake *fakeManagedPlayer) Close(context.Context) error {
 	fake.closed++
 	return nil

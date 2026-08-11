@@ -101,18 +101,26 @@ func (playback *Playback) WaitForEnd(ctx context.Context) error {
 }
 
 func playbackCancellationResult(ctx context.Context, failures <-chan error, playerResult <-chan error) error {
-	select {
-	case failure := <-failures:
-		if failure != nil {
-			return failure
+	for {
+		select {
+		case failure, ok := <-failures:
+			if !ok {
+				failures = nil
+				continue
+			}
+			if failure != nil {
+				return failure
+			}
+		case err := <-playerResult:
+			select {
+			case failure, ok := <-failures:
+				if ok && failure != nil {
+					return failure
+				}
+			default:
+			}
+			return playbackWaitResult(ctx, err)
 		}
-	default:
-	}
-	select {
-	case err := <-playerResult:
-		return playbackWaitResult(ctx, err)
-	default:
-		return ctx.Err()
 	}
 }
 
