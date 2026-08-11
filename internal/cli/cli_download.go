@@ -315,6 +315,12 @@ func completeLectureDownloads(
 		// server job runner uses) so per-lecture download+join logic has one home.
 		joinResult, err := d.DownloadAndJoinPlaylist(ctx, playlist, progress, tracker)
 		if err != nil {
+			if errors.Is(err, downloader.ErrNoSelectedMedia) {
+				if tracker != nil {
+					downloader.LectureCompleted(tracker)
+				}
+				continue
+			}
 			return nil, nil, 0, fmt.Errorf(
 				"download and join lecture institute=%d subject=%d session=%d ttid=%d: %w",
 				key.instituteID,
@@ -326,7 +332,13 @@ func completeLectureDownloads(
 		}
 		paths := joinResult.OutputPaths()
 		if len(paths) == 0 {
-			continue
+			return nil, nil, 0, fmt.Errorf(
+				"download and join lecture institute=%d subject=%d session=%d ttid=%d returned no outputs",
+				key.instituteID,
+				key.subjectID,
+				key.sessionID,
+				key.ttid,
+			)
 		}
 		manifest, err := buildDownloadArtifact(lecture, cfg, joinResult, time.Now().UTC())
 		if err != nil {

@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,23 @@ import (
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 )
+
+func TestDownloadAndJoinPlaylistRejectsMissingSelectedMediaBeforeCreatingWorkspace(t *testing.T) {
+	t.Parallel()
+
+	tempRoot := filepath.Join(t.TempDir(), "not-created")
+	d := &Downloader{config: &config.Config{
+		TempDirLocation: tempRoot,
+		Views:           "left",
+	}}
+	_, err := d.DownloadAndJoinPlaylist(context.Background(), client.ParsedPlaylist{ID: 17}, nil, nil)
+	if !errors.Is(err, ErrNoSelectedMedia) {
+		t.Fatalf("DownloadAndJoinPlaylist() error = %v, want ErrNoSelectedMedia", err)
+	}
+	if _, statErr := os.Stat(tempRoot); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("temporary root stat error = %v, want not-exist", statErr)
+	}
+}
 
 // TestNewDownloaderWithConfigDefaults tests that ApplyDefaults is called
 func TestNewDownloaderWithConfigDefaults(t *testing.T) {

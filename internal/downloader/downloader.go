@@ -3,6 +3,7 @@ package downloader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -19,6 +20,11 @@ import (
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/secrets"
 )
+
+// ErrNoSelectedMedia reports that a playlist has no chunks for the configured
+// camera selection. Callers may skip that lecture while retaining other valid
+// outputs in the same batch.
+var ErrNoSelectedMedia = errors.New("no selected media")
 
 // DownloadedPlaylist holds the result of downloading a complete playlist.
 type DownloadedPlaylist struct {
@@ -237,6 +243,9 @@ func (d *Downloader) downloadPlaylistPipelined(ctx context.Context, playlist cli
 
 // DownloadAndJoinPlaylist downloads a playlist and joins the chunks into final output file(s).
 func (d *Downloader) DownloadAndJoinPlaylist(ctx context.Context, playlist client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) (JoinResult, error) {
+	if d.totalChunksForPlaylist(playlist) == 0 {
+		return JoinResult{}, fmt.Errorf("%w for lecture %d", ErrNoSelectedMedia, playlist.ID)
+	}
 	// Each invocation owns a unique child workspace. The configured base
 	// directory remains caller-owned and may be shared by concurrent downloads.
 	if err := os.MkdirAll(d.config.TempDirLocation, 0o755); err != nil { // #nosec G301
