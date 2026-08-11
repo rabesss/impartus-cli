@@ -23,7 +23,7 @@ func PlanJoinResult(cfg *config.Config, playlist client.ParsedPlaylist) (JoinRes
 	if mediaErr != nil {
 		return JoinResult{}, mediaErr
 	}
-	base := fmt.Sprintf("LEC %03d %s", playlist.SeqNo, sanitizeFilename(playlist.Title))
+	base := lectureOutputBase(playlist)
 	result := JoinResult{}
 	planSelectedViews(&result, location, base, extension, container, views, cfg.AudioOnly, playlist)
 	if len(result.OutputPaths()) == 0 {
@@ -51,11 +51,28 @@ func plannedMedia(cfg *config.Config) (string, string, error) {
 	if !cfg.AudioOnly {
 		return "mp4", "mp4", nil
 	}
-	container := audioContainer(strings.ToLower(strings.TrimSpace(cfg.AudioFormat)))
-	if container == "" {
-		return "", "", errors.New("audio format is required in audio-only mode")
+	if !selection.ValidAudioFormat(cfg.AudioFormat) {
+		return "", "", fmt.Errorf("unsupported audio format %q", cfg.AudioFormat)
 	}
+	container := audioContainer(cfg.AudioFormat)
 	return container, container, nil
+}
+
+func lectureOutputBase(playlist client.ParsedPlaylist) string {
+	return fmt.Sprintf("LEC %03d %s", playlist.SeqNo, sanitizeFilename(playlist.Title))
+}
+
+func outputFilename(base string, view selection.View, container string) string {
+	suffix := ""
+	switch view {
+	case selection.ViewLeft:
+		suffix = " LEFT VIEW"
+	case selection.ViewRight:
+		suffix = " RIGHT VIEW"
+	case selection.ViewBoth:
+		suffix = " BOTH"
+	}
+	return fmt.Sprintf("%s%s.%s", base, suffix, container)
 }
 
 func planSelectedViews(
@@ -66,11 +83,11 @@ func planSelectedViews(
 	playlist client.ParsedPlaylist,
 ) {
 	if views.Includes(selection.ViewLeft) && len(playlist.FirstViewURLs) > 0 {
-		result.LeftOutput = filepath.Join(location, fmt.Sprintf("%s LEFT VIEW.%s", base, extension))
+		result.LeftOutput = filepath.Join(location, outputFilename(base, selection.ViewLeft, extension))
 		result.LeftContainer = container
 	}
 	if views.Includes(selection.ViewRight) && len(playlist.SecondViewURLs) > 0 {
-		result.RightOutput = filepath.Join(location, fmt.Sprintf("%s RIGHT VIEW.%s", base, extension))
+		result.RightOutput = filepath.Join(location, outputFilename(base, selection.ViewRight, extension))
 		result.RightContainer = container
 	}
 	if views == selection.ViewBoth && result.LeftOutput != "" && result.RightOutput != "" {
@@ -78,7 +95,7 @@ func planSelectedViews(
 		if audioOnly {
 			bothContainer = container
 		}
-		result.BothOutput = filepath.Join(location, fmt.Sprintf("%s BOTH.%s", base, bothContainer))
+		result.BothOutput = filepath.Join(location, outputFilename(base, selection.ViewBoth, bothContainer))
 		result.BothContainer = bothContainer
 	}
 }

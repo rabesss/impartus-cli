@@ -11,6 +11,7 @@ type keyMap struct {
 	Download key.Binding
 	Library  key.Binding
 	Filter   key.Binding
+	Retry    key.Binding
 	Doctor   key.Binding
 	Details  key.Binding
 	Back     key.Binding
@@ -25,6 +26,7 @@ func newKeyMap() keyMap {
 		Download: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "download")),
 		Library:  key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "library")),
 		Filter:   key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
+		Retry:    key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "retry")),
 		Doctor:   key.NewBinding(key.WithKeys("!"), key.WithHelp("!", "diagnostics")),
 		Details:  key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "details")),
 		Back:     key.NewBinding(key.WithKeys("esc", "backspace"), key.WithHelp("esc", "back")),
@@ -33,13 +35,13 @@ func newKeyMap() keyMap {
 }
 
 func (keys keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{keys.Navigate, keys.Select, keys.Details, keys.Download, keys.Library, keys.Filter, keys.Doctor, keys.Back, keys.Quit}
+	return []key.Binding{keys.Navigate, keys.Select, keys.Details, keys.Download, keys.Library, keys.Filter, keys.Retry, keys.Doctor, keys.Back, keys.Quit}
 }
 
 func (keys keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{keys.Navigate, keys.Select, keys.Play},
-		{keys.Details, keys.Download, keys.Library, keys.Filter, keys.Doctor},
+		{keys.Details, keys.Download, keys.Library, keys.Filter, keys.Retry, keys.Doctor},
 		{keys.Back, keys.Quit},
 	}
 }

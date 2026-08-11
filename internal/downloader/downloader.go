@@ -19,6 +19,7 @@ import (
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/secrets"
+	"github.com/rabesss/impartus-cli/internal/selection"
 )
 
 var (
@@ -487,13 +488,15 @@ func (d *Downloader) stopPipelineMonitor(monitorDone chan struct{}, downloadBar 
 
 func (d *Downloader) joinAudioOutput(ctx context.Context, file M3U8File) (JoinResult, error) {
 	result := JoinResult{}
-	left, err := d.joinIfPresent(ctx, file.FirstViewFile, d.config.IncludesLeft(), fmt.Sprintf("LEC %03d %s LEFT VIEW.%s", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title), d.config.AudioFormat), func(ctx context.Context, path, name string) (string, error) {
+	base := lectureOutputBase(file.Playlist)
+	container := audioContainer(d.config.AudioFormat)
+	left, err := d.joinIfPresent(ctx, file.FirstViewFile, d.config.IncludesLeft(), outputFilename(base, selection.ViewLeft, container), func(ctx context.Context, path, name string) (string, error) {
 		return d.JoinChunksFromM3U8AudioOnly(ctx, path, name, d.config.AudioFormat)
 	})
 	if err != nil {
 		return result, err
 	}
-	right, err := d.joinIfPresent(ctx, file.SecondViewFile, d.config.IncludesRight(), fmt.Sprintf("LEC %03d %s RIGHT VIEW.%s", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title), d.config.AudioFormat), func(ctx context.Context, path, name string) (string, error) {
+	right, err := d.joinIfPresent(ctx, file.SecondViewFile, d.config.IncludesRight(), outputFilename(base, selection.ViewRight, container), func(ctx context.Context, path, name string) (string, error) {
 		return d.JoinChunksFromM3U8AudioOnly(ctx, path, name, d.config.AudioFormat)
 	})
 	if err != nil {
@@ -501,26 +504,27 @@ func (d *Downloader) joinAudioOutput(ctx context.Context, file M3U8File) (JoinRe
 	}
 	result.LeftOutput = left
 	result.RightOutput = right
-	result.LeftContainer = containerWhenPresent(left, audioContainer(d.config.AudioFormat))
-	result.RightContainer = containerWhenPresent(right, audioContainer(d.config.AudioFormat))
+	result.LeftContainer = containerWhenPresent(left, container)
+	result.RightContainer = containerWhenPresent(right, container)
 	if left != "" && right != "" && d.config.HasBothViews() {
-		both, joinErr := d.CreateBothViewsAudioOutput(ctx, left, fmt.Sprintf("LEC %03d %s", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title)), d.config.AudioFormat)
+		both, joinErr := d.CreateBothViewsAudioOutput(ctx, left, base, d.config.AudioFormat)
 		if joinErr != nil {
 			return result, joinErr
 		}
 		result.BothOutput = both
-		result.BothContainer = containerWhenPresent(both, audioContainer(d.config.AudioFormat))
+		result.BothContainer = containerWhenPresent(both, container)
 	}
 	return result, nil
 }
 
 func (d *Downloader) joinVideoOutput(ctx context.Context, file M3U8File) (JoinResult, error) {
 	result := JoinResult{}
-	left, err := d.joinIfPresent(ctx, file.FirstViewFile, d.config.IncludesLeft(), fmt.Sprintf("LEC %03d %s LEFT VIEW.mp4", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title)), d.JoinChunksFromM3U8)
+	base := lectureOutputBase(file.Playlist)
+	left, err := d.joinIfPresent(ctx, file.FirstViewFile, d.config.IncludesLeft(), outputFilename(base, selection.ViewLeft, "mp4"), d.JoinChunksFromM3U8)
 	if err != nil {
 		return result, err
 	}
-	right, err := d.joinIfPresent(ctx, file.SecondViewFile, d.config.IncludesRight(), fmt.Sprintf("LEC %03d %s RIGHT VIEW.mp4", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title)), d.JoinChunksFromM3U8)
+	right, err := d.joinIfPresent(ctx, file.SecondViewFile, d.config.IncludesRight(), outputFilename(base, selection.ViewRight, "mp4"), d.JoinChunksFromM3U8)
 	if err != nil {
 		return result, err
 	}
@@ -529,7 +533,7 @@ func (d *Downloader) joinVideoOutput(ctx context.Context, file M3U8File) (JoinRe
 	result.LeftContainer = containerWhenPresent(left, "mp4")
 	result.RightContainer = containerWhenPresent(right, "mp4")
 	if left != "" && right != "" && d.config.HasBothViews() {
-		both, joinErr := d.JoinViews(ctx, left, right, fmt.Sprintf("LEC %03d %s", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title)))
+		both, joinErr := d.JoinViews(ctx, left, right, base)
 		if joinErr != nil {
 			return result, joinErr
 		}

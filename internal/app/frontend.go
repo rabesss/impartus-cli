@@ -325,13 +325,10 @@ func BuildDownloadArtifact(lecture client.Lecture, cfg *config.Config, result do
 	if cfg == nil {
 		return artifact.Manifest{}, errors.New("download configuration is required")
 	}
-	role := "video"
-	if cfg.AudioOnly {
-		role = "audio"
-	}
-	fileSpecs := make([]artifact.FileSpec, 0, 3)
-	for _, output := range result.Outputs() {
-		fileSpecs = append(fileSpecs, artifact.FileSpec{Path: output.Path, Role: role, View: output.View, Container: output.Container})
+	files := downloadArtifactFiles(cfg, result)
+	fileSpecs := make([]artifact.FileSpec, 0, len(files))
+	for _, file := range files {
+		fileSpecs = append(fileSpecs, artifact.FileSpec{Path: file.Path, Role: file.Role, View: file.View, Container: file.Container})
 	}
 	return artifact.Build(artifact.BuildInput{
 		Lecture:   downloadArtifactLecture(lecture),
@@ -342,18 +339,34 @@ func BuildDownloadArtifact(lecture client.Lecture, cfg *config.Config, result do
 }
 
 func buildExpectedDownloadArtifact(lecture client.Lecture, cfg *config.Config, result downloader.JoinResult, producedAt time.Time) library.ExpectedArtifact {
-	role := "video"
-	if cfg.AudioOnly {
-		role = "audio"
-	}
-	files := make([]library.ExpectedFile, 0, len(result.Outputs()))
-	for _, output := range result.Outputs() {
-		files = append(files, library.ExpectedFile{Path: output.Path, Role: role, View: output.View, Container: output.Container})
+	artifactFiles := downloadArtifactFiles(cfg, result)
+	files := make([]library.ExpectedFile, 0, len(artifactFiles))
+	for _, file := range artifactFiles {
+		files = append(files, library.ExpectedFile{Path: file.Path, Role: file.Role, View: file.View, Container: file.Container})
 	}
 	return library.ExpectedArtifact{
 		Lecture: downloadArtifactLecture(lecture), Selection: downloadArtifactSelection(cfg), Files: files,
 		ProducedAt: producedAt, Producer: artifact.Producer{Name: "impartus", Version: buildinfo.Version},
 	}
+}
+
+type downloadArtifactFile struct {
+	Path      string
+	Role      string
+	View      string
+	Container string
+}
+
+func downloadArtifactFiles(cfg *config.Config, result downloader.JoinResult) []downloadArtifactFile {
+	role := "video"
+	if cfg.AudioOnly {
+		role = "audio"
+	}
+	files := make([]downloadArtifactFile, 0, len(result.Outputs()))
+	for _, output := range result.Outputs() {
+		files = append(files, downloadArtifactFile{Path: output.Path, Role: role, View: output.View, Container: output.Container})
+	}
+	return files
 }
 
 func downloadArtifactLecture(lecture client.Lecture) artifact.Lecture {
