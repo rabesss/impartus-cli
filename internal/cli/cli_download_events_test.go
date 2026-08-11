@@ -118,6 +118,58 @@ func TestDownloadEventsEmitOriginalPerLectureLifecycleWithArtifactID(t *testing.
 	}
 }
 
+func TestDownloadEventsKeepUnavailableSelectedMediaNonfatal(t *testing.T) {
+	t.Parallel()
+
+	outputDir := t.TempDir()
+	lectures := client.Lectures{
+		{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 123, SeqNo: 5, Topic: "Unavailable"},
+		{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 124, SeqNo: 6, Topic: "Available"},
+	}
+	runner := &fakeLectureDownloadRunner{
+		playlists: []client.ParsedPlaylist{
+			{InstituteID: 4, SubjectID: 67, SessionID: 8, ID: 123},
+			{InstituteID: 4, SubjectID: 67, SessionID: 8, ID: 124},
+		},
+		downloadErrs: []error{downloader.ErrNoSelectedMedia, nil},
+		results:      materializeJoinResults(t, outputDir, []downloader.JoinResult{{}, {LeftOutput: "lecture.mp4"}}),
+	}
+	var output bytes.Buffer
+	stream := newDownloadEventStream(&output, "job-skip", func() time.Time { return time.Unix(1, 0).UTC() })
+	if err := stream.start(); err != nil {
+		t.Fatal(err)
+	}
+	result, err := downloadLecturesWithRunner(context.Background(), &config.Config{
+		DownloadLocation: outputDir, Views: "left", Quality: "720",
+	}, runner, lectures, downloadPresentationOptions{eventStream: stream})
+	if err != nil {
+		t.Fatalf("downloadLecturesWithRunner() error = %v", err)
+	}
+	result.LibraryRecorded = true
+	if err := stream.finish(result, nil); err != nil {
+		t.Fatalf("finish() error = %v", err)
+	}
+
+	decoded := decodeCLIEvents(t, output.String())
+	wantTypes := []string{
+		events.JobStarted,
+		events.LectureStarted,
+		events.LectureStarted, events.LectureProgress, events.LectureCompleted,
+		events.JobCompleted,
+	}
+	if len(decoded) != len(wantTypes) {
+		t.Fatalf("events = %+v, want types %v", decoded, wantTypes)
+	}
+	for index, wantType := range wantTypes {
+		if decoded[index].Type != wantType {
+			t.Fatalf("event[%d].Type = %q, want %q", index, decoded[index].Type, wantType)
+		}
+	}
+	if result.LectureCount != 1 || len(result.Artifacts) != 1 {
+		t.Fatalf("partial result = %+v, want one completed artifact", result)
+	}
+}
+
 func TestDownloadEventsPreservePublishedMediaWhenProgressDeliveryFails(t *testing.T) {
 	t.Parallel()
 

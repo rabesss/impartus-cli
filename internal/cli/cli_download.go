@@ -367,9 +367,6 @@ func completeLectureDownloads(
 		joinResult, err := d.DownloadAndJoinPlaylist(ctx, playlist, progress, tracker)
 		if err != nil {
 			if errors.Is(err, downloader.ErrNoSelectedMedia) {
-				if emitErr := stream.lecture(events.LectureSkipped, lecture, artifactID, nil, nil, map[string]any{"reason": "no selected media"}); emitErr != nil {
-					return outputPaths, artifacts, len(artifacts), emitErr
-				}
 				if tracker != nil {
 					downloader.LectureCompleted(tracker)
 				}
