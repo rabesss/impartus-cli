@@ -204,11 +204,15 @@ func TestWatchForceRunsOneExplicitRedownloadCycle(t *testing.T) {
 		now: time.Now,
 	}
 
-	if _, err := executeWatchWithDependencies(context.Background(), []string{"--force", "-s", "67", "-S", "8"}, false, io.Discard, io.Discard, deps); err != nil {
+	var output bytes.Buffer
+	if _, err := executeWatchWithDependencies(context.Background(), []string{"--force", "-s", "67", "-S", "8"}, false, io.Discard, &output, deps); err != nil {
 		t.Fatalf("executeWatchWithDependencies() error = %v", err)
 	}
 	if !got.Force || !got.Once {
 		t.Fatalf("watch options = %+v, want force to imply one cycle", got)
+	}
+	if !strings.Contains(output.String(), "watch: listed=") {
+		t.Fatalf("force output = %q, want one-cycle summary", output.String())
 	}
 }
 

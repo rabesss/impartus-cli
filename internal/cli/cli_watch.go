@@ -200,7 +200,7 @@ func executeWatchWithDependencies(
 	if closeErr := prepared.close(); closeErr != nil {
 		runErr = errors.Join(runErr, watch.ErrDurableState, fmt.Errorf("close watch state: %w", closeErr))
 	}
-	if !jsonMode && !flags.events && (flags.once || flags.dryRun) {
+	if !jsonMode && !flags.events && (flags.once || flags.dryRun || flags.force) {
 		_, writeErr := fmt.Fprintf(logOutput, "watch: listed=%d new=%d skipped=%d downloaded=%d failed=%d\n", cycle.Listed, cycle.New, cycle.Skipped, cycle.Downloaded, cycle.Failed)
 		runErr = errors.Join(runErr, writeErr)
 	}
