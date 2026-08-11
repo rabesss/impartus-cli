@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -240,8 +241,8 @@ func TestPlanJoinResultRejectsUnavailableSelectedView(t *testing.T) {
 	_, err := PlanJoinResult(&config.Config{DownloadLocation: t.TempDir(), Views: "left"}, client.ParsedPlaylist{
 		ID: 1, SeqNo: 1, Title: "No left", SecondViewURLs: []string{"right"},
 	})
-	if err == nil {
-		t.Fatal("PlanJoinResult() error = nil, want unavailable-view error")
+	if !errors.Is(err, ErrNoSelectedMedia) {
+		t.Fatalf("PlanJoinResult() error = %v, want ErrNoSelectedMedia", err)
 	}
 }
 

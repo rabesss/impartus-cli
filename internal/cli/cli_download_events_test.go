@@ -76,7 +76,7 @@ func TestDownloadEventsEmitOriginalPerLectureLifecycleWithArtifactID(t *testing.
 	outputDir := t.TempDir()
 	lecture := client.Lecture{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 123, SeqNo: 5, Topic: "Lifecycle"}
 	runner := &fakeLectureDownloadRunner{
-		playlists: []client.ParsedPlaylist{{InstituteID: 4, SubjectID: 67, SessionID: 8, ID: 123}},
+		playlists: []client.ParsedPlaylist{{InstituteID: 4, SubjectID: 67, SessionID: 8, ID: 123, FirstViewURLs: []string{"chunk"}}},
 		results:   materializeJoinResults(t, outputDir, []downloader.JoinResult{{LeftOutput: "lecture.mp4"}}),
 	}
 	var output bytes.Buffer
@@ -118,7 +118,7 @@ func TestDownloadEventsEmitOriginalPerLectureLifecycleWithArtifactID(t *testing.
 	}
 }
 
-func TestDownloadEventsKeepUnavailableSelectedMediaNonfatal(t *testing.T) {
+func TestDownloadEventsSkipUnavailableSelectedMediaBeforeLifecycle(t *testing.T) {
 	t.Parallel()
 
 	outputDir := t.TempDir()
@@ -129,10 +129,9 @@ func TestDownloadEventsKeepUnavailableSelectedMediaNonfatal(t *testing.T) {
 	runner := &fakeLectureDownloadRunner{
 		playlists: []client.ParsedPlaylist{
 			{InstituteID: 4, SubjectID: 67, SessionID: 8, ID: 123},
-			{InstituteID: 4, SubjectID: 67, SessionID: 8, ID: 124},
+			{InstituteID: 4, SubjectID: 67, SessionID: 8, ID: 124, FirstViewURLs: []string{"chunk"}},
 		},
-		downloadErrs: []error{downloader.ErrNoSelectedMedia, nil},
-		results:      materializeJoinResults(t, outputDir, []downloader.JoinResult{{}, {LeftOutput: "lecture.mp4"}}),
+		results: materializeJoinResults(t, outputDir, []downloader.JoinResult{{LeftOutput: "lecture.mp4"}}),
 	}
 	var output bytes.Buffer
 	stream := newDownloadEventStream(&output, "job-skip", func() time.Time { return time.Unix(1, 0).UTC() })
@@ -153,7 +152,6 @@ func TestDownloadEventsKeepUnavailableSelectedMediaNonfatal(t *testing.T) {
 	decoded := decodeCLIEvents(t, output.String())
 	wantTypes := []string{
 		events.JobStarted,
-		events.LectureStarted, events.LectureFailed,
 		events.LectureStarted, events.LectureProgress, events.LectureCompleted,
 		events.JobCompleted,
 	}
@@ -168,9 +166,156 @@ func TestDownloadEventsKeepUnavailableSelectedMediaNonfatal(t *testing.T) {
 	if result.LectureCount != 1 || len(result.Artifacts) != 1 {
 		t.Fatalf("partial result = %+v, want one completed artifact", result)
 	}
-	details, ok := decoded[2].Details.(map[string]any)
-	if !ok || details["nonfatal"] != true || details["reason"] != "no_selected_media" {
-		t.Fatalf("unavailable-media failure details = %#v", decoded[2].Details)
+	if runner.downloads != 1 {
+		t.Fatalf("downloads = %d, want only the available lecture", runner.downloads)
+	}
+}
+
+func TestDownloadEventsAllUnavailableFailsWithoutLectureLifecycle(t *testing.T) {
+	t.Parallel()
+
+	lectures := client.Lectures{
+		{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 123},
+		{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 124},
+	}
+	runner := &fakeLectureDownloadRunner{playlists: []client.ParsedPlaylist{
+		{InstituteID: 4, SubjectID: 67, SessionID: 8, ID: 123},
+		{InstituteID: 4, SubjectID: 67, SessionID: 8, ID: 124},
+	}}
+	var output bytes.Buffer
+	stream := newDownloadEventStream(&output, "job-all-unavailable", func() time.Time { return time.Unix(1, 0).UTC() })
+	if err := stream.start(); err != nil {
+		t.Fatal(err)
+	}
+	result, downloadErr := downloadLecturesWithRunner(context.Background(), &config.Config{
+		DownloadLocation: t.TempDir(), Views: "left", Quality: "720",
+	}, runner, lectures, downloadPresentationOptions{eventStream: stream})
+	finishErr := stream.finish(result, downloadErr)
+	if !errors.Is(finishErr, downloader.ErrNoMediaOutputs) {
+		t.Fatalf("finish() error = %v, want ErrNoMediaOutputs", finishErr)
+	}
+	decoded := decodeCLIEvents(t, output.String())
+	if len(decoded) != 2 || decoded[0].Type != events.JobStarted || decoded[1].Type != events.JobFailed {
+		t.Fatalf("events = %+v, want job.started then job.failed", decoded)
+	}
+	if runner.downloads != 0 {
+		t.Fatalf("downloads = %d, want 0", runner.downloads)
+	}
+}
+
+func TestDownloadEventsUnexpectedUnavailableAfterStartFailsJob(t *testing.T) {
+	t.Parallel()
+
+	lecture := client.Lecture{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 123, SeqNo: 5, Topic: "Unexpectedly unavailable"}
+	runner := &fakeLectureDownloadRunner{
+		playlists:   []client.ParsedPlaylist{{InstituteID: 4, SubjectID: 67, SessionID: 8, ID: 123, FirstViewURLs: []string{"chunk"}}},
+		downloadErr: downloader.ErrNoSelectedMedia,
+	}
+	var output bytes.Buffer
+	stream := newDownloadEventStream(&output, "job-unexpected-unavailable", func() time.Time { return time.Unix(1, 0).UTC() })
+	if err := stream.start(); err != nil {
+		t.Fatal(err)
+	}
+	result, downloadErr := downloadLecturesWithRunner(context.Background(), &config.Config{
+		DownloadLocation: t.TempDir(), Views: "left", Quality: "720",
+	}, runner, client.Lectures{lecture}, downloadPresentationOptions{eventStream: stream})
+	finishErr := stream.finish(result, downloadErr)
+	if !errors.Is(finishErr, downloader.ErrNoSelectedMedia) {
+		t.Fatalf("finish() error = %v, want ErrNoSelectedMedia", finishErr)
+	}
+
+	decoded := decodeCLIEvents(t, output.String())
+	wantTypes := []string{events.JobStarted, events.LectureStarted, events.LectureFailed, events.JobFailed}
+	if len(decoded) != len(wantTypes) {
+		t.Fatalf("events = %+v, want %v", decoded, wantTypes)
+	}
+	for index, wantType := range wantTypes {
+		if decoded[index].Type != wantType {
+			t.Fatalf("event[%d].Type = %q, want %q", index, decoded[index].Type, wantType)
+		}
+	}
+	if details, ok := decoded[2].Details.(map[string]any); ok && details["nonfatal"] == true {
+		t.Fatalf("lecture.failed was marked nonfatal: %#v", decoded[2].Details)
+	}
+}
+
+func TestDownloadEventsCancellationWinsBeforeUnavailablePreflight(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	lecture := client.Lecture{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 123}
+	runner := &fakeLectureDownloadRunner{
+		playlists: []client.ParsedPlaylist{{InstituteID: 4, SubjectID: 67, SessionID: 8, ID: 123}},
+	}
+	var output bytes.Buffer
+	stream := newDownloadEventStream(&output, "job-canceled-unavailable", func() time.Time { return time.Unix(1, 0).UTC() })
+	if err := stream.start(); err != nil {
+		t.Fatal(err)
+	}
+	result, downloadErr := downloadLecturesWithRunner(ctx, &config.Config{
+		DownloadLocation: t.TempDir(), Views: "left", Quality: "720",
+	}, runner, client.Lectures{lecture}, downloadPresentationOptions{eventStream: stream})
+	finishErr := stream.finish(result, downloadErr)
+	if !errors.Is(finishErr, context.Canceled) {
+		t.Fatalf("finish() error = %v, want context cancellation", finishErr)
+	}
+	decoded := decodeCLIEvents(t, output.String())
+	if len(decoded) != 2 || decoded[0].Type != events.JobStarted || decoded[1].Type != events.JobCanceled {
+		t.Fatalf("events = %+v, want job.started then job.canceled", decoded)
+	}
+}
+
+func TestDownloadEventsCancellationWinsAfterPartialOutputBeforeUnavailablePreflight(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	outputDir := t.TempDir()
+	lectures := client.Lectures{
+		{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 123},
+		{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 124},
+	}
+	runner := &fakeLectureDownloadRunner{
+		playlists: []client.ParsedPlaylist{
+			{InstituteID: 4, SubjectID: 67, SessionID: 8, ID: 123, FirstViewURLs: []string{"chunk"}},
+			{InstituteID: 4, SubjectID: 67, SessionID: 8, ID: 124},
+		},
+		results: materializeJoinResults(t, outputDir, []downloader.JoinResult{{LeftOutput: "lecture.mp4"}}),
+		afterDownload: func(downloads int) {
+			if downloads == 1 {
+				cancel()
+			}
+		},
+	}
+	var output bytes.Buffer
+	stream := newDownloadEventStream(&output, "job-canceled-partial", func() time.Time { return time.Unix(1, 0).UTC() })
+	if err := stream.start(); err != nil {
+		t.Fatal(err)
+	}
+	result, downloadErr := downloadLecturesWithRunner(ctx, &config.Config{
+		DownloadLocation: outputDir, Views: "left", Quality: "720",
+	}, runner, lectures, downloadPresentationOptions{eventStream: stream})
+	result.LibraryRecorded = true
+	finishErr := stream.finish(result, downloadErr)
+	if !errors.Is(finishErr, context.Canceled) {
+		t.Fatalf("finish() error = %v, want context cancellation", finishErr)
+	}
+	decoded := decodeCLIEvents(t, output.String())
+	wantTypes := []string{
+		events.JobStarted,
+		events.LectureStarted, events.LectureProgress, events.LectureCompleted,
+		events.JobCanceled,
+	}
+	if len(decoded) != len(wantTypes) {
+		t.Fatalf("events = %+v, want %v", decoded, wantTypes)
+	}
+	for index, wantType := range wantTypes {
+		if decoded[index].Type != wantType {
+			t.Fatalf("event[%d].Type = %q, want %q", index, decoded[index].Type, wantType)
+		}
+	}
+	if len(decoded[len(decoded)-1].Artifacts) != 1 {
+		t.Fatalf("job.canceled partial artifacts = %+v, want one", decoded[len(decoded)-1].Artifacts)
 	}
 }
 
@@ -180,7 +325,7 @@ func TestDownloadEventsPreservePublishedMediaWhenProgressDeliveryFails(t *testin
 	outputDir := t.TempDir()
 	lecture := client.Lecture{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 123, SeqNo: 5, Topic: "Published media"}
 	runner := &fakeLectureDownloadRunner{
-		playlists: []client.ParsedPlaylist{{InstituteID: 4, SubjectID: 67, SessionID: 8, ID: 123}},
+		playlists: []client.ParsedPlaylist{{InstituteID: 4, SubjectID: 67, SessionID: 8, ID: 123, FirstViewURLs: []string{"chunk"}}},
 		results:   materializeJoinResults(t, outputDir, []downloader.JoinResult{{LeftOutput: "lecture.mp4"}}),
 	}
 	output := &failWriteOnce{failAt: 3} // job.started, lecture.started, then lecture.progress
@@ -286,7 +431,7 @@ func TestDownloadEventsMediaCancellationDoesNotEmitLectureFailure(t *testing.T) 
 
 	lecture := client.Lecture{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 123, SeqNo: 5, Topic: "Canceled media"}
 	runner := &fakeLectureDownloadRunner{
-		playlists:   []client.ParsedPlaylist{{InstituteID: 4, SubjectID: 67, SessionID: 8, ID: 123}},
+		playlists:   []client.ParsedPlaylist{{InstituteID: 4, SubjectID: 67, SessionID: 8, ID: 123, FirstViewURLs: []string{"chunk"}}},
 		downloadErr: context.Canceled,
 	}
 	output := &failEventTypeWriter{failType: events.LectureFailed, failures: 1}

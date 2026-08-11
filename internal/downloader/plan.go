@@ -27,7 +27,7 @@ func PlanJoinResult(cfg *config.Config, playlist client.ParsedPlaylist) (JoinRes
 	result := JoinResult{}
 	planSelectedViews(&result, location, base, extension, container, views, cfg.AudioOnly, playlist)
 	if len(result.OutputPaths()) == 0 {
-		return JoinResult{}, fmt.Errorf("selected %s view is unavailable for lecture %d", views, playlist.ID)
+		return JoinResult{}, fmt.Errorf("%w: selected %s view is unavailable for lecture %d", ErrNoSelectedMedia, views, playlist.ID)
 	}
 	return result, nil
 }

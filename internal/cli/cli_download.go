@@ -354,6 +354,16 @@ func completeLectureDownloads(
 				key.ttid,
 			)
 		}
+		// Classify unavailable selected media once, before any presentation mode
+		// begins work. Event stream v1 cannot publish a nonfatal lecture.failed,
+		// and human/JSON modes must not carry a second copy of the same policy.
+		skipUnavailable, planErr := skipUnavailablePlaylist(ctx, cfg, playlist, tracker)
+		if planErr != nil {
+			return outputPaths, artifacts, len(artifacts), planErr
+		}
+		if skipUnavailable {
+			continue
+		}
 		artifactID, identityErr := downloadArtifactID(lecture, cfg)
 		if identityErr != nil {
 			return outputPaths, artifacts, len(artifacts), identityErr
@@ -366,10 +376,7 @@ func completeLectureDownloads(
 		// server job runner uses) so per-lecture download+join logic has one home.
 		joinResult, err := d.DownloadAndJoinPlaylist(ctx, playlist, progress, tracker)
 		if err != nil {
-			skipped, downloadErr := handleLectureDownloadError(stream, lecture, artifactID, key, err, tracker)
-			if skipped {
-				continue
-			}
+			downloadErr := handleLectureDownloadError(stream, lecture, artifactID, key, err)
 			return outputPaths, artifacts, len(artifacts), downloadErr
 		}
 		paths := joinResult.OutputPaths()
@@ -411,23 +418,30 @@ func completeLectureDownloads(
 	return outputPaths, artifacts, len(artifacts), nil
 }
 
+func skipUnavailablePlaylist(
+	ctx context.Context,
+	cfg *config.Config,
+	playlist client.ParsedPlaylist,
+	tracker *downloader.ProgressTracker,
+) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	_, err := downloader.PlanJoinResult(cfg, playlist)
+	if !errors.Is(err, downloader.ErrNoSelectedMedia) {
+		return false, err
+	}
+	downloader.LectureCompleted(tracker)
+	return true, nil
+}
+
 func handleLectureDownloadError(
 	stream *downloadEventStream,
 	lecture client.Lecture,
 	artifactID string,
 	key scopedLectureKey,
 	cause error,
-	tracker *downloader.ProgressTracker,
-) (bool, error) {
-	if errors.Is(cause, downloader.ErrNoSelectedMedia) {
-		if emitErr := stream.lecture(events.LectureFailed, lecture, artifactID, nil, nil, map[string]any{
-			"error": events.RedactError(cause), "nonfatal": true, "reason": "no_selected_media",
-		}); emitErr != nil {
-			return false, emitErr
-		}
-		downloader.LectureCompleted(tracker)
-		return true, nil
-	}
+) error {
 	downloadErr := fmt.Errorf(
 		"download and join lecture institute=%d subject=%d session=%d ttid=%d: %w",
 		key.instituteID,
@@ -437,10 +451,10 @@ func handleLectureDownloadError(
 		cause,
 	)
 	if events.IsCancellation(downloadErr) {
-		return false, events.RedactedError(downloadErr)
+		return events.RedactedError(downloadErr)
 	}
 	emitErr := stream.lecture(events.LectureFailed, lecture, artifactID, nil, nil, map[string]any{"error": events.RedactError(downloadErr)})
-	return false, errors.Join(downloadErr, emitErr)
+	return errors.Join(downloadErr, emitErr)
 }
 
 // validatePlaylistAssociations rejects unselected and duplicate playlists. The

@@ -25,16 +25,17 @@ import (
 )
 
 type fakeLectureDownloadRunner struct {
-	playlists    []client.ParsedPlaylist
-	results      []downloader.JoinResult
-	progress     []*mpb.Progress
-	trackers     []*downloader.ProgressTracker
-	fetches      int
-	downloads    int
-	next         int
-	downloadErr  error
-	downloadErrs []error
-	failAt       int
+	playlists     []client.ParsedPlaylist
+	results       []downloader.JoinResult
+	progress      []*mpb.Progress
+	trackers      []*downloader.ProgressTracker
+	fetches       int
+	downloads     int
+	next          int
+	downloadErr   error
+	downloadErrs  []error
+	failAt        int
+	afterDownload func(int)
 }
 
 func (f *fakeLectureDownloadRunner) FetchLecturePlaylists(_ context.Context, lectures []client.Lecture) ([]client.ParsedPlaylist, error) {
@@ -70,6 +71,9 @@ func (f *fakeLectureDownloadRunner) DownloadAndJoinPlaylist(_ context.Context, _
 		return downloader.JoinResult{}, f.downloadErrs[index]
 	}
 	result := f.results[index]
+	if f.afterDownload != nil {
+		f.afterDownload(f.downloads)
+	}
 	return result, nil
 }
 
@@ -83,8 +87,8 @@ func TestDownloadReturnsValidatedPartialResultWhenLaterLectureFails(t *testing.T
 	}
 	runner := &fakeLectureDownloadRunner{
 		playlists: []client.ParsedPlaylist{
-			{InstituteID: 1, SubjectID: 2, SessionID: 3, ID: 10},
-			{InstituteID: 1, SubjectID: 2, SessionID: 3, ID: 11},
+			{InstituteID: 1, SubjectID: 2, SessionID: 3, ID: 10, FirstViewURLs: []string{"chunk"}},
+			{InstituteID: 1, SubjectID: 2, SessionID: 3, ID: 11, FirstViewURLs: []string{"chunk"}},
 		},
 		results:     materializeJoinResults(t, outputDir, []downloader.JoinResult{{LeftOutput: "first.mp4"}}),
 		downloadErr: errors.New("second failed"),
@@ -107,7 +111,7 @@ func TestDownloadSkipsSelectedLectureWithoutPlaylist(t *testing.T) {
 
 	outputDir := t.TempDir()
 	runner := &fakeLectureDownloadRunner{
-		playlists: []client.ParsedPlaylist{{InstituteID: 1, SubjectID: 2, SessionID: 3, ID: 10}},
+		playlists: []client.ParsedPlaylist{{InstituteID: 1, SubjectID: 2, SessionID: 3, ID: 10, FirstViewURLs: []string{"chunk"}}},
 		results:   materializeJoinResults(t, outputDir, []downloader.JoinResult{{LeftOutput: "one.mp4"}}),
 	}
 	lectures := client.Lectures{
@@ -152,9 +156,8 @@ func TestDownloadSkipsPlaylistWithoutSelectedViewOutput(t *testing.T) {
 
 	outputDir := t.TempDir()
 	runner := &fakeLectureDownloadRunner{
-		playlists:    []client.ParsedPlaylist{{ID: 10}, {ID: 11}},
-		downloadErrs: []error{downloader.ErrNoSelectedMedia, nil},
-		results:      materializeJoinResults(t, outputDir, []downloader.JoinResult{{}, {LeftOutput: "eleven.mp4"}}),
+		playlists: []client.ParsedPlaylist{{ID: 10}, {ID: 11, FirstViewURLs: []string{"chunk"}}},
+		results:   materializeJoinResults(t, outputDir, []downloader.JoinResult{{LeftOutput: "eleven.mp4"}}),
 	}
 	result, err := downloadLecturesWithRunner(context.Background(), &config.Config{
 		DownloadLocation: outputDir,
@@ -168,14 +171,14 @@ func TestDownloadSkipsPlaylistWithoutSelectedViewOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("downloadLecturesWithRunner() error = %v", err)
 	}
-	if runner.downloads != 2 || result.LectureCount != 1 || len(result.Artifacts) != 1 || len(result.OutputPaths) != 1 {
+	if runner.downloads != 1 || result.LectureCount != 1 || len(result.Artifacts) != 1 || len(result.OutputPaths) != 1 {
 		t.Fatalf("partial-view batch result = %+v, downloads = %d", result, runner.downloads)
 	}
 	if result.Artifacts[0].Lecture.TTID != 11 {
 		t.Fatalf("artifact lecture = %d, want 11", result.Artifacts[0].Lecture.TTID)
 	}
-	if len(runner.trackers) != 2 || runner.trackers[0] == nil || runner.trackers[0].GetStats().CompletedLectures != 2 {
-		t.Fatalf("progress trackers = %+v, want two completed lectures", runner.trackers)
+	if len(runner.trackers) != 1 || runner.trackers[0] == nil || runner.trackers[0].GetStats().CompletedLectures != 2 {
+		t.Fatalf("progress trackers = %+v, want one download and two completed lectures", runner.trackers)
 	}
 }
 
@@ -183,9 +186,7 @@ func TestDownloadFailsWhenAllPlaylistsProduceNoOutput(t *testing.T) {
 	t.Parallel()
 
 	runner := &fakeLectureDownloadRunner{
-		playlists:    []client.ParsedPlaylist{{ID: 10}, {ID: 11}},
-		downloadErrs: []error{downloader.ErrNoSelectedMedia, downloader.ErrNoSelectedMedia},
-		results:      []downloader.JoinResult{{}, {}},
+		playlists: []client.ParsedPlaylist{{ID: 10}, {ID: 11}},
 	}
 	_, err := downloadLecturesWithRunner(context.Background(), &config.Config{
 		DownloadLocation: t.TempDir(),
@@ -198,8 +199,8 @@ func TestDownloadFailsWhenAllPlaylistsProduceNoOutput(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "no media outputs available") {
 		t.Fatalf("downloadLecturesWithRunner() error = %v", err)
 	}
-	if runner.downloads != 2 {
-		t.Fatalf("downloads = %d, want 2", runner.downloads)
+	if runner.downloads != 0 {
+		t.Fatalf("downloads = %d, want 0", runner.downloads)
 	}
 }
 
@@ -208,7 +209,7 @@ func TestDownloadFailureIncludesLectureScope(t *testing.T) {
 
 	lecture := client.Lecture{InstituteID: 1, SubjectID: 2, SessionID: 3, TTID: 10}
 	runner := &fakeLectureDownloadRunner{
-		playlists:   []client.ParsedPlaylist{{InstituteID: 1, SubjectID: 2, SessionID: 3, ID: 10}},
+		playlists:   []client.ParsedPlaylist{{InstituteID: 1, SubjectID: 2, SessionID: 3, ID: 10, FirstViewURLs: []string{"chunk"}}},
 		downloadErr: errors.New("chunk failed"),
 	}
 	_, err := downloadLecturesWithRunner(context.Background(), &config.Config{
@@ -254,7 +255,7 @@ func TestDownloadLectureCountTracksCompletedPlaylists(t *testing.T) {
 			playlists := make([]client.ParsedPlaylist, len(tt.results))
 			lectures := make(client.Lectures, len(tt.results))
 			for i := range playlists {
-				playlists[i] = client.ParsedPlaylist{ID: i + 1}
+				playlists[i] = client.ParsedPlaylist{ID: i + 1, FirstViewURLs: []string{"left"}, SecondViewURLs: []string{"right"}}
 				lectures[i] = client.Lecture{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: i + 1}
 			}
 			runner := &fakeLectureDownloadRunner{playlists: playlists, results: materializeJoinResults(t, outputDir, tt.results)}
@@ -295,7 +296,7 @@ func TestHumanDownloadPresentationKeepsWarningsAndProgress(t *testing.T) {
 
 	outputDir := t.TempDir()
 	runner := &fakeLectureDownloadRunner{
-		playlists: []client.ParsedPlaylist{{ID: 1}},
+		playlists: []client.ParsedPlaylist{{ID: 1, FirstViewURLs: []string{"chunk"}}},
 		results:   materializeJoinResults(t, outputDir, []downloader.JoinResult{{LeftOutput: "left.mp4"}}),
 	}
 	cfg := &config.Config{
@@ -341,7 +342,7 @@ func TestProgressTrackingModeMatrix(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			outputDir := t.TempDir()
 			runner := &fakeLectureDownloadRunner{
-				playlists: []client.ParsedPlaylist{{ID: 1}},
+				playlists: []client.ParsedPlaylist{{ID: 1, FirstViewURLs: []string{"chunk"}}},
 				results:   materializeJoinResults(t, outputDir, []downloader.JoinResult{{LeftOutput: "left.mp4"}}),
 			}
 			cfg := &config.Config{
