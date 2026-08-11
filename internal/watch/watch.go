@@ -125,6 +125,7 @@ func NewFromDownloader(cfg *config.Config, apiClient *client.Client, store JobSt
 }
 
 func normalizeOptions(cfg *config.Config, options Options) Options {
+	options.Once = options.Once || options.Force
 	options.Targets = normalizedTargets(cfg, options.Targets)
 	options.Interval = normalizedInterval(cfg, options.Interval)
 	options.MaxRetries = normalizedPositive(options.MaxRetries, watchRetries(cfg), 3)
