@@ -153,7 +153,7 @@ func TestDownloadEventsKeepUnavailableSelectedMediaNonfatal(t *testing.T) {
 	decoded := decodeCLIEvents(t, output.String())
 	wantTypes := []string{
 		events.JobStarted,
-		events.LectureStarted,
+		events.LectureStarted, events.LectureFailed,
 		events.LectureStarted, events.LectureProgress, events.LectureCompleted,
 		events.JobCompleted,
 	}
@@ -167,6 +167,10 @@ func TestDownloadEventsKeepUnavailableSelectedMediaNonfatal(t *testing.T) {
 	}
 	if result.LectureCount != 1 || len(result.Artifacts) != 1 {
 		t.Fatalf("partial result = %+v, want one completed artifact", result)
+	}
+	details, ok := decoded[2].Details.(map[string]any)
+	if !ok || details["nonfatal"] != true || details["reason"] != "no_selected_media" {
+		t.Fatalf("unavailable-media failure details = %#v", decoded[2].Details)
 	}
 }
 

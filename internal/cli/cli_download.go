@@ -366,25 +366,11 @@ func completeLectureDownloads(
 		// server job runner uses) so per-lecture download+join logic has one home.
 		joinResult, err := d.DownloadAndJoinPlaylist(ctx, playlist, progress, tracker)
 		if err != nil {
-			if errors.Is(err, downloader.ErrNoSelectedMedia) {
-				if tracker != nil {
-					downloader.LectureCompleted(tracker)
-				}
+			skipped, downloadErr := handleLectureDownloadError(stream, lecture, artifactID, key, err, tracker)
+			if skipped {
 				continue
 			}
-			downloadErr := fmt.Errorf(
-				"download and join lecture institute=%d subject=%d session=%d ttid=%d: %w",
-				key.instituteID,
-				key.subjectID,
-				key.sessionID,
-				key.ttid,
-				err,
-			)
-			if events.IsCancellation(downloadErr) {
-				return outputPaths, artifacts, len(artifacts), events.RedactedError(downloadErr)
-			}
-			emitErr := stream.lecture(events.LectureFailed, lecture, artifactID, nil, nil, map[string]any{"error": events.RedactError(downloadErr)})
-			return outputPaths, artifacts, len(artifacts), errors.Join(downloadErr, emitErr)
+			return outputPaths, artifacts, len(artifacts), downloadErr
 		}
 		paths := joinResult.OutputPaths()
 		if len(paths) == 0 {
@@ -423,6 +409,38 @@ func completeLectureDownloads(
 		return nil, nil, 0, downloader.ErrNoMediaOutputs
 	}
 	return outputPaths, artifacts, len(artifacts), nil
+}
+
+func handleLectureDownloadError(
+	stream *downloadEventStream,
+	lecture client.Lecture,
+	artifactID string,
+	key scopedLectureKey,
+	cause error,
+	tracker *downloader.ProgressTracker,
+) (bool, error) {
+	if errors.Is(cause, downloader.ErrNoSelectedMedia) {
+		if emitErr := stream.lecture(events.LectureFailed, lecture, artifactID, nil, nil, map[string]any{
+			"error": events.RedactError(cause), "nonfatal": true, "reason": "no_selected_media",
+		}); emitErr != nil {
+			return false, emitErr
+		}
+		downloader.LectureCompleted(tracker)
+		return true, nil
+	}
+	downloadErr := fmt.Errorf(
+		"download and join lecture institute=%d subject=%d session=%d ttid=%d: %w",
+		key.instituteID,
+		key.subjectID,
+		key.sessionID,
+		key.ttid,
+		cause,
+	)
+	if events.IsCancellation(downloadErr) {
+		return false, events.RedactedError(downloadErr)
+	}
+	emitErr := stream.lecture(events.LectureFailed, lecture, artifactID, nil, nil, map[string]any{"error": events.RedactError(downloadErr)})
+	return false, errors.Join(downloadErr, emitErr)
 }
 
 // validatePlaylistAssociations rejects unselected and duplicate playlists. The
