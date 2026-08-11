@@ -185,6 +185,30 @@ func TestCompleteJobRejectsUnexpectedOutputPath(t *testing.T) {
 	}
 }
 
+func TestCreateJobCanonicalizesExpectedFileViewAliases(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	jobID := uuid.NewString()
+	expected := library.ExpectedArtifact{
+		Lecture:    artifact.Lecture{TTID: 49, InstituteID: 1, SubjectID: 2, SessionID: 3},
+		Selection:  artifact.Selection{Views: "first", Quality: "720"},
+		Files:      []library.ExpectedFile{{Path: filepath.Join(t.TempDir(), "lecture.mp4"), Role: "video", View: "first", Container: "mp4"}},
+		ProducedAt: time.Date(2026, time.August, 11, 10, 0, 0, 0, time.UTC),
+		Producer:   artifact.Producer{Name: "impartus", Version: "test"},
+	}
+	if err := store.CreateJob(context.Background(), library.JobSpec{ID: jobID, Kind: library.JobKindDownload, Expected: expected}); err != nil {
+		t.Fatalf("CreateJob() error = %v", err)
+	}
+	job, err := store.Job(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("Job() error = %v", err)
+	}
+	if job.Expected.Selection.Views != "left" || len(job.Expected.Files) != 1 || job.Expected.Files[0].View != "left" {
+		t.Fatalf("canonical expected artifact = %+v", job.Expected)
+	}
+}
+
 func TestCompleteJobEnforcesExpectedSHA256(t *testing.T) {
 	store := openTestStore(t)
 	outputPath := filepath.Join(t.TempDir(), "expected.mp4")

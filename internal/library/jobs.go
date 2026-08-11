@@ -577,6 +577,9 @@ func normalizeExpectedArtifact(expected ExpectedArtifact) (ExpectedArtifact, str
 		file.Path = absolute
 		file.Role = strings.ToLower(strings.TrimSpace(file.Role))
 		file.View = strings.ToLower(strings.TrimSpace(file.View))
+		if canonicalView, ok := selection.ParseView(file.View); ok {
+			file.View = string(canonicalView)
+		}
 		file.Container = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(file.Container)), ".")
 		file.SHA256 = strings.ToLower(strings.TrimSpace(file.SHA256))
 		if err := validateExpectedFile(expected.Selection, *file); err != nil {
