@@ -1,9 +1,67 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"sync"
 	"testing"
+
+	"github.com/vbauerster/mpb/v8"
+
+	"github.com/rabesss/impartus-cli/internal/client"
+	"github.com/rabesss/impartus-cli/internal/downloader"
 )
+
+type fakePlaylistJoiner struct {
+	results map[int]downloader.JoinResult
+	errors  map[int]error
+}
+
+func (fake fakePlaylistJoiner) DownloadAndJoinPlaylist(_ context.Context, playlist client.ParsedPlaylist, _ *mpb.Progress, _ *downloader.ProgressTracker) (downloader.JoinResult, error) {
+	return fake.results[playlist.ID], fake.errors[playlist.ID]
+}
+
+func TestPlaylistDownloadRunnerSkipsUnavailableSelectedMedia(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	joiner := fakePlaylistJoiner{
+		results: map[int]downloader.JoinResult{2: {LeftOutput: "available.mp4"}},
+		errors:  map[int]error{1: downloader.ErrNoSelectedMedia},
+	}
+	var progress []int
+	outputs, err := newPlaylistDownloadRunner(1).run(ctx, cancel, joiner, []client.ParsedPlaylist{
+		{ID: 1, SeqNo: 1},
+		{ID: 2, SeqNo: 2},
+	}, func(done int) bool {
+		progress = append(progress, done)
+		return true
+	})
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if len(outputs) != 1 || outputs[0] != "available.mp4" {
+		t.Fatalf("outputs = %v, want available media", outputs)
+	}
+	if len(progress) != 2 || progress[0] != 1 || progress[1] != 2 {
+		t.Fatalf("progress = %v, want [1 2]", progress)
+	}
+}
+
+func TestPlaylistDownloadRunnerPreservesOtherFailures(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	want := errors.New("download failed")
+	_, err := newPlaylistDownloadRunner(1).run(ctx, cancel, fakePlaylistJoiner{
+		errors: map[int]error{1: want},
+	}, []client.ParsedPlaylist{{ID: 1, SeqNo: 1}}, func(int) bool { return true })
+	if !errors.Is(err, want) {
+		t.Fatalf("run() error = %v, want wrapped failure", err)
+	}
+}
 
 func TestNewPlaylistDownloadRunner(t *testing.T) {
 	tests := []struct {

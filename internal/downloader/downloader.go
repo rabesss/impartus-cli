@@ -62,11 +62,14 @@ func (r JoinResult) OutputPaths() []string {
 	return paths
 }
 
-type viewConfig struct{ SkipView, Label string }
+type viewConfig struct {
+	Included func(*config.Config) bool
+	Label    string
+}
 
 var (
-	firstViewConfig  = viewConfig{SkipView: "right", Label: "left"}
-	secondViewConfig = viewConfig{SkipView: "left", Label: "right"}
+	firstViewConfig  = viewConfig{Included: (*config.Config).IncludesLeft, Label: "left"}
+	secondViewConfig = viewConfig{Included: (*config.Config).IncludesRight, Label: "right"}
 )
 
 // Downloader orchestrates chunk downloading, decryption, and FFmpeg joining.
@@ -307,7 +310,7 @@ func (d *Downloader) fetchDecryptionKey(ctx context.Context, keyURL string) ([]b
 }
 
 func (d *Downloader) downloadViewChunks(ctx context.Context, p *mpb.Progress, tracker *ProgressTracker, playlist client.ParsedPlaylist, urls []string, vc viewConfig, decryptionKey []byte) ([]string, int) {
-	if len(urls) == 0 || d.config.Views == vc.SkipView {
+	if len(urls) == 0 || !vc.Included(d.config) {
 		return nil, 0
 	}
 	bar := d.newViewBar(p, len(urls), playlist.SeqNo, vc.Label)

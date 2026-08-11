@@ -32,6 +32,29 @@ func TestDownloadAndJoinPlaylistRejectsMissingSelectedMediaBeforeCreatingWorkspa
 	}
 }
 
+func TestViewConfigsUseCanonicalSelectionMembership(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		views        string
+		includeLeft  bool
+		includeRight bool
+	}{
+		{views: " first ", includeLeft: true},
+		{views: " second ", includeRight: true},
+		{views: "both", includeLeft: true, includeRight: true},
+	}
+	for _, test := range tests {
+		cfg := &config.Config{Views: test.views}
+		if got := firstViewConfig.Included(cfg); got != test.includeLeft {
+			t.Errorf("first view included for %q = %t, want %t", test.views, got, test.includeLeft)
+		}
+		if got := secondViewConfig.Included(cfg); got != test.includeRight {
+			t.Errorf("second view included for %q = %t, want %t", test.views, got, test.includeRight)
+		}
+	}
+}
+
 // TestNewDownloaderWithConfigDefaults tests that ApplyDefaults is called
 func TestNewDownloaderWithConfigDefaults(t *testing.T) {
 	cfg := &config.Config{}

@@ -2,13 +2,20 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
 
+	"github.com/vbauerster/mpb/v8"
+
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/downloader"
 )
+
+type playlistJoiner interface {
+	DownloadAndJoinPlaylist(context.Context, client.ParsedPlaylist, *mpb.Progress, *downloader.ProgressTracker) (downloader.JoinResult, error)
+}
 
 type playlistDownloadRunner struct {
 	workers int
@@ -21,7 +28,7 @@ func newPlaylistDownloadRunner(workers int) playlistDownloadRunner {
 	return playlistDownloadRunner{workers: workers}
 }
 
-func (r playlistDownloadRunner) run(ctx context.Context, cancel context.CancelFunc, d *downloader.Downloader, playlists []client.ParsedPlaylist, onProgress func(done int) bool) ([]string, error) {
+func (r playlistDownloadRunner) run(ctx context.Context, cancel context.CancelFunc, d playlistJoiner, playlists []client.ParsedPlaylist, onProgress func(done int) bool) ([]string, error) {
 	tasks := make(chan client.ParsedPlaylist)
 	errCh := make(chan error, 1)
 	doneCh := make(chan struct{})
@@ -37,7 +44,7 @@ func (r playlistDownloadRunner) run(ctx context.Context, cancel context.CancelFu
 				return
 			}
 			result, err := d.DownloadAndJoinPlaylist(ctx, playlist, nil, nil)
-			if err != nil {
+			if err != nil && !errors.Is(err, downloader.ErrNoSelectedMedia) {
 				select {
 				case errCh <- fmt.Errorf("lecture %03d: %w", playlist.SeqNo, err):
 				default:
@@ -45,7 +52,9 @@ func (r playlistDownloadRunner) run(ctx context.Context, cancel context.CancelFu
 				cancel()
 				return
 			}
-			appendOutputs(&outputsMu, &outputs, result.OutputPaths())
+			if err == nil {
+				appendOutputs(&outputsMu, &outputs, result.OutputPaths())
+			}
 			done := int(atomic.AddInt32(&completed, 1))
 			if !onProgress(done) {
 				return
