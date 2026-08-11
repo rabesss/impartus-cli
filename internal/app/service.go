@@ -4,6 +4,7 @@ package app
 import (
 	"context"
 	"io"
+	"time"
 
 	"github.com/rabesss/impartus-cli/internal/artifact"
 	"github.com/rabesss/impartus-cli/internal/client"
@@ -62,14 +63,15 @@ type playbackHistory interface {
 // Service coordinates existing Impartus API, stream proxy, and player layers.
 // It owns no terminal, HTTP, subprocess, or persistence implementation itself.
 type Service struct {
-	config        *config.Config
-	catalog       catalogClient
-	streams       playbackStreams
-	startPlayer   playerStarter
-	playerOptions player.Options
-	history       playbackHistory
-	downloads     lectureDownloads
-	library       artifactLibrary
+	config                 *config.Config
+	catalog                catalogClient
+	streams                playbackStreams
+	startPlayer            playerStarter
+	playerOptions          player.Options
+	history                playbackHistory
+	downloads              lectureDownloads
+	library                artifactLibrary
+	resumeReadinessTimeout time.Duration
 }
 
 // New creates the production application service.
@@ -112,10 +114,11 @@ func NewWithLibraryAndPlayerOptions(cfg *config.Config, apiClient *client.Client
 
 func newService(cfg *config.Config, catalog catalogClient, streams playbackStreams, start playerStarter, options ...player.Options) *Service {
 	service := &Service{
-		config:      cfg,
-		catalog:     catalog,
-		streams:     streams,
-		startPlayer: start,
+		config:                 cfg,
+		catalog:                catalog,
+		streams:                streams,
+		startPlayer:            start,
+		resumeReadinessTimeout: playbackReadinessTimeout,
 	}
 	if downloads, ok := streams.(lectureDownloads); ok {
 		service.downloads = downloads

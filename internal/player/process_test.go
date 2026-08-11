@@ -97,6 +97,24 @@ func TestPlaybackCancellationResultKeepsCancellationOverReadyCleanExit(t *testin
 	}
 }
 
+func TestPollTerminalPreservesReadyFailure(t *testing.T) {
+	t.Parallel()
+
+	session := &Session{
+		client:      &Client{done: make(chan struct{}), readDone: make(chan struct{})},
+		events:      make(chan Event, 1),
+		playbackEnd: make(chan error, 1),
+	}
+	session.acceptEvent(Event{Name: "end-file", Reason: "error", FileError: "HTTP error 401"})
+	ready, err := session.PollTerminal()
+	if !ready || !errors.Is(err, ErrPlaybackAuthorization) {
+		t.Fatalf("PollTerminal() = (%t, %v), want ready authorization failure", ready, err)
+	}
+	if waitErr := session.WaitForEnd(context.Background()); !errors.Is(waitErr, ErrPlaybackAuthorization) {
+		t.Fatalf("WaitForEnd() after PollTerminal = %v, want the same authorization failure", waitErr)
+	}
+}
+
 func TestAcceptEventRemovesUntrustedPeerTextFromPublicEvents(t *testing.T) {
 	t.Parallel()
 

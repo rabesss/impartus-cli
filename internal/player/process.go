@@ -95,16 +95,18 @@ func removeRuntimePath(path string) error {
 // Session owns one mpv child, its process group, private IPC socket, and JSON
 // client. Close always attempts to reap the child and is idempotent.
 type Session struct {
-	options      Options
-	command      *exec.Cmd
-	client       *Client
-	runtime      *runtimeReservation
-	lifecycle    context.Context
-	processDone  chan struct{}
-	events       chan Event
-	playbackEnd  chan error
-	eventMutex   sync.Mutex
-	eventsClosed bool
+	options       Options
+	command       *exec.Cmd
+	client        *Client
+	runtime       *runtimeReservation
+	lifecycle     context.Context
+	processDone   chan struct{}
+	events        chan Event
+	playbackEnd   chan error
+	eventMutex    sync.Mutex
+	eventsClosed  bool
+	terminalReady bool
+	terminalErr   error
 
 	waitMutex sync.Mutex
 	waitErr   error
@@ -307,6 +309,10 @@ func (session *Session) acceptEvent(event Event) {
 	defer session.eventMutex.Unlock()
 	ended, endErr := playbackEndResult(event)
 	if ended {
+		if !session.terminalReady {
+			session.terminalReady = true
+			session.terminalErr = endErr
+		}
 		select {
 		case session.playbackEnd <- endErr:
 		default:
@@ -390,6 +396,35 @@ func (session *Session) WaitForEnd(ctx context.Context) error {
 			return session.cancellationResult(ctx)
 		}
 	}
+}
+
+// PollTerminal reports an already-observable terminal result without closing
+// IPC, canceling playback, or consuming WaitForEnd's completion signal.
+func (session *Session) PollTerminal() (bool, error) {
+	if ready, endErr := session.terminalSnapshot(); ready {
+		return true, playbackTerminalResult(context.Background(), endErr)
+	}
+	if session.client == nil {
+		return false, nil
+	}
+	select {
+	case <-session.client.readDone:
+		if ready, endErr := session.terminalSnapshot(); ready {
+			return true, playbackTerminalResult(context.Background(), endErr)
+		}
+		if session.processFinished() {
+			return true, session.processError()
+		}
+		return true, session.client.Err()
+	default:
+		return false, nil
+	}
+}
+
+func (session *Session) terminalSnapshot() (bool, error) {
+	session.eventMutex.Lock()
+	defer session.eventMutex.Unlock()
+	return session.terminalReady, session.terminalErr
 }
 
 func (session *Session) cancellationResult(ctx context.Context) error {

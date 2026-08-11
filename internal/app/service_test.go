@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -143,6 +144,10 @@ type fakeManagedPlayer struct {
 	events        chan player.Event
 	load          error
 	wait          error
+	honorWaitCtx  bool
+	terminalReady bool
+	terminalErr   error
+	pollTerminal  func()
 	waitStarted   chan struct{}
 	waitRelease   <-chan struct{}
 	closed        int
@@ -216,8 +221,9 @@ func TestPlaybackCancellationResultPreservesReadyFailures(t *testing.T) {
 				failures <- test.proxyFailure
 			}
 			playerResult <- test.playerResult
+			playback := &Playback{failures: failures}
 
-			if err := playbackCancellationResult(ctx, failures, playerResult); !errors.Is(err, test.want) {
+			if err := playback.playbackCancellationResult(ctx, failures, playerResult); !errors.Is(err, test.want) {
 				t.Fatalf("playbackCancellationResult() error = %v, want %v", err, test.want)
 			}
 		})
@@ -252,6 +258,53 @@ func TestPlaybackWaitForEndDrainsInFlightPlayerFailureAfterCancellation(t *testi
 	close(release)
 	if err := <-result; !errors.Is(err, sentinel) {
 		t.Fatalf("WaitForEnd() error = %v, want player failure", err)
+	}
+}
+
+func TestPlaybackPollTerminalKeepsProxyFailureStickyForWaitForEnd(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("proxy failed before readiness")
+	failures := make(chan error, 1)
+	failures <- sentinel
+	playback := newPlayback(&fakeManagedPlayer{}, failures, nil)
+	ready, err := playback.PollTerminal()
+	if !ready || !errors.Is(err, sentinel) {
+		t.Fatalf("PollTerminal() = (%t, %v), want ready proxy failure", ready, err)
+	}
+	if waitErr := playback.WaitForEnd(context.Background()); !errors.Is(waitErr, sentinel) {
+		t.Fatalf("WaitForEnd() after PollTerminal = %v, want the same proxy failure", waitErr)
+	}
+}
+
+func TestPlaybackPollTerminalDoesNotStealActiveWaitFailure(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("proxy failed during wait")
+	failures := make(chan error, 1)
+	playback := newPlayback(&fakeManagedPlayer{}, failures, nil)
+	if ready, err := playback.beginProxyFailureWait(); ready || err != nil {
+		t.Fatalf("beginProxyFailureWait() = (%t, %v), want active wait ownership", ready, err)
+	}
+	failures <- sentinel
+	if ready, err := playback.PollTerminal(); ready || err != nil {
+		t.Fatalf("PollTerminal() during WaitForEnd = (%t, %v), want non-owning not-ready result", ready, err)
+	}
+	playback.endProxyFailureWait()
+	if waitErr := playback.WaitForEnd(context.Background()); !errors.Is(waitErr, sentinel) {
+		t.Fatalf("WaitForEnd() error = %v, want proxy failure", waitErr)
+	}
+}
+
+func TestPlaybackPollTerminalRechecksProxyAfterPlayerPoll(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("proxy failed during player poll")
+	failures := make(chan error, 1)
+	playback := newPlayback(&fakeManagedPlayer{pollTerminal: func() { failures <- sentinel }}, failures, nil)
+	ready, err := playback.PollTerminal()
+	if !ready || !errors.Is(err, sentinel) {
+		t.Fatalf("PollTerminal() = (%t, %v), want concurrent proxy failure", ready, err)
 	}
 }
 
@@ -293,14 +346,23 @@ func TestServiceCleansPlayerAndProxyWhenLoadFails(t *testing.T) {
 	}
 }
 
-func (fake *fakeManagedPlayer) WaitForEnd(context.Context) error {
+func (fake *fakeManagedPlayer) WaitForEnd(ctx context.Context) error {
 	if fake.waitStarted != nil {
 		close(fake.waitStarted)
 	}
 	if fake.waitRelease != nil {
 		<-fake.waitRelease
 	}
+	if fake.honorWaitCtx && ctx.Err() != nil {
+		return ctx.Err()
+	}
 	return fake.wait
+}
+func (fake *fakeManagedPlayer) PollTerminal() (bool, error) {
+	if fake.pollTerminal != nil {
+		fake.pollTerminal()
+	}
+	return fake.terminalReady, fake.terminalErr
 }
 func (fake *fakeManagedPlayer) Close(context.Context) error {
 	fake.closed++
@@ -417,6 +479,47 @@ func TestStartLectureSurfacesFailureBeforeMediaReady(t *testing.T) {
 	}
 }
 
+func TestStartLectureCleansUpAfterReadinessTimeout(t *testing.T) {
+	t.Parallel()
+
+	streams := &fakeStreams{playlists: []client.ParsedPlaylist{{ID: 91}}}
+	fakePlayer := &fakeManagedPlayer{events: make(chan player.Event)}
+	service := newService(&config.Config{}, &fakeCatalog{}, streams, func(context.Context, player.Options) (managedPlayer, error) {
+		return fakePlayer, nil
+	})
+	service.resumeReadinessTimeout = 10 * time.Millisecond
+
+	started, err := service.StartLecture(context.Background(), client.Lecture{TTID: 91}, 42.5)
+	if started.Session != nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("StartLecture() = (%v, %v), want readiness timeout", started, err)
+	}
+	if fakePlayer.closed != 1 || streams.cleanups != 1 {
+		t.Fatalf("readiness timeout cleanup player=%d proxy=%d, want one each", fakePlayer.closed, streams.cleanups)
+	}
+}
+
+func TestStartLecturePreservesProxyFailureAtReadinessTimeout(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("proxy failed before readiness")
+	failures := make(chan error, 1)
+	failures <- sentinel
+	streams := &fakeStreams{playlists: []client.ParsedPlaylist{{ID: 91}}, failures: failures}
+	fakePlayer := &fakeManagedPlayer{events: make(chan player.Event)}
+	service := newService(&config.Config{}, &fakeCatalog{}, streams, func(context.Context, player.Options) (managedPlayer, error) {
+		return fakePlayer, nil
+	})
+	service.resumeReadinessTimeout = 10 * time.Millisecond
+
+	started, err := service.StartLecture(context.Background(), client.Lecture{TTID: 91}, 42.5)
+	if started.Session != nil || !errors.Is(err, sentinel) {
+		t.Fatalf("StartLecture() = (%v, %v), want proxy failure", started, err)
+	}
+	if fakePlayer.closed != 1 || streams.cleanups != 1 {
+		t.Fatalf("terminal readiness cleanup player=%d proxy=%d, want one each", fakePlayer.closed, streams.cleanups)
+	}
+}
+
 func TestWaitForPlaybackReadyTimesOut(t *testing.T) {
 	t.Parallel()
 
@@ -428,6 +531,100 @@ func TestWaitForPlaybackReadyTimesOut(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("waitForPlaybackReady() elapsed = %v, want bounded readiness wait", elapsed)
+	}
+}
+
+func TestWaitForPlaybackReadyPreservesParentCancellation(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	playback := &fakeManagedPlayer{events: make(chan player.Event)}
+	_, err := waitForPlaybackReady(ctx, playback, time.Second)
+	if err != context.Canceled {
+		t.Fatalf("waitForPlaybackReady() error = %v, want exact context.Canceled", err)
+	}
+}
+
+func TestWaitForPlaybackReadyPreservesTerminalFailureAtTimeout(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("player failed before readiness")
+	for range 100 {
+		events := make(chan player.Event)
+		close(events)
+		playback := &fakeManagedPlayer{
+			events: events, wait: sentinel, honorWaitCtx: true,
+			terminalReady: true, terminalErr: sentinel,
+		}
+		_, err := waitForPlaybackReady(context.Background(), playback, -time.Nanosecond)
+		if !errors.Is(err, sentinel) {
+			t.Fatalf("waitForPlaybackReady() error = %v, want terminal failure", err)
+		}
+	}
+}
+
+func TestWaitForPlaybackReadyPollsTerminalFailureBeforeTimeout(t *testing.T) {
+	t.Parallel()
+
+	sentinel := errors.New("proxy failed before readiness")
+	playback := &fakeManagedPlayer{
+		events:        make(chan player.Event),
+		terminalReady: true,
+		terminalErr:   sentinel,
+	}
+	_, err := waitForPlaybackReady(context.Background(), playback, 10*time.Millisecond)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("waitForPlaybackReady() error = %v, want terminal failure", err)
+	}
+}
+
+func TestPlaybackReadinessTimeoutDoesNotBlockOnTerminalEvent(t *testing.T) {
+	t.Parallel()
+
+	events := make(chan player.Event, 1)
+	events <- player.Event{Name: "end-file", Reason: "eof"}
+	waitStarted := make(chan struct{})
+	playback := &fakeManagedPlayer{
+		events:      events,
+		waitStarted: waitStarted,
+		waitRelease: make(chan struct{}),
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, err := playbackReadinessTimeoutResult(
+			context.Background(), playback, events, nil, time.Millisecond, context.DeadlineExceeded,
+		)
+		result <- err
+	}()
+
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "playback ended before media became ready") {
+			t.Fatalf("playbackReadinessTimeoutResult() error = %v, want clean terminal classification", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("playbackReadinessTimeoutResult() blocked on WaitForEnd")
+	}
+	select {
+	case <-waitStarted:
+		t.Fatal("playbackReadinessTimeoutResult() called WaitForEnd")
+	default:
+	}
+}
+
+func TestWaitForPlaybackReadyPreservesCancellationOverCleanTerminal(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	playback := &fakeManagedPlayer{
+		events:        make(chan player.Event),
+		terminalReady: true,
+	}
+	_, err := waitForPlaybackReady(ctx, playback, time.Second)
+	if err != context.Canceled {
+		t.Fatalf("waitForPlaybackReady() error = %v, want exact context.Canceled", err)
 	}
 }
 

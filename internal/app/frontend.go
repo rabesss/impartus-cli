@@ -37,6 +37,10 @@ type PlaybackSession interface {
 	Close(context.Context) error
 }
 
+type playbackTerminalPoller interface {
+	PollTerminal() (bool, error)
+}
+
 // DownloadResult is the application-level result of one interactive lecture
 // download. LibraryRecorded is false only when media completed but the local
 // library commit failed.
@@ -79,7 +83,11 @@ func (service *Service) StartLecture(ctx context.Context, lecture client.Lecture
 	var playback PlaybackSession = startedPlayback
 	result := PlaybackStart{Session: playback}
 	if resumeSeconds > 0 {
-		readinessEvents, readyErr := waitForPlaybackReady(ctx, playback, playbackReadinessTimeout)
+		readinessTimeout := service.resumeReadinessTimeout
+		if readinessTimeout <= 0 {
+			readinessTimeout = playbackReadinessTimeout
+		}
+		readinessEvents, readyErr := waitForPlaybackReady(ctx, playback, readinessTimeout)
 		if readyErr != nil {
 			closeErr := playback.Close(context.Background())
 			return PlaybackStart{}, errors.Join(fmt.Errorf("resume lecture playback: wait for media readiness: %w", readyErr), closeErr)
@@ -97,37 +105,100 @@ func waitForPlaybackReady(ctx context.Context, playback PlaybackSession, timeout
 	readyCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	events := playback.Events()
 	observed := make([]player.Event, 0, 6)
 	for {
 		select {
-		case event, open := <-playback.Events():
-			if !open {
-				if waitErr := playback.WaitForEnd(readyCtx); waitErr != nil {
-					return nil, waitErr
-				}
-				return nil, errors.New("playback ended before media became ready")
-			}
-			ready, terminal, eventErr := playbackReadiness(event)
-			if eventErr != nil {
-				return nil, eventErr
-			}
-			observed = retainResumeTelemetry(observed, event, ready)
-			if ready {
-				return observed, nil
-			}
-			if terminal {
-				if waitErr := playback.WaitForEnd(readyCtx); waitErr != nil {
-					return nil, waitErr
-				}
-				return nil, errors.New("playback ended before media became ready")
+		case event, open := <-events:
+			var done bool
+			var eventErr error
+			observed, done, eventErr = consumePlaybackReadinessEvent(ctx, playback, observed, event, open)
+			if done {
+				return observed, eventErr
 			}
 		case <-readyCtx.Done():
+			return playbackReadinessTimeoutResult(ctx, playback, events, observed, timeout, readyCtx.Err())
+		}
+	}
+}
+
+func playbackReadinessTimeoutResult(
+	ctx context.Context,
+	playback PlaybackSession,
+	events <-chan player.Event,
+	observed []player.Event,
+	timeout time.Duration,
+	timeoutErr error,
+) ([]player.Event, error) {
+	// A terminal event and the readiness timer can become selectable together.
+	// Give already-observable terminal state one final nonblocking drain so a
+	// real playback failure is not mislabeled.
+	terminalObserved := false
+	select {
+	case event, open := <-events:
+		if !open {
+			terminalObserved = true
+			break
+		}
+		ready, terminal, eventErr := playbackReadiness(event)
+		if eventErr != nil {
+			return nil, eventErr
+		}
+		observed = retainResumeTelemetry(observed, event, ready)
+		if ready {
+			return observed, nil
+		}
+		terminalObserved = terminal
+	default:
+	}
+	if poller, ok := playback.(playbackTerminalPoller); ok {
+		if ready, terminalErr := poller.PollTerminal(); ready {
+			if terminalErr != nil {
+				return nil, terminalErr
+			}
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			return nil, fmt.Errorf("media readiness timed out after %s: %w", timeout, readyCtx.Err())
+			return nil, errors.New("playback ended before media became ready")
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if terminalObserved {
+		return nil, errors.New("playback ended before media became ready")
+	}
+	return nil, fmt.Errorf("media readiness timed out after %s: %w", timeout, timeoutErr)
+}
+
+func consumePlaybackReadinessEvent(
+	ctx context.Context,
+	playback PlaybackSession,
+	observed []player.Event,
+	event player.Event,
+	open bool,
+) ([]player.Event, bool, error) {
+	if !open {
+		if waitErr := playback.WaitForEnd(ctx); waitErr != nil {
+			return nil, true, waitErr
+		}
+		return nil, true, errors.New("playback ended before media became ready")
+	}
+	ready, terminal, eventErr := playbackReadiness(event)
+	if eventErr != nil {
+		return nil, true, eventErr
+	}
+	observed = retainResumeTelemetry(observed, event, ready)
+	if ready {
+		return observed, true, nil
+	}
+	if terminal {
+		if waitErr := playback.WaitForEnd(ctx); waitErr != nil {
+			return nil, true, waitErr
+		}
+		return nil, true, errors.New("playback ended before media became ready")
+	}
+	return observed, false, nil
 }
 
 const maxResumeTelemetryDrain = 128
