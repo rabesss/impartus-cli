@@ -391,12 +391,16 @@ func (session *Session) WaitForEnd(ctx context.Context) error {
 }
 
 func (session *Session) cancellationResult(ctx context.Context) error {
-	select {
-	case <-session.client.Done():
-		<-session.client.readDone
-	default:
+	// Lifecycle cancellation owns IPC shutdown. Close synchronously here instead
+	// of racing the background closer so any terminal handler that is already in
+	// flight can publish its result before cancellation is classified.
+	closeErr := session.client.Close()
+	<-session.client.readDone
+	result := playbackCancellationResult(ctx, session.playbackEnd)
+	if closeErr != nil && errors.Is(result, ctx.Err()) {
+		return errors.Join(result, fmt.Errorf("close mpv IPC after cancellation: %w", closeErr))
 	}
-	return playbackCancellationResult(ctx, session.playbackEnd)
+	return result
 }
 
 func playbackCancellationResult(ctx context.Context, playbackEnd <-chan error) error {
