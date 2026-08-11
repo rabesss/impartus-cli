@@ -105,6 +105,28 @@ func TestClientEmitsPropertyEvent(t *testing.T) {
 	}
 }
 
+func TestClientEventHandlerOwnsEventDelivery(t *testing.T) {
+	t.Parallel()
+
+	var handled []Event
+	client := &Client{
+		options: ClientOptions{eventHandler: func(event Event) {
+			handled = append(handled, event)
+		}},
+		events: make(chan Event, 1),
+	}
+	want := Event{Name: "end-file", Reason: "eof"}
+	client.publishEvent(want)
+	if len(handled) != 1 || handled[0].Name != want.Name || handled[0].Reason != want.Reason {
+		t.Fatalf("handled events = %+v, want %+v", handled, want)
+	}
+	select {
+	case event := <-client.events:
+		t.Fatalf("internal channel received duplicate event %+v", event)
+	default:
+	}
+}
+
 func TestClientDropsOldestEventWithoutBlockingCommands(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
 	client := NewClient(clientConn, ClientOptions{CommandTimeout: time.Second, EventBuffer: 2})

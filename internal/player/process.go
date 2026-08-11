@@ -12,11 +12,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/rabesss/impartus-cli/internal/playback"
 )
 
 // ErrPlaybackAuthorization classifies an upstream media authorization failure
 // regardless of whether it is first observed by mpv or the local HLS proxy.
-var ErrPlaybackAuthorization = errors.New("upstream authorization failed")
+var ErrPlaybackAuthorization = playback.ErrAuthorization
 
 const (
 	defaultConnectTimeout = 5 * time.Second

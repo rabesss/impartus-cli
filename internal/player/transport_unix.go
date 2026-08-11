@@ -143,8 +143,8 @@ func validatePrivateDirectory(path string) (string, error) {
 	if !ok {
 		return "", errors.New("runtime directory ownership is unavailable")
 	}
-	if stat.Uid != uint32(os.Getuid()) { // #nosec G115 -- UID values are unsigned platform identifiers
-		return "", fmt.Errorf("runtime directory is owned by uid %d, not current uid %d", stat.Uid, os.Getuid())
+	if stat.Uid != uint32(os.Geteuid()) { // #nosec G115 -- UID values are unsigned platform identifiers
+		return "", fmt.Errorf("runtime directory is owned by uid %d, not effective uid %d", stat.Uid, os.Geteuid())
 	}
 	return resolved, nil
 }
@@ -205,8 +205,8 @@ func connectVerifiedIPC(ctx context.Context, socketPath string) (net.Conn, bool,
 	if !ok {
 		return nil, false, errors.New("mpv IPC socket ownership is unavailable")
 	}
-	if stat.Uid != uint32(os.Getuid()) { // #nosec G115 -- UID values are unsigned platform identifiers
-		return nil, false, fmt.Errorf("mpv IPC socket is owned by uid %d, not current uid %d", stat.Uid, os.Getuid())
+	if stat.Uid != uint32(os.Geteuid()) { // #nosec G115 -- UID values are unsigned platform identifiers
+		return nil, false, fmt.Errorf("mpv IPC socket is owned by uid %d, not effective uid %d", stat.Uid, os.Geteuid())
 	}
 	// #nosec G703 -- socketPath is reserved beneath an owner-private verified directory.
 	if secureErr := os.Chmod(socketPath, 0o600); secureErr != nil {

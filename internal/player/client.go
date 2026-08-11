@@ -327,9 +327,11 @@ func safeMPVError(raw string) string {
 func (client *Client) publishEvent(event Event) {
 	// The internal session handler is deliberately synchronous and non-blocking:
 	// terminal state must be recorded before readLoop can close Done on a
-	// following EOF. Public Client users still receive the bounded channel copy.
+	// following EOF. A handler owns delivery; public Client users without one
+	// receive the bounded channel copy.
 	if client.options.eventHandler != nil {
 		client.options.eventHandler(event)
+		return
 	}
 	select {
 	case client.events <- event:
