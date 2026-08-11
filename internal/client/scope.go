@@ -14,8 +14,8 @@ type CourseCatalog interface {
 	GetCourses(context.Context, *config.Config) (Courses, error)
 }
 
-// ResolveLectureScope applies the selected subject/session to every lecture and
-// fills omitted institute IDs from one unambiguous batch or catalog value.
+// ResolveLectureScope validates the selected subject/session against positive
+// upstream values, then fills omitted scope from the unambiguous selection.
 func ResolveLectureScope(
 	ctx context.Context,
 	cfg *config.Config,
@@ -23,25 +23,26 @@ func ResolveLectureScope(
 	lectures Lectures,
 	subjectID, sessionID int,
 ) error {
-	knownInstitutes, missingInstitute := applySelectedCourseScope(lectures, subjectID, sessionID)
-	if !missingInstitute {
-		return nil
+	knownInstitutes, missingInstitute, err := inspectSelectedCourseScope(lectures, subjectID, sessionID)
+	if err != nil {
+		return err
 	}
-
 	instituteID, err := uniqueInstituteID(knownInstitutes)
 	if err != nil {
 		return err
 	}
-	if instituteID == 0 {
+	if missingInstitute && instituteID == 0 {
 		instituteID, err = resolveInstituteFromCatalog(ctx, cfg, catalog, subjectID, sessionID)
 		if err != nil {
 			return err
 		}
 	}
-	if instituteID == 0 {
+	if missingInstitute && instituteID == 0 {
 		return fmt.Errorf("cannot resolve institute scope for subject=%d session=%d", subjectID, sessionID)
 	}
 	for index := range lectures {
+		lectures[index].SubjectID = subjectID
+		lectures[index].SessionID = sessionID
 		if lectures[index].InstituteID == 0 {
 			lectures[index].InstituteID = instituteID
 		}
@@ -49,19 +50,23 @@ func ResolveLectureScope(
 	return nil
 }
 
-func applySelectedCourseScope(lectures Lectures, subjectID, sessionID int) (map[int]struct{}, bool) {
+func inspectSelectedCourseScope(lectures Lectures, subjectID, sessionID int) (map[int]struct{}, bool, error) {
 	knownInstitutes := make(map[int]struct{})
 	missingInstitute := false
 	for index := range lectures {
-		lectures[index].SubjectID = subjectID
-		lectures[index].SessionID = sessionID
+		if lectures[index].SubjectID > 0 && lectures[index].SubjectID != subjectID {
+			return nil, false, fmt.Errorf("subject scope mismatch for lecture %d", lectures[index].TTID)
+		}
+		if lectures[index].SessionID > 0 && lectures[index].SessionID != sessionID {
+			return nil, false, fmt.Errorf("session scope mismatch for lecture %d", lectures[index].TTID)
+		}
 		if lectures[index].InstituteID > 0 {
 			knownInstitutes[lectures[index].InstituteID] = struct{}{}
 		} else {
 			missingInstitute = true
 		}
 	}
-	return knownInstitutes, missingInstitute
+	return knownInstitutes, missingInstitute, nil
 }
 
 func resolveInstituteFromCatalog(

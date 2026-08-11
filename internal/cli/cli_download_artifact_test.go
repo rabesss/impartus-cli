@@ -75,6 +75,13 @@ func TestResolveDownloadLectureScopeRejectsAmbiguousInstitute(t *testing.T) {
 			},
 		},
 		{
+			name: "fully populated selected batch",
+			lectures: client.Lectures{
+				{InstituteID: 4, TTID: 1},
+				{InstituteID: 5, TTID: 2},
+			},
+		},
+		{
 			name:     "course catalog",
 			lectures: client.Lectures{{TTID: 1}},
 			courses: client.Courses{
