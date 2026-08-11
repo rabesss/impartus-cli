@@ -314,6 +314,52 @@ func TestDownloadPlaylistPipelineUsesDownloaderRetryLimit(t *testing.T) {
 	}
 }
 
+func TestDownloadPlaylistPipelineTreatsUnsetRetryLimitAsOneAttempt(t *testing.T) {
+	key := []byte("0123456789abcdef")
+	var chunkRequests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/key" {
+			writeDownloadSpeedResponse(w, fakeKeyResponse(key))
+			return
+		}
+		chunkRequests.Add(1)
+		http.Error(w, "upstream failed", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		Token:                     "test-token",
+		TempDirLocation:           t.TempDir(),
+		Views:                     "left",
+		EnablePipeline:            true,
+		DownloadWorkersPerLecture: 1,
+		DecryptWorkersPerLecture:  1,
+		RateLimit:                 100,
+		APIRateLimit:              20,
+	}
+	d := New(cfg, client.New(server.Client(), nil))
+	d.maxRetries = 0
+
+	_, err := d.DownloadPlaylist(t.Context(), client.ParsedPlaylist{
+		ID:            42,
+		SeqNo:         1,
+		KeyURL:        server.URL + "/key",
+		FirstViewURLs: []string{server.URL + "/chunk"},
+	}, nil, nil)
+	if err == nil {
+		t.Fatal("DownloadPlaylist returned nil error for HTTP 503")
+	}
+	if !strings.Contains(err.Error(), "failed after 1 attempt") || !strings.Contains(err.Error(), "status 503") {
+		t.Fatalf("DownloadPlaylist error = %v, want one-attempt root cause", err)
+	}
+	if strings.Contains(err.Error(), "%!w") {
+		t.Fatalf("DownloadPlaylist error contains malformed wrapping: %v", err)
+	}
+	if got := chunkRequests.Load(); got != 1 {
+		t.Fatalf("chunk requests = %d, want 1 fallback attempt", got)
+	}
+}
+
 func TestDownloadPlaylistPipelineOrdersFailureDetailsByChunkNumber(t *testing.T) {
 	const chunkCount = 11
 
