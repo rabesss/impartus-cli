@@ -417,6 +417,20 @@ func TestStartLectureSurfacesFailureBeforeMediaReady(t *testing.T) {
 	}
 }
 
+func TestWaitForPlaybackReadyTimesOut(t *testing.T) {
+	t.Parallel()
+
+	playback := &fakeManagedPlayer{events: make(chan player.Event)}
+	started := time.Now()
+	_, err := waitForPlaybackReady(context.Background(), playback, 10*time.Millisecond)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("waitForPlaybackReady() error = %v, want deadline exceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("waitForPlaybackReady() elapsed = %v, want bounded readiness wait", elapsed)
+	}
+}
+
 func TestPlaybackReadinessIgnoresStaleEOFProperty(t *testing.T) {
 	t.Parallel()
 

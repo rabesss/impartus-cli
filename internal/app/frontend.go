@@ -54,6 +54,8 @@ type PlaybackStart struct {
 	InitialEvents []player.Event
 }
 
+const playbackReadinessTimeout = 10 * time.Second
+
 // StartLecture resolves one live lecture and starts supervised playback. A
 // positive resume position is applied only after the capability URL is loaded.
 func (service *Service) StartLecture(ctx context.Context, lecture client.Lecture, resumeSeconds float64) (PlaybackStart, error) {
@@ -77,7 +79,7 @@ func (service *Service) StartLecture(ctx context.Context, lecture client.Lecture
 	var playback PlaybackSession = startedPlayback
 	result := PlaybackStart{Session: playback}
 	if resumeSeconds > 0 {
-		readinessEvents, readyErr := waitForPlaybackReady(ctx, playback)
+		readinessEvents, readyErr := waitForPlaybackReady(ctx, playback, playbackReadinessTimeout)
 		if readyErr != nil {
 			closeErr := playback.Close(context.Background())
 			return PlaybackStart{}, errors.Join(fmt.Errorf("resume lecture playback: wait for media readiness: %w", readyErr), closeErr)
@@ -91,13 +93,16 @@ func (service *Service) StartLecture(ctx context.Context, lecture client.Lecture
 	return result, nil
 }
 
-func waitForPlaybackReady(ctx context.Context, playback PlaybackSession) ([]player.Event, error) {
+func waitForPlaybackReady(ctx context.Context, playback PlaybackSession, timeout time.Duration) ([]player.Event, error) {
+	readyCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	observed := make([]player.Event, 0, 6)
 	for {
 		select {
 		case event, open := <-playback.Events():
 			if !open {
-				if waitErr := playback.WaitForEnd(ctx); waitErr != nil {
+				if waitErr := playback.WaitForEnd(readyCtx); waitErr != nil {
 					return nil, waitErr
 				}
 				return nil, errors.New("playback ended before media became ready")
@@ -111,13 +116,16 @@ func waitForPlaybackReady(ctx context.Context, playback PlaybackSession) ([]play
 				return observed, nil
 			}
 			if terminal {
-				if waitErr := playback.WaitForEnd(ctx); waitErr != nil {
+				if waitErr := playback.WaitForEnd(readyCtx); waitErr != nil {
 					return nil, waitErr
 				}
 				return nil, errors.New("playback ended before media became ready")
 			}
-		case <-ctx.Done():
-			return nil, ctx.Err()
+		case <-readyCtx.Done():
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			return nil, fmt.Errorf("media readiness timed out after %s: %w", timeout, readyCtx.Err())
 		}
 	}
 }
