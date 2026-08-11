@@ -205,6 +205,10 @@ func applyLibraryRecording(
 	presentation downloadPresentationOptions,
 	record func(context.Context, []artifact.Manifest) error,
 ) downloadResult {
+	if len(result.Artifacts) == 0 {
+		result.LibraryRecorded = true
+		return result
+	}
 	if record == nil {
 		result.LibraryRecorded = true
 		return result

@@ -464,6 +464,31 @@ func TestLibraryRecordingFailureKeepsCompletedDownloadAndAddsOneWarning(t *testi
 	}
 }
 
+func TestLibraryRecordingWithNoArtifactsIsSuccessfulNoOp(t *testing.T) {
+	t.Parallel()
+
+	var called bool
+	var warnings bytes.Buffer
+	result := applyLibraryRecording(
+		context.Background(),
+		downloadResult{Status: "completed"},
+		downloadPresentationOptions{warningOutput: &warnings},
+		func(context.Context, []artifact.Manifest) error {
+			called = true
+			return errors.New("state is read-only")
+		},
+	)
+	if called {
+		t.Fatal("zero-artifact download attempted a library write")
+	}
+	if !result.LibraryRecorded || len(result.Warnings) != 0 {
+		t.Fatalf("zero-artifact result = %+v", result)
+	}
+	if warnings.Len() != 0 {
+		t.Fatalf("zero-artifact warnings = %q, want none", warnings.String())
+	}
+}
+
 func TestCompletedDownloadSurvivesUnwritableDefaultStateHome(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", filepath.Join("/proc", fmt.Sprintf("impartus-library-%d", os.Getpid())))
 	mediaPath := filepath.Join(t.TempDir(), "lecture.mp4")
