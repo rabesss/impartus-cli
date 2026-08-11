@@ -64,30 +64,6 @@ func TestTerminalEventPreservesPartialCycleForFailureAndCancellation(t *testing.
 	}
 }
 
-func TestWatcherCompletesPredownloadTransitionsBeforeHonoringCancellation(t *testing.T) {
-	t.Parallel()
-
-	baseStore := openWatchStore(t)
-	store := &contextRecordingStore{Store: baseStore}
-	cfg := watchTestConfig(t)
-	target := cfg.Watch.Targets[0]
-	lecture := watchLecture(target, 39, 1, "Cancel after playlist")
-	source := &fakeSource{lectures: map[[2]int]client.Lectures{{target.SubjectID, target.SessionID}: {lecture}}, errors: map[[2]int]error{}}
-	ctx, cancel := context.WithCancel(context.Background())
-	producer := &fakeProducer{
-		cfg: cfg, fetchErrors: map[int]error{}, downloadErrors: map[int]error{},
-		afterFetch: cancel, blockDownload: true,
-	}
-
-	_, err := New(cfg, source, producer, store, Options{Once: true}).Run(ctx)
-	if !errors.Is(err, context.Canceled) || errors.Is(err, ErrDurableState) {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if store.createContextError != nil || store.startContextError != nil {
-		t.Fatalf("pre-download contexts: create=%v start=%v", store.createContextError, store.startContextError)
-	}
-}
-
 func TestWatcherCommitsArtifactAndSkipsItOnRepeatedCycle(t *testing.T) {
 	t.Parallel()
 

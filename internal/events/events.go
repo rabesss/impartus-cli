@@ -3,6 +3,7 @@
 package events
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -179,6 +180,12 @@ func isLectureLifecycle(eventType string) bool {
 // IsTerminal reports whether eventType closes an event stream.
 func IsTerminal(eventType string) bool {
 	return eventType == JobCompleted || eventType == JobFailed || eventType == JobCanceled
+}
+
+// IsCancellation reports the two context terminal conditions that lifecycle
+// streams represent as cancellation rather than failure.
+func IsCancellation(cause error) bool {
+	return errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded)
 }
 
 // Failure constructs a sanitized terminal failure event.

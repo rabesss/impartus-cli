@@ -71,6 +71,19 @@ func TestWriterEmitsValidNDJSONAndExactlyOneTerminal(t *testing.T) {
 	}
 }
 
+func TestIsCancellationRecognizesContextTerminals(t *testing.T) {
+	t.Parallel()
+
+	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
+		if !IsCancellation(fmt.Errorf("wrapped: %w", cause)) {
+			t.Fatalf("IsCancellation(%v) = false", cause)
+		}
+	}
+	if IsCancellation(errors.New("ordinary failure")) {
+		t.Fatal("IsCancellation(ordinary failure) = true")
+	}
+}
+
 func TestEventV1UsesOriginalWireFieldAndLectureLifecycleNames(t *testing.T) {
 	t.Parallel()
 

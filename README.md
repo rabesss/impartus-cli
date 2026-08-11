@@ -437,7 +437,7 @@ until signaled.
 | `--once` | Run one cycle and exit |
 | `--dry-run` | Discover and report without media or job mutations |
 | `--events` | Emit synchronous NDJSON lifecycle records to stdout |
-| `--force` | Explicitly redownload a present committed artifact |
+| `--force` | Explicitly redownload a present committed artifact for one cycle |
 
 The per-cycle budget is global across targets. A failed target is recorded but
 does not prevent later targets from running; a one-shot cycle with any failure

@@ -73,7 +73,7 @@ func (watcher *Watcher) loadRetryableJobs(ctx context.Context) error {
 	}
 	watcher.retryable = make(map[string][]library.Job)
 	for _, job := range jobs {
-		if job.Kind != "watch" || (job.Status != library.JobPending && job.Status != library.JobRecoverable) {
+		if job.Kind != library.JobKindWatch || (job.Status != library.JobPending && job.Status != library.JobRecoverable) {
 			continue
 		}
 		watcher.retryable[job.LogicalArtifactID] = append(watcher.retryable[job.LogicalArtifactID], job)
@@ -97,7 +97,7 @@ func (watcher *Watcher) downloadLecture(ctx context.Context, target config.Watch
 	}
 	delete(watcher.retryable, artifactID)
 	if !reused {
-		if err := watcher.store.CreateJob(context.WithoutCancel(ctx), library.JobSpec{ID: jobID, Kind: "watch", Expected: expected}); err != nil {
+		if err := watcher.store.CreateJob(context.WithoutCancel(ctx), library.JobSpec{ID: jobID, Kind: library.JobKindWatch, Expected: expected}); err != nil {
 			return artifact.Manifest{}, watcher.lectureFailure(target, lecture, jobID, durableStateError("create durable watch job", err))
 		}
 	}
@@ -212,7 +212,7 @@ func durableStateError(operation string, err error) error {
 		return nil
 	}
 	wrapped := fmt.Errorf("%s: %w", operation, err)
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if events.IsCancellation(err) {
 		return wrapped
 	}
 	return errors.Join(ErrDurableState, wrapped)

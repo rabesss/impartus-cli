@@ -53,6 +53,7 @@ type fakeProducer struct {
 	failuresLeft    map[int]int
 	downloadStarted chan struct{}
 	blockDownload   bool
+	beforeFetch     func()
 	afterFetch      func()
 }
 
@@ -122,6 +123,9 @@ func (emitter *recordingEmitter) types() []string {
 
 func (producer *fakeProducer) FetchLecturePlaylists(_ context.Context, lectures []client.Lecture) ([]client.ParsedPlaylist, error) {
 	lecture := lectures[0]
+	if producer.beforeFetch != nil {
+		producer.beforeFetch()
+	}
 	if err := producer.fetchErrors[lecture.TTID]; err != nil {
 		return nil, err
 	}

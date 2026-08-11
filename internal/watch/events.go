@@ -1,7 +1,6 @@
 package watch
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -31,7 +30,7 @@ func TerminalEvent(jobID string, cause error, result CycleResult, at time.Time) 
 	if cause == nil {
 		return event
 	}
-	if (errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded)) && !isFatalCycleError(cause) {
+	if events.IsCancellation(cause) && !isFatalCycleError(cause) {
 		event = events.Cancellation(jobID, "watch", cause, at)
 	} else {
 		event = events.Failure(jobID, "watch", cause, at)
@@ -67,6 +66,9 @@ func (watcher *Watcher) emitLecture(eventType string, target config.WatchTarget,
 }
 
 func (watcher *Watcher) lectureFailure(target config.WatchTarget, lecture client.Lecture, jobID string, cause error) error {
+	if events.IsCancellation(cause) && !isFatalCycleError(cause) {
+		return events.RedactedError(cause)
+	}
 	details := map[string]any{"error": events.RedactError(cause)}
 	if jobID != "" {
 		details["libraryJobId"] = jobID

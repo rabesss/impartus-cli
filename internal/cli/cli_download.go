@@ -103,7 +103,7 @@ func downloadCommandError(err error) error {
 	if errors.Is(err, errDownloadEventDelivery) || errors.Is(err, errDownloadLibraryCommit) {
 		return events.RedactedError(err)
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if events.IsCancellation(err) {
 		return &exitCodeError{code: 130, err: events.RedactedError(err)}
 	}
 	return events.RedactedError(err)
@@ -383,6 +383,9 @@ func completeLectureDownloads(
 				key.ttid,
 				err,
 			)
+			if events.IsCancellation(downloadErr) {
+				return outputPaths, artifacts, len(artifacts), events.RedactedError(downloadErr)
+			}
 			emitErr := stream.lecture(events.LectureFailed, lecture, artifactID, nil, nil, map[string]any{"error": events.RedactError(downloadErr)})
 			return outputPaths, artifacts, len(artifacts), errors.Join(downloadErr, emitErr)
 		}

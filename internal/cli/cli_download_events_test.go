@@ -25,6 +25,21 @@ type failWriteOnce struct {
 	writes int
 }
 
+type failEventTypeWriter struct {
+	bytes.Buffer
+	failType string
+	failures int
+}
+
+func (writer *failEventTypeWriter) Write(data []byte) (int, error) {
+	var event events.Event
+	if err := json.Unmarshal(data, &event); err == nil && event.Type == writer.failType && writer.failures > 0 {
+		writer.failures--
+		return 0, fmt.Errorf("event %s write failed", event.Type)
+	}
+	return writer.Buffer.Write(data)
+}
+
 func (writer *failWriteOnce) Write(data []byte) (int, error) {
 	writer.writes++
 	if writer.writes == writer.failAt {
@@ -207,6 +222,41 @@ func TestDownloadEventsCancellationEmitsCanceledTerminalAndExit130(t *testing.T)
 	decoded := decodeCLIEvents(t, output.String())
 	if len(decoded) != 2 || decoded[1].Type != events.JobCanceled {
 		t.Fatalf("events = %+v", decoded)
+	}
+}
+
+func TestDownloadEventsMediaCancellationDoesNotEmitLectureFailure(t *testing.T) {
+	t.Parallel()
+
+	lecture := client.Lecture{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 123, SeqNo: 5, Topic: "Canceled media"}
+	runner := &fakeLectureDownloadRunner{
+		playlists:   []client.ParsedPlaylist{{InstituteID: 4, SubjectID: 67, SessionID: 8, ID: 123}},
+		downloadErr: context.Canceled,
+	}
+	output := &failEventTypeWriter{failType: events.LectureFailed, failures: 1}
+	stream := newDownloadEventStream(output, "job-media-canceled", func() time.Time { return time.Unix(1, 0).UTC() })
+	if err := stream.start(); err != nil {
+		t.Fatal(err)
+	}
+	result, downloadErr := downloadLecturesWithRunner(context.Background(), &config.Config{
+		DownloadLocation: t.TempDir(), Views: "left", Quality: "720",
+	}, runner, client.Lectures{lecture}, downloadPresentationOptions{eventStream: stream})
+	finishErr := stream.finish(result, downloadErr)
+	if !errors.Is(finishErr, context.Canceled) || errors.Is(finishErr, errDownloadEventDelivery) {
+		t.Fatalf("finish error = %v, want cancellation without event-delivery promotion", finishErr)
+	}
+	if got := ExitCode(downloadCommandError(finishErr)); got != 130 {
+		t.Fatalf("exit code = %d, want 130", got)
+	}
+	decoded := decodeCLIEvents(t, output.String())
+	want := []string{events.JobStarted, events.LectureStarted, events.JobCanceled}
+	if len(decoded) != len(want) {
+		t.Fatalf("events = %+v, want %v", decoded, want)
+	}
+	for index, event := range decoded {
+		if event.Type != want[index] {
+			t.Fatalf("event[%d] = %s, want %s", index, event.Type, want[index])
+		}
 	}
 }
 

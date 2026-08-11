@@ -181,6 +181,37 @@ func TestWatchDryRunSkipsDurableRecoveryAndFFmpegPreflight(t *testing.T) {
 	}
 }
 
+func TestWatchForceRunsOneExplicitRedownloadCycle(t *testing.T) {
+	t.Parallel()
+
+	store := openCLIWatchStore(t)
+	cfg := cliWatchConfig(t)
+	var got watch.Options
+	deps := watchExecutionDependencies{
+		loadConfig:         func() (*config.Config, error) { return cfg, nil },
+		defaultLibraryPath: func() (string, error) { return filepath.Join(t.TempDir(), "library.db"), nil },
+		acquireLock:        func(string) (io.Closer, error) { return closerFunc(func() error { return nil }), nil },
+		openLibrary:        func(context.Context, library.Options) (*library.Store, error) { return store, nil },
+		recoverJobs: func(context.Context, *library.Store) (library.RecoveryResult, error) {
+			return library.RecoveryResult{}, nil
+		},
+		ensureFFmpeg: func() error { return nil },
+		login:        func(context.Context, *config.Config) (*client.Client, error) { return &client.Client{}, nil },
+		run: func(_ context.Context, _ *config.Config, _ *client.Client, _ *library.Store, options watch.Options) (watch.CycleResult, error) {
+			got = options
+			return watch.CycleResult{}, nil
+		},
+		now: time.Now,
+	}
+
+	if _, err := executeWatchWithDependencies(context.Background(), []string{"--force", "-s", "67", "-S", "8"}, false, io.Discard, io.Discard, deps); err != nil {
+		t.Fatalf("executeWatchWithDependencies() error = %v", err)
+	}
+	if !got.Force || !got.Once {
+		t.Fatalf("watch options = %+v, want force to imply one cycle", got)
+	}
+}
+
 func TestWatchEventsEmitFailedTerminalForLoginFailure(t *testing.T) {
 	t.Parallel()
 

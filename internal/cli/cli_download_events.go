@@ -71,7 +71,7 @@ func (stream *downloadEventStream) fail(cause error) error {
 
 func (stream *downloadEventStream) failResult(result downloadResult, cause error) error {
 	event := events.Failure(stream.jobID, "download", cause, stream.now())
-	if !errors.Is(cause, errDownloadLibraryCommit) && (errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded)) {
+	if !errors.Is(cause, errDownloadLibraryCommit) && !errors.Is(cause, errDownloadEventDelivery) && events.IsCancellation(cause) {
 		event = events.Cancellation(stream.jobID, "download", cause, stream.now())
 	}
 	event.Outputs = artifactOutputPaths(result.Artifacts)

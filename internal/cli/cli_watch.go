@@ -155,7 +155,7 @@ func watchCommandError(err error) error {
 	if errors.Is(err, watch.ErrEventDelivery) || errors.Is(err, watch.ErrDurableState) {
 		return events.RedactedError(err)
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if events.IsCancellation(err) {
 		return &exitCodeError{code: 130, err: events.RedactedError(err)}
 	}
 	return events.RedactedError(err)
@@ -191,7 +191,7 @@ func executeWatchWithDependencies(
 		return result, finishPreflight(prepareErr)
 	}
 	cycle, runErr := dependencies.run(ctx, prepared.cfg, prepared.apiClient, prepared.store, watch.Options{
-		Targets: prepared.cfg.Watch.Targets, Once: flags.once || flags.dryRun || jsonMode,
+		Targets: prepared.cfg.Watch.Targets, Once: flags.once || flags.dryRun || flags.force || jsonMode,
 		DryRun: flags.dryRun, Force: flags.force, Interval: prepared.interval,
 		MaxRetries: prepared.cfg.Watch.MaxRetries, MaxLecturesPerCycle: prepared.cfg.Watch.MaxLecturesPerCycle,
 		Emitter: emitter, Log: logOutput, Now: dependencies.now, JobID: jobID, StartupRecovery: &prepared.recovery,
