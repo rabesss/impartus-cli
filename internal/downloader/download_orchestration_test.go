@@ -32,6 +32,18 @@ func TestDownloadAndJoinPlaylistRejectsMissingSelectedMediaBeforeCreatingWorkspa
 	}
 }
 
+func TestDownloadAndJoinPlaylistCancellationPrecedesMissingSelectedMedia(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	d := &Downloader{config: &config.Config{TempDirLocation: t.TempDir(), Views: "left"}}
+	_, err := d.DownloadAndJoinPlaylist(ctx, client.ParsedPlaylist{ID: 18}, nil, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("DownloadAndJoinPlaylist() error = %v, want context.Canceled", err)
+	}
+}
+
 func TestViewConfigsUseCanonicalSelectionMembership(t *testing.T) {
 	t.Parallel()
 

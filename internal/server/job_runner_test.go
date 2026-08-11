@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/vbauerster/mpb/v8"
 
@@ -19,6 +20,12 @@ type fakePlaylistJoiner struct {
 
 func (fake fakePlaylistJoiner) DownloadAndJoinPlaylist(_ context.Context, playlist client.ParsedPlaylist, _ *mpb.Progress, _ *downloader.ProgressTracker) (downloader.JoinResult, error) {
 	return fake.results[playlist.ID], fake.errors[playlist.ID]
+}
+
+type playlistJoinerFunc func(context.Context, client.ParsedPlaylist) (downloader.JoinResult, error)
+
+func (fn playlistJoinerFunc) DownloadAndJoinPlaylist(ctx context.Context, playlist client.ParsedPlaylist, _ *mpb.Progress, _ *downloader.ProgressTracker) (downloader.JoinResult, error) {
+	return fn(ctx, playlist)
 }
 
 func TestPlaylistDownloadRunnerSkipsUnavailableSelectedMedia(t *testing.T) {
@@ -49,6 +56,33 @@ func TestPlaylistDownloadRunnerSkipsUnavailableSelectedMedia(t *testing.T) {
 	}
 }
 
+func TestPlaylistDownloadRunnerRejectsAllUnavailableSelectedMedia(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, err := newPlaylistDownloadRunner(1).run(ctx, cancel, fakePlaylistJoiner{
+		errors: map[int]error{
+			1: downloader.ErrNoSelectedMedia,
+			2: downloader.ErrNoSelectedMedia,
+		},
+	}, []client.ParsedPlaylist{{ID: 1, SeqNo: 1}, {ID: 2, SeqNo: 2}}, func(int) bool { return true })
+	if !errors.Is(err, downloader.ErrNoMediaOutputs) {
+		t.Fatalf("run() error = %v, want ErrNoMediaOutputs", err)
+	}
+}
+
+func TestPlaylistDownloadRunnerCancellationPrecedesEmptyCompletion(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := newPlaylistDownloadRunner(1).run(ctx, cancel, fakePlaylistJoiner{}, []client.ParsedPlaylist{{ID: 1}}, func(int) bool { return true })
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("run() error = %v, want context.Canceled", err)
+	}
+}
+
 func TestPlaylistDownloadRunnerPreservesOtherFailures(t *testing.T) {
 	t.Parallel()
 
@@ -60,6 +94,83 @@ func TestPlaylistDownloadRunnerPreservesOtherFailures(t *testing.T) {
 	}, []client.ParsedPlaylist{{ID: 1, SeqNo: 1}}, func(int) bool { return true })
 	if !errors.Is(err, want) {
 		t.Fatalf("run() error = %v, want wrapped failure", err)
+	}
+}
+
+func TestPlaylistDownloadRunnerDrainsWorkersAndPreservesHardFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	want := errors.New("download failed")
+	secondStarted := make(chan struct{})
+	secondCanceled := make(chan struct{})
+	releaseSecond := make(chan struct{})
+	joiner := playlistJoinerFunc(func(ctx context.Context, playlist client.ParsedPlaylist) (downloader.JoinResult, error) {
+		switch playlist.ID {
+		case 1:
+			<-secondStarted
+			return downloader.JoinResult{}, want
+		case 2:
+			close(secondStarted)
+			<-ctx.Done()
+			close(secondCanceled)
+			<-releaseSecond
+			return downloader.JoinResult{}, ctx.Err()
+		default:
+			return downloader.JoinResult{}, errors.New("unexpected playlist")
+		}
+	})
+
+	type runResult struct {
+		err error
+	}
+	resultCh := make(chan runResult, 1)
+	go func() {
+		_, err := newPlaylistDownloadRunner(2).run(ctx, cancel, joiner, []client.ParsedPlaylist{
+			{ID: 1, SeqNo: 1},
+			{ID: 2, SeqNo: 2},
+		}, func(int) bool { return true })
+		resultCh <- runResult{err: err}
+	}()
+
+	<-secondCanceled
+	select {
+	case result := <-resultCh:
+		t.Fatalf("run() returned before sibling worker exited: %v", result.err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseSecond)
+	result := <-resultCh
+	if !errors.Is(result.err, want) {
+		t.Fatalf("run() error = %v, want wrapped hard failure", result.err)
+	}
+}
+
+func TestPlaylistDownloadRunnerProgressStopCancelsDispatch(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	joiner := playlistJoinerFunc(func(_ context.Context, playlist client.ParsedPlaylist) (downloader.JoinResult, error) {
+		return downloader.JoinResult{LeftOutput: "available.mp4"}, nil
+	})
+	resultCh := make(chan error, 1)
+	go func() {
+		_, err := newPlaylistDownloadRunner(1).run(ctx, cancel, joiner, []client.ParsedPlaylist{
+			{ID: 1, SeqNo: 1},
+			{ID: 2, SeqNo: 2},
+		}, func(int) bool { return false })
+		resultCh <- err
+	}()
+
+	select {
+	case err := <-resultCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("run() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("run() did not stop after progress callback returned false")
 	}
 }
 

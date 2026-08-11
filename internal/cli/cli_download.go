@@ -351,7 +351,7 @@ func completeLectureDownloads(
 		}
 	}
 	if len(artifacts) == 0 {
-		return nil, nil, 0, errors.New("no media outputs available for selected lectures")
+		return nil, nil, 0, downloader.ErrNoMediaOutputs
 	}
 	return outputPaths, artifacts, len(artifacts), nil
 }

@@ -21,10 +21,15 @@ import (
 	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
-// ErrNoSelectedMedia reports that a playlist has no chunks for the configured
-// camera selection. Callers may skip that lecture while retaining other valid
-// outputs in the same batch.
-var ErrNoSelectedMedia = errors.New("no selected media")
+var (
+	// ErrNoSelectedMedia reports that one playlist has no chunks for the
+	// configured camera selection. Callers may skip that lecture while retaining
+	// other valid outputs in the same batch.
+	ErrNoSelectedMedia = errors.New("no selected media")
+	// ErrNoMediaOutputs reports that a selected batch produced no usable final
+	// outputs after unavailable playlists were skipped.
+	ErrNoMediaOutputs = errors.New("no media outputs available for selected lectures")
+)
 
 // DownloadedPlaylist holds the result of downloading a complete playlist.
 type DownloadedPlaylist struct {
@@ -246,6 +251,9 @@ func (d *Downloader) downloadPlaylistPipelined(ctx context.Context, playlist cli
 
 // DownloadAndJoinPlaylist downloads a playlist and joins the chunks into final output file(s).
 func (d *Downloader) DownloadAndJoinPlaylist(ctx context.Context, playlist client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) (JoinResult, error) {
+	if err := ctx.Err(); err != nil {
+		return JoinResult{}, err
+	}
 	if d.totalChunksForPlaylist(playlist) == 0 {
 		return JoinResult{}, fmt.Errorf("%w for lecture %d", ErrNoSelectedMedia, playlist.ID)
 	}
