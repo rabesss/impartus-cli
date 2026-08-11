@@ -112,6 +112,17 @@ func TestAcceptEventRemovesUntrustedPeerTextFromPublicEvents(t *testing.T) {
 	}
 }
 
+func TestAcceptEventNormalizesUnexpectedPublicEndReason(t *testing.T) {
+	t.Parallel()
+
+	session := &Session{events: make(chan Event, 1), playbackEnd: make(chan error, 1)}
+	session.acceptEvent(Event{Name: "end-file", Reason: "peer-controlled-reason"})
+	event := <-session.events
+	if event.Reason != "unknown" {
+		t.Fatalf("public terminal reason = %q, want unknown", event.Reason)
+	}
+}
+
 func assertNoPlaybackEnd(t *testing.T, playbackEnd <-chan error) {
 	t.Helper()
 	select {
