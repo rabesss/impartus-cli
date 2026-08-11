@@ -112,6 +112,59 @@ func TestDownloadFailsWhenNoSelectedLectureHasPlaylist(t *testing.T) {
 	}
 }
 
+func TestDownloadSkipsPlaylistWithoutSelectedViewOutput(t *testing.T) {
+	t.Parallel()
+
+	outputDir := t.TempDir()
+	runner := &fakeLectureDownloadRunner{
+		playlists: []client.ParsedPlaylist{{ID: 10}, {ID: 11}},
+		results: materializeJoinResults(t, outputDir, []downloader.JoinResult{
+			{},
+			{LeftOutput: "eleven.mp4"},
+		}),
+	}
+	result, err := downloadLecturesWithRunner(context.Background(), &config.Config{
+		DownloadLocation: outputDir,
+		Views:            "left",
+		Quality:          "720",
+	}, runner, client.Lectures{
+		{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 10},
+		{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 11},
+	}, quietDownloadPresentation())
+	if err != nil {
+		t.Fatalf("downloadLecturesWithRunner() error = %v", err)
+	}
+	if runner.downloads != 2 || result.LectureCount != 1 || len(result.Artifacts) != 1 || len(result.OutputPaths) != 1 {
+		t.Fatalf("partial-view batch result = %+v, downloads = %d", result, runner.downloads)
+	}
+	if result.Artifacts[0].Lecture.TTID != 11 {
+		t.Fatalf("artifact lecture = %d, want 11", result.Artifacts[0].Lecture.TTID)
+	}
+}
+
+func TestDownloadFailsWhenAllPlaylistsProduceNoOutput(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeLectureDownloadRunner{
+		playlists: []client.ParsedPlaylist{{ID: 10}, {ID: 11}},
+		results:   []downloader.JoinResult{{}, {}},
+	}
+	_, err := downloadLecturesWithRunner(context.Background(), &config.Config{
+		DownloadLocation: t.TempDir(),
+		Views:            "left",
+		Quality:          "720",
+	}, runner, client.Lectures{
+		{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 10},
+		{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 11},
+	}, quietDownloadPresentation())
+	if err == nil || !strings.Contains(err.Error(), "no media outputs available") {
+		t.Fatalf("downloadLecturesWithRunner() error = %v", err)
+	}
+	if runner.downloads != 2 {
+		t.Fatalf("downloads = %d, want 2", runner.downloads)
+	}
+}
+
 func TestDownloadFailureIncludesLectureScope(t *testing.T) {
 	t.Parallel()
 

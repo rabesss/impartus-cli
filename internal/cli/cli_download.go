@@ -324,15 +324,22 @@ func completeLectureDownloads(
 				err,
 			)
 		}
+		paths := joinResult.OutputPaths()
+		if len(paths) == 0 {
+			continue
+		}
 		manifest, err := buildDownloadArtifact(lecture, cfg, joinResult, time.Now().UTC())
 		if err != nil {
 			return nil, nil, 0, fmt.Errorf("build artifact manifest for lecture %d: %w", lecture.TTID, err)
 		}
-		outputPaths = append(outputPaths, joinResult.OutputPaths()...)
+		outputPaths = append(outputPaths, paths...)
 		artifacts = append(artifacts, manifest)
 		if tracker != nil {
 			downloader.LectureCompleted(tracker)
 		}
+	}
+	if len(artifacts) == 0 {
+		return nil, nil, 0, errors.New("no media outputs available for selected lectures")
 	}
 	return outputPaths, artifacts, len(artifacts), nil
 }
