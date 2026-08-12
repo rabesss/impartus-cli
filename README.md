@@ -44,11 +44,12 @@
 [![Build Status](https://github.com/rabesss/impartus-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/rabesss/impartus-cli/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A Go-based CLI and HTTP API server for downloading lecture videos from Impartus platforms. Features interactive mode for humans and deterministic JSON mode for automation and AI agents.
+A Go-based CLI/TUI and HTTP API server for browsing, streaming, and downloading lecture videos from Impartus platforms. The terminal workspace is for humans; deterministic JSON remains available for automation and AI agents.
 
 ## Features
 
-- **Interactive CLI Mode** - Guided download flow with course/lecture selection
+- **Bubble Tea Terminal Workspace** - Browse/filter courses and lectures, inspect details, control native mpv, download, inspect the local library, and resume recorded artifacts
+- **Legacy Prompt Compatibility** - The previous guided download prompt remains temporarily available as `impartus classic`
 - **Deterministic JSON Mode** - Machine-readable output for automation and AI agent integration
 - **HTTP API with WebSocket Events** - REST API with real-time job progress updates
 - **Multi-View Video Processing** - Support for instructor/dual-view video streams
@@ -57,6 +58,7 @@ A Go-based CLI and HTTP API server for downloading lecture videos from Impartus 
 - **Progress Tracking with ETA** - Real-time progress bars with speed and time estimates
 - **Rate Limiting** - Configurable API and download rate limits
 - **Slide Download Support** - Download lecture slides alongside video content
+- **Supervised mpv Playback** - Private JSON IPC provides playback state and controls without exposing the loopback stream capability in process arguments
 
 ## Quick Start
 
@@ -82,7 +84,7 @@ go build -o impartus .
 
 - **Go 1.25+** - Go toolchain for building (pinned in `go.mod`; Docker images may use a newer patch release)
 - **FFmpeg** - Required for video processing (must be in `PATH`)
-- **mpv** - Required for the `play` command (must be in `PATH`)
+- **mpv** - Required for TUI or CLI playback (must be in `PATH`)
 - **Impartus Account** - Valid credentials for your institution's Impartus platform
 
 ### Container usage
@@ -158,6 +160,7 @@ protection manually with `chmod 600 config.json`.
 | `listenAddr` | string | No | `"127.0.0.1"` | API server bind address (loopback only unless `allowRemoteAccess` is set) |
 | `allowRemoteAccess` | bool | No | `false` | Permit a non-loopback `listenAddr` (e.g. `0.0.0.0`); required to expose the API on the network |
 | `progressTracking` | object | No | see below | Progress bar tracking configuration |
+| `watch` | object | No | disabled | Generic durable lecture auto-download configuration |
 
 #### Progress Tracking Options
 
@@ -168,6 +171,44 @@ protection manually with `chmod 600 config.json`.
 | `showETA` | bool | `false` | Include estimated time remaining in the aggregate progress status |
 | `updateInterval` | string | `"2s"` | Speed-sampling interval (500ms-10s) |
 | `speedWindowSize` | int | `10` | Number of samples used for the speed moving average (3-30) |
+
+#### Watch Options
+
+The watcher owns Impartus polling and completed local artifacts only. Configure
+one or more course targets; downstream tools consume the committed manifest or
+the NDJSON event stream independently.
+
+```json
+{
+  "watch": {
+    "enabled": true,
+    "pollInterval": "10m",
+    "maxLecturesPerCycle": 3,
+    "maxRetries": 3,
+    "quality": "144",
+    "views": "left",
+    "audioFormat": "mp3",
+    "targets": [
+      {"subjectId": 123, "sessionId": 456, "label": "Algorithms"}
+    ]
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Validate and enable configured watch targets |
+| `pollInterval` | string | `"5m"` | Delay between cycles, from 5 minutes to 24 hours |
+| `maxLecturesPerCycle` | int | `3` | Global new-lecture budget across all targets |
+| `maxRetries` | int | `3` | Playlist/download attempts with bounded backoff |
+| `targets` | array | none | Unique `subjectId`/`sessionId` pairs with optional display labels |
+| `quality` | string | `"144"` | Watch download quality |
+| `views` | string | `"left"` | Watch view selection: `left`, `right`, or `both` |
+| `audioFormat` | string | `"mp3"` | Watch audio output: `mp3`, `m4a`, `aac`, or `opus` |
+
+Watch downloads are always audio-only and skip lectures marked as having no
+audio. There are no remote-provider credentials or routing fields in this
+configuration.
 
 #### Environment Variables
 
@@ -196,6 +237,13 @@ Only the settings listed below have environment-variable overrides. Settings abs
 | `IMPARTUS_NUM_WORKERS` | `numWorkers` | Integer from 1-50 |
 | `IMPARTUS_RATE_LIMIT` | `rateLimit` | Number from 0.1-100 |
 | `IMPARTUS_API_RATE_LIMIT` | `apiRateLimit` | Number from 0.1-20 |
+| `IMPARTUS_WATCH_ENABLED` | `watch.enabled` | Boolean |
+| `IMPARTUS_WATCH_POLL_INTERVAL` | `watch.pollInterval` | Duration from 5m to 24h |
+| `IMPARTUS_WATCH_MAX_LECTURES_PER_CYCLE` | `watch.maxLecturesPerCycle` | Positive integer |
+| `IMPARTUS_WATCH_MAX_RETRIES` | `watch.maxRetries` | Positive integer |
+| `IMPARTUS_WATCH_QUALITY` | `watch.quality` | `144`, `450`, or `720` |
+| `IMPARTUS_WATCH_VIEWS` | `watch.views` | `left`, `right`, or `both` |
+| `IMPARTUS_WATCH_AUDIO_FORMAT` | `watch.audioFormat` | `mp3`, `m4a`, `aac`, or `opus` |
 
 #### Validation Rules
 
@@ -211,17 +259,27 @@ Only the settings listed below have environment-variable overrides. Settings abs
 
 ### Interactive Mode
 
-Run without arguments for guided download:
+Run without arguments from a real terminal, or invoke the workspace explicitly:
 
 ```bash
 ./impartus
+./impartus tui
 ```
 
-This launches an interactive workflow:
-1. Log in with configured credentials
-2. Select course from list
-3. Select session/lecture range
-4. Download with progress tracking
+The Bubble Tea v2 workspace owns the alternate screen while mpv renders in a
+separate native window. It supports live course/lecture browsing, `/` filters,
+`i` details, `enter` playback, `d` download, `l` library, `!` dependency
+diagnostics, resume prompts, and mpv pause/seek/volume/mute/speed/camera controls.
+It never falls back to blocking legacy mpv.
+
+No-argument use is TTY-aware: when stdin or stdout is not a terminal, Impartus
+prints help to stderr and exits 2 rather than consuming a pipeline. The previous
+prompt-based download flow is available for one release with a deprecation
+notice:
+
+```bash
+./impartus classic
+```
 
 ### Deterministic JSON Mode
 
@@ -257,23 +315,47 @@ not write progress bars or warning text, and successful downloads leave stderr
 empty. Failed JSON commands exit non-zero and write exactly one error envelope
 to stderr while leaving stdout empty; in that envelope, `success` is `false`,
 `data` is `null`, and `error.message` contains the error text.
+The diagnostic `doctor` command is the one intentional exception: on failure,
+`data` contains the full per-check report so automation can identify the broken
+dependency or path while the envelope remains unsuccessful and exits non-zero.
 
 For JSON downloads, `lectureCount` is the number of lectures completed.
 `outputPaths` contains the files produced, so one completed lecture can add
-multiple paths when multiple views or output forms are requested.
+multiple paths when multiple views or output forms are requested. The additive
+`artifacts` array contains one versioned manifest per completed lecture with its
+scoped IDs, normalized media selection, verified absolute files, byte sizes,
+and a stable `impartus:v1:` logical identity. Existing automation can continue
+using the legacy fields unchanged. `libraryRecorded` reports whether all
+manifests were committed to the local SQLite library. If media completed but
+that additive commit failed, the command still succeeds, sets the field to
+`false`, and places exactly one diagnostic in `meta.warnings` without writing
+unstructured JSON-mode stderr.
+
+`selection.views` records the normalized requested view set used for logical
+identity. `files` is the authoritative materialization list: an upstream
+lecture can expose only one playable camera even when `both` was requested, so
+consumers must use each file's `view` rather than infer output completeness from
+the selection alone.
 
 ### Command Reference
 
 | Command | Description |
 |---------|-------------|
-| `impartus` | Interactive mode (guided download) |
+| `impartus` | Launch the TUI when stdin/stdout are terminals; otherwise help + exit 2 |
+| `impartus tui` | Explicitly launch the course/lecture terminal workspace |
+| `impartus classic` | Legacy guided download prompt (deprecated for one release) |
 | `impartus --json` | Capability metadata |
 | `impartus help` | Show usage information |
 | `impartus version` | Show version and build date |
 | `impartus courses` | List available courses |
 | `impartus lectures -s ID -S ID` | List lectures for subject/session |
 | `impartus download [flags]` | Download lectures |
+| `impartus watch [flags]` | Poll configured targets and durably download new lectures |
 | `impartus play [flags]` | Play lectures in mpv |
+| `impartus doctor` | Check mpv, FFmpeg, credential permissions, and private writable state/runtime paths |
+| `impartus library list` | List logical artifacts and materialized file counts |
+| `impartus library show ARTIFACT_ID` | Show one artifact and every known local path |
+| `impartus library verify [--hash] [ARTIFACT_ID]` | Mark missing/changed paths without deleting records; optionally fill or recheck SHA-256 |
 | `impartus serve [--port PORT]` | Start HTTP API server |
 
 ### Download / Play Flags
@@ -290,12 +372,14 @@ multiple paths when multiple views or output forms are requested.
 | `--start` | | Start lecture index (1-based) | Both |
 | `--end` | | End lecture index (1-based, inclusive) | Both |
 | `--lecture` | `-l` | Specific lecture index (shortcut for start & end) | Play Only |
+| `--mpv-mode` | | `ipc` (supervised default; `legacy` defaults on Windows) or explicit compatibility mode `legacy` | Play Only |
 | `--quality` | | Quality: `144`, `450`, `720` | Both |
 | `--views` | | Views: `left`, `right`, `both`, `first`, `second` | Both |
 | `--audio-only` | | Audio-only mode | Download Only |
 | `--format` | | Audio format: `mp3`, `m4a`, `aac`, `opus` | Download Only |
 | `--output` | `-o` | Output directory | Download Only |
 | `--json` | | JSON output (non-blocking) | Download Only |
+| `--events` | | NDJSON lifecycle stream; mutually exclusive with `--json` | Download Only |
 
 **Examples:**
 
@@ -317,7 +401,112 @@ multiple paths when multiple views or output forms are requested.
 
 # Play a specific lecture
 ./impartus play -s 123 -S 456 --lecture 3
+
+# Browse, stream, control, download, and resume interactively
+./impartus tui
+
+# Diagnose local playback/download prerequisites and private paths
+./impartus doctor
+
+# Inspect and non-destructively verify completed local media
+./impartus library list
+./impartus library show 'impartus:v1:...'
+./impartus library verify --hash
+
+# Preview new lectures once without creating media or jobs
+./impartus watch --once --dry-run -s 123 -S 456
+
+# Run one durable cycle and stream machine-readable lifecycle events
+./impartus watch --once --events -s 123 -S 456
+
+# Temporary compatibility path; IPC failures never select this automatically
+./impartus play -s 123 -S 456 --lecture 3 --mpv-mode legacy
 ```
+
+### Durable Watch
+
+`impartus watch` reads `watch.targets`, or accepts one target through
+`--subject/-s` and `--session/-S`. JSON mode, dry-run, and `--once` each run one
+cycle. Without them, the command sleeps for `watch.pollInterval` and continues
+until signaled.
+
+| Flag | Description |
+|------|-------------|
+| `--subject,-s` and `--session,-S` | Replace configured targets with one course |
+| `--interval` | Override the polling interval |
+| `--output,-o` | Override the download directory |
+| `--once` | Run one cycle and exit |
+| `--dry-run` | Discover and report without media or job mutations |
+| `--events` | Emit synchronous NDJSON lifecycle records to stdout |
+| `--force` | Explicitly redownload a present committed artifact for one cycle |
+
+The per-cycle budget is global across targets. A failed target is recorded but
+does not prevent later targets from running; a one-shot cycle with any failure
+exits non-zero and emits one aggregate `job.failed` terminal record. See
+[`docs/cli-events.md`](docs/cli-events.md) for the stream contract.
+Signal cancellation emits `job.canceled` in events mode and exits 130.
+
+The default `ipc` mode starts mpv idle with user configuration and scripts
+disabled, creates an owner-private Unix socket, and sends the tokenized local
+stream URL only after that socket is verified. It observes playback state and
+reaps mpv on normal exit, cancellation, or forced shutdown. The local HLS proxy
+accepts only its exact loopback Host and unguessable session paths. `legacy`
+retains the previous blocking process launch as an explicit one-release
+compatibility option; an IPC error never falls back to it.
+
+`impartus doctor` may create the application-owned state directory at
+`$XDG_STATE_HOME/impartus` (or `~/.local/state/impartus`) with mode `0700` so it
+can verify private writable storage. Missing `config.json` and `.token` files
+are warnings because environment-only configuration and a first login are
+supported; an existing credential file with group/world permissions is a
+blocking failure. The doctor also opens and migrates the local library, verifies
+WAL and private permissions, and fails instead of attempting an automatic
+repair when the database is incompatible.
+
+### Local Lecture Library
+
+Completed manifests, every materialized path, playback resume state, and local
+download/watch job state live in `$XDG_STATE_HOME/impartus/library.db` (or
+`~/.local/state/impartus/library.db`). Unix enforces mode `0700` on the parent
+and `0600` on the database. Windows creates a protected DACL limited to the
+current user, SYSTEM, and Administrators, rejects broader existing ACLs, and
+retains symlink and file-type checks. The pure-Go SQLite
+store enables WAL, foreign keys, `synchronous=FULL`, a bounded busy timeout, and
+transactional forward-only migrations, so CGO is not required.
+
+Logical artifacts are keyed by the stable manifest identity rather than by a
+filename. Re-downloading the same selection elsewhere adds another file row;
+it does not discard the older path. `library verify` checks regular-file type
+and size and updates presence metadata without deleting user data. Hashing is
+deliberately opt-in: `library verify --hash` fills or rechecks SHA-256 metadata.
+Playback checkpoints reject far-future timestamps, merge equal-time updates,
+and keep completion sticky so out-of-order delivery cannot regress resume.
+
+FFmpeg writes final media to a same-directory `.part` path, syncs it, and then
+atomically replaces the final path. Colliding in-process writers to one final
+path are serialized, and every pre-publication failure removes its `.part`.
+The library's durable job API can record expected final paths before work and
+mark interrupted `running` jobs
+`recoverable`. When all expected outputs already validate, recovery commits the
+artifact without another Impartus fetch; incomplete `.part` files are never
+considered complete. Startup recovery must run while the watcher holds its
+single-instance lock and before workers start; the recovery method is never an
+implicit database-open side effect. Event-mode watcher runs carry each recovered
+manifest across preflight and emit it immediately after `job.started`, before
+the first lecture cycle. Current one-shot CLI downloads best-effort
+record their completed manifests but do not create lifecycle job rows. The
+generic watcher creates a UUIDv4 `watch` job before final-output work, marks it
+running, and calls the atomic artifact-plus-job completion transaction only
+after every expected final file validates. It reuses recoverable jobs after an
+interrupted process and skips a present committed artifact on later cycles
+unless `--force` is explicit. These local jobs are separate from the existing
+HTTP API server's `.jobs.json` compatibility store.
+
+Only one watcher can own the state directory at a time. `watch.lock` is an OS
+advisory lock rather than a database flag; closing the process or SIGKILL
+releases ownership in the kernel, so the small lock file may safely remain.
+Startup acquires that lock and recovers interrupted jobs before login or other
+network work.
 
 ### API Server
 
@@ -573,6 +762,12 @@ impartus/
 │   ├── config/              # Configuration parsing and validation
 │   ├── client/              # Impartus API client, auth, HTTP helpers
 │   ├── downloader/          # Playlist parsing, chunk download/decrypt, ffmpeg
+│   ├── app/                 # Shared catalog/playback orchestration seam
+│   ├── tui/                 # Bubble Tea view state, keys, layout, and app-event translation
+│   ├── player/              # Supervised mpv process and bounded JSON IPC
+│   ├── library/             # Pure-Go SQLite artifacts, playback, and local jobs
+│   ├── events/              # Shared synchronous CLI NDJSON lifecycle contract
+│   ├── watch/               # Generic polling, advisory lock, and durable downloads
 │   └── server/              # HTTP API, auth middleware, jobs, WebSocket
 ├── docs/                    # Documentation
 └── config.json              # User configuration
@@ -580,10 +775,16 @@ impartus/
 
 ### Key Components
 
-- **`internal/cli`** - CLI command routing and interactive/deterministic modes
+- **`internal/cli`** - CLI command routing, TTY-aware TUI launch, classic compatibility, and deterministic modes
 - **`internal/config`** - Configuration loading, defaults, and validation
 - **`internal/client`** - Impartus API HTTP client with authentication
 - **`internal/downloader`** - Video pipeline: playlist parsing, chunk download, AES decryption, FFmpeg join
+- **`internal/app`** - Shared catalog, playback, download, artifact, library, and resume orchestration boundary
+- **`internal/tui`** - Bubble Tea v2 terminal state only; it performs no HTTP, subprocess, or SQL work directly
+- **`internal/player`** - Private mpv runtime, process-group supervision, bounded JSON IPC, events, and typed controls
+- **`internal/library`** - Private SQLite migrations, artifact paths, verification, resume history, and recoverable local jobs
+- **`internal/events`** - Single-terminal NDJSON lifecycle events for automation
+- **`internal/watch`** - Provider-neutral polling and durable artifact completion
 - **`internal/server`** - HTTP API server with bearer-token auth, background jobs, and WebSocket broadcasting
 
 For detailed flow diagrams, see [`docs/architecture.md`](docs/architecture.md).
@@ -605,6 +806,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [gorilla/mux](https://github.com/gorilla/mux) - HTTP router
 - [gorilla/websocket](https://github.com/gorilla/websocket) - WebSocket implementation
 - [vbauerster/mpb](https://github.com/vbauerster/mpb) - Progress bars
+- [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite) - Pure-Go SQLite driver
 - [google/uuid](https://github.com/google/uuid) - UUID generation
 - [golang.org/x/time](https://pkg.go.dev/golang.org/x/time) - Rate limiting
 

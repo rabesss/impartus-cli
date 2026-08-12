@@ -18,12 +18,19 @@ Changes to these areas need careful review:
 - WebSocket event payloads
 - path handling and output filenames
 - FFmpeg invocation and media pipeline behavior
+- mpv process supervision, JSON IPC socket ownership, and loopback capability URLs
 - rate limiting and retry behavior
 - logging and error reporting
 
 ## Local Config Guidance
 
 Keep `config.json` and generated job/state files private to your user account. Use sample config files for docs and tests. Do not commit real credentials or private downloaded content.
+
+The default player starts mpv without user configuration or scripts, verifies
+an owner-private IPC socket, and sends the tokenized loopback stream URL only
+over JSON IPC. Do not add media URLs to mpv argv, logs, errors, screenshots, or
+review artifacts. The legacy blocking player is opt-in only and must never be
+an automatic fallback for IPC failures.
 
 ## Reporting
 

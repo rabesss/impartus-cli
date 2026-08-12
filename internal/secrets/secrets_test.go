@@ -84,6 +84,8 @@ func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 		{name: "authorization header", input: "Authorization: Bearer body-secret", secret: "body-secret"},
 		{name: "prefixed authorization header", input: "proxy error: Authorization: Bearer body-secret", secret: "body-secret"},
 		{name: "auth equals", input: "upstream auth=body-secret failed", secret: "body-secret"},
+		{name: "json auth", input: `{"auth":"body-secret"}`, secret: "body-secret"},
+		{name: "json authorization", input: `{"authorization":"Bearer body-secret"}`, secret: "body-secret"},
 		{name: "equals token", input: "upstream token=body-secret failed", secret: "body-secret"},
 		{name: "equals key", input: "upstream key=body-secret failed", secret: "body-secret"},
 		{name: "json token", input: `{"refresh_token":"body-secret"}`, secret: "body-secret"},
@@ -155,7 +157,7 @@ func TestScrub_RedactsMultipleAssignmentsWithoutDiscardingTheirKeys(t *testing.T
 	}
 }
 
-func TestScrub_PreservesOrdinaryParserDiagnostics(t *testing.T) {
+func TestScrub_PreservesPathDiagnostics(t *testing.T) {
 	t.Parallel()
 
 	for _, diagnostic := range []string{

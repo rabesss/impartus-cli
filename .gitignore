@@ -20,6 +20,8 @@
 !*.go
 !go.sum
 !go.mod
+!internal/library/migrations/*.sql
+!internal/tui/testdata/*.golden
 
 !/CHANGELOG.md
 !/Dockerfile

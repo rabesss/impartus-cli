@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/rabesss/impartus-cli/internal/client"
-	"github.com/rabesss/impartus-cli/internal/config"
 )
 
 func TestCountChunks(t *testing.T) {
@@ -18,8 +17,9 @@ func TestCountChunks(t *testing.T) {
 		{"both", 5},
 		{"left", 3},
 		{"right", 2},
-		{config.NormalizeViews("first"), 3},
-		{config.NormalizeViews("second"), 2},
+		{" FIRST ", 3},
+		{"SECOND", 2},
+		{"invalid", 0},
 	}
 	for _, tt := range tests {
 		if got := countChunks(playlists, tt.views); got != tt.want {

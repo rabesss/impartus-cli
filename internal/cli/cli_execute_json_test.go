@@ -2,25 +2,89 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 )
 
-func TestExecuteNoArgsDefaultsToInteractive(t *testing.T) {
+func TestExecuteNoArgsLaunchesTUIOnlyOnInteractiveTerminal(t *testing.T) {
 	restoreCLIState(t)
 	called := false
-	runInteractiveFn = func() error {
+	runTUIFn = func() error {
 		called = true
 		return nil
 	}
+	isInteractiveTerminalFn = func() bool { return true }
 	os.Args = []string{"impartus"}
 
 	if err := Execute("dev", ""); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}
 	if !called {
-		t.Fatal("expected interactive mode to be used when no args are provided")
+		t.Fatal("expected TUI mode to be used when no args are provided on a terminal")
+	}
+}
+
+func TestExecuteNoArgsOnPipePrintsHelpAndReturnsExitTwo(t *testing.T) {
+	restoreCLIState(t)
+	runTUIFn = func() error {
+		t.Fatal("TUI must not claim a non-interactive terminal")
+		return nil
+	}
+	isInteractiveTerminalFn = func() bool { return false }
+	os.Args = []string{"impartus"}
+
+	stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("dev", "") })
+	if stdout != "" || !strings.Contains(stderr, "Usage:") {
+		t.Fatalf("non-TTY output stdout=%q stderr=%q", stdout, stderr)
+	}
+	var exitErr interface{ ExitCode() int }
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+		t.Fatalf("non-TTY error = %v, want exit code 2", err)
+	}
+}
+
+func TestExplicitTUIOnPipeReturnsExitTwoWithoutLaunching(t *testing.T) {
+	restoreCLIState(t)
+	runTUIFn = func() error {
+		t.Fatal("explicit TUI must not claim a non-interactive terminal")
+		return nil
+	}
+	isInteractiveTerminalFn = func() bool { return false }
+	os.Args = []string{"impartus", "tui"}
+
+	err := Execute("dev", "")
+	var exitErr interface{ ExitCode() int }
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+		t.Fatalf("explicit non-TTY error = %v, want exit code 2", err)
+	}
+}
+
+func TestClassicPreservesOldPromptForOneRelease(t *testing.T) {
+	restoreCLIState(t)
+	called := false
+	runInteractiveFn = func() error {
+		called = true
+		return nil
+	}
+	os.Args = []string{"impartus", "classic"}
+
+	stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("dev", "") })
+	if err != nil || !called || stdout != "" || !strings.Contains(stderr, "deprecated") {
+		t.Fatalf("classic = called=%t stdout=%q stderr=%q err=%v", called, stdout, stderr, err)
+	}
+}
+
+func TestExitCodePreservesUsageErrors(t *testing.T) {
+	if got := ExitCode(nil); got != 0 {
+		t.Fatalf("ExitCode(nil) = %d, want 0", got)
+	}
+	if got := ExitCode(errors.New("ordinary")); got != 1 {
+		t.Fatalf("ExitCode(ordinary) = %d, want 1", got)
+	}
+	if got := ExitCode(&exitCodeError{code: 2, err: errors.New("usage")}); got != 2 {
+		t.Fatalf("ExitCode(usage) = %d, want 2", got)
 	}
 }
 
@@ -63,7 +127,7 @@ func TestExecuteJSONNoSubcommandReturnsCapabilitiesEnvelope(t *testing.T) {
 	if payload.Meta.Command != "help" || payload.Meta.Mode != "json" {
 		t.Fatalf("unexpected meta: %+v", payload.Meta)
 	}
-	if payload.Data.DefaultMode != "interactive" || payload.Data.Name == "" || len(payload.Data.Commands) == 0 {
+	if payload.Data.DefaultMode != "tui" || payload.Data.Name == "" || len(payload.Data.Commands) == 0 {
 		t.Fatalf("unexpected capability payload: %+v", payload.Data)
 	}
 }
@@ -229,6 +293,57 @@ func TestExecuteJSONDownloadUsesStructuredResult(t *testing.T) {
 	}
 	if !decoded.Success || decoded.Data.Status != "completed" || len(decoded.Data.OutputPaths) != 1 || decoded.Data.LectureCount != 1 {
 		t.Fatalf("unexpected decoded payload: %+v", decoded)
+	}
+}
+
+func TestExecuteJSONDownloadIncludesLibraryWarningInMeta(t *testing.T) {
+	restoreCLIState(t)
+	runDownloadJSONFn = func([]string) (downloadResult, error) {
+		return downloadResult{
+			Status:          "completed",
+			LectureCount:    1,
+			LibraryRecorded: false,
+			Warnings:        []string{"local library unavailable"},
+		}, nil
+	}
+	os.Args = []string{"impartus", "download", "--json"}
+	output, err := captureStdout(t, func() error { return Execute("dev", "") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Status          string `json:"status"`
+			LibraryRecorded bool   `json:"libraryRecorded"`
+		} `json:"data"`
+		Meta jsonMeta `json:"meta"`
+	}
+	if err := json.Unmarshal([]byte(output), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if !envelope.Success || envelope.Data.Status != "completed" || envelope.Data.LibraryRecorded || len(envelope.Meta.Warnings) != 1 {
+		t.Fatalf("download warning envelope = %+v", envelope)
+	}
+}
+
+func TestExecuteJSONDownloadRedactsCredentialErrors(t *testing.T) {
+	restoreCLIState(t)
+	runDownloadJSONFn = func([]string) (downloadResult, error) {
+		return downloadResult{}, errors.New("Proxy-Authorization: Custom proof=proxy-secret\nauth: Digest response=auth-secret\nX-Api-Key: api-secret")
+	}
+
+	err := executeJSONDownload(nil)
+	if err == nil {
+		t.Fatal("executeJSONDownload() error = nil")
+	}
+	for _, secret := range []string{"proxy-secret", "auth-secret", "api-secret"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("JSON download envelope leaked %q: %v", secret, err)
+		}
+	}
+	if !strings.Contains(err.Error(), "REDACTED") {
+		t.Fatalf("JSON download envelope omitted redaction marker: %v", err)
 	}
 }
 

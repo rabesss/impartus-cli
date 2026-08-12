@@ -7,6 +7,8 @@ import (
 	"net"
 	"regexp"
 	"strings"
+
+	"github.com/rabesss/impartus-cli/internal/downloader"
 )
 
 var httpStatusRe = regexp.MustCompile(`status (\d{3})`)
@@ -20,6 +22,9 @@ func sanitizeUpstreamErr(err error) string {
 	// Context cancellation/timeout
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return "job was canceled or timed out"
+	}
+	if errors.Is(err, downloader.ErrNoMediaOutputs) {
+		return downloader.ErrNoMediaOutputs.Error()
 	}
 	// DNS errors
 	var dnsErr *net.DNSError

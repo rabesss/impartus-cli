@@ -15,24 +15,36 @@ func restoreCLIState(t *testing.T) {
 	t.Helper()
 	oldArgs := os.Args
 	oldInteractive := runInteractiveFn
+	oldTUI := runTUIFn
+	oldInteractiveTerminal := isInteractiveTerminalFn
 	oldCourses := runCoursesFn
 	oldLectures := runLecturesFn
 	oldDownload := runDownloadFn
 	oldDownloadJSON := runDownloadJSONFn
 	oldServe := runServeFn
 	oldPlay := runPlayFn
+	oldDoctor := runDoctorFn
+	oldLibrary := runLibraryFn
+	oldWatch := runWatchFn
+	oldWatchJSON := runWatchJSONFn
 	oldLoadResolved := loadResolvedFn
 	oldNewLoggedIn := newLoggedInFn
 	oldStartAPIServer := startAPIServerFn
 	t.Cleanup(func() {
 		os.Args = oldArgs
 		runInteractiveFn = oldInteractive
+		runTUIFn = oldTUI
+		isInteractiveTerminalFn = oldInteractiveTerminal
 		runCoursesFn = oldCourses
 		runLecturesFn = oldLectures
 		runDownloadFn = oldDownload
 		runDownloadJSONFn = oldDownloadJSON
 		runServeFn = oldServe
 		runPlayFn = oldPlay
+		runDoctorFn = oldDoctor
+		runLibraryFn = oldLibrary
+		runWatchFn = oldWatch
+		runWatchJSONFn = oldWatchJSON
 		loadResolvedFn = oldLoadResolved
 		newLoggedInFn = oldNewLoggedIn
 		startAPIServerFn = oldStartAPIServer

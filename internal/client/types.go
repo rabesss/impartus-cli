@@ -38,6 +38,10 @@ type Course struct {
 // Lectures is a collection of Lecture entries returned by the Impartus API.
 type Lectures []Lecture
 
+// ErrNoLecturesAfterFiltering reports that a valid range became empty only
+// because every selected lecture was marked no-audio.
+var ErrNoLecturesAfterFiltering = errors.New("no lectures available after filtering")
+
 // Lecture likewise mirrors the upstream payload. The downloader uses only a
 // subset of fields, but the full struct is retained so downstream JSON output
 // stays faithful to the upstream schema exposed by this application.
@@ -95,6 +99,9 @@ type ParsedPlaylist struct {
 	FirstDurations   []float64
 	SecondDurations  []float64
 	ID               int
+	InstituteID      int
+	SubjectID        int
+	SessionID        int
 	SeqNo            int
 	HasMultipleViews bool
 }
@@ -158,7 +165,7 @@ func (l Lectures) SelectForDownload(start, end int, skipNoAudio bool) (Lectures,
 		filtered = before - len(selected)
 	}
 	if len(selected) == 0 {
-		return nil, filtered, errors.New("no lectures available after filtering (all lectures have noaudio=1 in the selected range)")
+		return nil, filtered, fmt.Errorf("%w (all lectures have noaudio=1 in the selected range)", ErrNoLecturesAfterFiltering)
 	}
 	return selected, filtered, nil
 }

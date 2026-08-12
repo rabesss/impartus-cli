@@ -3,6 +3,8 @@ package cli
 import (
 	"encoding/json"
 	"os"
+
+	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
 type jsonEnvelope struct {
@@ -17,8 +19,15 @@ type jsonErr struct {
 }
 
 type jsonMeta struct {
-	Command string `json:"command"`
-	Mode    string `json:"mode"`
+	Command  string   `json:"command"`
+	Mode     string   `json:"mode"`
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+func newSuccessEnvelopeWithWarnings(command string, data any, warnings []string) jsonEnvelope {
+	envelope := newSuccessEnvelope(command, data)
+	envelope.Meta.Warnings = append([]string(nil), warnings...)
+	return envelope
 }
 
 type jsonEnvelopeError struct {
@@ -77,7 +86,7 @@ func newErrorEnvelope(command string, err error) jsonEnvelope {
 	return jsonEnvelope{
 		Success: false,
 		Data:    nil,
-		Error:   &jsonErr{Message: err.Error()},
+		Error:   &jsonErr{Message: secrets.ScrubError(err)},
 		Meta: jsonMeta{
 			Command: command,
 			Mode:    "json",
@@ -98,11 +107,21 @@ func newJSONError(command string, err error) error {
 	return jsonEnvelopeError{payload: string(payload)}
 }
 
+func newJSONErrorWithData(command string, data any, err error) error {
+	envelope := newErrorEnvelope(command, err)
+	envelope.Data = data
+	payload, marshalErr := json.Marshal(envelope)
+	if marshalErr != nil {
+		return err
+	}
+	return jsonEnvelopeError{payload: string(payload)}
+}
+
 func helpPayload() capabilityPayload {
 	return capabilityPayload{
 		Name:        "impartus",
-		Description: "CLI and interactive downloader for Impartus lectures",
-		DefaultMode: "interactive",
+		Description: "CLI and terminal UI for Impartus lectures",
+		DefaultMode: "tui",
 		Flags:       []string{"--json"},
 		Commands: []capabilityCommand{
 			{Name: "help", Usage: "impartus help"},
@@ -112,6 +131,11 @@ func helpPayload() capabilityPayload {
 			{Name: "download", Usage: "impartus download --subject <id> --session <id> [--start <n>] [--end <n>]"},
 			{Name: "serve", Usage: "impartus serve [--port <port>]"},
 			{Name: "play", Usage: "impartus play --subject <id> --session <id> [--lecture <n>] (not available in JSON mode)"},
+			{Name: "doctor", Usage: "impartus doctor"},
+			{Name: "library", Usage: "impartus library list|show|verify"},
+			{Name: "watch", Usage: "impartus watch [--subject <id> --session <id>] [--once] [--dry-run] [--events]"},
+			{Name: "tui", Usage: "impartus tui (not available in JSON mode)"},
+			{Name: "classic", Usage: "impartus classic (deprecated; not available in JSON mode)"},
 		},
 	}
 }
