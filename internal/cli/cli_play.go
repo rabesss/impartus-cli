@@ -9,11 +9,14 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime"
 	"syscall"
 
+	"github.com/rabesss/impartus-cli/internal/app"
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/downloader"
+	"github.com/rabesss/impartus-cli/internal/player"
 )
 
 type playFlags struct {
@@ -26,6 +29,7 @@ type playFlags struct {
 	views          string
 	skipNoAudio    bool
 	includeNoAudio bool
+	mpvMode        string
 }
 
 func runPlay(args []string) error {
@@ -58,7 +62,7 @@ func runPlay(args []string) error {
 	}
 
 	if f.subject <= 0 || f.session <= 0 {
-		return runPlayInteractive(ctx, cfg, apiClient)
+		return runPlayInteractive(ctx, cfg, apiClient, f.mpvMode)
 	}
 
 	lectures, err := apiClient.GetLectures(ctx, cfg, client.Course{SubjectID: f.subject, SessionID: f.session})
@@ -73,7 +77,7 @@ func runPlay(args []string) error {
 
 	warnNoAudioLectures(os.Stderr, selected, cfg.SkipNoAudio)
 
-	return playLectures(ctx, cfg, apiClient, selected)
+	return playLectures(ctx, cfg, apiClient, selected, f.mpvMode)
 }
 
 func parsePlayFlags(args []string) (playFlags, error) {
@@ -92,6 +96,7 @@ func parsePlayFlags(args []string) (playFlags, error) {
 	fs.StringVar(&f.views, "views", "", "Views override: left/right/both or first/second/both")
 	fs.BoolVar(&f.skipNoAudio, "skip-no-audio", false, "Skip lectures with no audio track")
 	fs.BoolVar(&f.includeNoAudio, "include-noaudio", false, "Include lectures with no audio track (overrides --skip-no-audio)")
+	fs.StringVar(&f.mpvMode, "mpv-mode", defaultMPVModeForOS(runtime.GOOS), "mpv control mode: ipc or legacy")
 
 	if err := fs.Parse(args); err != nil {
 		return playFlags{}, err
@@ -106,6 +111,13 @@ func parsePlayFlags(args []string) (playFlags, error) {
 	}
 
 	return f, nil
+}
+
+func defaultMPVModeForOS(goos string) string {
+	if goos == "windows" {
+		return "legacy"
+	}
+	return "ipc"
 }
 
 func validatePlayFlags(f playFlags) error {
@@ -125,10 +137,13 @@ func validatePlayFlags(f playFlags) error {
 	if hasRangeSelection && (!hasSubject || !hasSession) {
 		return errors.New("play lecture range flags require --subject/-s and --session/-S")
 	}
+	if f.mpvMode != "" && f.mpvMode != "ipc" && f.mpvMode != "legacy" {
+		return errors.New("play mpv mode must be ipc or legacy")
+	}
 	return nil
 }
 
-func runPlayInteractive(ctx context.Context, cfg *config.Config, apiClient *client.Client) error {
+func runPlayInteractive(ctx context.Context, cfg *config.Config, apiClient *client.Client, mpvMode string) error {
 	fmt.Println("Impartus Video Player")
 	fmt.Println()
 
@@ -142,10 +157,34 @@ func runPlayInteractive(ctx context.Context, cfg *config.Config, apiClient *clie
 		return err
 	}
 
-	return playLectures(ctx, cfg, apiClient, selected)
+	return playLectures(ctx, cfg, apiClient, selected, mpvMode)
 }
 
-func playLectures(ctx context.Context, cfg *config.Config, apiClient *client.Client, lectures client.Lectures) error {
+func playLectures(ctx context.Context, cfg *config.Config, apiClient *client.Client, lectures client.Lectures, mpvMode string) error {
+	return routePlayLectures(ctx, cfg, apiClient, lectures, mpvMode, app.New(cfg, apiClient), playLecturesLegacy)
+}
+
+type legacyPlayer func(context.Context, *config.Config, *client.Client, client.Lectures) error
+
+func routePlayLectures(ctx context.Context, cfg *config.Config, apiClient *client.Client, lectures client.Lectures, mpvMode string, supervised sequentialPlayer, legacy legacyPlayer) error {
+	if mpvMode == "legacy" {
+		return legacy(ctx, cfg, apiClient, lectures)
+	}
+	return playLecturesWithService(ctx, cfg, lectures, supervised)
+}
+
+type sequentialPlayer interface {
+	PlaySequential(context.Context, client.Lectures, func(client.ParsedPlaylist)) error
+}
+
+func playLecturesWithService(ctx context.Context, cfg *config.Config, lectures client.Lectures, service sequentialPlayer) error {
+	return service.PlaySequential(ctx, lectures, func(playlist client.ParsedPlaylist) {
+		fmt.Printf("[INFO] Playing Lec %03d: %s\n", playlist.SeqNo, playlist.Title)
+		fmt.Printf("[INFO] Views: %s (mpv is controlled over private JSON IPC; q exits)\n", cfg.Views)
+	})
+}
+
+func playLecturesLegacy(ctx context.Context, cfg *config.Config, apiClient *client.Client, lectures client.Lectures) error {
 	d := downloader.New(cfg, apiClient)
 	playlists, err := d.FetchLecturePlaylists(ctx, lectures)
 	if err != nil {
@@ -156,7 +195,7 @@ func playLectures(ctx context.Context, cfg *config.Config, apiClient *client.Cli
 	}
 
 	for _, playlist := range playlists {
-		if err := playOnePlaylist(ctx, cfg, d, playlist); err != nil {
+		if err := playOnePlaylistLegacy(ctx, cfg, d, playlist); err != nil {
 			return err
 		}
 	}
@@ -164,30 +203,58 @@ func playLectures(ctx context.Context, cfg *config.Config, apiClient *client.Cli
 	return nil
 }
 
-func playOnePlaylist(ctx context.Context, cfg *config.Config, d *downloader.Downloader, playlist client.ParsedPlaylist) error {
+func playOnePlaylistLegacy(ctx context.Context, cfg *config.Config, d *downloader.Downloader, playlist client.ParsedPlaylist) error {
 	fmt.Printf("[INFO] Playing Lec %03d: %s\n", playlist.SeqNo, playlist.Title)
 	fmt.Printf("[INFO] Views: %s (Press '_' in mpv to cycle views, 'q' to exit/next)\n", cfg.Views)
 
-	playURL, cleanup, err := d.StartPlayServer(ctx, playlist)
+	stream, err := d.StartPlaybackStream(ctx, playlist)
 	if err != nil {
 		return fmt.Errorf("failed to start local playback server: %w", err)
 	}
-	defer cleanup()
+	defer stream.Cleanup()
 
-	cmd := exec.CommandContext(ctx, "mpv", playURL) // #nosec G204
+	cmd := exec.CommandContext(ctx, "mpv", stream.URL) // #nosec G204
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	if runErr := cmd.Run(); runErr != nil {
+	if startErr := cmd.Start(); startErr != nil {
+		return fmt.Errorf("start mpv: %w", startErr)
+	}
+	finished := make(chan error, 1)
+	go func() { finished <- cmd.Wait() }()
+	return waitLegacyPlayback(ctx, stream.Failures, finished, func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		return cmd.Process.Kill()
+	})
+}
+
+func waitLegacyPlayback(ctx context.Context, failures <-chan error, finished <-chan error, kill func() error) error {
+	select {
+	case failure := <-failures:
+		if kill != nil {
+			_ = kill() //nolint:errcheck // failure is reported below; finished reaps the process
+		}
+		<-finished
+		return fmt.Errorf("legacy playback failed: %w", failure)
+	case runErr := <-finished:
+		select {
+		case failure := <-failures:
+			return fmt.Errorf("legacy playback failed: %w", failure)
+		default:
+		}
+		if contextErr := ctx.Err(); contextErr != nil {
+			return contextErr
+		}
+		if runErr == nil {
+			return nil
+		}
 		return fmt.Errorf("mpv execution failed: %w", runErr)
 	}
-	return nil
 }
 
 func ensureMpv() error {
-	if _, err := exec.LookPath("mpv"); err != nil {
-		return errors.New("please add mpv to your path")
-	}
-	return nil
+	return player.CheckBinary("mpv")
 }

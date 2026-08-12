@@ -58,6 +58,8 @@ sequenceDiagram
       J-->>A: run command silently + success envelope
     else serve
       J-->>A: non-blocking ready metadata (no server start)
+    else doctor
+      J-->>A: dependency and private-path report, or error envelope
     else failure/unknown command
       J-->>A: error envelope ({success:false})
     end
@@ -71,10 +73,12 @@ stdout empty, and writes exactly one error envelope to stderr. For download
 results, `lectureCount` counts completed lectures, while `outputPaths` may hold
 multiple files for each lecture. `artifacts` contains one stable version-1
 manifest per completed lecture; the older fields retain their meaning.
+Failed `doctor` envelopes retain the complete check report in `data` so JSON
+automation receives the same diagnostic detail as human mode.
 
 ## CLI play command flow
 
-The `play` command streams lectures directly in **mpv** without writing output files or invoking FFmpeg join.
+The `play` command streams lectures directly in **mpv** without writing output files or invoking FFmpeg join. Supervised JSON IPC is the default; the old blocking launch is available only through explicit `--mpv-mode=legacy` compatibility mode.
 
 ```mermaid
 flowchart TD
@@ -82,11 +86,28 @@ flowchart TD
   B --> C[loadConfig + apply defaults]
   C --> D[client.LoginAndSetToken]
   D --> E[Fetch lectures in range]
-  E --> F[downloader.PlayLectures via mpv]
-  F --> G[Stream HLS to mpv]
+  E --> F[app.Service.PlaySequential]
+  F --> G[downloader loopback HLS proxy]
+  F --> H[player starts mpv idle in private process group]
+  H --> I[verify owner-private JSON IPC socket]
+  G --> J[send capability URL via loadfile IPC]
+  I --> J
+  J --> K[observe state and typed controls]
+  K --> L[quit, terminate if needed, reap, cleanup socket/proxy]
 ```
 
-Requires **mpv** on `PATH`. Supports the same `--start`/`--end` range flags as download (1-based inclusive).
+Requires **mpv** on `PATH`. Supports the same `--start`/`--end` range flags as download (1-based inclusive). The capability-bearing proxy URL never enters mpv argv: mpv starts with `--no-config`, `--load-scripts=no`, and `--no-terminal`, then receives the URL only after IPC verification. Unix supervision uses a distinct verified process group so cancellation can reap mpv without signalling the caller's group. The loopback proxy enforces its exact Host and tokenized routes and maps upstream 401/403 responses to an actionable authorization failure.
+
+The bounded IPC reader rejects frames larger than 1 MiB. Its synchronous,
+non-blocking session handler records completion before a following EOF can
+close the client, while forwarding a drop-oldest copy of property and lifecycle
+events to the TUI. `WaitForEnd` and the UI therefore never race for the same
+terminal event or for disconnect ordering.
+
+`impartus doctor` checks mpv and FFmpeg resolution, private `config.json` and
+`.token` permissions, the writable state directory, and the private IPC runtime
+without starting mpv. The state check prepares the future library directory
+with mode `0700`; the runtime probe reserves and removes an IPC path.
 
 ## API authenticated job lifecycle flow
 
@@ -120,9 +141,11 @@ sequenceDiagram
 
 ## Internal package/module boundaries
 
-Core boundaries keep command orchestration in `internal/cli`, network access in
-`internal/client`, media pipeline in `internal/downloader`, stable local media
-contracts in `internal/artifact`, and HTTP orchestration in `internal/server`.
+Core boundaries keep command parsing and presentation in `internal/cli`, shared
+catalog/playback orchestration in `internal/app`, mpv ownership and JSON IPC in
+`internal/player`, network access in `internal/client`, the media pipeline and
+loopback HLS proxy in `internal/downloader`, stable local media contracts in
+`internal/artifact`, and HTTP orchestration in `internal/server`.
 
 ```mermaid
 flowchart LR
@@ -137,11 +160,14 @@ flowchart LR
     CLT[internal/client]
     DL[internal/downloader]
     ART[internal/artifact]
+    APP[internal/app]
+    PLR[internal/player]
     SRV[internal/server]
   end
 
   IMP[(Impartus APIs)]
   FS[(Local files + ffmpeg)]
+  MPV[(native mpv)]
 
   M1 --> CLI
   M2 --> CLI
@@ -149,10 +175,15 @@ flowchart LR
   CLI --> CLT
   CLI --> DL
   CLI --> ART
+  CLI --> APP
   CLI --> SRV
+  APP --> CLT
+  APP --> DL
+  APP --> PLR
   SRV --> CFG
   SRV --> CLT
   SRV --> DL
   CLT --> IMP
   DL --> FS
+  PLR --> MPV
 ```

@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -9,47 +10,125 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/rabesss/impartus-cli/internal/client"
+	"github.com/rabesss/impartus-cli/internal/playback"
+	"github.com/rabesss/impartus-cli/internal/secrets"
 )
+
+type playbackKey struct {
+	mutex    sync.Mutex
+	material []byte
+	closed   bool
+}
+
+// ErrPlaybackAuthorization is reported when the private playback proxy receives
+// an authentication or authorization rejection from the upstream media host.
+var ErrPlaybackAuthorization = playback.ErrAuthorization
+
+// PlaybackStream owns one private HLS capability and its asynchronous failures.
+type PlaybackStream struct {
+	URL      string
+	Failures <-chan error
+	Cleanup  func()
+}
+
+type playbackFailures struct {
+	once    sync.Once
+	channel chan error
+}
+
+func newPlaybackFailures() *playbackFailures {
+	return &playbackFailures{channel: make(chan error, 1)}
+}
+
+func (failures *playbackFailures) report(err error) {
+	if failures == nil || err == nil {
+		return
+	}
+	failures.once.Do(func() { failures.channel <- err })
+}
+
+func newPlaybackKey(material []byte) *playbackKey {
+	return &playbackKey{material: material}
+}
+
+func (key *playbackKey) acquire() ([]byte, bool) {
+	key.mutex.Lock()
+	defer key.mutex.Unlock()
+	if key.closed {
+		return nil, false
+	}
+	return append([]byte(nil), key.material...), true
+}
+
+func (key *playbackKey) close() {
+	key.mutex.Lock()
+	defer key.mutex.Unlock()
+	if key.closed {
+		return
+	}
+	key.closed = true
+	zeroKey(key.material)
+}
 
 // StartPlayServer starts a temporary local HTTP server to stream and decrypt HLS segments on the fly.
 // It returns the URL to the master playlist, a cleanup function to shut down the server, and any error.
 func (d *Downloader) StartPlayServer(ctx context.Context, playlist client.ParsedPlaylist) (string, func(), error) {
+	stream, err := d.StartPlaybackStream(ctx, playlist)
+	if err != nil {
+		return "", nil, err
+	}
+	return stream.URL, stream.Cleanup, nil
+}
+
+// StartPlaybackStream starts the private HLS proxy and exposes safe asynchronous
+// failures that mpv's generic file_error text cannot represent reliably.
+func (d *Downloader) StartPlaybackStream(ctx context.Context, playlist client.ParsedPlaylist) (PlaybackStream, error) {
 	if !d.hasPlayableViews(playlist) {
-		return "", nil, fmt.Errorf("no playable views available for lecture %d", playlist.SeqNo)
+		return PlaybackStream{}, fmt.Errorf("no playable views available for lecture %d", playlist.SeqNo)
 	}
 
 	decryptionKey, err := d.fetchDecryptionKey(ctx, playlist.KeyURL)
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to fetch decryption key: %w", err)
+		return PlaybackStream{}, fmt.Errorf("failed to fetch decryption key: %w", sanitizedPlaybackError(err))
 	}
+	keyStore := newPlaybackKey(decryptionKey)
+	keyOwned := true
+	defer func() {
+		if keyOwned {
+			keyStore.close()
+		}
+	}()
 
 	var lc net.ListenConfig
 	listener, err := lc.Listen(ctx, "tcp", "127.0.0.1:0")
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to create listener: %w", err)
+		return PlaybackStream{}, fmt.Errorf("failed to create listener: %w", err)
 	}
 
 	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
 	if !ok {
 		_ = listener.Close() //nolint:errcheck
-		return "", nil, fmt.Errorf("failed to assert net.Addr to *net.TCPAddr")
+		return PlaybackStream{}, fmt.Errorf("failed to assert net.Addr to *net.TCPAddr")
 	}
 	port := tcpAddr.Port
 
 	sessionToken := uuid.New().String()
+	failures := newPlaybackFailures()
 	mux := http.NewServeMux()
 	mux.HandleFunc(fmt.Sprintf("/%s/master.m3u8", sessionToken), d.handleMaster(playlist, port, sessionToken))
 	mux.HandleFunc(fmt.Sprintf("/%s/left.m3u8", sessionToken), d.handleLeft(playlist, port, sessionToken))
 	mux.HandleFunc(fmt.Sprintf("/%s/right.m3u8", sessionToken), d.handleRight(playlist, port, sessionToken))
-	mux.HandleFunc(fmt.Sprintf("/%s/segment/", sessionToken), d.handleSegment(playlist, decryptionKey))
+	mux.HandleFunc(fmt.Sprintf("/%s/segment/", sessionToken), d.handleSegment(playlist, keyStore, failures, sessionToken))
+	expectedHost := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 
 	server := &http.Server{
-		Handler:           mux,
+		Handler:           securePlayHandler(expectedHost, mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -60,14 +139,32 @@ func (d *Downloader) StartPlayServer(ctx context.Context, playlist client.Parsed
 		_ = server.Serve(listener) //nolint:errcheck
 	}()
 
+	var cleanupOnce sync.Once
 	cleanup := func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdownCtx) //nolint:errcheck
+		cleanupOnce.Do(func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = server.Shutdown(shutdownCtx) //nolint:errcheck
+			_ = listener.Close()             //nolint:errcheck
+			keyStore.close()
+		})
 	}
 
 	masterURL := fmt.Sprintf("http://127.0.0.1:%d/%s/master.m3u8", port, sessionToken)
-	return masterURL, cleanup, nil
+	keyOwned = false
+	return PlaybackStream{URL: masterURL, Failures: failures.channel, Cleanup: cleanup}, nil
+}
+
+func securePlayHandler(expectedHost string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if r.Host != expectedHost {
+			http.Error(w, "unexpected host", http.StatusMisdirectedRequest)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (d *Downloader) handleMaster(playlist client.ParsedPlaylist, port int, token string) http.HandlerFunc {
@@ -120,40 +217,13 @@ func (d *Downloader) handleRight(playlist client.ParsedPlaylist, port int, token
 	}
 }
 
-func (d *Downloader) handleSegment(playlist client.ParsedPlaylist, decryptionKey []byte) http.HandlerFunc {
+func (d *Downloader) handleSegment(playlist client.ParsedPlaylist, keyStore *playbackKey, failures *playbackFailures, token string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Expecting path like /<token>/segment/<view>/<idx>
-		path := strings.TrimPrefix(r.URL.Path, "/")
-		parts := strings.Split(path, "/")
-		if len(parts) != 4 {
-			http.Error(w, "invalid segment path", http.StatusBadRequest)
+		realURL, status, message := resolveSegmentSource(playlist, token, r.URL.Path)
+		if status != 0 {
+			http.Error(w, message, status)
 			return
 		}
-		view := parts[2]
-		idxStr := parts[3]
-		idx, err := strconv.Atoi(idxStr)
-		if err != nil {
-			http.Error(w, "invalid segment index", http.StatusBadRequest)
-			return
-		}
-
-		var urls []string
-		switch view {
-		case "left":
-			urls = playlist.FirstViewURLs
-		case "right":
-			urls = playlist.SecondViewURLs
-		default:
-			http.Error(w, "invalid view name", http.StatusBadRequest)
-			return
-		}
-
-		if idx < 0 || idx >= len(urls) {
-			http.Error(w, "segment index out of range", http.StatusNotFound)
-			return
-		}
-
-		realURL := urls[idx]
 
 		if waitErr := d.rateLimiter.WaitForDownload(r.Context()); waitErr != nil {
 			http.Error(w, fmt.Sprintf("rate limit wait failed: %v", waitErr), http.StatusInternalServerError)
@@ -167,6 +237,11 @@ func (d *Downloader) handleSegment(playlist client.ParsedPlaylist, decryptionKey
 		}
 		defer resp.Body.Close() //nolint:errcheck
 
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			failures.report(ErrPlaybackAuthorization)
+			http.Error(w, "upstream authorization failed", resp.StatusCode)
+			return
+		}
 		if resp.StatusCode != http.StatusOK {
 			http.Error(w, fmt.Sprintf("segment fetch returned status %d", resp.StatusCode), http.StatusBadGateway)
 			return
@@ -184,6 +259,12 @@ func (d *Downloader) handleSegment(playlist client.ParsedPlaylist, decryptionKey
 			return
 		}
 
+		decryptionKey, acquired := keyStore.acquire()
+		if !acquired {
+			http.Error(w, "playback is shutting down", http.StatusServiceUnavailable)
+			return
+		}
+		defer zeroKey(decryptionKey)
 		decryptedBytes, err := DecryptAESInPlace(encryptedBytes, decryptionKey)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("failed to decrypt segment: %v", err), http.StatusInternalServerError)
@@ -194,6 +275,51 @@ func (d *Downloader) handleSegment(playlist client.ParsedPlaylist, decryptionKey
 		w.Header().Set("Content-Length", strconv.Itoa(len(decryptedBytes)))
 		_, _ = w.Write(decryptedBytes) //nolint:errcheck
 	}
+}
+
+func sanitizedPlaybackError(err error) error {
+	if err == nil {
+		return nil
+	}
+	safe := errors.New(secrets.ScrubError(err))
+	for _, identity := range []error{context.Canceled, context.DeadlineExceeded} {
+		if !errors.Is(err, identity) {
+			continue
+		}
+		if safe.Error() == identity.Error() {
+			return identity
+		}
+		return errors.Join(safe, identity)
+	}
+	return safe
+}
+
+func resolveSegmentSource(playlist client.ParsedPlaylist, token, requestPath string) (string, int, string) {
+	// Expecting path like /<token>/segment/<view>/<idx>.
+	parts := strings.Split(strings.TrimPrefix(requestPath, "/"), "/")
+	if len(parts) != 4 {
+		return "", http.StatusBadRequest, "invalid segment path"
+	}
+	if parts[0] != token || parts[1] != "segment" {
+		return "", http.StatusNotFound, "invalid segment path"
+	}
+	index, err := strconv.Atoi(parts[3])
+	if err != nil {
+		return "", http.StatusBadRequest, "invalid segment index"
+	}
+	var urls []string
+	switch parts[2] {
+	case "left":
+		urls = playlist.FirstViewURLs
+	case "right":
+		urls = playlist.SecondViewURLs
+	default:
+		return "", http.StatusBadRequest, "invalid view name"
+	}
+	if index < 0 || index >= len(urls) {
+		return "", http.StatusNotFound, "segment index out of range"
+	}
+	return urls[index], 0, ""
 }
 
 func readSegmentBytes(r io.Reader, maxBytes int64) ([]byte, error) {

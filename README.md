@@ -57,6 +57,7 @@ A Go-based CLI and HTTP API server for downloading lecture videos from Impartus 
 - **Progress Tracking with ETA** - Real-time progress bars with speed and time estimates
 - **Rate Limiting** - Configurable API and download rate limits
 - **Slide Download Support** - Download lecture slides alongside video content
+- **Supervised mpv Playback** - Private JSON IPC provides playback state and controls without exposing the loopback stream capability in process arguments
 
 ## Quick Start
 
@@ -256,6 +257,9 @@ not write progress bars or warning text, and successful downloads leave stderr
 empty. Failed JSON commands exit non-zero and write exactly one error envelope
 to stderr while leaving stdout empty; in that envelope, `success` is `false`,
 `data` is `null`, and `error.message` contains the error text.
+The diagnostic `doctor` command is the one intentional exception: on failure,
+`data` contains the full per-check report so automation can identify the broken
+dependency or path while the envelope remains unsuccessful and exits non-zero.
 
 For JSON downloads, `lectureCount` is the number of lectures completed.
 `outputPaths` contains the files produced, so one completed lecture can add
@@ -283,6 +287,7 @@ the selection alone.
 | `impartus lectures -s ID -S ID` | List lectures for subject/session |
 | `impartus download [flags]` | Download lectures |
 | `impartus play [flags]` | Play lectures in mpv |
+| `impartus doctor` | Check mpv, FFmpeg, credential permissions, and private writable state/runtime paths |
 | `impartus serve [--port PORT]` | Start HTTP API server |
 
 ### Download / Play Flags
@@ -299,6 +304,7 @@ the selection alone.
 | `--start` | | Start lecture index (1-based) | Both |
 | `--end` | | End lecture index (1-based, inclusive) | Both |
 | `--lecture` | `-l` | Specific lecture index (shortcut for start & end) | Play Only |
+| `--mpv-mode` | | `ipc` (supervised default; `legacy` defaults on Windows) or explicit compatibility mode `legacy` | Play Only |
 | `--quality` | | Quality: `144`, `450`, `720` | Both |
 | `--views` | | Views: `left`, `right`, `both`, `first`, `second` | Both |
 | `--audio-only` | | Audio-only mode | Download Only |
@@ -326,7 +332,28 @@ the selection alone.
 
 # Play a specific lecture
 ./impartus play -s 123 -S 456 --lecture 3
+
+# Diagnose local playback/download prerequisites and private paths
+./impartus doctor
+
+# Temporary compatibility path; IPC failures never select this automatically
+./impartus play -s 123 -S 456 --lecture 3 --mpv-mode legacy
 ```
+
+The default `ipc` mode starts mpv idle with user configuration and scripts
+disabled, creates an owner-private Unix socket, and sends the tokenized local
+stream URL only after that socket is verified. It observes playback state and
+reaps mpv on normal exit, cancellation, or forced shutdown. The local HLS proxy
+accepts only its exact loopback Host and unguessable session paths. `legacy`
+retains the previous blocking process launch as an explicit one-release
+compatibility option; an IPC error never falls back to it.
+
+`impartus doctor` may create the future state directory at
+`$XDG_STATE_HOME/impartus` (or `~/.local/state/impartus`) with mode `0700` so it
+can verify private writable storage. Missing `config.json` and `.token` files
+are warnings because environment-only configuration and a first login are
+supported; an existing credential file with group/world permissions is a
+blocking failure.
 
 ### API Server
 
@@ -582,6 +609,8 @@ impartus/
 │   ├── config/              # Configuration parsing and validation
 │   ├── client/              # Impartus API client, auth, HTTP helpers
 │   ├── downloader/          # Playlist parsing, chunk download/decrypt, ffmpeg
+│   ├── app/                 # Shared catalog/playback orchestration seam
+│   ├── player/              # Supervised mpv process and bounded JSON IPC
 │   └── server/              # HTTP API, auth middleware, jobs, WebSocket
 ├── docs/                    # Documentation
 └── config.json              # User configuration
@@ -593,6 +622,8 @@ impartus/
 - **`internal/config`** - Configuration loading, defaults, and validation
 - **`internal/client`** - Impartus API HTTP client with authentication
 - **`internal/downloader`** - Video pipeline: playlist parsing, chunk download, AES decryption, FFmpeg join
+- **`internal/app`** - Small orchestration boundary shared by the CLI and forthcoming TUI
+- **`internal/player`** - Private mpv runtime, process-group supervision, bounded JSON IPC, events, and typed controls
 - **`internal/server`** - HTTP API server with bearer-token auth, background jobs, and WebSocket broadcasting
 
 For detailed flow diagrams, see [`docs/architecture.md`](docs/architecture.md).
