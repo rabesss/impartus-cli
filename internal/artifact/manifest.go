@@ -65,11 +65,12 @@ type File struct {
 // FileSpec assigns typed output metadata before Build verifies the file on
 // disk. Role and view should come from the downloader's typed join result.
 type FileSpec struct {
-	Path      string
-	Role      string
-	View      string
-	Container string
-	SHA256    string
+	Path            string
+	Role            string
+	View            string
+	Container       string
+	SHA256          string
+	VerifyContainer bool
 }
 
 // Producer identifies the program version that materialized the artifact.
@@ -195,6 +196,13 @@ func verifyFile(spec FileSpec, audioOnly bool, selectedViews string) (verifiedFi
 		_ = closeErr
 		return verifiedFile{}, err
 	}
+	if spec.VerifyContainer {
+		if containerErr := verifyContainerSignature(file, absolutePath, container); containerErr != nil {
+			closeErr := file.Close()
+			_ = closeErr
+			return verifiedFile{}, containerErr
+		}
+	}
 	size := info.Size()
 	if sha256Hex != "" {
 		size, err = verifySHA256(file, absolutePath, sha256Hex)
@@ -237,6 +245,21 @@ func openCompletedFile(rawPath string) (string, *os.File, os.FileInfo, error) {
 		return "", nil, nil, err
 	}
 	return absolutePath, file, info, nil
+}
+
+// OpenCompletedFileDescriptor opens a completed local artifact without
+// following symlinks or blocking on a path swapped to a special file. Callers
+// must compare the returned descriptor metadata with their pre-open Lstat.
+func OpenCompletedFileDescriptor(path string) (*os.File, error) {
+	return openCompletedFileDescriptor(path)
+}
+
+// ValidateStableCompletedFile proves that path still names the same regular
+// file descriptor with unchanged size and modification time. Callers that
+// inspect or hash an opened completed file must invoke this immediately before
+// publishing their result.
+func ValidateStableCompletedFile(path string, file *os.File, initial os.FileInfo) error {
+	return validateStableCompletedFile(path, file, initial)
 }
 
 func normalizeCompletedPath(rawPath string) (string, error) {

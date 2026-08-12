@@ -7,6 +7,7 @@ import (
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/downloader"
+	"github.com/rabesss/impartus-cli/internal/library"
 	"github.com/rabesss/impartus-cli/internal/player"
 )
 
@@ -35,6 +36,11 @@ type managedPlayer interface {
 
 type playerStarter func(context.Context, player.Options) (managedPlayer, error)
 
+type playbackHistory interface {
+	Playback(context.Context, string) (library.PlaybackState, bool, error)
+	RecordPlayback(context.Context, library.PlaybackState) error
+}
+
 // Service coordinates existing Impartus API, stream proxy, and player layers.
 // It owns no terminal, HTTP, subprocess, or persistence implementation itself.
 type Service struct {
@@ -43,6 +49,7 @@ type Service struct {
 	streams       playbackStreams
 	startPlayer   playerStarter
 	playerOptions player.Options
+	history       playbackHistory
 }
 
 // New creates the production application service.
@@ -59,6 +66,21 @@ func NewWithPlayerOptions(cfg *config.Config, apiClient *client.Client, options 
 	}, options)
 }
 
+// NewWithLibrary creates the production application service with durable
+// playback resume support for TUI and automation callers.
+func NewWithLibrary(cfg *config.Config, apiClient *client.Client, store *library.Store) *Service {
+	return NewWithLibraryAndPlayerOptions(cfg, apiClient, store, player.Options{})
+}
+
+// NewWithLibraryAndPlayerOptions creates the full playback service with both
+// durable resume history and explicit supervised-mpv options.
+func NewWithLibraryAndPlayerOptions(cfg *config.Config, apiClient *client.Client, store *library.Store, options player.Options) *Service {
+	media := downloader.New(cfg, apiClient)
+	return newServiceWithHistory(cfg, apiClient, media, func(ctx context.Context, playerOptions player.Options) (managedPlayer, error) {
+		return player.Start(ctx, playerOptions)
+	}, options, store)
+}
+
 func newService(cfg *config.Config, catalog catalogClient, streams playbackStreams, start playerStarter, options ...player.Options) *Service {
 	service := &Service{
 		config:      cfg,
@@ -69,5 +91,18 @@ func newService(cfg *config.Config, catalog catalogClient, streams playbackStrea
 	if len(options) > 0 {
 		service.playerOptions = options[0]
 	}
+	return service
+}
+
+func newServiceWithHistory(
+	cfg *config.Config,
+	catalog catalogClient,
+	streams playbackStreams,
+	start playerStarter,
+	options player.Options,
+	history playbackHistory,
+) *Service {
+	service := newService(cfg, catalog, streams, start, options)
+	service.history = history
 	return service
 }

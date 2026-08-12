@@ -101,6 +101,7 @@ func showHelp(version, date string) {
 	fmt.Println("  download [flags]                     Download lectures")
 	fmt.Println("  play [flags]                         Play lectures in mpv")
 	fmt.Println("  doctor                               Check local dependencies and private paths")
+	fmt.Println("  library list|show|verify             Inspect and verify the local lecture library")
 	fmt.Println("  serve [--port <port>]                Start HTTP API server")
 	fmt.Println("  version                              Show version")
 	fmt.Println("  help                                 Show help")

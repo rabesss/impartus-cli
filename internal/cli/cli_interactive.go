@@ -42,8 +42,13 @@ func runInteractive() error {
 		return scopeErr
 	}
 
-	_, err = downloadLectures(ctx, cfg, apiClient, selected, humanDownloadPresentation())
-	return err
+	presentation := humanDownloadPresentation()
+	result, err := downloadLectures(ctx, cfg, apiClient, selected, presentation)
+	if err != nil {
+		return err
+	}
+	applyLibraryRecording(ctx, result, presentation, recordDownloadedArtifacts)
+	return nil
 }
 
 func selectCourseInteractive(ctx context.Context, cfg *config.Config, apiClient *client.Client) (*client.Course, error) {

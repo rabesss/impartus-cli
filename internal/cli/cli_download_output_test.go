@@ -439,6 +439,83 @@ func TestJSONDownloadStreamContract(t *testing.T) {
 	}
 }
 
+func TestLibraryRecordingFailureKeepsCompletedDownloadAndAddsOneWarning(t *testing.T) {
+	manifest := artifact.Manifest{ArtifactID: "impartus:v1:test"}
+	var warnings bytes.Buffer
+	result := applyLibraryRecording(
+		context.Background(),
+		downloadResult{Status: "completed", LectureCount: 1, Artifacts: []artifact.Manifest{manifest}},
+		downloadPresentationOptions{warningOutput: &warnings},
+		func(context.Context, []artifact.Manifest) error { return errors.New("state is read-only") },
+	)
+	if result.Status != "completed" || result.LectureCount != 1 || result.LibraryRecorded {
+		t.Fatalf("library failure changed completed download: %+v", result)
+	}
+	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "state is read-only") {
+		t.Fatalf("warnings = %+v", result.Warnings)
+	}
+	if strings.Count(warnings.String(), "[WARNING]") != 1 {
+		t.Fatalf("human warnings = %q, want exactly one", warnings.String())
+	}
+
+	envelope := newSuccessEnvelopeWithWarnings("download", result, result.Warnings)
+	if !envelope.Success || len(envelope.Meta.Warnings) != 1 {
+		t.Fatalf("JSON envelope = %+v", envelope)
+	}
+}
+
+func TestLibraryRecordingWithNoArtifactsIsSuccessfulNoOp(t *testing.T) {
+	t.Parallel()
+
+	var called bool
+	var warnings bytes.Buffer
+	result := applyLibraryRecording(
+		context.Background(),
+		downloadResult{Status: "completed"},
+		downloadPresentationOptions{warningOutput: &warnings},
+		func(context.Context, []artifact.Manifest) error {
+			called = true
+			return errors.New("state is read-only")
+		},
+	)
+	if called {
+		t.Fatal("zero-artifact download attempted a library write")
+	}
+	if !result.LibraryRecorded || len(result.Warnings) != 0 {
+		t.Fatalf("zero-artifact result = %+v", result)
+	}
+	if warnings.Len() != 0 {
+		t.Fatalf("zero-artifact warnings = %q, want none", warnings.String())
+	}
+}
+
+func TestCompletedDownloadSurvivesUnwritableDefaultStateHome(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", filepath.Join("/proc", fmt.Sprintf("impartus-library-%d", os.Getpid())))
+	mediaPath := filepath.Join(t.TempDir(), "lecture.mp4")
+	if err := os.WriteFile(mediaPath, []byte("media"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := artifact.Build(artifact.BuildInput{
+		Lecture:    artifact.Lecture{TTID: 4, InstituteID: 1, SubjectID: 2, SessionID: 3},
+		Selection:  artifact.Selection{Views: "left", Quality: "720"},
+		Files:      []artifact.FileSpec{{Path: mediaPath, Role: "video", View: "left", Container: "mp4"}},
+		ProducedAt: time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC),
+		Producer:   artifact.Producer{Name: "impartus", Version: "test"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := applyLibraryRecording(
+		context.Background(),
+		downloadResult{Status: "completed", LectureCount: 1, Artifacts: []artifact.Manifest{manifest}},
+		quietDownloadPresentation(),
+		recordDownloadedArtifacts,
+	)
+	if result.Status != "completed" || result.LibraryRecorded || len(result.Warnings) != 1 {
+		t.Fatalf("unwritable-state result = %+v", result)
+	}
+}
+
 func TestJSONDownloadFailureStreamSuppressesDownloaderLogs(t *testing.T) {
 	restoreCLIState(t)
 	cfg, apiClient, cleanup := newJSONDownloadIntegration(t, true)

@@ -7,6 +7,7 @@
   * [CLI interactive mode flow](#cli-interactive-mode-flow)
   * [CLI deterministic JSON mode flow](#cli-deterministic-json-mode-flow)
   * [CLI play command flow](#cli-play-command-flow)
+  * [Local library and recovery flow](#local-library-and-recovery-flow)
   * [API authenticated job lifecycle flow](#api-authenticated-job-lifecycle-flow)
   * [Internal package/module boundaries](#internal-packagemodule-boundaries)
 
@@ -73,6 +74,9 @@ stdout empty, and writes exactly one error envelope to stderr. For download
 results, `lectureCount` counts completed lectures, while `outputPaths` may hold
 multiple files for each lecture. `artifacts` contains one stable version-1
 manifest per completed lecture; the older fields retain their meaning.
+`libraryRecorded` is additive. A post-download SQLite failure leaves the media
+and manifest successful, sets it to `false`, and adds one structured
+`meta.warnings` entry.
 Failed `doctor` envelopes retain the complete check report in `data` so JSON
 automation receives the same diagnostic detail as human mode.
 
@@ -107,7 +111,48 @@ terminal event or for disconnect ordering.
 `impartus doctor` checks mpv and FFmpeg resolution, private `config.json` and
 `.token` permissions, the writable state directory, and the private IPC runtime
 without starting mpv. The state check prepares the future library directory
-with mode `0700`; the runtime probe reserves and removes an IPC path.
+with mode `0700`; the runtime probe reserves and removes an IPC path. It also
+opens the library through its normal migration/WAL path and stops on
+incompatibility or corruption rather than modifying data through an automatic
+repair.
+
+## Local library and recovery flow
+
+```mermaid
+flowchart TD
+  A[Job-backed caller selects scoped lecture] --> B[Persist expected artifact and final paths]
+  B --> C[Download and decrypt private workspace chunks]
+  C --> D[FFmpeg writes same-directory final.part]
+  D --> E[fsync file]
+  E --> F[atomic replace final path and sync directory]
+  F --> G[Build versioned manifest from final regular files]
+  G --> H[SQLite transaction: artifact plus every materialized path plus completed job]
+
+  I[Process restarts] --> J[running job becomes recoverable]
+  J --> K{All expected finals validate?}
+  K -- yes --> G
+  K -- no --> L[keep recoverable; never treat partials as final]
+```
+
+The private database is `$XDG_STATE_HOME/impartus/library.db`. Unix requires a
+`0700` parent and `0600` file. Windows creates a protected DACL limited to the
+current user, SYSTEM, and Administrators and rejects broader existing ACLs,
+while still rejecting symlinks and non-regular database paths.
+`modernc.org/sqlite` keeps the build CGO-free. WAL, foreign keys,
+`synchronous=FULL`, a busy timeout, and transactional `user_version`
+migrations are enforced whenever the writable store opens. A newer schema
+fails before journal mode or tables are changed.
+
+`artifacts` holds immutable logical identity plus the latest manifest;
+`artifact_files` retains every distinct materialized path and its presence/hash
+state; `playback` holds coalesced resume checkpoints; and `jobs` holds expected
+outputs and lifecycle state. Default verification checks type and size; only
+`--hash` fills or rechecks SHA-256. Verification updates rows but never deletes
+media or history. One-shot CLI downloads record completed manifests best-effort;
+job creation and recovery are an explicit seam for the later watcher
+integration. Recovery requires the watcher single-instance lock and runs before
+workers, not yet part of that one-shot path. The HTTP API server's existing
+`.jobs.json` store remains a separate compatibility surface.
 
 ## API authenticated job lifecycle flow
 
@@ -162,12 +207,14 @@ flowchart LR
     ART[internal/artifact]
     APP[internal/app]
     PLR[internal/player]
+    LIB[internal/library]
     SRV[internal/server]
   end
 
   IMP[(Impartus APIs)]
   FS[(Local files + ffmpeg)]
   MPV[(native mpv)]
+  DB[(private library.db)]
 
   M1 --> CLI
   M2 --> CLI
@@ -176,14 +223,17 @@ flowchart LR
   CLI --> DL
   CLI --> ART
   CLI --> APP
+  CLI --> LIB
   CLI --> SRV
   APP --> CLT
   APP --> DL
   APP --> PLR
+  APP --> LIB
   SRV --> CFG
   SRV --> CLT
   SRV --> DL
   CLT --> IMP
   DL --> FS
   PLR --> MPV
+  LIB --> DB
 ```

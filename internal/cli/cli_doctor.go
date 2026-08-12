@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -8,8 +9,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/rabesss/impartus-cli/internal/config"
+	"github.com/rabesss/impartus-cli/internal/library"
 	"github.com/rabesss/impartus-cli/internal/player"
 )
 
@@ -37,6 +40,7 @@ type doctorOptions struct {
 	stateDir     string
 	mpvMode      string
 	checkRuntime func() error
+	checkLibrary func() error
 }
 
 func defaultDoctorOptions() (doctorOptions, error) {
@@ -51,6 +55,7 @@ func defaultDoctorOptions() (doctorOptions, error) {
 		stateDir:     stateDir,
 		mpvMode:      defaultMPVModeForOS(runtime.GOOS),
 		checkRuntime: func() error { return player.CheckRuntime("") },
+		checkLibrary: checkDefaultLibrary,
 	}, nil
 }
 
@@ -93,13 +98,14 @@ func getDoctorReport(args []string) (doctorReport, error) {
 }
 
 func collectDoctorReport(options doctorOptions) doctorReport {
-	checks := make([]doctorCheck, 0, 6)
+	checks := make([]doctorCheck, 0, 7)
 	checks = append(checks, checkExecutable(options.lookPath, "mpv"))
 	checks = append(checks, checkExecutable(options.lookPath, "ffmpeg"))
 	checks = append(checks, checkConfigFile(options.configPath))
 	checks = append(checks, checkTokenFile(options.tokenPath))
 	checks = append(checks, checkWritableStateDirectory(options.stateDir))
 	checks = append(checks, checkRuntimeDirectory(options.checkRuntime, options.mpvMode))
+	checks = append(checks, checkLibraryDatabase(options.checkLibrary))
 
 	report := doctorReport{OK: true, Checks: checks}
 	for _, check := range checks {
@@ -127,6 +133,26 @@ func checkTokenFile(path string) doctorCheck {
 	}
 	privacy := assessDoctorPrivateFilePermissions(runtime.GOOS, path, "contains a bearer token", info)
 	return doctorCheck{Name: "token", Status: privacy.Status, Detail: privacy.Detail}
+}
+
+func checkDefaultLibrary() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	store, err := library.Open(ctx, library.Options{})
+	if err != nil {
+		return err
+	}
+	return finishCommittedLibraryOperation(store.Check(ctx), store.Close)
+}
+
+func checkLibraryDatabase(check func() error) doctorCheck {
+	if check == nil {
+		return doctorCheck{Name: "library", Status: doctorStatusFail, Detail: "library checker is unavailable"}
+	}
+	if err := check(); err != nil {
+		return doctorCheck{Name: "library", Status: doctorStatusFail, Detail: err.Error()}
+	}
+	return doctorCheck{Name: "library", Status: doctorStatusPass, Detail: "SQLite migrations, WAL, and private permissions are healthy"}
 }
 
 func checkExecutable(lookPath func(string) (string, error), name string) doctorCheck {

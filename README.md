@@ -267,7 +267,11 @@ multiple paths when multiple views or output forms are requested. The additive
 `artifacts` array contains one versioned manifest per completed lecture with its
 scoped IDs, normalized media selection, verified absolute files, byte sizes,
 and a stable `impartus:v1:` logical identity. Existing automation can continue
-using the legacy fields unchanged.
+using the legacy fields unchanged. `libraryRecorded` reports whether all
+manifests were committed to the local SQLite library. If media completed but
+that additive commit failed, the command still succeeds, sets the field to
+`false`, and places exactly one diagnostic in `meta.warnings` without writing
+unstructured JSON-mode stderr.
 
 `selection.views` records the normalized requested view set used for logical
 identity. `files` is the authoritative materialization list: an upstream
@@ -288,6 +292,9 @@ the selection alone.
 | `impartus download [flags]` | Download lectures |
 | `impartus play [flags]` | Play lectures in mpv |
 | `impartus doctor` | Check mpv, FFmpeg, credential permissions, and private writable state/runtime paths |
+| `impartus library list` | List logical artifacts and materialized file counts |
+| `impartus library show ARTIFACT_ID` | Show one artifact and every known local path |
+| `impartus library verify [--hash] [ARTIFACT_ID]` | Mark missing/changed paths without deleting records; optionally fill or recheck SHA-256 |
 | `impartus serve [--port PORT]` | Start HTTP API server |
 
 ### Download / Play Flags
@@ -336,6 +343,11 @@ the selection alone.
 # Diagnose local playback/download prerequisites and private paths
 ./impartus doctor
 
+# Inspect and non-destructively verify completed local media
+./impartus library list
+./impartus library show 'impartus:v1:...'
+./impartus library verify --hash
+
 # Temporary compatibility path; IPC failures never select this automatically
 ./impartus play -s 123 -S 456 --lecture 3 --mpv-mode legacy
 ```
@@ -353,7 +365,42 @@ compatibility option; an IPC error never falls back to it.
 can verify private writable storage. Missing `config.json` and `.token` files
 are warnings because environment-only configuration and a first login are
 supported; an existing credential file with group/world permissions is a
-blocking failure.
+blocking failure. The doctor also opens and migrates the local library, verifies
+WAL and private permissions, and fails instead of attempting an automatic
+repair when the database is incompatible.
+
+### Local Lecture Library
+
+Completed manifests, every materialized path, playback resume state, and local
+download/watch job state live in `$XDG_STATE_HOME/impartus/library.db` (or
+`~/.local/state/impartus/library.db`). Unix enforces mode `0700` on the parent
+and `0600` on the database. Windows creates a protected DACL limited to the
+current user, SYSTEM, and Administrators, rejects broader existing ACLs, and
+retains symlink and file-type checks. The pure-Go SQLite
+store enables WAL, foreign keys, `synchronous=FULL`, a bounded busy timeout, and
+transactional forward-only migrations, so CGO is not required.
+
+Logical artifacts are keyed by the stable manifest identity rather than by a
+filename. Re-downloading the same selection elsewhere adds another file row;
+it does not discard the older path. `library verify` checks regular-file type
+and size and updates presence metadata without deleting user data. Hashing is
+deliberately opt-in: `library verify --hash` fills or rechecks SHA-256 metadata.
+Playback checkpoints reject far-future timestamps, merge equal-time updates,
+and keep completion sticky so out-of-order delivery cannot regress resume.
+
+FFmpeg writes final media to a same-directory `.part` path, syncs it, and then
+atomically replaces the final path. Colliding in-process writers to one final
+path are serialized, and every pre-publication failure removes its `.part`.
+The library's durable job API can record expected final paths before work and
+mark interrupted `running` jobs
+`recoverable`. When all expected outputs already validate, recovery commits the
+artifact without another Impartus fetch; incomplete `.part` files are never
+considered complete. Startup recovery must run while the watcher holds its
+single-instance lock and before workers start; the recovery method is never an
+implicit database-open side effect. Current one-shot CLI downloads best-effort
+record their completed manifests but do not yet create lifecycle job rows; the
+watcher will use that job seam in a later stacked change. These local jobs are
+separate from the existing HTTP API server's `.jobs.json` compatibility store.
 
 ### API Server
 
@@ -611,6 +658,7 @@ impartus/
 │   ├── downloader/          # Playlist parsing, chunk download/decrypt, ffmpeg
 │   ├── app/                 # Shared catalog/playback orchestration seam
 │   ├── player/              # Supervised mpv process and bounded JSON IPC
+│   ├── library/             # Pure-Go SQLite artifacts, playback, and local jobs
 │   └── server/              # HTTP API, auth middleware, jobs, WebSocket
 ├── docs/                    # Documentation
 └── config.json              # User configuration
@@ -624,6 +672,7 @@ impartus/
 - **`internal/downloader`** - Video pipeline: playlist parsing, chunk download, AES decryption, FFmpeg join
 - **`internal/app`** - Small orchestration boundary shared by the CLI and forthcoming TUI
 - **`internal/player`** - Private mpv runtime, process-group supervision, bounded JSON IPC, events, and typed controls
+- **`internal/library`** - Private SQLite migrations, artifact paths, verification, resume history, and recoverable local jobs
 - **`internal/server`** - HTTP API server with bearer-token auth, background jobs, and WebSocket broadcasting
 
 For detailed flow diagrams, see [`docs/architecture.md`](docs/architecture.md).
@@ -645,6 +694,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [gorilla/mux](https://github.com/gorilla/mux) - HTTP router
 - [gorilla/websocket](https://github.com/gorilla/websocket) - WebSocket implementation
 - [vbauerster/mpb](https://github.com/vbauerster/mpb) - Progress bars
+- [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite) - Pure-Go SQLite driver
 - [google/uuid](https://github.com/google/uuid) - UUID generation
 - [golang.org/x/time](https://pkg.go.dev/golang.org/x/time) - Rate limiting
 

@@ -17,8 +17,15 @@ type jsonErr struct {
 }
 
 type jsonMeta struct {
-	Command string `json:"command"`
-	Mode    string `json:"mode"`
+	Command  string   `json:"command"`
+	Mode     string   `json:"mode"`
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+func newSuccessEnvelopeWithWarnings(command string, data any, warnings []string) jsonEnvelope {
+	envelope := newSuccessEnvelope(command, data)
+	envelope.Meta.Warnings = append([]string(nil), warnings...)
+	return envelope
 }
 
 type jsonEnvelopeError struct {
@@ -123,6 +130,7 @@ func helpPayload() capabilityPayload {
 			{Name: "serve", Usage: "impartus serve [--port <port>]"},
 			{Name: "play", Usage: "impartus play --subject <id> --session <id> [--lecture <n>] (not available in JSON mode)"},
 			{Name: "doctor", Usage: "impartus doctor"},
+			{Name: "library", Usage: "impartus library list|show|verify"},
 		},
 	}
 }

@@ -301,10 +301,11 @@ files are complete: it exits 0, emits the normal manifest, reports
 run requires its durable job store before downloading and fails the cycle if it
 cannot commit state. Final media output uses same-directory `.part` files plus
 fsync/atomic rename. Before ffmpeg starts, the watch job records the expected
-final paths. After a crash, a final path is reusable only when the job identity
-matches and all outputs pass stat/container validation; then the manifest is
-committed without another network fetch. Partial `.part` files are never
-mistaken for completed artifacts.
+final paths. After a crash, the watcher holds its single-instance lock while it
+marks interrupted work recoverable and before it launches workers. A final path
+is reusable only when the job identity matches and all outputs pass
+stat/container validation; then the manifest is committed without another
+network fetch. Partial `.part` files are never mistaken for completed artifacts.
 
 ### Hermes/NotebookLM bridge contract
 

@@ -22,6 +22,7 @@ func restoreCLIState(t *testing.T) {
 	oldServe := runServeFn
 	oldPlay := runPlayFn
 	oldDoctor := runDoctorFn
+	oldLibrary := runLibraryFn
 	oldLoadResolved := loadResolvedFn
 	oldNewLoggedIn := newLoggedInFn
 	oldStartAPIServer := startAPIServerFn
@@ -35,6 +36,7 @@ func restoreCLIState(t *testing.T) {
 		runServeFn = oldServe
 		runPlayFn = oldPlay
 		runDoctorFn = oldDoctor
+		runLibraryFn = oldLibrary
 		loadResolvedFn = oldLoadResolved
 		newLoggedInFn = oldNewLoggedIn
 		startAPIServerFn = oldStartAPIServer

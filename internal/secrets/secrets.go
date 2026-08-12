@@ -41,6 +41,27 @@ var sensitiveQueryRe = buildSensitiveQueryRe()
 // URL strings, including those url.Parse cannot interpret.
 var userinfoRe = regexp.MustCompile(`(?i)(https?://)[^/\s:@]+:[^/\s@]+@`)
 
+// Free-form response bodies use the same exact credential keys as URL query
+// redaction, plus common suffix forms such as refresh_token and client_secret.
+// Building the regex from sensitiveParams keeps sig/signature and future keys
+// from drifting between URL and body sanitization.
+var sensitiveAssignmentKey = buildSensitiveAssignmentKey()
+var quotedSecretValue = regexp.MustCompile(
+	`(?i)(\b` + sensitiveAssignmentKey + `"\s*:\s*")((?:\\.|[^"\\])*)`,
+)
+var strongCredentialAssignment = regexp.MustCompile(
+	`(?i)(^|[^/\\a-z0-9_-])((?:authorization|proxy[-_]?authorization|auth|(?:x[-_])?api[-_]?key)\s*[:=]\s*)[^\r\n]+`,
+)
+var schemeSecretAssignment = regexp.MustCompile(
+	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*[:=]\s*)(?:bearer|basic|token|apikey|oauth)\s+[^\s,;}]+`,
+)
+var bareSecretEquals = regexp.MustCompile(
+	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*=\s*)[^\s,;}]+`,
+)
+var bareSecretColon = regexp.MustCompile(
+	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*:\s*)[^\s,;}]+`,
+)
+
 func buildSensitiveQueryRe() *regexp.Regexp {
 	keys := make([]string, 0, len(sensitiveParams))
 	for k := range sensitiveParams {
@@ -48,6 +69,16 @@ func buildSensitiveQueryRe() *regexp.Regexp {
 	}
 	sort.Strings(keys)
 	return regexp.MustCompile(`(?i)([?&])(` + strings.Join(keys, "|") + `)=[^&#\s]*`)
+}
+
+func buildSensitiveAssignmentKey() string {
+	keys := make([]string, 0, len(sensitiveParams)+3)
+	for key := range sensitiveParams {
+		keys = append(keys, regexp.QuoteMeta(key))
+	}
+	keys = append(keys, "authorization", "password", `(?:x[_-])?api[_-]?key`, `[a-z0-9_-]+(?:token|password|secret|signature)`)
+	sort.Strings(keys)
+	return `(?:` + strings.Join(keys, "|") + `)`
 }
 
 func isSensitiveParam(key string) bool {
@@ -128,14 +159,19 @@ func SanitizeError(err error) error {
 	return errors.New(scrubbed)
 }
 
-// Scrub redacts sensitive data from every http(s) URL embedded in free-form
-// text (e.g. an arbitrary error string). It is a defense-in-depth layer for log
-// paths that receive pre-formatted error messages.
+// Scrub redacts sensitive URLs and credential assignments from free-form text.
+// It is the shared defense-in-depth boundary for logs, terminal output, and
+// durable error summaries.
 func Scrub(s string) string {
 	if s == "" {
 		return s
 	}
-	return urlTokenRe.ReplaceAllStringFunc(s, RedactURL)
+	scrubbed := urlTokenRe.ReplaceAllStringFunc(s, RedactURL)
+	scrubbed = quotedSecretValue.ReplaceAllString(scrubbed, "${1}REDACTED")
+	scrubbed = strongCredentialAssignment.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
+	scrubbed = schemeSecretAssignment.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
+	scrubbed = bareSecretEquals.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
+	return bareSecretColon.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
 }
 
 // ScrubError returns the error's message with any embedded URLs scrubbed. It
