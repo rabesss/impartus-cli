@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -11,18 +12,18 @@ import (
 	"github.com/rabesss/impartus-cli/internal/events"
 )
 
-func (watcher *Watcher) finish(cause error, result CycleResult) error {
+func (watcher *Watcher) finish(ctx context.Context, cause error, result CycleResult) error {
 	safeCause := events.RedactedError(cause)
 	if watcher.options.DeferTerminal {
 		return safeCause
 	}
-	return errors.Join(safeCause, watcher.emit(TerminalEvent(watcher.options.JobID, cause, result, watcher.options.Now())))
+	return errors.Join(safeCause, watcher.emit(TerminalEvent(ctx, watcher.options.JobID, cause, result, watcher.options.Now())))
 }
 
 // TerminalEvent builds the single aggregate watch terminal for both package
 // and CLI ownership paths without duplicating failure classification or losing
 // partial committed artifacts.
-func TerminalEvent(jobID string, cause error, result CycleResult, at time.Time) events.Event {
+func TerminalEvent(ctx context.Context, jobID string, cause error, result CycleResult, at time.Time) events.Event {
 	event := events.Event{
 		Type: events.JobCompleted, JobID: jobID, Command: "watch", Status: "completed", Timestamp: at.UTC(),
 		Outputs: append([]string(nil), result.Outputs...), Artifacts: append([]artifact.Manifest(nil), result.Artifacts...), Details: result,
@@ -30,7 +31,7 @@ func TerminalEvent(jobID string, cause error, result CycleResult, at time.Time) 
 	if cause == nil {
 		return event
 	}
-	if events.IsCancellation(cause) && !isFatalCycleError(cause) {
+	if events.IsCancellationForContext(ctx, cause) && !isFatalCycleError(cause) {
 		event = events.Cancellation(jobID, "watch", cause, at)
 	} else {
 		event = events.Failure(jobID, "watch", cause, at)
@@ -65,8 +66,8 @@ func (watcher *Watcher) emitLecture(eventType string, target config.WatchTarget,
 	return watcher.emit(event)
 }
 
-func (watcher *Watcher) lectureFailure(target config.WatchTarget, lecture client.Lecture, jobID string, cause error) error {
-	if events.IsCancellation(cause) && !isFatalCycleError(cause) {
+func (watcher *Watcher) lectureFailure(ctx context.Context, target config.WatchTarget, lecture client.Lecture, jobID string, cause error) error {
+	if events.IsCancellationForContext(ctx, cause) && !isFatalCycleError(cause) {
 		return events.RedactedError(cause)
 	}
 	details := map[string]any{"error": events.RedactError(cause)}

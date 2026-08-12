@@ -84,6 +84,20 @@ func TestIsCancellationRecognizesContextTerminals(t *testing.T) {
 	}
 }
 
+func TestIsCancellationForContextDistinguishesTransportTimeout(t *testing.T) {
+	t.Parallel()
+
+	timeoutErr := fmt.Errorf("request timed out: %w", context.DeadlineExceeded)
+	if IsCancellationForContext(context.Background(), timeoutErr) {
+		t.Fatal("transport timeout classified as cancellation")
+	}
+	deadlineCtx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	if !IsCancellationForContext(deadlineCtx, timeoutErr) {
+		t.Fatal("caller deadline not classified as cancellation")
+	}
+}
+
 func TestEventV1UsesOriginalWireFieldAndLectureLifecycleNames(t *testing.T) {
 	t.Parallel()
 

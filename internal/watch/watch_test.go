@@ -43,17 +43,22 @@ func TestTerminalEventPreservesPartialCycleForFailureAndCancellation(t *testing.
 
 	manifest := artifact.Manifest{SchemaVersion: 1, ArtifactID: "impartus:v1:partial"}
 	cycle := CycleResult{Downloaded: 1, Outputs: []string{"/absolute/partial.mp3"}, Artifacts: []artifact.Manifest{manifest}}
+	deadlineCtx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
 	for _, test := range []struct {
 		name      string
+		ctx       context.Context
 		cause     error
 		wantEvent string
 	}{
-		{name: "failure", cause: errors.Join(ErrDurableState, errors.New("commit failed")), wantEvent: events.JobFailed},
-		{name: "cancellation", cause: context.Canceled, wantEvent: events.JobCanceled},
+		{name: "failure", ctx: context.Background(), cause: errors.Join(ErrDurableState, errors.New("commit failed")), wantEvent: events.JobFailed},
+		{name: "cancellation", ctx: context.Background(), cause: context.Canceled, wantEvent: events.JobCanceled},
+		{name: "transport timeout", ctx: context.Background(), cause: context.DeadlineExceeded, wantEvent: events.JobFailed},
+		{name: "caller deadline", ctx: deadlineCtx, cause: context.DeadlineExceeded, wantEvent: events.JobCanceled},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			event := TerminalEvent("job-test", test.cause, cycle, time.Unix(1, 0).UTC())
+			event := TerminalEvent(test.ctx, "job-test", test.cause, cycle, time.Unix(1, 0).UTC())
 			if event.Type != test.wantEvent || len(event.Outputs) != 1 || len(event.Artifacts) != 1 || event.Artifacts[0].ArtifactID != manifest.ArtifactID {
 				t.Fatalf("TerminalEvent() = %+v", event)
 			}

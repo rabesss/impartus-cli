@@ -202,34 +202,34 @@ func (watcher *Watcher) Run(ctx context.Context) (CycleResult, error) {
 		return CycleResult{}, errors.New("watch context is required")
 	}
 	if err := watcher.validate(); err != nil {
-		return CycleResult{}, watcher.finish(err, CycleResult{DryRun: watcher.options.DryRun})
+		return CycleResult{}, watcher.finish(ctx, err, CycleResult{DryRun: watcher.options.DryRun})
 	}
 	recovery, err := watcher.recover(ctx)
 	result := CycleResult{DryRun: watcher.options.DryRun, Recovered: append([]string(nil), recovery.Recovered...)}
 	if err != nil {
-		return result, watcher.finish(err, result)
+		return result, watcher.finish(ctx, err, result)
 	}
 	if err := watcher.loadRetryableJobs(ctx); err != nil {
-		return result, watcher.finish(err, result)
+		return result, watcher.finish(ctx, err, result)
 	}
 	if err := watcher.emit(events.Event{
 		Type: events.JobStarted, Status: "running",
 		Details: map[string]any{"recovered": recovery.Recovered, "pending": recovery.Pending},
 	}); err != nil {
-		return result, watcher.finish(err, result)
+		return result, watcher.finish(ctx, err, result)
 	}
 	if err := watcher.emitRecoveredArtifacts(recovery.Artifacts); err != nil {
-		return result, watcher.finish(err, result)
+		return result, watcher.finish(ctx, err, result)
 	}
 	for {
 		cycle, cycleErr := watcher.RunCycle(ctx)
 		cycle.Recovered = append([]string(nil), result.Recovered...)
 		result = cycle
 		if isFatalCycleError(cycleErr) {
-			return result, watcher.finish(cycleErr, result)
+			return result, watcher.finish(ctx, cycleErr, result)
 		}
 		if watcher.options.Once {
-			return result, watcher.finish(cycleErr, result)
+			return result, watcher.finish(ctx, cycleErr, result)
 		}
 		if cycleErr != nil {
 			watcher.logf("watch cycle failed; retrying after %s: %s", watcher.options.Interval, events.RedactError(cycleErr))
@@ -238,7 +238,7 @@ func (watcher *Watcher) Run(ctx context.Context) (CycleResult, error) {
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return result, watcher.finish(ctx.Err(), result)
+			return result, watcher.finish(ctx, ctx.Err(), result)
 		case <-timer.C:
 		}
 	}
@@ -340,7 +340,7 @@ type lectureOutcome struct {
 func (watcher *Watcher) inspectAndProcess(ctx context.Context, target config.WatchTarget, lecture client.Lecture, withinBudget bool) (lectureOutcome, error) {
 	artifactID, identityErr := watcher.artifactIDForLecture(target, lecture)
 	if identityErr != nil {
-		return lectureOutcome{}, watcher.lectureFailure(target, lecture, "", identityErr)
+		return lectureOutcome{}, watcher.lectureFailure(ctx, target, lecture, "", identityErr)
 	}
 	skipped, skipErr := watcher.skipCommitted(ctx, target, lecture, artifactID)
 	if skipped {
@@ -357,10 +357,10 @@ func (watcher *Watcher) inspectAndProcess(ctx context.Context, target config.Wat
 	outcome.Attempted = true
 	lecture, playlist, expected, resolvedArtifactID, resolveErr := watcher.resolveLecture(ctx, target, lecture)
 	if resolveErr != nil {
-		return outcome, watcher.lectureFailure(target, lecture, "", resolveErr)
+		return outcome, watcher.lectureFailure(ctx, target, lecture, "", resolveErr)
 	}
 	if resolvedArtifactID != artifactID {
-		return outcome, watcher.lectureFailure(target, lecture, "", errors.New("resolved playlist changed lecture artifact identity"))
+		return outcome, watcher.lectureFailure(ctx, target, lecture, "", errors.New("resolved playlist changed lecture artifact identity"))
 	}
 	if watcher.options.DryRun {
 		return outcome, nil
@@ -383,7 +383,7 @@ func (watcher *Watcher) skipCommitted(ctx context.Context, target config.WatchTa
 	}
 	committed, committedErr := watcher.committed(ctx, artifactID)
 	if committedErr != nil {
-		return false, watcher.lectureFailure(target, lecture, "", committedErr)
+		return false, watcher.lectureFailure(ctx, target, lecture, "", committedErr)
 	}
 	if !committed {
 		return false, nil

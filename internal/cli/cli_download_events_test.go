@@ -54,7 +54,7 @@ func TestDownloadEventsEmitCommittedArtifactsAndOneTerminal(t *testing.T) {
 	manifest := artifact.Manifest{SchemaVersion: 1, ArtifactID: "impartus:v1:test", Files: []artifact.File{{Path: "/absolute/lecture.mp3"}}}
 	var output bytes.Buffer
 	result := downloadResult{Status: "completed", OutputPaths: []string{"lecture.mp3"}, LectureCount: 1, Artifacts: []artifact.Manifest{manifest}, LibraryRecorded: true}
-	err := emitDownloadResultEvents(&output, "job-test", result, nil, func() time.Time { return time.Unix(1, 0).UTC() })
+	err := emitDownloadResultEvents(context.Background(), &output, "job-test", result, nil, func() time.Time { return time.Unix(1, 0).UTC() })
 	if err != nil {
 		t.Fatalf("emitDownloadResultEvents() error = %v", err)
 	}
@@ -91,7 +91,7 @@ func TestDownloadEventsEmitOriginalPerLectureLifecycleWithArtifactID(t *testing.
 		t.Fatalf("downloadLecturesWithRunner() error = %v", err)
 	}
 	result.LibraryRecorded = true
-	if err := stream.finish(result, nil); err != nil {
+	if err := stream.finish(context.Background(), result, nil); err != nil {
 		t.Fatalf("finish() error = %v", err)
 	}
 
@@ -145,7 +145,7 @@ func TestDownloadEventsSkipUnavailableSelectedMediaBeforeLifecycle(t *testing.T)
 		t.Fatalf("downloadLecturesWithRunner() error = %v", err)
 	}
 	result.LibraryRecorded = true
-	if err := stream.finish(result, nil); err != nil {
+	if err := stream.finish(context.Background(), result, nil); err != nil {
 		t.Fatalf("finish() error = %v", err)
 	}
 
@@ -190,7 +190,7 @@ func TestDownloadEventsAllUnavailableFailsWithoutLectureLifecycle(t *testing.T) 
 	result, downloadErr := downloadLecturesWithRunner(context.Background(), &config.Config{
 		DownloadLocation: t.TempDir(), Views: "left", Quality: "720",
 	}, runner, lectures, downloadPresentationOptions{eventStream: stream})
-	finishErr := stream.finish(result, downloadErr)
+	finishErr := stream.finish(context.Background(), result, downloadErr)
 	if !errors.Is(finishErr, downloader.ErrNoMediaOutputs) {
 		t.Fatalf("finish() error = %v, want ErrNoMediaOutputs", finishErr)
 	}
@@ -219,7 +219,7 @@ func TestDownloadEventsUnexpectedUnavailableAfterStartFailsJob(t *testing.T) {
 	result, downloadErr := downloadLecturesWithRunner(context.Background(), &config.Config{
 		DownloadLocation: t.TempDir(), Views: "left", Quality: "720",
 	}, runner, client.Lectures{lecture}, downloadPresentationOptions{eventStream: stream})
-	finishErr := stream.finish(result, downloadErr)
+	finishErr := stream.finish(context.Background(), result, downloadErr)
 	if !errors.Is(finishErr, downloader.ErrNoSelectedMedia) {
 		t.Fatalf("finish() error = %v, want ErrNoSelectedMedia", finishErr)
 	}
@@ -256,7 +256,7 @@ func TestDownloadEventsCancellationWinsBeforeUnavailablePreflight(t *testing.T) 
 	result, downloadErr := downloadLecturesWithRunner(ctx, &config.Config{
 		DownloadLocation: t.TempDir(), Views: "left", Quality: "720",
 	}, runner, client.Lectures{lecture}, downloadPresentationOptions{eventStream: stream})
-	finishErr := stream.finish(result, downloadErr)
+	finishErr := stream.finish(context.Background(), result, downloadErr)
 	if !errors.Is(finishErr, context.Canceled) {
 		t.Fatalf("finish() error = %v, want context cancellation", finishErr)
 	}
@@ -296,7 +296,7 @@ func TestDownloadEventsCancellationWinsAfterPartialOutputBeforeUnavailablePrefli
 		DownloadLocation: outputDir, Views: "left", Quality: "720",
 	}, runner, lectures, downloadPresentationOptions{eventStream: stream})
 	result.LibraryRecorded = true
-	finishErr := stream.finish(result, downloadErr)
+	finishErr := stream.finish(context.Background(), result, downloadErr)
 	if !errors.Is(finishErr, context.Canceled) {
 		t.Fatalf("finish() error = %v, want context cancellation", finishErr)
 	}
@@ -354,7 +354,7 @@ func TestDownloadEventsFailClosedWhenLibraryCommitDidNotComplete(t *testing.T) {
 		Artifacts:       []artifact.Manifest{{SchemaVersion: 1, ArtifactID: "impartus:v1:not-committed"}},
 		LibraryRecorded: false,
 	}
-	err := emitDownloadResultEvents(&output, "job-test", result, nil, func() time.Time { return time.Unix(1, 0).UTC() })
+	err := emitDownloadResultEvents(context.Background(), &output, "job-test", result, nil, func() time.Time { return time.Unix(1, 0).UTC() })
 	if err == nil || !strings.Contains(err.Error(), "library") {
 		t.Fatalf("emitDownloadResultEvents() error = %v", err)
 	}
@@ -371,7 +371,7 @@ func TestDownloadEventsFailureStillEmitsOneFailedTerminal(t *testing.T) {
 	cause := errors.New("download failed")
 	manifest := artifact.Manifest{SchemaVersion: 1, ArtifactID: "impartus:v1:partial", Files: []artifact.File{{Path: "/absolute/partial.mp3"}}}
 	result := downloadResult{Status: "failed", LectureCount: 1, Artifacts: []artifact.Manifest{manifest}, LibraryRecorded: true}
-	err := emitDownloadResultEvents(&output, "job-test", result, cause, func() time.Time { return time.Unix(1, 0).UTC() })
+	err := emitDownloadResultEvents(context.Background(), &output, "job-test", result, cause, func() time.Time { return time.Unix(1, 0).UTC() })
 	if !errors.Is(err, cause) {
 		t.Fatalf("error = %v, want cause", err)
 	}
@@ -414,14 +414,36 @@ func TestDownloadEventsCancellationEmitsCanceledTerminalAndExit130(t *testing.T)
 		func() time.Time { return time.Unix(1, 0).UTC() },
 		"job-canceled",
 	)
-	if !errors.Is(err, context.Canceled) || ExitCode(downloadCommandError(err)) != 130 {
-		t.Fatalf("cancellation error = %v, exit = %d", err, ExitCode(downloadCommandError(err)))
+	if !errors.Is(err, context.Canceled) || ExitCode(downloadCommandError(ctx, err)) != 130 {
+		t.Fatalf("cancellation error = %v, exit = %d", err, ExitCode(downloadCommandError(ctx, err)))
 	}
 	if strings.Contains(err.Error(), "secret-value") {
 		t.Fatalf("returned error leaked authorization: %v", err)
 	}
 	decoded := decodeCLIEvents(t, output.String())
 	if len(decoded) != 2 || decoded[1].Type != events.JobCanceled {
+		t.Fatalf("events = %+v", decoded)
+	}
+}
+
+func TestDownloadEventsTransportTimeoutEmitsFailedTerminalAndExit1(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	stream := newDownloadEventStream(&output, "job-timeout", func() time.Time { return time.Unix(1, 0).UTC() })
+	if err := stream.start(); err != nil {
+		t.Fatal(err)
+	}
+	timeoutErr := fmt.Errorf("request timed out: %w", context.DeadlineExceeded)
+	finishErr := stream.finish(context.Background(), downloadResult{}, timeoutErr)
+	if !errors.Is(finishErr, context.DeadlineExceeded) {
+		t.Fatalf("finish error = %v, want deadline identity", finishErr)
+	}
+	if got := ExitCode(downloadCommandError(context.Background(), finishErr)); got != 1 {
+		t.Fatalf("exit code = %d, want 1", got)
+	}
+	decoded := decodeCLIEvents(t, output.String())
+	if len(decoded) != 2 || decoded[1].Type != events.JobFailed {
 		t.Fatalf("events = %+v", decoded)
 	}
 }
@@ -442,11 +464,11 @@ func TestDownloadEventsMediaCancellationDoesNotEmitLectureFailure(t *testing.T) 
 	result, downloadErr := downloadLecturesWithRunner(context.Background(), &config.Config{
 		DownloadLocation: t.TempDir(), Views: "left", Quality: "720",
 	}, runner, client.Lectures{lecture}, downloadPresentationOptions{eventStream: stream})
-	finishErr := stream.finish(result, downloadErr)
+	finishErr := stream.finish(context.Background(), result, downloadErr)
 	if !errors.Is(finishErr, context.Canceled) || errors.Is(finishErr, errDownloadEventDelivery) {
 		t.Fatalf("finish error = %v, want cancellation without event-delivery promotion", finishErr)
 	}
-	if got := ExitCode(downloadCommandError(finishErr)); got != 130 {
+	if got := ExitCode(downloadCommandError(context.Background(), finishErr)); got != 130 {
 		t.Fatalf("exit code = %d, want 130", got)
 	}
 	decoded := decodeCLIEvents(t, output.String())
@@ -469,13 +491,13 @@ func TestDownloadEventsLibraryCommitFailureWinsOverCancellation(t *testing.T) {
 		Status: "failed", LectureCount: 1, Artifacts: []artifact.Manifest{manifest}, LibraryRecorded: false,
 	}
 	var output bytes.Buffer
-	err := emitDownloadResultEvents(&output, "job-library-failed", result, context.Canceled, func() time.Time {
+	err := emitDownloadResultEvents(context.Background(), &output, "job-library-failed", result, context.Canceled, func() time.Time {
 		return time.Unix(1, 0).UTC()
 	})
 	if !errors.Is(err, context.Canceled) || !errors.Is(err, errDownloadLibraryCommit) {
 		t.Fatalf("finish error = %v, want cancellation plus library-commit failure", err)
 	}
-	if got := ExitCode(downloadCommandError(err)); got != 1 {
+	if got := ExitCode(downloadCommandError(context.Background(), err)); got != 1 {
 		t.Fatalf("exit code = %d, want 1", got)
 	}
 	decoded := decodeCLIEvents(t, output.String())
@@ -554,7 +576,7 @@ func TestDownloadEventsAttemptFailedTerminalAfterStreamWriteFailure(t *testing.T
 		t.Run(fmt.Sprintf("write_%d", test.failAt), func(t *testing.T) {
 			t.Parallel()
 			output := &failWriteOnce{failAt: test.failAt}
-			err := emitDownloadResultEvents(output, fmt.Sprintf("job-test-%d", test.failAt), result, nil, func() time.Time { return time.Unix(1, 0).UTC() })
+			err := emitDownloadResultEvents(context.Background(), output, fmt.Sprintf("job-test-%d", test.failAt), result, nil, func() time.Time { return time.Unix(1, 0).UTC() })
 			if err == nil || !strings.Contains(err.Error(), "event write") {
 				t.Fatalf("emitDownloadResultEvents() error = %v", err)
 			}

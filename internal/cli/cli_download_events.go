@@ -43,13 +43,13 @@ func (stream *downloadEventStream) start() error {
 	})
 }
 
-func (stream *downloadEventStream) finish(result downloadResult, cause error) error {
+func (stream *downloadEventStream) finish(ctx context.Context, result downloadResult, cause error) error {
 	if !result.LibraryRecorded && (cause == nil || len(result.Artifacts) > 0) {
 		commitErr := errors.Join(errDownloadLibraryCommit, errors.New("download completed but the local library commit did not complete"))
-		return stream.failResult(result, errors.Join(cause, commitErr))
+		return stream.failResult(ctx, result, errors.Join(cause, commitErr))
 	}
 	if cause != nil {
-		return stream.failResult(result, cause)
+		return stream.failResult(ctx, result, cause)
 	}
 	if err := stream.writer.Emit(events.Event{
 		Type: events.JobCompleted, JobID: stream.jobID, Command: "download",
@@ -60,18 +60,18 @@ func (stream *downloadEventStream) finish(result downloadResult, cause error) er
 			"filteredCount": result.FilteredCount, "totalLectures": result.TotalLectures,
 		},
 	}); err != nil {
-		return stream.failResult(result, err)
+		return stream.failResult(ctx, result, err)
 	}
 	return nil
 }
 
-func (stream *downloadEventStream) fail(cause error) error {
-	return stream.failResult(downloadResult{}, cause)
+func (stream *downloadEventStream) fail(ctx context.Context, cause error) error {
+	return stream.failResult(ctx, downloadResult{}, cause)
 }
 
-func (stream *downloadEventStream) failResult(result downloadResult, cause error) error {
+func (stream *downloadEventStream) failResult(ctx context.Context, result downloadResult, cause error) error {
 	event := events.Failure(stream.jobID, "download", cause, stream.now())
-	if !errors.Is(cause, errDownloadLibraryCommit) && !errors.Is(cause, errDownloadEventDelivery) && events.IsCancellation(cause) {
+	if !errors.Is(cause, errDownloadLibraryCommit) && !errors.Is(cause, errDownloadEventDelivery) && events.IsCancellationForContext(ctx, cause) {
 		event = events.Cancellation(stream.jobID, "download", cause, stream.now())
 	}
 	event.Outputs = artifactOutputPaths(result.Artifacts)
@@ -105,20 +105,20 @@ func (stream *downloadEventStream) lecture(eventType string, lecture client.Lect
 func runDownloadEventsWithDependenciesContext(ctx context.Context, args []string, output io.Writer, deps downloadExecutionDependencies, now func() time.Time, jobID string) error {
 	stream := newDownloadEventStream(output, jobID, now)
 	if err := stream.start(); err != nil {
-		return stream.fail(err)
+		return stream.fail(ctx, err)
 	}
 	presentation := quietDownloadPresentation()
 	presentation.eventStream = stream
 	result, err := executeDownloadWithDependenciesContext(ctx, args, presentation, deps)
-	return stream.finish(result, err)
+	return stream.finish(ctx, result, err)
 }
 
-func emitDownloadResultEvents(output io.Writer, jobID string, result downloadResult, cause error, now func() time.Time) error {
+func emitDownloadResultEvents(ctx context.Context, output io.Writer, jobID string, result downloadResult, cause error, now func() time.Time) error {
 	stream := newDownloadEventStream(output, jobID, now)
 	if err := stream.start(); err != nil {
-		return stream.fail(err)
+		return stream.fail(ctx, err)
 	}
-	return stream.finish(result, cause)
+	return stream.finish(ctx, result, cause)
 }
 
 func requestedEvents(args []string) bool {

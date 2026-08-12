@@ -289,8 +289,8 @@ func TestWatchRecoveryFailureIsDurableAndFailedEvenWhenCanceled(t *testing.T) {
 	}
 	var output bytes.Buffer
 	_, err := executeWatchWithDependencies(context.Background(), []string{"--events", "--once", "-s", "67", "-S", "8"}, false, &output, io.Discard, deps)
-	if !errors.Is(err, watch.ErrDurableState) || ExitCode(watchCommandError(err)) != 1 {
-		t.Fatalf("recovery error = %v, exit = %d", err, ExitCode(watchCommandError(err)))
+	if !errors.Is(err, watch.ErrDurableState) || ExitCode(watchCommandError(context.Background(), err)) != 1 {
+		t.Fatalf("recovery error = %v, exit = %d", err, ExitCode(watchCommandError(context.Background(), err)))
 	}
 	decoded := decodeCLIEvents(t, output.String())
 	if len(decoded) != 1 || decoded[0].Type != events.JobFailed {
@@ -461,8 +461,8 @@ func TestWatchEventsPreflightCancellationEmitsCanceledTerminal(t *testing.T) {
 		io.Discard,
 		deps,
 	)
-	if !errors.Is(err, context.Canceled) || ExitCode(watchCommandError(err)) != 130 {
-		t.Fatalf("preflight error = %v, exit = %d", err, ExitCode(watchCommandError(err)))
+	if !errors.Is(err, context.Canceled) || ExitCode(watchCommandError(context.Background(), err)) != 130 {
+		t.Fatalf("preflight error = %v, exit = %d", err, ExitCode(watchCommandError(context.Background(), err)))
 	}
 	decoded := decodeCLIEvents(t, output.String())
 	if len(decoded) != 1 || decoded[0].Type != events.JobCanceled {
@@ -504,8 +504,8 @@ func TestWatchPreflightCleanupFailureIsDurableAndFailedWhenLoginCanceled(t *test
 		io.Discard,
 		deps,
 	)
-	if !errors.Is(err, watch.ErrDurableState) || !errors.Is(err, context.Canceled) || ExitCode(watchCommandError(err)) != 1 {
-		t.Fatalf("preflight error = %v, exit = %d", err, ExitCode(watchCommandError(err)))
+	if !errors.Is(err, watch.ErrDurableState) || !errors.Is(err, context.Canceled) || ExitCode(watchCommandError(context.Background(), err)) != 1 {
+		t.Fatalf("preflight error = %v, exit = %d", err, ExitCode(watchCommandError(context.Background(), err)))
 	}
 	if closeCalls != 1 {
 		t.Fatalf("lock close calls = %d, want 1", closeCalls)
@@ -519,29 +519,43 @@ func TestWatchPreflightCleanupFailureIsDurableAndFailedWhenLoginCanceled(t *test
 func TestWatchCancellationMapsToExit130(t *testing.T) {
 	t.Parallel()
 
-	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
-		err := watchCommandError(fmt.Errorf("watch interrupted: %w", cause))
-		if !errors.Is(err, cause) || ExitCode(err) != 130 {
-			t.Fatalf("watchCommandError(%v) = %v, exit = %d", cause, err, ExitCode(err))
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	deadlineCtx, deadlineCancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer deadlineCancel()
+	for _, test := range []struct {
+		ctx   context.Context
+		cause error
+	}{
+		{ctx: canceledCtx, cause: context.Canceled},
+		{ctx: deadlineCtx, cause: context.DeadlineExceeded},
+	} {
+		err := watchCommandError(test.ctx, fmt.Errorf("watch interrupted: %w", test.cause))
+		if !errors.Is(err, test.cause) || ExitCode(err) != 130 {
+			t.Fatalf("watchCommandError(%v) = %v, exit = %d", test.cause, err, ExitCode(err))
 		}
 	}
+	transportTimeout := fmt.Errorf("request timed out: %w", context.DeadlineExceeded)
+	if got := watchCommandError(context.Background(), transportTimeout); !errors.Is(got, context.DeadlineExceeded) || ExitCode(got) != 1 {
+		t.Fatalf("transport timeout = %v, exit = %d", got, ExitCode(got))
+	}
 	ordinary := errors.New("ordinary failure")
-	if got := watchCommandError(ordinary); !errors.Is(got, ordinary) || ExitCode(got) != 1 {
+	if got := watchCommandError(context.Background(), ordinary); !errors.Is(got, ordinary) || ExitCode(got) != 1 {
 		t.Fatalf("ordinary error = %v, exit = %d", got, ExitCode(got))
 	}
 	credentialFailure := errors.New("Proxy-Authorization: Custom proof=watch-secret")
-	if got := watchCommandError(credentialFailure); !errors.Is(got, credentialFailure) || strings.Contains(got.Error(), "watch-secret") {
+	if got := watchCommandError(context.Background(), credentialFailure); !errors.Is(got, credentialFailure) || strings.Contains(got.Error(), "watch-secret") {
 		t.Fatalf("credential error = %v, want redacted chain-preserving boundary", got)
 	}
-	if got := watchCommandError(nil); got != nil {
+	if got := watchCommandError(context.Background(), nil); got != nil {
 		t.Fatalf("nil error = %v", got)
 	}
 	delivery := errors.Join(context.Canceled, watch.ErrEventDelivery)
-	if got := watchCommandError(delivery); ExitCode(got) != 1 {
+	if got := watchCommandError(context.Background(), delivery); ExitCode(got) != 1 {
 		t.Fatalf("delivery plus cancellation exit = %d, want 1", ExitCode(got))
 	}
 	durable := errors.Join(context.Canceled, watch.ErrDurableState)
-	if got := watchCommandError(durable); ExitCode(got) != 1 {
+	if got := watchCommandError(context.Background(), durable); ExitCode(got) != 1 {
 		t.Fatalf("durable-state plus cancellation exit = %d, want 1", ExitCode(got))
 	}
 }

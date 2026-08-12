@@ -182,10 +182,20 @@ func IsTerminal(eventType string) bool {
 	return eventType == JobCompleted || eventType == JobFailed || eventType == JobCanceled
 }
 
-// IsCancellation reports the two context terminal conditions that lifecycle
-// streams represent as cancellation rather than failure.
+// IsCancellation reports context terminal identities. Callers that have the
+// operation context should use IsCancellationForContext so transport timeouts
+// are not mistaken for command cancellation.
 func IsCancellation(cause error) bool {
 	return errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded)
+}
+
+// IsCancellationForContext distinguishes a caller deadline from an unrelated
+// transport timeout that wraps context.DeadlineExceeded.
+func IsCancellationForContext(ctx context.Context, cause error) bool {
+	if errors.Is(cause, context.Canceled) {
+		return true
+	}
+	return ctx != nil && ctx.Err() != nil && errors.Is(cause, ctx.Err())
 }
 
 // Failure constructs a sanitized terminal failure event.

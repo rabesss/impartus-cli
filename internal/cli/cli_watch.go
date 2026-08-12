@@ -145,17 +145,17 @@ func runWatch(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	_, err := executeWatchWithDependencies(ctx, args, false, os.Stdout, os.Stderr, defaultWatchExecutionDependencies())
-	return watchCommandError(err)
+	return watchCommandError(ctx, err)
 }
 
-func watchCommandError(err error) error {
+func watchCommandError(ctx context.Context, err error) error {
 	if err == nil {
 		return nil
 	}
 	if errors.Is(err, watch.ErrEventDelivery) || errors.Is(err, watch.ErrDurableState) {
 		return events.RedactedError(err)
 	}
-	if events.IsCancellation(err) {
+	if events.IsCancellationForContext(ctx, err) {
 		return &exitCodeError{code: 130, err: events.RedactedError(err)}
 	}
 	return events.RedactedError(err)
@@ -176,7 +176,7 @@ func executeWatchWithDependencies(
 	jobID := "job-" + uuid.NewString()
 	writer := requestedWatchEventWriter(args, eventOutput)
 	finishPreflight := func(cause error) error {
-		return ensureWatchTerminal(writer, jobID, watch.CycleResult{}, cause, dependencies.now)
+		return ensureWatchTerminal(ctx, writer, jobID, watch.CycleResult{}, cause, dependencies.now)
 	}
 	flags, parseErr := parseWatchFlags(args)
 	if parseErr != nil {
@@ -208,7 +208,7 @@ func executeWatchWithDependencies(
 	if runErr != nil {
 		result.Status = "failed"
 	}
-	runErr = ensureWatchTerminal(writer, jobID, cycle, runErr, dependencies.now)
+	runErr = ensureWatchTerminal(ctx, writer, jobID, cycle, runErr, dependencies.now)
 	return result, runErr
 }
 
@@ -278,11 +278,11 @@ func prepareWatch(ctx context.Context, flags watchFlags, dependencies watchExecu
 	return prepared, nil
 }
 
-func ensureWatchTerminal(writer *events.Writer, jobID string, cycle watch.CycleResult, cause error, now func() time.Time) error {
+func ensureWatchTerminal(ctx context.Context, writer *events.Writer, jobID string, cycle watch.CycleResult, cause error, now func() time.Time) error {
 	if writer == nil || writer.TerminalAttempted() {
 		return events.RedactedError(cause)
 	}
-	emitErr := writer.Emit(watch.TerminalEvent(jobID, cause, cycle, now()))
+	emitErr := writer.Emit(watch.TerminalEvent(ctx, jobID, cause, cycle, now()))
 	if emitErr != nil {
 		return errors.Join(events.RedactedError(cause), watch.ErrEventDelivery, events.RedactedError(emitErr))
 	}

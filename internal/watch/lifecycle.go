@@ -92,17 +92,17 @@ func (watcher *Watcher) downloadLecture(ctx context.Context, target config.Watch
 			continue
 		}
 		if err := watcher.store.FailJob(context.WithoutCancel(ctx), candidate.ID, errors.New("recoverable job was superseded by a new output plan")); err != nil {
-			return artifact.Manifest{}, watcher.lectureFailure(target, lecture, candidate.ID, durableStateError("fail superseded recoverable watch job", err))
+			return artifact.Manifest{}, watcher.lectureFailure(ctx, target, lecture, candidate.ID, durableStateError("fail superseded recoverable watch job", err))
 		}
 	}
 	delete(watcher.retryable, artifactID)
 	if !reused {
 		if err := watcher.store.CreateJob(context.WithoutCancel(ctx), library.JobSpec{ID: jobID, Kind: library.JobKindWatch, Expected: expected}); err != nil {
-			return artifact.Manifest{}, watcher.lectureFailure(target, lecture, jobID, durableStateError("create durable watch job", err))
+			return artifact.Manifest{}, watcher.lectureFailure(ctx, target, lecture, jobID, durableStateError("create durable watch job", err))
 		}
 	}
 	if err := watcher.store.StartJob(context.WithoutCancel(ctx), jobID); err != nil {
-		return artifact.Manifest{}, watcher.lectureFailure(target, lecture, jobID, durableStateError("start durable watch job", err))
+		return artifact.Manifest{}, watcher.lectureFailure(ctx, target, lecture, jobID, durableStateError("start durable watch job", err))
 	}
 	if err := watcher.emitLecture(events.LectureStarted, target, lecture, artifactID, map[string]any{"libraryJobId": jobID}); err != nil {
 		failErr := durableStateError("fail watch job after event delivery failure", watcher.store.FailJob(context.WithoutCancel(ctx), jobID, err))
@@ -120,16 +120,16 @@ func (watcher *Watcher) downloadLecture(ctx context.Context, target config.Watch
 			return artifact.Manifest{}, errors.Join(ctxErr, cancelErr)
 		}
 		failErr := durableStateError("fail durable watch job", watcher.store.FailJob(context.WithoutCancel(ctx), jobID, err))
-		return artifact.Manifest{}, watcher.lectureFailure(target, lecture, jobID, errors.Join(err, failErr))
+		return artifact.Manifest{}, watcher.lectureFailure(ctx, target, lecture, jobID, errors.Join(err, failErr))
 	}
 	manifest, err := manifestFromExpected(expected, joined)
 	if err != nil {
 		failErr := durableStateError("fail watch job after manifest validation", watcher.store.FailJob(context.WithoutCancel(ctx), jobID, err))
-		return artifact.Manifest{}, watcher.lectureFailure(target, lecture, jobID, errors.Join(err, failErr))
+		return artifact.Manifest{}, watcher.lectureFailure(ctx, target, lecture, jobID, errors.Join(err, failErr))
 	}
 	if err := watcher.store.CompleteJob(context.WithoutCancel(ctx), jobID, manifest); err != nil {
 		commitErr := durableStateError("commit durable watch artifact", err)
-		return artifact.Manifest{}, watcher.lectureFailure(target, lecture, jobID, commitErr)
+		return artifact.Manifest{}, watcher.lectureFailure(ctx, target, lecture, jobID, commitErr)
 	}
 	progressErr := watcher.emitLecture(events.LectureProgress, target, lecture, artifactID, map[string]any{
 		"libraryJobId": jobID, "stage": "media_published", "outputs": manifestPaths(manifest),

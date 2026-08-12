@@ -90,20 +90,20 @@ func runDownloadWithDependencies(args []string, deps downloadExecutionDependenci
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		err := runDownloadEventsWithDependenciesContext(ctx, args, os.Stdout, deps, time.Now, "")
-		return downloadCommandError(err)
+		return downloadCommandError(ctx, err)
 	}
 	_, err := executeDownloadWithDependencies(args, humanDownloadPresentation(), deps)
-	return downloadCommandError(err)
+	return downloadCommandError(context.Background(), err)
 }
 
-func downloadCommandError(err error) error {
+func downloadCommandError(ctx context.Context, err error) error {
 	if err == nil {
 		return nil
 	}
 	if errors.Is(err, errDownloadEventDelivery) || errors.Is(err, errDownloadLibraryCommit) {
 		return events.RedactedError(err)
 	}
-	if events.IsCancellation(err) {
+	if events.IsCancellationForContext(ctx, err) {
 		return &exitCodeError{code: 130, err: events.RedactedError(err)}
 	}
 	return events.RedactedError(err)
@@ -376,7 +376,7 @@ func completeLectureDownloads(
 		// server job runner uses) so per-lecture download+join logic has one home.
 		joinResult, err := d.DownloadAndJoinPlaylist(ctx, playlist, progress, tracker)
 		if err != nil {
-			downloadErr := handleLectureDownloadError(stream, lecture, artifactID, key, err)
+			downloadErr := handleLectureDownloadError(ctx, stream, lecture, artifactID, key, err)
 			return outputPaths, artifacts, len(artifacts), downloadErr
 		}
 		paths := joinResult.OutputPaths()
@@ -436,6 +436,7 @@ func skipUnavailablePlaylist(
 }
 
 func handleLectureDownloadError(
+	ctx context.Context,
 	stream *downloadEventStream,
 	lecture client.Lecture,
 	artifactID string,
@@ -450,7 +451,7 @@ func handleLectureDownloadError(
 		key.ttid,
 		cause,
 	)
-	if events.IsCancellation(downloadErr) {
+	if events.IsCancellationForContext(ctx, downloadErr) {
 		return events.RedactedError(downloadErr)
 	}
 	emitErr := stream.lecture(events.LectureFailed, lecture, artifactID, nil, nil, map[string]any{"error": events.RedactError(downloadErr)})
