@@ -4,7 +4,7 @@
 <!---toc start-->
 
 * [Architecture](#architecture)
-  * [CLI interactive mode flow](#cli-interactive-mode-flow)
+  * [TUI and classic interactive flow](#tui-and-classic-interactive-flow)
   * [CLI deterministic JSON mode flow](#cli-deterministic-json-mode-flow)
   * [CLI play command flow](#cli-play-command-flow)
   * [Local library and recovery flow](#local-library-and-recovery-flow)
@@ -18,24 +18,34 @@
 
 This project is CLI-first and API-secondary: the CLI is the primary execution path, and the API is started from `impartus serve` when needed.
 
-## CLI interactive mode flow
+## TUI and classic interactive flow
 
-The default mode (`impartus` with no command) runs an interactive download workflow.
+The default mode launches `impartus tui` only when stdin and stdout are real
+terminals. A non-TTY no-argument invocation prints help to stderr and exits 2.
+`impartus classic` preserves the previous prompt-based download workflow for one
+release and always prints a deprecation notice.
 
 ```mermaid
 flowchart TD
   A[User runs impartus] --> B[cli.Execute]
   B --> C{Check json flag}
-  C -- No --> D[runInteractive]
-  D --> E[loadConfig + apply defaults]
-  E --> F[client.LoginAndSetToken]
-  F --> G[Fetch courses and lectures]
-  G --> H[Prompt selection + range]
-  H --> I[downloader.FetchLecturePlaylists]
-  I --> J[Download/decrypt/join outputs]
-  J --> K[Write files to downloads path]
-  C -- Yes --> L[Dispatch non-interactive command]
+  C -- Yes --> L[Dispatch deterministic JSON command]
+  C -- No --> D{stdin and stdout are TTYs?}
+  D -- No --> E[help to stderr + exit 2]
+  D -- Yes --> F[load config, login, open library]
+  F --> G[collect non-blocking doctor diagnostics]
+  G --> H[Bubble Tea v2 alternate screen]
+  H --> I[internal/tui state and key bindings]
+  I --> J[internal/app catalog/playback/download/library]
+  J --> K[Impartus API, native mpv, FFmpeg, private SQLite]
+  M[impartus classic] --> N[deprecated prompt workflow]
 ```
+
+`internal/tui` owns only view state, responsive layout, generated help, and
+translation between application/player events and Bubble Tea messages. mpv is
+started idle with `--no-terminal`, so Bubble Tea remains the sole terminal
+owner. PTY tests pin alternate-screen restoration on normal quit, rendered
+application error, context cancellation, and recovered panic.
 
 ## CLI deterministic JSON mode flow
 
@@ -110,7 +120,7 @@ terminal event or for disconnect ordering.
 
 `impartus doctor` checks mpv and FFmpeg resolution, private `config.json` and
 `.token` permissions, the writable state directory, and the private IPC runtime
-without starting mpv. The state check prepares the future library directory
+without starting mpv. The state check prepares the application library directory
 with mode `0700`; the runtime probe reserves and removes an IPC path. It also
 opens the library through its normal migration/WAL path and stops on
 incompatibility or corruption rather than modifying data through an automatic
@@ -186,7 +196,8 @@ sequenceDiagram
 
 ## Internal package/module boundaries
 
-Core boundaries keep command parsing and presentation in `internal/cli`, shared
+Core boundaries keep command parsing in `internal/cli`, terminal presentation
+and key state in `internal/tui`, shared
 catalog/playback orchestration in `internal/app`, mpv ownership and JSON IPC in
 `internal/player`, network access in `internal/client`, the media pipeline and
 loopback HLS proxy in `internal/downloader`, stable local media contracts in
@@ -201,6 +212,7 @@ flowchart LR
 
   subgraph Internal
     CLI[internal/cli]
+    TUI[internal/tui]
     CFG[internal/config]
     CLT[internal/client]
     DL[internal/downloader]
@@ -223,12 +235,14 @@ flowchart LR
   CLI --> DL
   CLI --> ART
   CLI --> APP
+  CLI --> TUI
   CLI --> LIB
   CLI --> SRV
   APP --> CLT
   APP --> DL
   APP --> PLR
   APP --> LIB
+  TUI --> APP
   SRV --> CFG
   SRV --> CLT
   SRV --> DL

@@ -419,7 +419,7 @@ Acceptance:
 - `go test ./... -count=1`, `go test -race ./...`, `go build ./...`,
   `CGO_ENABLED=0 go build ./...`, `make lint`, and `git diff --check` pass.
 
-### PR 2 — `feat(playback): supervise mpv over private JSON IPC`
+### PR 2 — `feat(cli): supervise mpv over private JSON IPC`
 
 Likely files:
 
@@ -457,7 +457,7 @@ Acceptance:
 - an opt-in local smoke launches real mpv with `--vo=null`, observes state,
   pauses/seeks, quits, and verifies the child is reaped.
 
-### PR 3 — `feat(library): persist artifacts, playback, and download jobs`
+### PR 3 — `feat(cli): persist artifacts, playback, and download jobs`
 
 Likely files:
 
@@ -496,7 +496,7 @@ Acceptance:
 - `library verify` never deletes user data;
 - `go test -race ./...` and `CGO_ENABLED=0 go build ./...` pass.
 
-### PR 4 — `feat(tui): browse, play, download, and resume lectures`
+### PR 4 — `feat(cli): browse, play, download, and resume lectures`
 
 Dependencies: PRs 1, 2, and 3.
 

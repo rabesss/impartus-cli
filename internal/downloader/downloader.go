@@ -19,6 +19,7 @@ import (
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/secrets"
+	"github.com/rabesss/impartus-cli/internal/selection"
 )
 
 var (
@@ -56,13 +57,34 @@ type JoinResult struct {
 	BothContainer  string
 }
 
+// JoinOutput describes one published media output and its stable artifact
+// metadata. Outputs are ordered left, right, then both.
+type JoinOutput struct {
+	Path      string
+	View      string
+	Container string
+}
+
+// Outputs returns non-empty outputs with their view and container metadata.
+func (r JoinResult) Outputs() []JoinOutput {
+	outputs := make([]JoinOutput, 0, 3)
+	for _, output := range []JoinOutput{
+		{Path: r.LeftOutput, View: "left", Container: r.LeftContainer},
+		{Path: r.RightOutput, View: "right", Container: r.RightContainer},
+		{Path: r.BothOutput, View: "both", Container: r.BothContainer},
+	} {
+		if strings.TrimSpace(output.Path) != "" {
+			outputs = append(outputs, output)
+		}
+	}
+	return outputs
+}
+
 // OutputPaths returns the non-empty output file paths in left, right, both order.
 func (r JoinResult) OutputPaths() []string {
 	paths := make([]string, 0, 3)
-	for _, p := range []string{r.LeftOutput, r.RightOutput, r.BothOutput} {
-		if strings.TrimSpace(p) != "" {
-			paths = append(paths, p)
-		}
+	for _, output := range r.Outputs() {
+		paths = append(paths, output.Path)
 	}
 	return paths
 }
@@ -288,6 +310,13 @@ func (d *Downloader) DownloadAndJoinPlaylist(ctx context.Context, playlist clien
 	return invocationDownloader.JoinLectureOutput(ctx, metadataFile)
 }
 
+// DownloadAndJoin downloads one playlist without owning a presentation-layer
+// progress renderer. Interactive frontends translate the returned lifecycle
+// result into their own UI events.
+func (d *Downloader) DownloadAndJoin(ctx context.Context, playlist client.ParsedPlaylist) (JoinResult, error) {
+	return d.DownloadAndJoinPlaylist(ctx, playlist, nil, nil)
+}
+
 // JoinLectureOutput joins the chunks described by the M3U8 file into final output.
 func (d *Downloader) JoinLectureOutput(ctx context.Context, file M3U8File) (JoinResult, error) {
 	if d.config.AudioOnly {
@@ -459,13 +488,15 @@ func (d *Downloader) stopPipelineMonitor(monitorDone chan struct{}, downloadBar 
 
 func (d *Downloader) joinAudioOutput(ctx context.Context, file M3U8File) (JoinResult, error) {
 	result := JoinResult{}
-	left, err := d.joinIfPresent(ctx, file.FirstViewFile, d.config.IncludesLeft(), fmt.Sprintf("LEC %03d %s LEFT VIEW.%s", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title), d.config.AudioFormat), func(ctx context.Context, path, name string) (string, error) {
+	base := lectureOutputBase(file.Playlist)
+	container := audioContainer(d.config.AudioFormat)
+	left, err := d.joinIfPresent(ctx, file.FirstViewFile, d.config.IncludesLeft(), outputFilename(base, selection.ViewLeft, container), func(ctx context.Context, path, name string) (string, error) {
 		return d.JoinChunksFromM3U8AudioOnly(ctx, path, name, d.config.AudioFormat)
 	})
 	if err != nil {
 		return result, err
 	}
-	right, err := d.joinIfPresent(ctx, file.SecondViewFile, d.config.IncludesRight(), fmt.Sprintf("LEC %03d %s RIGHT VIEW.%s", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title), d.config.AudioFormat), func(ctx context.Context, path, name string) (string, error) {
+	right, err := d.joinIfPresent(ctx, file.SecondViewFile, d.config.IncludesRight(), outputFilename(base, selection.ViewRight, container), func(ctx context.Context, path, name string) (string, error) {
 		return d.JoinChunksFromM3U8AudioOnly(ctx, path, name, d.config.AudioFormat)
 	})
 	if err != nil {
@@ -473,26 +504,27 @@ func (d *Downloader) joinAudioOutput(ctx context.Context, file M3U8File) (JoinRe
 	}
 	result.LeftOutput = left
 	result.RightOutput = right
-	result.LeftContainer = containerWhenPresent(left, audioContainer(d.config.AudioFormat))
-	result.RightContainer = containerWhenPresent(right, audioContainer(d.config.AudioFormat))
+	result.LeftContainer = containerWhenPresent(left, container)
+	result.RightContainer = containerWhenPresent(right, container)
 	if left != "" && right != "" && d.config.HasBothViews() {
-		both, joinErr := d.CreateBothViewsAudioOutput(ctx, left, fmt.Sprintf("LEC %03d %s", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title)), d.config.AudioFormat)
+		both, joinErr := d.CreateBothViewsAudioOutput(ctx, left, base, d.config.AudioFormat)
 		if joinErr != nil {
 			return result, joinErr
 		}
 		result.BothOutput = both
-		result.BothContainer = containerWhenPresent(both, audioContainer(d.config.AudioFormat))
+		result.BothContainer = containerWhenPresent(both, container)
 	}
 	return result, nil
 }
 
 func (d *Downloader) joinVideoOutput(ctx context.Context, file M3U8File) (JoinResult, error) {
 	result := JoinResult{}
-	left, err := d.joinIfPresent(ctx, file.FirstViewFile, d.config.IncludesLeft(), fmt.Sprintf("LEC %03d %s LEFT VIEW.mp4", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title)), d.JoinChunksFromM3U8)
+	base := lectureOutputBase(file.Playlist)
+	left, err := d.joinIfPresent(ctx, file.FirstViewFile, d.config.IncludesLeft(), outputFilename(base, selection.ViewLeft, "mp4"), d.JoinChunksFromM3U8)
 	if err != nil {
 		return result, err
 	}
-	right, err := d.joinIfPresent(ctx, file.SecondViewFile, d.config.IncludesRight(), fmt.Sprintf("LEC %03d %s RIGHT VIEW.mp4", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title)), d.JoinChunksFromM3U8)
+	right, err := d.joinIfPresent(ctx, file.SecondViewFile, d.config.IncludesRight(), outputFilename(base, selection.ViewRight, "mp4"), d.JoinChunksFromM3U8)
 	if err != nil {
 		return result, err
 	}
@@ -501,7 +533,7 @@ func (d *Downloader) joinVideoOutput(ctx context.Context, file M3U8File) (JoinRe
 	result.LeftContainer = containerWhenPresent(left, "mp4")
 	result.RightContainer = containerWhenPresent(right, "mp4")
 	if left != "" && right != "" && d.config.HasBothViews() {
-		both, joinErr := d.JoinViews(ctx, left, right, fmt.Sprintf("LEC %03d %s", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title)))
+		both, joinErr := d.JoinViews(ctx, left, right, base)
 		if joinErr != nil {
 			return result, joinErr
 		}

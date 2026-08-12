@@ -44,11 +44,12 @@
 [![Build Status](https://github.com/rabesss/impartus-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/rabesss/impartus-cli/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A Go-based CLI and HTTP API server for downloading lecture videos from Impartus platforms. Features interactive mode for humans and deterministic JSON mode for automation and AI agents.
+A Go-based CLI/TUI and HTTP API server for browsing, streaming, and downloading lecture videos from Impartus platforms. The terminal workspace is for humans; deterministic JSON remains available for automation and AI agents.
 
 ## Features
 
-- **Interactive CLI Mode** - Guided download flow with course/lecture selection
+- **Bubble Tea Terminal Workspace** - Browse/filter courses and lectures, inspect details, control native mpv, download, inspect the local library, and resume recorded artifacts
+- **Legacy Prompt Compatibility** - The previous guided download prompt remains temporarily available as `impartus classic`
 - **Deterministic JSON Mode** - Machine-readable output for automation and AI agent integration
 - **HTTP API with WebSocket Events** - REST API with real-time job progress updates
 - **Multi-View Video Processing** - Support for instructor/dual-view video streams
@@ -83,7 +84,7 @@ go build -o impartus .
 
 - **Go 1.25+** - Go toolchain for building (pinned in `go.mod`; Docker images may use a newer patch release)
 - **FFmpeg** - Required for video processing (must be in `PATH`)
-- **mpv** - Required for the `play` command (must be in `PATH`)
+- **mpv** - Required for TUI or CLI playback (must be in `PATH`)
 - **Impartus Account** - Valid credentials for your institution's Impartus platform
 
 ### Container usage
@@ -211,17 +212,27 @@ Only the settings listed below have environment-variable overrides. Settings abs
 
 ### Interactive Mode
 
-Run without arguments for guided download:
+Run without arguments from a real terminal, or invoke the workspace explicitly:
 
 ```bash
 ./impartus
+./impartus tui
 ```
 
-This launches an interactive workflow:
-1. Log in with configured credentials
-2. Select course from list
-3. Select session/lecture range
-4. Download with progress tracking
+The Bubble Tea v2 workspace owns the alternate screen while mpv renders in a
+separate native window. It supports live course/lecture browsing, `/` filters,
+`i` details, `enter` playback, `d` download, `l` library, `!` dependency
+diagnostics, resume prompts, and mpv pause/seek/volume/mute/speed/camera controls.
+It never falls back to blocking legacy mpv.
+
+No-argument use is TTY-aware: when stdin or stdout is not a terminal, Impartus
+prints help to stderr and exits 2 rather than consuming a pipeline. The previous
+prompt-based download flow is available for one release with a deprecation
+notice:
+
+```bash
+./impartus classic
+```
 
 ### Deterministic JSON Mode
 
@@ -283,7 +294,9 @@ the selection alone.
 
 | Command | Description |
 |---------|-------------|
-| `impartus` | Interactive mode (guided download) |
+| `impartus` | Launch the TUI when stdin/stdout are terminals; otherwise help + exit 2 |
+| `impartus tui` | Explicitly launch the course/lecture terminal workspace |
+| `impartus classic` | Legacy guided download prompt (deprecated for one release) |
 | `impartus --json` | Capability metadata |
 | `impartus help` | Show usage information |
 | `impartus version` | Show version and build date |
@@ -340,6 +353,9 @@ the selection alone.
 # Play a specific lecture
 ./impartus play -s 123 -S 456 --lecture 3
 
+# Browse, stream, control, download, and resume interactively
+./impartus tui
+
 # Diagnose local playback/download prerequisites and private paths
 ./impartus doctor
 
@@ -360,7 +376,7 @@ accepts only its exact loopback Host and unguessable session paths. `legacy`
 retains the previous blocking process launch as an explicit one-release
 compatibility option; an IPC error never falls back to it.
 
-`impartus doctor` may create the future state directory at
+`impartus doctor` may create the application-owned state directory at
 `$XDG_STATE_HOME/impartus` (or `~/.local/state/impartus`) with mode `0700` so it
 can verify private writable storage. Missing `config.json` and `.token` files
 are warnings because environment-only configuration and a first login are
@@ -657,6 +673,7 @@ impartus/
 │   ├── client/              # Impartus API client, auth, HTTP helpers
 │   ├── downloader/          # Playlist parsing, chunk download/decrypt, ffmpeg
 │   ├── app/                 # Shared catalog/playback orchestration seam
+│   ├── tui/                 # Bubble Tea view state, keys, layout, and app-event translation
 │   ├── player/              # Supervised mpv process and bounded JSON IPC
 │   ├── library/             # Pure-Go SQLite artifacts, playback, and local jobs
 │   └── server/              # HTTP API, auth middleware, jobs, WebSocket
@@ -666,11 +683,12 @@ impartus/
 
 ### Key Components
 
-- **`internal/cli`** - CLI command routing and interactive/deterministic modes
+- **`internal/cli`** - CLI command routing, TTY-aware TUI launch, classic compatibility, and deterministic modes
 - **`internal/config`** - Configuration loading, defaults, and validation
 - **`internal/client`** - Impartus API HTTP client with authentication
 - **`internal/downloader`** - Video pipeline: playlist parsing, chunk download, AES decryption, FFmpeg join
-- **`internal/app`** - Small orchestration boundary shared by the CLI and forthcoming TUI
+- **`internal/app`** - Shared catalog, playback, download, artifact, library, and resume orchestration boundary
+- **`internal/tui`** - Bubble Tea v2 terminal state only; it performs no HTTP, subprocess, or SQL work directly
 - **`internal/player`** - Private mpv runtime, process-group supervision, bounded JSON IPC, events, and typed controls
 - **`internal/library`** - Private SQLite migrations, artifact paths, verification, resume history, and recoverable local jobs
 - **`internal/server`** - HTTP API server with bearer-token auth, background jobs, and WebSocket broadcasting

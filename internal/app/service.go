@@ -3,7 +3,10 @@ package app
 
 import (
 	"context"
+	"io"
+	"time"
 
+	"github.com/rabesss/impartus-cli/internal/artifact"
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/downloader"
@@ -21,6 +24,21 @@ type playbackStreams interface {
 	StartPlaybackStream(context.Context, client.ParsedPlaylist) (downloader.PlaybackStream, error)
 }
 
+type lectureDownloads interface {
+	FetchLecturePlaylists(context.Context, []client.Lecture) ([]client.ParsedPlaylist, error)
+	DownloadAndJoin(context.Context, client.ParsedPlaylist) (downloader.JoinResult, error)
+}
+
+type artifactLibrary interface {
+	CreateJob(context.Context, library.JobSpec) error
+	StartJob(context.Context, string) error
+	FailJob(context.Context, string, error) error
+	CancelJob(context.Context, string) error
+	CompleteJob(context.Context, string, artifact.Manifest) error
+	ListArtifacts(context.Context) ([]library.ArtifactRecord, error)
+	GetArtifact(context.Context, string) (library.ArtifactRecord, error)
+}
+
 type managedPlayer interface {
 	Load(context.Context, string) error
 	WaitForEnd(context.Context) error
@@ -28,6 +46,7 @@ type managedPlayer interface {
 	Events() <-chan player.Event
 	Pause(context.Context, bool) error
 	SeekRelative(context.Context, float64) error
+	SeekAbsolute(context.Context, float64) error
 	SetVolume(context.Context, float64) error
 	SetMute(context.Context, bool) error
 	SetSpeed(context.Context, float64) error
@@ -44,12 +63,15 @@ type playbackHistory interface {
 // Service coordinates existing Impartus API, stream proxy, and player layers.
 // It owns no terminal, HTTP, subprocess, or persistence implementation itself.
 type Service struct {
-	config        *config.Config
-	catalog       catalogClient
-	streams       playbackStreams
-	startPlayer   playerStarter
-	playerOptions player.Options
-	history       playbackHistory
+	config                 *config.Config
+	catalog                catalogClient
+	streams                playbackStreams
+	startPlayer            playerStarter
+	playerOptions          player.Options
+	history                playbackHistory
+	downloads              lectureDownloads
+	library                artifactLibrary
+	resumeReadinessTimeout time.Duration
 }
 
 // New creates the production application service.
@@ -72,6 +94,15 @@ func NewWithLibrary(cfg *config.Config, apiClient *client.Client, store *library
 	return NewWithLibraryAndPlayerOptions(cfg, apiClient, store, player.Options{})
 }
 
+// NewWithLibraryAndDiagnosticWriter creates the full production service while
+// routing downloader diagnostics to the caller-owned writer.
+func NewWithLibraryAndDiagnosticWriter(cfg *config.Config, apiClient *client.Client, store *library.Store, diagnostics io.Writer) *Service {
+	media := downloader.NewWithDiagnosticWriter(cfg, apiClient, diagnostics)
+	return newServiceWithHistory(cfg, apiClient, media, func(ctx context.Context, playerOptions player.Options) (managedPlayer, error) {
+		return player.Start(ctx, playerOptions)
+	}, player.Options{}, store)
+}
+
 // NewWithLibraryAndPlayerOptions creates the full playback service with both
 // durable resume history and explicit supervised-mpv options.
 func NewWithLibraryAndPlayerOptions(cfg *config.Config, apiClient *client.Client, store *library.Store, options player.Options) *Service {
@@ -83,10 +114,14 @@ func NewWithLibraryAndPlayerOptions(cfg *config.Config, apiClient *client.Client
 
 func newService(cfg *config.Config, catalog catalogClient, streams playbackStreams, start playerStarter, options ...player.Options) *Service {
 	service := &Service{
-		config:      cfg,
-		catalog:     catalog,
-		streams:     streams,
-		startPlayer: start,
+		config:                 cfg,
+		catalog:                catalog,
+		streams:                streams,
+		startPlayer:            start,
+		resumeReadinessTimeout: playbackReadinessTimeout,
+	}
+	if downloads, ok := streams.(lectureDownloads); ok {
+		service.downloads = downloads
 	}
 	if len(options) > 0 {
 		service.playerOptions = options[0]
@@ -104,5 +139,8 @@ func newServiceWithHistory(
 ) *Service {
 	service := newService(cfg, catalog, streams, start, options)
 	service.history = history
+	if artifacts, ok := history.(artifactLibrary); ok {
+		service.library = artifacts
+	}
 	return service
 }

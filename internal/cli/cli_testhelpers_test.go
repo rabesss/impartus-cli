@@ -15,6 +15,8 @@ func restoreCLIState(t *testing.T) {
 	t.Helper()
 	oldArgs := os.Args
 	oldInteractive := runInteractiveFn
+	oldTUI := runTUIFn
+	oldInteractiveTerminal := isInteractiveTerminalFn
 	oldCourses := runCoursesFn
 	oldLectures := runLecturesFn
 	oldDownload := runDownloadFn
@@ -29,6 +31,8 @@ func restoreCLIState(t *testing.T) {
 	t.Cleanup(func() {
 		os.Args = oldArgs
 		runInteractiveFn = oldInteractive
+		runTUIFn = oldTUI
+		isInteractiveTerminalFn = oldInteractiveTerminal
 		runCoursesFn = oldCourses
 		runLecturesFn = oldLectures
 		runDownloadFn = oldDownload

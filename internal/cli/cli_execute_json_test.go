@@ -2,25 +2,89 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 )
 
-func TestExecuteNoArgsDefaultsToInteractive(t *testing.T) {
+func TestExecuteNoArgsLaunchesTUIOnlyOnInteractiveTerminal(t *testing.T) {
 	restoreCLIState(t)
 	called := false
-	runInteractiveFn = func() error {
+	runTUIFn = func() error {
 		called = true
 		return nil
 	}
+	isInteractiveTerminalFn = func() bool { return true }
 	os.Args = []string{"impartus"}
 
 	if err := Execute("dev", ""); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}
 	if !called {
-		t.Fatal("expected interactive mode to be used when no args are provided")
+		t.Fatal("expected TUI mode to be used when no args are provided on a terminal")
+	}
+}
+
+func TestExecuteNoArgsOnPipePrintsHelpAndReturnsExitTwo(t *testing.T) {
+	restoreCLIState(t)
+	runTUIFn = func() error {
+		t.Fatal("TUI must not claim a non-interactive terminal")
+		return nil
+	}
+	isInteractiveTerminalFn = func() bool { return false }
+	os.Args = []string{"impartus"}
+
+	stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("dev", "") })
+	if stdout != "" || !strings.Contains(stderr, "Usage:") {
+		t.Fatalf("non-TTY output stdout=%q stderr=%q", stdout, stderr)
+	}
+	var exitErr interface{ ExitCode() int }
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+		t.Fatalf("non-TTY error = %v, want exit code 2", err)
+	}
+}
+
+func TestExplicitTUIOnPipeReturnsExitTwoWithoutLaunching(t *testing.T) {
+	restoreCLIState(t)
+	runTUIFn = func() error {
+		t.Fatal("explicit TUI must not claim a non-interactive terminal")
+		return nil
+	}
+	isInteractiveTerminalFn = func() bool { return false }
+	os.Args = []string{"impartus", "tui"}
+
+	err := Execute("dev", "")
+	var exitErr interface{ ExitCode() int }
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+		t.Fatalf("explicit non-TTY error = %v, want exit code 2", err)
+	}
+}
+
+func TestClassicPreservesOldPromptForOneRelease(t *testing.T) {
+	restoreCLIState(t)
+	called := false
+	runInteractiveFn = func() error {
+		called = true
+		return nil
+	}
+	os.Args = []string{"impartus", "classic"}
+
+	stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("dev", "") })
+	if err != nil || !called || stdout != "" || !strings.Contains(stderr, "deprecated") {
+		t.Fatalf("classic = called=%t stdout=%q stderr=%q err=%v", called, stdout, stderr, err)
+	}
+}
+
+func TestExitCodePreservesUsageErrors(t *testing.T) {
+	if got := ExitCode(nil); got != 0 {
+		t.Fatalf("ExitCode(nil) = %d, want 0", got)
+	}
+	if got := ExitCode(errors.New("ordinary")); got != 1 {
+		t.Fatalf("ExitCode(ordinary) = %d, want 1", got)
+	}
+	if got := ExitCode(&exitCodeError{code: 2, err: errors.New("usage")}); got != 2 {
+		t.Fatalf("ExitCode(usage) = %d, want 2", got)
 	}
 }
 
@@ -63,7 +127,7 @@ func TestExecuteJSONNoSubcommandReturnsCapabilitiesEnvelope(t *testing.T) {
 	if payload.Meta.Command != "help" || payload.Meta.Mode != "json" {
 		t.Fatalf("unexpected meta: %+v", payload.Meta)
 	}
-	if payload.Data.DefaultMode != "interactive" || payload.Data.Name == "" || len(payload.Data.Commands) == 0 {
+	if payload.Data.DefaultMode != "tui" || payload.Data.Name == "" || len(payload.Data.Commands) == 0 {
 		t.Fatalf("unexpected capability payload: %+v", payload.Data)
 	}
 }

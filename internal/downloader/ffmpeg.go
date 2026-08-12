@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/rabesss/impartus-cli/internal/selection"
 )
 
 type finalOutputGate struct {
@@ -23,7 +25,7 @@ var finalOutputGates = struct {
 
 // JoinViews merges two video view files into a single combined output using FFmpeg.
 func (d *Downloader) JoinViews(ctx context.Context, leftFile, rightFile, name string) (string, error) {
-	title := fmt.Sprintf("%s BOTH.mkv", name)
+	title := outputFilename(name, selection.ViewBoth, "mkv")
 	outfile := filepath.Join(d.config.DownloadLocation, title)
 	if err := validateFFmpegArgs(leftFile, rightFile, outfile); err != nil {
 		return "", err
@@ -93,7 +95,7 @@ func (d *Downloader) CreateBothViewsAudioOutput(ctx context.Context, sourceFile,
 	if format == "aac" {
 		ext = ".m4a"
 	}
-	title := fmt.Sprintf("%s BOTH%s", name, ext)
+	title := outputFilename(name, selection.ViewBoth, strings.TrimPrefix(ext, "."))
 	outfile := filepath.Join(d.config.DownloadLocation, title)
 	if err := validateFFmpegArgs(sourceFile, outfile); err != nil {
 		return "", err

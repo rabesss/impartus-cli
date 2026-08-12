@@ -12,11 +12,16 @@ import (
 
 // Playback owns one mpv session and its corresponding loopback stream proxy.
 type Playback struct {
-	player       managedPlayer
-	failures     <-chan error
-	cleanupProxy func()
-	closeOnce    sync.Once
-	closeErr     error
+	player              managedPlayer
+	failures            <-chan error
+	failureMutex        sync.Mutex
+	failureWaitOwned    bool
+	failureSourceClosed bool
+	proxyFailure        error
+	proxyFailureReady   bool
+	cleanupProxy        func()
+	closeOnce           sync.Once
+	closeErr            error
 }
 
 // StartPlayback starts a loopback stream, launches supervised mpv idle, and
@@ -34,12 +39,16 @@ func (service *Service) StartPlayback(ctx context.Context, playlist client.Parse
 		stream.Cleanup()
 		return nil, fmt.Errorf("start supervised mpv: %w", err)
 	}
-	playback := &Playback{player: managed, failures: stream.Failures, cleanupProxy: stream.Cleanup}
+	playback := newPlayback(managed, stream.Failures, stream.Cleanup)
 	if err := managed.Load(ctx, stream.URL); err != nil {
 		closeErr := playback.Close(context.Background())
 		return nil, errors.Join(fmt.Errorf("load lecture in mpv: %w", err), closeErr)
 	}
 	return playback, nil
+}
+
+func newPlayback(managed managedPlayer, failures <-chan error, cleanupProxy func()) *Playback {
+	return &Playback{player: managed, failures: failures, cleanupProxy: cleanupProxy}
 }
 
 // PlaySequential preserves the existing CLI behavior of playing each selected
@@ -75,47 +84,169 @@ func (service *Service) PlaySequential(ctx context.Context, lectures client.Lect
 // Events exposes the player's state stream for the TUI.
 func (playback *Playback) Events() <-chan player.Event { return playback.player.Events() }
 
-// WaitForEnd waits for media completion or player/process failure.
-func (playback *Playback) WaitForEnd(ctx context.Context) error {
+// PollTerminal reports a terminal proxy or player result without initiating
+// lifecycle cancellation. Resume readiness uses it only when its local timer
+// expires, before classifying the wait as a timeout.
+func (playback *Playback) PollTerminal() (bool, error) {
+	if ready, failure := playback.pollProxyFailure(); ready {
+		return true, failure
+	}
+	poller, ok := playback.player.(playbackTerminalPoller)
+	if !ok {
+		return false, nil
+	}
+	ready, result := poller.PollTerminal()
+	if !ready {
+		return playback.pollProxyFailure()
+	}
+	if failed, failure := playback.pollProxyFailure(); failed {
+		return true, failure
+	}
+	return true, result
+}
+
+func (playback *Playback) pollProxyFailure() (bool, error) {
+	if playback == nil {
+		return false, nil
+	}
+	playback.failureMutex.Lock()
+	defer playback.failureMutex.Unlock()
+	if playback.proxyFailureReady {
+		return true, playback.proxyFailure
+	}
+	if playback.failureWaitOwned || playback.failureSourceClosed || playback.failures == nil {
+		return false, nil
+	}
+	return playback.receiveProxyFailureLocked(playback.failures)
+}
+
+func (playback *Playback) receiveProxyFailureLocked(failures <-chan error) (bool, error) {
 	select {
-	case failure := <-playback.failures:
-		return failure
+	case failure, open := <-failures:
+		if !open {
+			playback.failureSourceClosed = true
+			return false, nil
+		}
+		if failure == nil {
+			return false, nil
+		}
+		playback.proxyFailure = failure
+		playback.proxyFailureReady = true
+		return true, failure
 	default:
 	}
+	return false, nil
+}
+
+func (playback *Playback) beginProxyFailureWait() (bool, error) {
+	playback.failureMutex.Lock()
+	defer playback.failureMutex.Unlock()
+	if playback.proxyFailureReady {
+		return true, playback.proxyFailure
+	}
+	if !playback.failureSourceClosed && playback.failures != nil {
+		if ready, failure := playback.receiveProxyFailureLocked(playback.failures); ready {
+			return true, failure
+		}
+	}
+	playback.failureWaitOwned = true
+	return false, nil
+}
+
+func (playback *Playback) endProxyFailureWait() {
+	playback.failureMutex.Lock()
+	playback.failureWaitOwned = false
+	playback.failureMutex.Unlock()
+}
+
+func (playback *Playback) proxyFailureSource() <-chan error {
+	playback.failureMutex.Lock()
+	defer playback.failureMutex.Unlock()
+	if playback.failureSourceClosed {
+		return nil
+	}
+	return playback.failures
+}
+
+func (playback *Playback) recordProxyFailure(failure error) error {
+	if failure == nil {
+		return nil
+	}
+	playback.failureMutex.Lock()
+	if !playback.proxyFailureReady {
+		playback.proxyFailure = failure
+		playback.proxyFailureReady = true
+	}
+	result := playback.proxyFailure
+	playback.failureMutex.Unlock()
+	return result
+}
+
+func (playback *Playback) markProxyFailuresClosed() {
+	playback.failureMutex.Lock()
+	playback.failureSourceClosed = true
+	playback.failureMutex.Unlock()
+}
+
+// WaitForEnd waits for media completion or player/process failure.
+func (playback *Playback) WaitForEnd(ctx context.Context) error {
+	if ready, failure := playback.beginProxyFailureWait(); ready {
+		return failure
+	}
+	defer playback.endProxyFailureWait()
 
 	playerResult := make(chan error, 1)
 	go func() { playerResult <- playback.player.WaitForEnd(ctx) }()
-	select {
-	case failure := <-playback.failures:
-		return failure
-	case err := <-playerResult:
-		select {
-		case failure := <-playback.failures:
-			return failure
-		default:
-			return playbackWaitResult(ctx, err)
-		}
-	case <-ctx.Done():
-		return playbackCancellationResult(ctx, playback.failures, playerResult)
-	}
-}
-
-func playbackCancellationResult(ctx context.Context, failures <-chan error, playerResult <-chan error) error {
+	failures := playback.proxyFailureSource()
 	for {
 		select {
-		case failure, ok := <-failures:
-			if !ok {
+		case failure, open := <-failures:
+			if !open {
+				playback.markProxyFailuresClosed()
 				failures = nil
 				continue
 			}
 			if failure != nil {
-				return failure
+				return playback.recordProxyFailure(failure)
 			}
 		case err := <-playerResult:
 			select {
-			case failure, ok := <-failures:
-				if ok && failure != nil {
-					return failure
+			case failure, open := <-failures:
+				if open && failure != nil {
+					return playback.recordProxyFailure(failure)
+				}
+				if !open {
+					playback.markProxyFailuresClosed()
+				}
+			default:
+			}
+			return playbackWaitResult(ctx, err)
+		case <-ctx.Done():
+			return playback.playbackCancellationResult(ctx, failures, playerResult)
+		}
+	}
+}
+
+func (playback *Playback) playbackCancellationResult(ctx context.Context, failures <-chan error, playerResult <-chan error) error {
+	for {
+		select {
+		case failure, open := <-failures:
+			if !open {
+				playback.markProxyFailuresClosed()
+				failures = nil
+				continue
+			}
+			if failure != nil {
+				return playback.recordProxyFailure(failure)
+			}
+		case err := <-playerResult:
+			select {
+			case failure, open := <-failures:
+				if open && failure != nil {
+					return playback.recordProxyFailure(failure)
+				}
+				if !open {
+					playback.markProxyFailuresClosed()
 				}
 			default:
 			}
@@ -142,6 +273,11 @@ func (playback *Playback) Pause(ctx context.Context, paused bool) error {
 // SeekRelative seeks by signed seconds.
 func (playback *Playback) SeekRelative(ctx context.Context, seconds float64) error {
 	return playback.player.SeekRelative(ctx, seconds)
+}
+
+// SeekAbsolute seeks to an absolute playback position in seconds.
+func (playback *Playback) SeekAbsolute(ctx context.Context, seconds float64) error {
+	return playback.player.SeekAbsolute(ctx, seconds)
 }
 
 // SetVolume sets volume in percent.
