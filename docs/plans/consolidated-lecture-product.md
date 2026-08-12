@@ -221,7 +221,7 @@ command start (or loaded from the durable watch job). Every record includes
 - `job.completed` on complete success, exit 0;
 - `job.failed` on any lecture failure, exit 1, with counts plus manifests for
   fully validated lectures completed before the fail-fast error;
-- `job.cancelled` on signal cancellation, exit 130, with the same partial
+- `job.canceled` on signal cancellation, exit 130, with the same partial
   completion fields.
 
 The existing single-envelope `download --json` remains fail-fast: any lecture
@@ -231,7 +231,7 @@ may still be present in the library. Event names in scope are:
 
 - `job.started`, `lecture.started`, `lecture.progress`,
   `lecture.completed`, `lecture.failed`, `job.completed`, `job.failed`, and
-  `job.cancelled`.
+  `job.canceled`.
 
 Human diagnostics go to stderr. Cancellation emits a terminal event when stdout
 is still writable. A closed stdout/EPIPE cancels producers, exits 1, and never

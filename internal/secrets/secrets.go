@@ -174,8 +174,8 @@ func Scrub(s string) string {
 	return bareSecretColon.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
 }
 
-// ScrubError returns the error's message with any embedded URLs scrubbed. It
-// returns "" for a nil error.
+// ScrubError returns the error's message with embedded credentials scrubbed.
+// It returns "" for a nil error.
 func ScrubError(err error) string {
 	if err == nil {
 		return ""

@@ -3,6 +3,8 @@ package cli
 import (
 	"encoding/json"
 	"os"
+
+	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
 type jsonEnvelope struct {
@@ -84,7 +86,7 @@ func newErrorEnvelope(command string, err error) jsonEnvelope {
 	return jsonEnvelope{
 		Success: false,
 		Data:    nil,
-		Error:   &jsonErr{Message: err.Error()},
+		Error:   &jsonErr{Message: secrets.ScrubError(err)},
 		Meta: jsonMeta{
 			Command: command,
 			Mode:    "json",
@@ -131,6 +133,7 @@ func helpPayload() capabilityPayload {
 			{Name: "play", Usage: "impartus play --subject <id> --session <id> [--lecture <n>] (not available in JSON mode)"},
 			{Name: "doctor", Usage: "impartus doctor"},
 			{Name: "library", Usage: "impartus library list|show|verify"},
+			{Name: "watch", Usage: "impartus watch [--subject <id> --session <id>] [--once] [--dry-run] [--events]"},
 			{Name: "tui", Usage: "impartus tui (not available in JSON mode)"},
 			{Name: "classic", Usage: "impartus classic (deprecated; not available in JSON mode)"},
 		},

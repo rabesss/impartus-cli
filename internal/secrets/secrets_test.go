@@ -83,6 +83,7 @@ func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 	}{
 		{name: "auth equals", input: "upstream auth=body-secret failed", secret: "body-secret"},
 		{name: "json auth", input: `{"auth":"body-secret"}`, secret: "body-secret"},
+		{name: "json authorization", input: `{"authorization":"Bearer body-secret"}`, secret: "body-secret"},
 		{name: "auth bearer", input: "upstream auth: Bearer body-secret", secret: "body-secret"},
 		{name: "token bearer", input: "upstream token=Bearer body-secret", secret: "body-secret"},
 		{name: "authorization digest", input: `Authorization: Digest username="alice", realm="lecture", response="digest-secret"`, secret: "digest-secret"},

@@ -82,6 +82,12 @@ func TestRecoverInterruptedJobCommitsValidFinalOutputWithoutNetwork(t *testing.T
 	if len(third.Recovered) != 1 || third.Recovered[0] != jobID || len(third.Pending) != 0 {
 		t.Fatalf("completed-output recovery = %+v", third)
 	}
+	if len(third.Artifacts) != 1 || third.Artifacts[0].JobID != jobID {
+		t.Fatalf("completed-output recovery artifacts = %+v", third.Artifacts)
+	}
+	if third.Artifacts[0].Manifest.ArtifactID == "" || len(third.Artifacts[0].Manifest.Files) != 1 || third.Artifacts[0].Manifest.Files[0].Path != outputPath {
+		t.Fatalf("completed-output recovery manifest = %+v", third.Artifacts[0].Manifest)
+	}
 	job, err := store.Job(context.Background(), jobID)
 	if err != nil {
 		t.Fatal(err)
@@ -437,6 +443,36 @@ func TestJobFailureAndCancellationAreDurableTerminalStates(t *testing.T) {
 	}
 	if err := store.StartJob(context.Background(), failedID); !errors.Is(err, library.ErrJobTerminal) {
 		t.Fatalf("StartJob(terminal) error = %v", err)
+	}
+}
+
+func TestJobFailureRedactsHeadersAndBareAssignments(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	expected := library.ExpectedArtifact{
+		Lecture:    artifact.Lecture{TTID: 61, InstituteID: 1, SubjectID: 2, SessionID: 3},
+		Selection:  artifact.Selection{Views: "left", Quality: "720"},
+		Files:      []library.ExpectedFile{{Path: filepath.Join(t.TempDir(), "expected.mp4"), Role: "video", View: "left", Container: "mp4"}},
+		ProducedAt: time.Date(2026, time.August, 9, 10, 0, 0, 0, time.UTC),
+		Producer:   artifact.Producer{Name: "impartus", Version: "test"},
+	}
+	jobID := uuid.NewString()
+	if err := store.CreateJob(context.Background(), library.JobSpec{ID: jobID, Kind: "watch", Expected: expected}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StartJob(context.Background(), jobID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FailJob(context.Background(), jobID, errors.New(`Authorization: Token auth-secret upload_token=body-secret response={"token":"json-secret"}`)); err != nil {
+		t.Fatal(err)
+	}
+	job, err := store.Job(context.Background(), jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(job.ErrorSummary, "auth-secret") || strings.Contains(job.ErrorSummary, "body-secret") || strings.Contains(job.ErrorSummary, "json-secret") || !strings.Contains(job.ErrorSummary, "REDACTED") {
+		t.Fatalf("durable failure summary was not fully redacted: %q", job.ErrorSummary)
 	}
 }
 

@@ -125,8 +125,8 @@ func TestDownloadArtifactsAllowTTIDCollisionAcrossScopes(t *testing.T) {
 	})
 	runner := &fakeLectureDownloadRunner{
 		playlists: []client.ParsedPlaylist{
-			{InstituteID: 10, SubjectID: 20, SessionID: 30, ID: 9},
-			{InstituteID: 1, SubjectID: 2, SessionID: 3, ID: 9},
+			{InstituteID: 10, SubjectID: 20, SessionID: 30, ID: 9, FirstViewURLs: []string{"chunk"}},
+			{InstituteID: 1, SubjectID: 2, SessionID: 3, ID: 9, FirstViewURLs: []string{"chunk"}},
 		},
 		results: results,
 	}

@@ -95,12 +95,19 @@ type Job struct {
 	UpdatedAt           time.Time        `json:"updatedAt"`
 }
 
+// RecoveredArtifact associates a crash-recovered manifest with its durable job.
+type RecoveredArtifact struct {
+	JobID    string            `json:"jobId"`
+	Manifest artifact.Manifest `json:"manifest"`
+}
+
 // RecoveryResult separates complete output sets from jobs that still require
 // a future retry. Recovery performs no network work.
 type RecoveryResult struct {
-	Recovered []string `json:"recovered"`
-	Pending   []string `json:"pending"`
-	Skipped   []string `json:"skipped,omitempty"`
+	Recovered []string            `json:"recovered"`
+	Pending   []string            `json:"pending"`
+	Skipped   []string            `json:"skipped,omitempty"`
+	Artifacts []RecoveredArtifact `json:"artifacts,omitempty"`
 }
 
 // CreateJob durably records expected final paths before download work starts.
@@ -361,7 +368,10 @@ func (store *Store) RecoverInterruptedJobs(ctx context.Context, kind string) (Re
 	if err != nil {
 		return RecoveryResult{}, err
 	}
-	result := RecoveryResult{Recovered: make([]string, 0), Pending: make([]string, 0), Skipped: make([]string, 0)}
+	result := RecoveryResult{
+		Recovered: make([]string, 0), Pending: make([]string, 0), Skipped: make([]string, 0),
+		Artifacts: make([]RecoveredArtifact, 0),
+	}
 	for _, job := range jobs {
 		if job.Kind != kind {
 			continue
@@ -382,6 +392,7 @@ func (store *Store) RecoverInterruptedJobs(ctx context.Context, kind string) (Re
 			return RecoveryResult{}, err
 		}
 		result.Recovered = append(result.Recovered, job.ID)
+		result.Artifacts = append(result.Artifacts, RecoveredArtifact{JobID: job.ID, Manifest: manifest})
 	}
 	return result, nil
 }

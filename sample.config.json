@@ -20,6 +20,16 @@
   "enableJitter": true,
   "listenAddr": "127.0.0.1",
   "allowRemoteAccess": false,
+  "watch": {
+    "enabled": false,
+    "pollInterval": "5m",
+    "maxLecturesPerCycle": 3,
+    "maxRetries": 3,
+    "quality": "144",
+    "views": "left",
+    "audioFormat": "mp3",
+    "targets": []
+  },
   "progressTracking": {
     "enabled": false,
     "showSpeed": false,
