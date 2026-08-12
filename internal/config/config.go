@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/rabesss/impartus-cli/internal/selection"
 )
 
 // ConfigLocation is the default path to the configuration file.
@@ -127,26 +129,28 @@ func (c *Config) applyListenDefaults() {
 // NormalizeViews maps view aliases to canonical downloader names.
 // "first" → "left", "second" → "right", others pass through lowercased.
 func NormalizeViews(views string) string {
-	switch strings.ToLower(strings.TrimSpace(views)) {
-	case "first":
-		return "left"
-	case "second":
-		return "right"
-	default:
-		return strings.ToLower(strings.TrimSpace(views))
-	}
+	return selection.NormalizeView(views)
 }
 
 // IncludesLeft reports whether the configured view set includes the left
-// (first) camera view. Assumes Views is normalized ("both" | "left" | "right").
-func (c *Config) IncludesLeft() bool { return c.Views != "right" }
+// (first) camera view.
+func (c *Config) IncludesLeft() bool {
+	view, ok := selection.ParseView(c.Views)
+	return ok && view.Includes(selection.ViewLeft)
+}
 
 // IncludesRight reports whether the configured view set includes the right
-// (second) camera view. Assumes Views is normalized ("both" | "left" | "right").
-func (c *Config) IncludesRight() bool { return c.Views != "left" }
+// (second) camera view.
+func (c *Config) IncludesRight() bool {
+	view, ok := selection.ParseView(c.Views)
+	return ok && view.Includes(selection.ViewRight)
+}
 
 // HasBothViews reports whether both camera views are configured.
-func (c *Config) HasBothViews() bool { return c.Views == "both" }
+func (c *Config) HasBothViews() bool {
+	view, ok := selection.ParseView(c.Views)
+	return ok && view == selection.ViewBoth
+}
 
 // Validate checks the configuration for errors and returns the first one found.
 func (c *Config) Validate() error {
@@ -190,13 +194,15 @@ func (c *Config) validateBaseURL() error {
 }
 
 func (c *Config) validateMediaSettings() error {
-	if !OneOf(c.Quality, "144", "450", "720") {
+	if !selection.ValidQuality(c.Quality) {
 		return fmt.Errorf("quality must be one of: 144, 450, 720")
 	}
-	if !OneOf(c.Views, "first", "second", "both", "left", "right") {
+	view, ok := selection.ParseView(c.Views)
+	if !ok {
 		return fmt.Errorf("views must be one of: first, second, both, left, right")
 	}
-	if c.AudioOnly && !OneOf(c.AudioFormat, "mp3", "m4a", "aac", "opus") {
+	c.Views = string(view)
+	if c.AudioOnly && !selection.ValidAudioFormat(c.AudioFormat) {
 		return fmt.Errorf("audioFormat must be one of: mp3, m4a, aac, opus")
 	}
 	return nil

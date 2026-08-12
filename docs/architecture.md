@@ -69,7 +69,8 @@ one envelope to stdout and writes no progress or warning text; successful
 downloads leave stderr empty. Failure returns a non-zero exit status, leaves
 stdout empty, and writes exactly one error envelope to stderr. For download
 results, `lectureCount` counts completed lectures, while `outputPaths` may hold
-multiple files for each lecture.
+multiple files for each lecture. `artifacts` contains one stable version-1
+manifest per completed lecture; the older fields retain their meaning.
 
 ## CLI play command flow
 
@@ -119,7 +120,9 @@ sequenceDiagram
 
 ## Internal package/module boundaries
 
-Core boundaries keep command orchestration in `internal/cli`, network access in `internal/client`, media pipeline in `internal/downloader`, and HTTP orchestration in `internal/server`.
+Core boundaries keep command orchestration in `internal/cli`, network access in
+`internal/client`, media pipeline in `internal/downloader`, stable local media
+contracts in `internal/artifact`, and HTTP orchestration in `internal/server`.
 
 ```mermaid
 flowchart LR
@@ -133,6 +136,7 @@ flowchart LR
     CFG[internal/config]
     CLT[internal/client]
     DL[internal/downloader]
+    ART[internal/artifact]
     SRV[internal/server]
   end
 
@@ -144,6 +148,7 @@ flowchart LR
   CLI --> CFG
   CLI --> CLT
   CLI --> DL
+  CLI --> ART
   CLI --> SRV
   SRV --> CFG
   SRV --> CLT

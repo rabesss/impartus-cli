@@ -11,6 +11,7 @@ import (
 
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
+	"github.com/rabesss/impartus-cli/internal/selection"
 )
 
 func filterEmptyLectures(lectures client.Lectures) client.Lectures {
@@ -48,12 +49,16 @@ func warnNoAudioLectures(output io.Writer, lectures client.Lectures, skipNoAudio
 }
 
 func countChunks(playlists []client.ParsedPlaylist, views string) int {
+	selected, ok := selection.ParseView(views)
+	if !ok {
+		return 0
+	}
 	total := 0
 	for _, playlist := range playlists {
-		if views != "right" {
+		if selected.Includes(selection.ViewLeft) {
 			total += len(playlist.FirstViewURLs)
 		}
-		if views != "left" {
+		if selected.Includes(selection.ViewRight) {
 			total += len(playlist.SecondViewURLs)
 		}
 	}
@@ -63,13 +68,15 @@ func countChunks(playlists []client.ParsedPlaylist, views string) int {
 // validateFlagOverrides validates config values after CLI flag overrides are applied.
 // This ensures invalid flag values fail early, before any remote API calls.
 func validateFlagOverrides(cfg *config.Config) error {
-	if cfg.Quality != "" && !config.OneOf(cfg.Quality, "144", "450", "720") {
+	if cfg.Quality != "" && !selection.ValidQuality(cfg.Quality) {
 		return fmt.Errorf("invalid quality value %q: must be one of: 144, 450, 720", cfg.Quality)
 	}
-	if cfg.Views != "" && !config.OneOf(cfg.Views, "first", "second", "both", "left", "right") {
-		return fmt.Errorf("invalid views value %q: must be one of: first, second, both, left, right", cfg.Views)
+	if cfg.Views != "" {
+		if _, ok := selection.ParseView(cfg.Views); !ok {
+			return fmt.Errorf("invalid views value %q: must be one of: first, second, both, left, right", cfg.Views)
+		}
 	}
-	if cfg.AudioOnly && cfg.AudioFormat != "" && !config.OneOf(cfg.AudioFormat, "mp3", "m4a", "aac", "opus") {
+	if cfg.AudioOnly && cfg.AudioFormat != "" && !selection.ValidAudioFormat(cfg.AudioFormat) {
 		return fmt.Errorf("invalid audioFormat value %q: must be one of: mp3, m4a, aac, opus", cfg.AudioFormat)
 	}
 	return nil

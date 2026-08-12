@@ -2,9 +2,63 @@ package cli
 
 import (
 	"bufio"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/rabesss/impartus-cli/internal/client"
+	"github.com/rabesss/impartus-cli/internal/config"
 )
+
+func TestFilterLecturesInteractiveAllowsUnresolvedInstituteForPlayback(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/subjects/67/lectures/8" {
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(client.Lectures{
+			{InstituteID: 4, TTID: 1, SeqNo: 1, Topic: "Scoped"},
+			{TTID: 2, SeqNo: 2, Topic: "Missing scope"},
+		}); err != nil {
+			t.Errorf("encode lecture response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	inputPath := t.TempDir() + "/stdin"
+	if err := os.WriteFile(inputPath, []byte("1\n2\nn\nn\n"), 0o600); err != nil {
+		t.Fatalf("write interactive input: %v", err)
+	}
+	input, err := os.Open(inputPath)
+	if err != nil {
+		t.Fatalf("open interactive input: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := input.Close(); closeErr != nil {
+			t.Errorf("close interactive input: %v", closeErr)
+		}
+	})
+	originalStdin := os.Stdin
+	os.Stdin = input
+	t.Cleanup(func() { os.Stdin = originalStdin })
+
+	cfg := &config.Config{BaseURL: server.URL, Token: "test-token"}
+	course := &client.Course{SubjectID: 67, SessionID: 8}
+	lectures, err := filterLecturesInteractive(context.Background(), cfg, client.New(server.Client(), nil), course)
+	if err != nil {
+		t.Fatalf("filterLecturesInteractive: %v", err)
+	}
+	if len(lectures) != 2 {
+		t.Fatalf("lectures = %d, want 2", len(lectures))
+	}
+	if lectures[0].InstituteID != 0 || lectures[1].InstituteID != 4 {
+		t.Fatalf("filter changed institute scope: %+v", lectures)
+	}
+}
 
 func TestPromptInt(t *testing.T) {
 	tests := []struct {

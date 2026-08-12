@@ -47,6 +47,13 @@ func TestValidateRejectsInvalidViewsQualityAndMissingCredentials(t *testing.T) {
 			wantErr: "quality must be one of",
 		},
 		{
+			name: "noncanonical quality",
+			mutate: func(cfg *Config) {
+				cfg.Quality = " 720 "
+			},
+			wantErr: "quality must be one of",
+		},
+		{
 			name: "invalid views",
 			mutate: func(cfg *Config) {
 				cfg.Views = "sideways"
@@ -59,6 +66,14 @@ func TestValidateRejectsInvalidViewsQualityAndMissingCredentials(t *testing.T) {
 				cfg.Username = ""
 			},
 			wantErr: "username and password are required",
+		},
+		{
+			name: "noncanonical audio format",
+			mutate: func(cfg *Config) {
+				cfg.AudioOnly = true
+				cfg.AudioFormat = " M4A "
+			},
+			wantErr: "audioFormat must be one of",
 		},
 	}
 
@@ -74,6 +89,30 @@ func TestValidateRejectsInvalidViewsQualityAndMissingCredentials(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestValidateCanonicalizesSupportedViewInputs(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		" LEFT ": "left",
+		"SECOND": "right",
+		" both ": "both",
+	}
+	for input, want := range tests {
+		t.Run(input, func(t *testing.T) {
+			cfg := minimalValidConfig()
+			cfg.ApplyDefaults()
+			cfg.Views = input
+
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("Validate() error = %v", err)
+			}
+			if cfg.Views != want {
+				t.Fatalf("Views = %q, want canonical %q", cfg.Views, want)
 			}
 		})
 	}
@@ -228,6 +267,32 @@ func TestNormalizeViewsMapsAliasesToCanonicalNames(t *testing.T) {
 		got := NormalizeViews(tc.input)
 		if got != tc.want {
 			t.Errorf("NormalizeViews(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+func TestViewMembershipUsesCanonicalSelectionPolicy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		views             string
+		left, right, both bool
+	}{
+		{views: " LEFT ", left: true},
+		{views: "SECOND", right: true},
+		{views: "both", left: true, right: true, both: true},
+		{views: "invalid"},
+	}
+	for _, test := range tests {
+		cfg := Config{Views: test.views}
+		if got := cfg.IncludesLeft(); got != test.left {
+			t.Errorf("IncludesLeft(%q) = %t, want %t", test.views, got, test.left)
+		}
+		if got := cfg.IncludesRight(); got != test.right {
+			t.Errorf("IncludesRight(%q) = %t, want %t", test.views, got, test.right)
+		}
+		if got := cfg.HasBothViews(); got != test.both {
+			t.Errorf("HasBothViews(%q) = %t, want %t", test.views, got, test.both)
 		}
 	}
 }

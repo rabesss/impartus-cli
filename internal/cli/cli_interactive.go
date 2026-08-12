@@ -38,6 +38,9 @@ func runInteractive() error {
 	if err != nil {
 		return err
 	}
+	if scopeErr := client.ResolveLectureScope(ctx, cfg, apiClient, selected, course.SubjectID, course.SessionID); scopeErr != nil {
+		return scopeErr
+	}
 
 	_, err = downloadLectures(ctx, cfg, apiClient, selected, humanDownloadPresentation())
 	return err
@@ -66,11 +69,10 @@ func selectCourseInteractive(ctx context.Context, cfg *config.Config, apiClient 
 }
 
 func filterLecturesInteractive(ctx context.Context, cfg *config.Config, apiClient *client.Client, course *client.Course) (client.Lectures, error) {
-	lectures, err := apiClient.GetLectures(ctx, cfg, client.Course{SubjectID: course.SubjectID, SessionID: course.SessionID})
+	lectures, err := apiClient.GetLectures(ctx, cfg, *course)
 	if err != nil {
 		return nil, err
 	}
-
 	reversed := lectures.Reverse()
 	for i, lecture := range reversed {
 		fmt.Printf("%3d) LEC %3d %s\n", i+1, lecture.SeqNo, lecture.Topic)

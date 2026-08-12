@@ -7,6 +7,8 @@ import (
 	"net"
 	"strings"
 	"testing"
+
+	"github.com/rabesss/impartus-cli/internal/downloader"
 )
 
 func TestSanitizeUpstreamErr(t *testing.T) {
@@ -17,6 +19,7 @@ func TestSanitizeUpstreamErr(t *testing.T) {
 	}{
 		{"nil", nil, ""},
 		{"canceled", context.Canceled, "job was canceled or timed out"},
+		{"no media outputs", downloader.ErrNoMediaOutputs, "no media outputs available for selected lectures"},
 		{"deadline", context.DeadlineExceeded, "job was canceled or timed out"},
 		{"dns", &net.DNSError{Err: "no such host"}, "upstream connection failed"},
 		{"http status", fmt.Errorf("request failed with status 503"), "upstream API returned HTTP 503"},

@@ -3,6 +3,7 @@ package downloader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -20,6 +21,16 @@ import (
 	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
+var (
+	// ErrNoSelectedMedia reports that one playlist has no chunks for the
+	// configured camera selection. Callers may skip that lecture while retaining
+	// other valid outputs in the same batch.
+	ErrNoSelectedMedia = errors.New("no selected media")
+	// ErrNoMediaOutputs reports that a selected batch produced no usable final
+	// outputs after unavailable playlists were skipped.
+	ErrNoMediaOutputs = errors.New("no media outputs available for selected lectures")
+)
+
 // DownloadedPlaylist holds the result of downloading a complete playlist.
 type DownloadedPlaylist struct {
 	FirstViewChunks  []string
@@ -34,11 +45,15 @@ type M3U8File struct {
 	Playlist       client.ParsedPlaylist
 }
 
-// JoinResult contains the output file paths from joining downloaded chunks.
+// JoinResult contains typed output paths from joining downloaded chunks. Each
+// populated path has a matching container supplied by the code that created it.
 type JoinResult struct {
-	LeftOutput  string
-	RightOutput string
-	BothOutput  string
+	LeftOutput     string
+	LeftContainer  string
+	RightOutput    string
+	RightContainer string
+	BothOutput     string
+	BothContainer  string
 }
 
 // OutputPaths returns the non-empty output file paths in left, right, both order.
@@ -52,11 +67,14 @@ func (r JoinResult) OutputPaths() []string {
 	return paths
 }
 
-type viewConfig struct{ SkipView, Label string }
+type viewConfig struct {
+	Included func(*config.Config) bool
+	Label    string
+}
 
 var (
-	firstViewConfig  = viewConfig{SkipView: "right", Label: "left"}
-	secondViewConfig = viewConfig{SkipView: "left", Label: "right"}
+	firstViewConfig  = viewConfig{Included: (*config.Config).IncludesLeft, Label: "left"}
+	secondViewConfig = viewConfig{Included: (*config.Config).IncludesRight, Label: "right"}
 )
 
 // Downloader orchestrates chunk downloading, decryption, and FFmpeg joining.
@@ -233,6 +251,12 @@ func (d *Downloader) downloadPlaylistPipelined(ctx context.Context, playlist cli
 
 // DownloadAndJoinPlaylist downloads a playlist and joins the chunks into final output file(s).
 func (d *Downloader) DownloadAndJoinPlaylist(ctx context.Context, playlist client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) (JoinResult, error) {
+	if err := ctx.Err(); err != nil {
+		return JoinResult{}, err
+	}
+	if d.totalChunksForPlaylist(playlist) == 0 {
+		return JoinResult{}, fmt.Errorf("%w for lecture %d", ErrNoSelectedMedia, playlist.ID)
+	}
 	// Each invocation owns a unique child workspace. The configured base
 	// directory remains caller-owned and may be shared by concurrent downloads.
 	if err := os.MkdirAll(d.config.TempDirLocation, 0o755); err != nil { // #nosec G301
@@ -294,7 +318,7 @@ func (d *Downloader) fetchDecryptionKey(ctx context.Context, keyURL string) ([]b
 }
 
 func (d *Downloader) downloadViewChunks(ctx context.Context, p *mpb.Progress, tracker *ProgressTracker, playlist client.ParsedPlaylist, urls []string, vc viewConfig, decryptionKey []byte) ([]string, int) {
-	if len(urls) == 0 || d.config.Views == vc.SkipView {
+	if len(urls) == 0 || !vc.Included(d.config) {
 		return nil, 0
 	}
 	bar := d.newViewBar(p, len(urls), playlist.SeqNo, vc.Label)
@@ -449,12 +473,15 @@ func (d *Downloader) joinAudioOutput(ctx context.Context, file M3U8File) (JoinRe
 	}
 	result.LeftOutput = left
 	result.RightOutput = right
+	result.LeftContainer = containerWhenPresent(left, audioContainer(d.config.AudioFormat))
+	result.RightContainer = containerWhenPresent(right, audioContainer(d.config.AudioFormat))
 	if left != "" && right != "" && d.config.HasBothViews() {
 		both, joinErr := d.CreateBothViewsAudioOutput(ctx, left, fmt.Sprintf("LEC %03d %s", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title)), d.config.AudioFormat)
 		if joinErr != nil {
 			return result, joinErr
 		}
 		result.BothOutput = both
+		result.BothContainer = containerWhenPresent(both, audioContainer(d.config.AudioFormat))
 	}
 	return result, nil
 }
@@ -471,14 +498,31 @@ func (d *Downloader) joinVideoOutput(ctx context.Context, file M3U8File) (JoinRe
 	}
 	result.LeftOutput = left
 	result.RightOutput = right
+	result.LeftContainer = containerWhenPresent(left, "mp4")
+	result.RightContainer = containerWhenPresent(right, "mp4")
 	if left != "" && right != "" && d.config.HasBothViews() {
 		both, joinErr := d.JoinViews(ctx, left, right, fmt.Sprintf("LEC %03d %s", file.Playlist.SeqNo, sanitizeFilename(file.Playlist.Title)))
 		if joinErr != nil {
 			return result, joinErr
 		}
 		result.BothOutput = both
+		result.BothContainer = containerWhenPresent(both, "mkv")
 	}
 	return result, nil
+}
+
+func audioContainer(format string) string {
+	if format == "aac" {
+		return "m4a"
+	}
+	return format
+}
+
+func containerWhenPresent(path, container string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	return container
 }
 func (d *Downloader) joinIfPresent(ctx context.Context, path string, enabled bool, title string, join func(context.Context, string, string) (string, error)) (string, error) {
 	if path == "" || !enabled {

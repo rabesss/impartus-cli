@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,58 @@ import (
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 )
+
+func TestDownloadAndJoinPlaylistRejectsMissingSelectedMediaBeforeCreatingWorkspace(t *testing.T) {
+	t.Parallel()
+
+	tempRoot := filepath.Join(t.TempDir(), "not-created")
+	d := &Downloader{config: &config.Config{
+		TempDirLocation: tempRoot,
+		Views:           "left",
+	}}
+	_, err := d.DownloadAndJoinPlaylist(context.Background(), client.ParsedPlaylist{ID: 17}, nil, nil)
+	if !errors.Is(err, ErrNoSelectedMedia) {
+		t.Fatalf("DownloadAndJoinPlaylist() error = %v, want ErrNoSelectedMedia", err)
+	}
+	if _, statErr := os.Stat(tempRoot); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("temporary root stat error = %v, want not-exist", statErr)
+	}
+}
+
+func TestDownloadAndJoinPlaylistCancellationPrecedesMissingSelectedMedia(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	d := &Downloader{config: &config.Config{TempDirLocation: t.TempDir(), Views: "left"}}
+	_, err := d.DownloadAndJoinPlaylist(ctx, client.ParsedPlaylist{ID: 18}, nil, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("DownloadAndJoinPlaylist() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestViewConfigsUseCanonicalSelectionMembership(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		views        string
+		includeLeft  bool
+		includeRight bool
+	}{
+		{views: " first ", includeLeft: true},
+		{views: " second ", includeRight: true},
+		{views: "both", includeLeft: true, includeRight: true},
+	}
+	for _, test := range tests {
+		cfg := &config.Config{Views: test.views}
+		if got := firstViewConfig.Included(cfg); got != test.includeLeft {
+			t.Errorf("first view included for %q = %t, want %t", test.views, got, test.includeLeft)
+		}
+		if got := secondViewConfig.Included(cfg); got != test.includeRight {
+			t.Errorf("second view included for %q = %t, want %t", test.views, got, test.includeRight)
+		}
+	}
+}
 
 // TestNewDownloaderWithConfigDefaults tests that ApplyDefaults is called
 func TestNewDownloaderWithConfigDefaults(t *testing.T) {
@@ -359,5 +412,8 @@ func TestJoinAudioOutputKeepsPerViewOutputsForBothViews(t *testing.T) {
 		if _, err := os.Stat(output); err != nil {
 			t.Fatalf("expected output to exist: %s (%v)", output, err)
 		}
+	}
+	if result.LeftContainer != "mp3" || result.RightContainer != "mp3" || result.BothContainer != "mp3" {
+		t.Fatalf("unexpected typed audio containers: %+v", result)
 	}
 }
