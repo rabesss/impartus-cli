@@ -384,7 +384,7 @@ func (service *Service) finishDownloadJob(ctx context.Context, jobID string, cau
 	if service.library == nil || jobID == "" || cause == nil {
 		return nil
 	}
-	if errors.Is(cause, context.Canceled) || errors.Is(cause, context.DeadlineExceeded) {
+	if errors.Is(cause, context.Canceled) || (ctx != nil && ctx.Err() != nil && errors.Is(cause, ctx.Err())) {
 		return service.library.CancelJob(context.WithoutCancel(ctx), jobID)
 	}
 	return service.library.FailJob(context.WithoutCancel(ctx), jobID, cause)

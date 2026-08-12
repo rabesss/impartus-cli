@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -900,18 +901,27 @@ func TestDownloadLectureFinishesDurableJobOnDownloadFailure(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		cause      error
-		wantFailed int
-		wantCancel int
+		name           string
+		cause          error
+		callerDeadline bool
+		wantFailed     int
+		wantCancel     int
 	}{
 		{name: "failure", cause: errors.New("download failed"), wantFailed: 1},
+		{name: "transport timeout", cause: fmt.Errorf("request timed out: %w", context.DeadlineExceeded), wantFailed: 1},
+		{name: "caller deadline", cause: context.DeadlineExceeded, callerDeadline: true, wantCancel: 1},
 		{name: "cancellation", cause: context.Canceled, wantCancel: 1},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
+			ctx := context.Background()
+			if test.callerDeadline {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithDeadline(ctx, time.Now().Add(-time.Second))
+				defer cancel()
+			}
 			store := &fakeArtifactStore{}
 			service := &Service{
 				config: &config.Config{DownloadLocation: t.TempDir(), Views: "left", Quality: "720"},
@@ -922,7 +932,7 @@ func TestDownloadLectureFinishesDurableJobOnDownloadFailure(t *testing.T) {
 				library: store,
 			}
 
-			_, err := service.DownloadLecture(context.Background(), client.Lecture{
+			_, err := service.DownloadLecture(ctx, client.Lecture{
 				InstituteID: 1, SubjectID: 2, SessionID: 3, TTID: 12345, Topic: "Failure",
 			})
 			if !errors.Is(err, test.cause) {
