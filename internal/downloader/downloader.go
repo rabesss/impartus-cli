@@ -260,15 +260,54 @@ func (d *Downloader) downloadPlaylistPipelined(ctx context.Context, playlist cli
 	submitErr := <-submitErrCh
 
 	d.stopPipelineMonitor(monitorDone, downloadBar, totalChunks)
+	if err := pipelineCancellationError(ctx, result, totalChunks); err != nil {
+		return downloadedPlaylist, errors.Join(err, pipelineFailureError(result.Failures))
+	}
 	if submitErr != nil {
 		return downloadedPlaylist, submitErr
 	}
-	if len(result.FailedChunks) > 0 {
-		return downloadedPlaylist, fmt.Errorf("%d chunks failed to download: %v", len(result.FailedChunks), result.FailedChunks)
+	if failureErr := pipelineFailureError(result.Failures); failureErr != nil {
+		return downloadedPlaylist, failureErr
 	}
 	downloadedPlaylist.FirstViewChunks = result.FirstViewChunks
 	downloadedPlaylist.SecondViewChunks = result.SecondViewChunks
 	return downloadedPlaylist, nil
+}
+
+var errPipelineIncomplete = errors.New("pipeline collection incomplete")
+
+func pipelineCancellationError(ctx context.Context, result PipelineResult, totalChunks int) error {
+	// Once every submitted chunk has a terminal result, collection is complete:
+	// preserve that success or a genuine detailed chunk failure even if
+	// cancellation races with finalization. Any terminal cancellation failure
+	// still represents the parent's cancellation, even alongside diagnostics
+	// from chunks that failed first for another reason.
+	if len(result.FirstViewChunks)+len(result.SecondViewChunks)+len(result.Failures) == totalChunks {
+		if ctx.Err() != nil {
+			for _, failure := range result.Failures {
+				if failure.Canceled {
+					return ctx.Err()
+				}
+			}
+		}
+		return nil
+	}
+	collected := len(result.FirstViewChunks) + len(result.SecondViewChunks) + len(result.Failures)
+	return errors.Join(
+		ctx.Err(),
+		fmt.Errorf("%w: collected %d of %d terminal chunk results", errPipelineIncomplete, collected, totalChunks),
+	)
+}
+
+func pipelineFailureError(failures []ChunkFailure) error {
+	if len(failures) == 0 {
+		return nil
+	}
+	details := make([]string, 0, len(failures))
+	for _, failure := range failures {
+		details = append(details, fmt.Sprintf("%s view chunk %d: %s", failure.View, failure.ChunkID, failure.Detail))
+	}
+	return fmt.Errorf("%d chunks failed to download: %s", len(failures), strings.Join(details, "; "))
 }
 
 // DownloadAndJoinPlaylist downloads a playlist and joins the chunks into final output file(s).

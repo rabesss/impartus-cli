@@ -3,9 +3,12 @@ package downloader
 import (
 	"context"
 	"errors"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
 //nolint:misspell // Prefer UK English in user-facing error text.
@@ -68,7 +71,16 @@ type PipelineResult struct {
 	FirstViewChunks  []string
 	SecondViewChunks []string
 	TotalTime        time.Duration
-	FailedChunks     []int
+	Failures         []ChunkFailure
+}
+
+// ChunkFailure retains sortable chunk identity separately from its scrubbed
+// root cause so concurrent completion order cannot leak into user output.
+type ChunkFailure struct {
+	ChunkID  int
+	View     string
+	Detail   string
+	Canceled bool
 }
 
 // LecturePipeline manages concurrent download and decrypt workers for a single lecture.
@@ -87,7 +99,7 @@ type LecturePipeline struct {
 	firstViewMap    map[int]string
 	secondViewMap   map[int]string
 	totalChunks     atomic.Int64
-	failedChunks    []int
+	failures        []ChunkFailure
 	firstViewCount  atomic.Int64
 	secondViewCount atomic.Int64
 	failedCount     atomic.Int64
@@ -133,7 +145,7 @@ func NewLecturePipeline(config PipelineConfig, downloader *Downloader) *LectureP
 		cancel:           cancel,
 		firstViewMap:     make(map[int]string),
 		secondViewMap:    make(map[int]string),
-		failedChunks:     make([]int, 0),
+		failures:         make([]ChunkFailure, 0),
 		startTime:        time.Now(),
 	}
 	pipeline.inFlightCond = sync.NewCond(&pipeline.inFlightMu)
@@ -199,7 +211,7 @@ func (p *LecturePipeline) downloadWorker() {
 				return
 			}
 
-			encryptedPath, encryptedBytes, err := p.downloader.downloadBytesWithRetry(p.ctx, task.URL, task.LectureID, task.ChunkID, task.View, 3, p.config.ProgressTracker)
+			encryptedPath, encryptedBytes, err := p.downloader.downloadBytesWithRetry(p.ctx, task.URL, task.LectureID, task.ChunkID, task.View, p.downloader.maxRetries, p.config.ProgressTracker)
 			result := DownloadedChunk{
 				ChunkID:        task.ChunkID,
 				View:           task.View,
@@ -293,7 +305,13 @@ func (p *LecturePipeline) FinishSubmission(totalChunks int) {
 func (p *LecturePipeline) Collect() PipelineResult {
 	for decrypted := range p.decryptedChunks {
 		if decrypted.Err != nil {
-			p.failedChunks = append(p.failedChunks, decrypted.ChunkID)
+			p.failures = append(p.failures, ChunkFailure{
+				ChunkID: decrypted.ChunkID,
+				View:    decrypted.View,
+				Detail:  secrets.ScrubError(decrypted.Err),
+				Canceled: errors.Is(decrypted.Err, context.Canceled) ||
+					errors.Is(decrypted.Err, context.DeadlineExceeded),
+			})
 			p.failedCount.Add(1)
 		} else if decrypted.View == "first" {
 			p.firstViewMap[decrypted.ChunkID] = decrypted.DecryptedPath
@@ -307,11 +325,20 @@ func (p *LecturePipeline) Collect() PipelineResult {
 	// All decrypt workers have finished; zero the shared decryption key.
 	defer zeroKey(p.config.DecryptionKey)
 
+	sort.Slice(p.failures, func(left, right int) bool {
+		if p.failures[left].View != p.failures[right].View {
+			return p.failures[left].View < p.failures[right].View
+		}
+		if p.failures[left].ChunkID != p.failures[right].ChunkID {
+			return p.failures[left].ChunkID < p.failures[right].ChunkID
+		}
+		return p.failures[left].Detail < p.failures[right].Detail
+	})
 	return PipelineResult{
 		FirstViewChunks:  p.buildOrderedList(p.firstViewMap),
 		SecondViewChunks: p.buildOrderedList(p.secondViewMap),
 		TotalTime:        time.Since(p.startTime),
-		FailedChunks:     p.failedChunks,
+		Failures:         p.failures,
 	}
 }
 

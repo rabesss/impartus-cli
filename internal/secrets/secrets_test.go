@@ -81,9 +81,26 @@ func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 		input  string
 		secret string
 	}{
+		{name: "authorization header", input: "Authorization: Bearer body-secret", secret: "body-secret"},
+		{name: "prefixed authorization header", input: "proxy error: Authorization: Bearer body-secret", secret: "body-secret"},
 		{name: "auth equals", input: "upstream auth=body-secret failed", secret: "body-secret"},
 		{name: "json auth", input: `{"auth":"body-secret"}`, secret: "body-secret"},
 		{name: "json authorization", input: `{"authorization":"Bearer body-secret"}`, secret: "body-secret"},
+		{name: "equals token", input: "upstream token=body-secret failed", secret: "body-secret"},
+		{name: "equals key", input: "upstream key=body-secret failed", secret: "body-secret"},
+		{name: "json token", input: `{"refresh_token":"body-secret"}`, secret: "body-secret"},
+		{name: "json key", input: `{"key":"body-secret"}`, secret: "body-secret"},
+		{name: "password colon", input: "password:body-secret", secret: "body-secret"},
+		{name: "inline tight auth colon", input: "upstream auth:body-secret failed", secret: "body-secret"},
+		{name: "inline spaced auth colon", input: "upstream auth: body-secret failed", secret: "body-secret"},
+		{name: "inline short auth colon", input: "upstream auth: abc123 failed", secret: "abc123"},
+		{name: "inline short bare token colon", input: "upstream token: z failed", secret: "z"},
+		{name: "inline short token colon", input: "upstream access_token: z failed", secret: "z"},
+		{name: "inline short api key colon", input: "upstream api-key: q failed", secret: "q"},
+		{name: "inline short secret colon", input: "upstream secret: v failed", secret: "v"},
+		{name: "inline short key colon", input: "upstream key: q7 failed", secret: "q7"},
+		{name: "inline short password colon", input: "upstream password: hunter2 failed", secret: "hunter2"},
+		{name: "line token colon", input: "token: body-secret", secret: "body-secret"},
 		{name: "auth bearer", input: "upstream auth: Bearer body-secret", secret: "body-secret"},
 		{name: "token bearer", input: "upstream token=Bearer body-secret", secret: "body-secret"},
 		{name: "authorization digest", input: `Authorization: Digest username="alice", realm="lecture", response="digest-secret"`, secret: "digest-secret"},
@@ -94,7 +111,6 @@ func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 		{name: "proxy authorization", input: "Proxy-Authorization: Custom proof=proxy-secret", secret: "proxy-secret"},
 		{name: "x api key", input: "X-Api-Key: api-secret", secret: "api-secret"},
 		{name: "json x api key", input: `{"x-api-key":"api-secret"}`, secret: "api-secret"},
-		{name: "short token", input: "upstream token: z failed", secret: "z"},
 		{name: "signature equals", input: "upstream signature=body-secret failed", secret: "body-secret"},
 		{name: "short sig colon", input: "upstream sig: q failed", secret: "q"},
 		{name: "json signature", input: `{"signature":"body-secret"}`, secret: "body-secret"},
@@ -152,6 +168,24 @@ func TestScrub_PreservesPathDiagnostics(t *testing.T) {
 		if got := Scrub(diagnostic); got != diagnostic {
 			t.Fatalf("Scrub(%q) = %q", diagnostic, got)
 		}
+	}
+}
+
+func TestScrub_RedactsAmbiguousPasswordValueButPreservesContext(t *testing.T) {
+	t.Parallel()
+
+	const diagnostic = "login failed because password: expired"
+	if got := Scrub(diagnostic); got != "login failed because password: REDACTED" {
+		t.Fatalf("Scrub(%q) = %q", diagnostic, got)
+	}
+}
+
+func TestScrub_RedactsAmbiguousParserTokenValueButPreservesContext(t *testing.T) {
+	t.Parallel()
+
+	const diagnostic = "decode failed: unexpected token: EOF"
+	if got := Scrub(diagnostic); got != "decode failed: unexpected token: REDACTED" {
+		t.Fatalf("Scrub(%q) = %q", diagnostic, got)
 	}
 }
 

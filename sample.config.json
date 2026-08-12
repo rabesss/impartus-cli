@@ -13,7 +13,7 @@
   "numWorkers": 5,
   "rateLimit": 100,
   "apiRateLimit": 2,
-  "enablePipeline": false,
+  "enablePipeline": true,
   "downloadWorkersPerLecture": 12,
   "decryptWorkersPerLecture": 4,
   "httpTimeout": "10m",

@@ -175,6 +175,7 @@ func writeTempConfig(t *testing.T, body string) string {
 }
 
 func TestLoadResolvedEnableJitterDefaultsTrueWhenOmitted(t *testing.T) {
+	unsetConfigEnv(t, "IMPARTUS_ENABLE_JITTER")
 	path := writeTempConfig(t, `{
 		"username": "u", "password": "p", "baseUrl": "https://example.com",
 		"quality": "450", "views": "both"
@@ -189,6 +190,7 @@ func TestLoadResolvedEnableJitterDefaultsTrueWhenOmitted(t *testing.T) {
 }
 
 func TestLoadResolvedEnableJitterHonorsExplicitFalse(t *testing.T) {
+	unsetConfigEnv(t, "IMPARTUS_ENABLE_JITTER")
 	path := writeTempConfig(t, `{
 		"username": "u", "password": "p", "baseUrl": "https://example.com",
 		"quality": "450", "views": "both", "enableJitter": false
@@ -203,6 +205,7 @@ func TestLoadResolvedEnableJitterHonorsExplicitFalse(t *testing.T) {
 }
 
 func TestLoadResolvedEnableJitterHonorsExplicitFalseLowercaseKey(t *testing.T) {
+	unsetConfigEnv(t, "IMPARTUS_ENABLE_JITTER")
 	// json.Unmarshal matches field tags case-insensitively, so "enablejitter"
 	// (lowercase) parses as false. jsonKeyPresent must detect it the same way,
 	// otherwise an explicit false would be silently overwritten to true.
@@ -231,6 +234,81 @@ func TestLoadResolvedEnableJitterEnvOverridesDefault(t *testing.T) {
 	}
 	if cfg.EnableJitter {
 		t.Error("expected IMPARTUS_ENABLE_JITTER=false to disable jitter despite omitted config key")
+	}
+}
+
+func TestLoadResolvedEnablePipelineDefaultsTrueWhenOmitted(t *testing.T) {
+	unsetConfigEnv(t, "IMPARTUS_ENABLE_PIPELINE")
+	path := writeTempConfig(t, `{
+		"username": "u", "password": "p", "baseUrl": "https://example.com",
+		"quality": "450", "views": "both"
+	}`)
+	cfg, err := LoadResolved(path)
+	if err != nil {
+		t.Fatalf("LoadResolved: %v", err)
+	}
+	if !cfg.EnablePipeline {
+		t.Error("expected EnablePipeline to default true when omitted from config")
+	}
+}
+
+func TestLoadResolvedEnablePipelineHonorsExplicitFalse(t *testing.T) {
+	unsetConfigEnv(t, "IMPARTUS_ENABLE_PIPELINE")
+	path := writeTempConfig(t, `{
+		"username": "u", "password": "p", "baseUrl": "https://example.com",
+		"quality": "450", "views": "both", "enablePipeline": false
+	}`)
+	cfg, err := LoadResolved(path)
+	if err != nil {
+		t.Fatalf("LoadResolved: %v", err)
+	}
+	if cfg.EnablePipeline {
+		t.Error("expected EnablePipeline to stay false when explicitly disabled in config")
+	}
+}
+
+func TestLoadResolvedEnablePipelineHonorsExplicitFalseLowercaseKey(t *testing.T) {
+	unsetConfigEnv(t, "IMPARTUS_ENABLE_PIPELINE")
+	path := writeTempConfig(t, `{
+		"username": "u", "password": "p", "baseUrl": "https://example.com",
+		"quality": "450", "views": "both", "enablepipeline": false
+	}`)
+	cfg, err := LoadResolved(path)
+	if err != nil {
+		t.Fatalf("LoadResolved: %v", err)
+	}
+	if cfg.EnablePipeline {
+		t.Error("expected EnablePipeline to stay false when set via a lowercase key")
+	}
+}
+
+func TestLoadResolvedEnablePipelineEnvOverridesFileValue(t *testing.T) {
+	t.Setenv("IMPARTUS_ENABLE_PIPELINE", "false")
+	path := writeTempConfig(t, `{
+		"username": "u", "password": "p", "baseUrl": "https://example.com",
+		"quality": "450", "views": "both", "enablePipeline": true
+	}`)
+	cfg, err := LoadResolved(path)
+	if err != nil {
+		t.Fatalf("LoadResolved: %v", err)
+	}
+	if cfg.EnablePipeline {
+		t.Error("expected IMPARTUS_ENABLE_PIPELINE=false to override a file value")
+	}
+}
+
+func TestLoadResolvedEnablePipelineTrueEnvOverridesFalseFileValue(t *testing.T) {
+	t.Setenv("IMPARTUS_ENABLE_PIPELINE", "true")
+	path := writeTempConfig(t, `{
+		"username": "u", "password": "p", "baseUrl": "https://example.com",
+		"quality": "450", "views": "both", "enablePipeline": false
+	}`)
+	cfg, err := LoadResolved(path)
+	if err != nil {
+		t.Fatalf("LoadResolved: %v", err)
+	}
+	if !cfg.EnablePipeline {
+		t.Error("expected IMPARTUS_ENABLE_PIPELINE=true to override a false file value")
 	}
 }
 
@@ -395,6 +473,7 @@ func TestParseRejectsMalformedJSON(t *testing.T) {
 }
 
 func TestLoadResolvedNoConfigFileUsesEnvOnly(t *testing.T) {
+	unsetConfigEnv(t, "IMPARTUS_ENABLE_PIPELINE")
 	t.Setenv("IMPARTUS_USERNAME", "env-user")
 	t.Setenv("IMPARTUS_PASSWORD", "env-pass")
 	t.Setenv("IMPARTUS_BASE_URL", "https://env.example.com")
@@ -421,6 +500,57 @@ func TestLoadResolvedNoConfigFileUsesEnvOnly(t *testing.T) {
 	}
 	if cfg.Username != "env-user" {
 		t.Errorf("expected env-user, got %s", cfg.Username)
+	}
+	if !cfg.EnablePipeline {
+		t.Error("expected EnablePipeline to default true without a config file")
+	}
+}
+
+func unsetConfigEnv(t *testing.T, key string) {
+	t.Helper()
+	value, wasSet := os.LookupEnv(key)
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatalf("unset %s: %v", key, err)
+	}
+	t.Cleanup(func() {
+		var err error
+		if wasSet {
+			err = os.Setenv(key, value)
+		} else {
+			err = os.Unsetenv(key)
+		}
+		if err != nil {
+			t.Errorf("restore %s: %v", key, err)
+		}
+	})
+}
+
+func TestLoadResolvedNoConfigFileHonorsPipelineEnvOptOut(t *testing.T) {
+	t.Setenv("IMPARTUS_USERNAME", "env-user")
+	t.Setenv("IMPARTUS_PASSWORD", "env-pass")
+	t.Setenv("IMPARTUS_BASE_URL", "https://env.example.com")
+	t.Setenv("IMPARTUS_QUALITY", "450")
+	t.Setenv("IMPARTUS_ENABLE_PIPELINE", "false")
+
+	originalDirectory, err := os.Getwd()
+	if err != nil {
+		t.Skipf("cannot get cwd: %v", err)
+	}
+	if chdirErr := os.Chdir(t.TempDir()); chdirErr != nil {
+		t.Skipf("cannot chdir: %v", chdirErr)
+	}
+	defer func() {
+		if restoreErr := os.Chdir(originalDirectory); restoreErr != nil {
+			t.Fatalf("cannot restore cwd: %v", restoreErr)
+		}
+	}()
+
+	cfg, err := LoadResolved("")
+	if err != nil {
+		t.Fatalf("LoadResolved: %v", err)
+	}
+	if cfg.EnablePipeline {
+		t.Error("expected IMPARTUS_ENABLE_PIPELINE=false to preserve the serial opt-out without a config file")
 	}
 }
 

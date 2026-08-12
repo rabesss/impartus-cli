@@ -114,8 +114,8 @@ func TestNewLecturePipeline(t *testing.T) {
 				t.Error("secondViewMap should not be nil")
 			}
 
-			if p.failedChunks == nil {
-				t.Error("failedChunks should not be nil")
+			if p.failures == nil {
+				t.Error("failures should not be nil")
 			}
 
 			if p.startTime.IsZero() {
@@ -541,7 +541,7 @@ func TestPipelineResultStruct(t *testing.T) {
 		FirstViewChunks:  []string{"/first/0", "/first/1"},
 		SecondViewChunks: []string{"/second/0"},
 		TotalTime:        10 * time.Second,
-		FailedChunks:     []int{2},
+		Failures:         []ChunkFailure{{ChunkID: 2, View: "first", Detail: "failed"}},
 	}
 
 	if len(result.FirstViewChunks) != 2 {
@@ -553,7 +553,7 @@ func TestPipelineResultStruct(t *testing.T) {
 	if result.TotalTime != 10*time.Second {
 		t.Errorf("TotalTime = %v, want 10s", result.TotalTime)
 	}
-	if len(result.FailedChunks) != 1 {
-		t.Errorf("FailedChunks len = %v, want 1", len(result.FailedChunks))
+	if len(result.Failures) != 1 {
+		t.Errorf("Failures len = %v, want 1", len(result.Failures))
 	}
 }

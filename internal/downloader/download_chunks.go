@@ -55,7 +55,7 @@ func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, i
 		if readErr != nil {
 			return "", nil, 0, fmt.Errorf("chunk request failed with status %d and unreadable error body: %w", resp.StatusCode, readErr)
 		}
-		message := strings.TrimSpace(string(body))
+		message := secrets.Scrub(strings.TrimSpace(string(body)))
 		if message == "" {
 			return "", nil, 0, fmt.Errorf("chunk request failed with status %d for URL %s", resp.StatusCode, secrets.RedactURL(url))
 		}
@@ -63,6 +63,9 @@ func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, i
 	}
 
 	outFilepath := filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_%s_%04d.ts.temp", id, view, chunk))
+	if resp.ContentLength > limit {
+		return "", nil, 0, fmt.Errorf("chunk %d exceeds max size %d bytes: %w", chunk, limit, errDownloadSizeLimit)
+	}
 
 	if toMemory {
 		data, readErr := io.ReadAll(io.LimitReader(resp.Body, limit+1))
@@ -74,10 +77,6 @@ func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, i
 		}
 		return outFilepath, data, int64(len(data)), nil
 	}
-	if resp.ContentLength > limit {
-		return "", nil, 0, fmt.Errorf("chunk %d exceeds max size %d bytes: %w", chunk, limit, errDownloadSizeLimit)
-	}
-
 	// G304: file paths are constructed from validated config and internal data
 	// #nosec G304
 	outFile, createErr := os.Create(outFilepath)
@@ -115,6 +114,9 @@ func (d *Downloader) downloadURL(ctx context.Context, url string, id int, chunk 
 // downloadChunkWithRetry performs a download with exponential backoff retry logic.
 // When toMemory is true, it returns data in the byte slice; otherwise it writes to a file.
 func (d *Downloader) downloadChunkWithRetry(ctx context.Context, url string, id int, chunk int, view string, maxRetries int, tracker *ProgressTracker, toMemory bool) (string, []byte, error) {
+	if maxRetries < 1 {
+		maxRetries = 1
+	}
 	var lastErr error
 	baseDelay := 1 * time.Second
 	for attempt := 0; attempt < maxRetries; attempt++ {
