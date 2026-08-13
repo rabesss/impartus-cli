@@ -3,10 +3,13 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { SessionClient } from "../src/client.ts"
 import {
   PROTOCOL_VERSION,
+  type ArtifactList,
   type Bootstrap,
   type CourseList,
+  type DiagnosticList,
   type Event,
   type Health,
+  type LectureList,
   type Operation,
 } from "../src/protocol/types.gen.ts"
 
@@ -52,6 +55,41 @@ describe("SessionClient", () => {
                 },
               ],
             } satisfies CourseList)
+          case "/tui/v1/lectures":
+            return Response.json({
+              lectures: [{
+                classroomName: "Room 7",
+                durationSeconds: 3600,
+                instituteId: 1,
+                noAudio: false,
+                professorName: "Dr. Rao",
+                sequence: 4,
+                sessionId: 2,
+                sessionName: "Monsoon",
+                startTime: "2026-08-13T10:00:00Z",
+                subjectId: 3,
+                subjectName: "Distributed Systems",
+                topic: "Consensus",
+                ttid: 5,
+                views: 2,
+              }],
+            } satisfies LectureList)
+          case "/tui/v1/library":
+            return Response.json({
+              artifacts: [{
+                artifactId: "artifact-1",
+                fileCount: 2,
+                presentFileCount: 2,
+                producedAt: "2026-08-13T12:30:00Z",
+                sequence: 4,
+                topic: "Consensus",
+                totalBytes: 2048,
+              }],
+            } satisfies ArtifactList)
+          case "/tui/v1/diagnostics":
+            return Response.json({
+              diagnostics: [{ detail: "available", name: "mpv", status: "pass" }],
+            } satisfies DiagnosticList)
           case "/tui/v1/operations":
             return Response.json({ id: "operation-id", kind: "selftest", state: "running" } satisfies Operation, {
               status: 202,
@@ -93,6 +131,11 @@ describe("SessionClient", () => {
 
     expect((await client.health()).sessionId).toBe("session-id")
     expect((await client.courses()).courses[0]?.subjectName).toBe("Distributed Systems")
+    const course = (await client.courses()).courses[0]
+    expect(course).toBeDefined()
+    expect((await client.lectures(course!)).lectures[0]?.topic).toBe("Consensus")
+    expect((await client.artifacts()).artifacts[0]?.totalBytes).toBe(2048)
+    expect((await client.diagnostics()).diagnostics[0]?.status).toBe("pass")
     expect((await client.startSelfTest()).id).toBe("operation-id")
     const events: Event[] = []
     for await (const event of client.events()) {
@@ -100,11 +143,12 @@ describe("SessionClient", () => {
     }
     expect(events.map((event) => event.sequence)).toEqual([1, 2, 3])
 
-    expect(requests).toHaveLength(4)
+    expect(requests).toHaveLength(8)
     for (const request of requests) {
       expect(request.capability).toBe(bootstrap.capability)
       expect(request.protocol).toBe(PROTOCOL_VERSION)
       expect(request.url).not.toContain(bootstrap.capability)
     }
+    expect(requests.find((request) => request.url.includes("/lectures?"))?.url).toContain("subjectId=3")
   })
 })

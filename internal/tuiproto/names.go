@@ -13,6 +13,7 @@ var goInitialisms = map[string]string{
 	"id":   "ID",
 	"json": "JSON",
 	"ok":   "OK",
+	"ttid": "TTID",
 	"url":  "URL",
 }
 

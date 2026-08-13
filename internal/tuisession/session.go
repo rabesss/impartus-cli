@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/rabesss/impartus-cli/internal/client"
+	"github.com/rabesss/impartus-cli/internal/library"
 	"github.com/rabesss/impartus-cli/internal/tuiproto"
 )
 
@@ -56,6 +57,23 @@ type Catalog interface {
 	Courses(context.Context) (client.Courses, error)
 }
 
+// LectureCatalog resolves the live lectures for one selected course.
+type LectureCatalog interface {
+	Lectures(context.Context, client.Course) (client.Lectures, error)
+}
+
+// ArtifactCatalog projects the durable local lecture library.
+type ArtifactCatalog interface {
+	Artifacts(context.Context) ([]library.ArtifactRecord, error)
+}
+
+// Diagnostic is one presentation-only startup preflight result.
+type Diagnostic struct {
+	Name   string
+	Status string
+	Detail string
+}
+
 // SelfTestOptions tunes the cancellable operation seam used to prove
 // operation lifecycle semantics without coupling the transport to the
 // downloader.
@@ -71,6 +89,12 @@ type SelfTestOptions struct {
 type Options struct {
 	// Catalog supplies read-only catalog projections. Required.
 	Catalog Catalog
+	// Lectures supplies live lecture projections. Optional during transport-only tests.
+	Lectures LectureCatalog
+	// Artifacts supplies local-library projections. Optional during transport-only tests.
+	Artifacts ArtifactCatalog
+	// Diagnostics are copied and scrubbed before the session begins serving.
+	Diagnostics []Diagnostic
 	// Version is the parent build version reported by the health probe.
 	Version string
 	// EventQueueDepth bounds per-client event delivery. Zero uses the default.
@@ -86,11 +110,14 @@ type Session struct {
 	address    string
 	version    string
 
-	listener   net.Listener
-	server     *http.Server
-	catalog    Catalog
-	events     *hub
-	operations *operationRegistry
+	listener    net.Listener
+	server      *http.Server
+	catalog     Catalog
+	lectures    LectureCatalog
+	artifacts   ArtifactCatalog
+	diagnostics []tuiproto.Diagnostic
+	events      *hub
+	operations  *operationRegistry
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -135,16 +162,19 @@ func newSession(ctx context.Context, listener net.Listener, options Options) (*S
 	}
 	sessionCtx, cancel := context.WithCancel(ctx)
 	session := &Session{
-		id:         identity,
-		capability: capability,
-		address:    listener.Addr().String(),
-		version:    options.Version,
-		listener:   listener,
-		catalog:    options.Catalog,
-		events:     newHub(options.EventQueueDepth),
-		ctx:        sessionCtx,
-		cancel:     cancel,
-		serveErr:   make(chan error, 1),
+		id:          identity,
+		capability:  capability,
+		address:     listener.Addr().String(),
+		version:     options.Version,
+		listener:    listener,
+		catalog:     options.Catalog,
+		lectures:    options.Lectures,
+		artifacts:   options.Artifacts,
+		diagnostics: projectDiagnostics(options.Diagnostics),
+		events:      newHub(options.EventQueueDepth),
+		ctx:         sessionCtx,
+		cancel:      cancel,
+		serveErr:    make(chan error, 1),
 	}
 	session.id = identity
 	session.operations = newOperationRegistry(sessionCtx, session.events, options.SelfTest)

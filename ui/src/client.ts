@@ -2,12 +2,18 @@ import {
   CAPABILITY_HEADER,
   PROTOCOL_HEADER,
   PROTOCOL_VERSION,
+  type ArtifactList,
+  type ArtifactSummary,
   type Bootstrap,
   type Course,
   type CourseList,
+  type Diagnostic,
+  type DiagnosticList,
   type Event,
   type EventType,
   type Health,
+  type Lecture,
+  type LectureList,
   type Operation,
   type OperationState,
 } from "./protocol/types.gen.ts"
@@ -41,6 +47,35 @@ export class SessionClient {
   public async courses(signal?: AbortSignal): Promise<CourseList> {
     const value = await this.#json("/courses", { method: "GET" }, signal)
     if (!isCourseList(value)) {
+      throw new Error("Invalid UI session response")
+    }
+    return value
+  }
+
+  public async lectures(course: Course, signal?: AbortSignal): Promise<LectureList> {
+    const query = new URLSearchParams({
+      instituteId: String(course.instituteId),
+      sessionId: String(course.sessionId),
+      subjectId: String(course.subjectId),
+    })
+    const value = await this.#json(`/lectures?${query.toString()}`, { method: "GET" }, signal)
+    if (!isLectureList(value)) {
+      throw new Error("Invalid UI session response")
+    }
+    return value
+  }
+
+  public async artifacts(signal?: AbortSignal): Promise<ArtifactList> {
+    const value = await this.#json("/library", { method: "GET" }, signal)
+    if (!isArtifactList(value)) {
+      throw new Error("Invalid UI session response")
+    }
+    return value
+  }
+
+  public async diagnostics(signal?: AbortSignal): Promise<DiagnosticList> {
+    const value = await this.#json("/diagnostics", { method: "GET" }, signal)
+    if (!isDiagnosticList(value)) {
       throw new Error("Invalid UI session response")
     }
     return value
@@ -194,6 +229,58 @@ function isCourse(value: unknown): value is Course {
   )
 }
 
+function isLectureList(value: unknown): value is LectureList {
+  return isRecord(value) && Array.isArray(value.lectures) && value.lectures.every(isLecture)
+}
+
+function isLecture(value: unknown): value is Lecture {
+  return (
+    isRecord(value) &&
+    typeof value.classroomName === "string" &&
+    isNonNegativeInteger(value.durationSeconds) &&
+    isInteger(value.instituteId) &&
+    typeof value.noAudio === "boolean" &&
+    typeof value.professorName === "string" &&
+    isInteger(value.sequence) &&
+    isInteger(value.sessionId) &&
+    typeof value.sessionName === "string" &&
+    typeof value.startTime === "string" &&
+    isInteger(value.subjectId) &&
+    typeof value.subjectName === "string" &&
+    typeof value.topic === "string" &&
+    isInteger(value.ttid) &&
+    isNonNegativeInteger(value.views)
+  )
+}
+
+function isArtifactList(value: unknown): value is ArtifactList {
+  return isRecord(value) && Array.isArray(value.artifacts) && value.artifacts.every(isArtifactSummary)
+}
+
+function isArtifactSummary(value: unknown): value is ArtifactSummary {
+  return (
+    isRecord(value) &&
+    typeof value.artifactId === "string" &&
+    value.artifactId.length > 0 &&
+    isNonNegativeInteger(value.fileCount) &&
+    isNonNegativeInteger(value.presentFileCount) &&
+    value.presentFileCount <= value.fileCount &&
+    typeof value.producedAt === "string" &&
+    !Number.isNaN(Date.parse(value.producedAt)) &&
+    isInteger(value.sequence) &&
+    typeof value.topic === "string" &&
+    isNonNegativeInteger(value.totalBytes)
+  )
+}
+
+function isDiagnosticList(value: unknown): value is DiagnosticList {
+  return isRecord(value) && Array.isArray(value.diagnostics) && value.diagnostics.every(isDiagnostic)
+}
+
+function isDiagnostic(value: unknown): value is Diagnostic {
+  return isRecord(value) && typeof value.detail === "string" && typeof value.name === "string" && typeof value.status === "string"
+}
+
 function isOperation(value: unknown): value is Operation {
   return (
     isRecord(value) &&
@@ -226,6 +313,10 @@ function isEvent(value: unknown): value is Event {
 
 function isInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value)
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return isInteger(value) && value >= 0
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

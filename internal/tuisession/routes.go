@@ -8,8 +8,12 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
+	"unicode"
 
+	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/secrets"
 	"github.com/rabesss/impartus-cli/internal/tuiproto"
 )
@@ -18,6 +22,9 @@ func (session *Session) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc(tuiproto.ProtocolBasePath+"/health", session.health)
 	mux.HandleFunc(tuiproto.ProtocolBasePath+"/courses", session.courses)
+	mux.HandleFunc(tuiproto.ProtocolBasePath+"/diagnostics", session.diagnosticsView)
+	mux.HandleFunc(tuiproto.ProtocolBasePath+"/lectures", session.lecturesView)
+	mux.HandleFunc(tuiproto.ProtocolBasePath+"/library", session.libraryView)
 	mux.HandleFunc(tuiproto.ProtocolBasePath+"/events", session.streamEvents)
 	mux.HandleFunc(tuiproto.ProtocolBasePath+"/operations", session.operationsRoot)
 	mux.HandleFunc(tuiproto.ProtocolBasePath+"/operations/", session.operationByID)
@@ -140,13 +147,147 @@ func (session *Session) courses(writer http.ResponseWriter, request *http.Reques
 			InstituteID:   int64(course.InstituteID),
 			SessionID:     int64(course.SessionID),
 			SubjectID:     int64(course.SubjectID),
-			SubjectName:   course.SubjectName,
-			SessionName:   course.SessionName,
-			ProfessorName: course.ProfessorName,
+			SubjectName:   safePresentationText(course.SubjectName),
+			SessionName:   safePresentationText(course.SessionName),
+			ProfessorName: safePresentationText(course.ProfessorName),
 			VideoCount:    int64(course.VideoCount),
 		})
 	}
 	writeJSON(writer, http.StatusOK, tuiproto.CourseList{Courses: projected})
+}
+
+func (session *Session) diagnosticsView(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		methodNotAllowed(writer, http.MethodGet)
+		return
+	}
+	writeJSON(writer, http.StatusOK, tuiproto.DiagnosticList{
+		Diagnostics: session.diagnostics,
+	})
+}
+
+func (session *Session) lecturesView(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		methodNotAllowed(writer, http.MethodGet)
+		return
+	}
+	if session.lectures == nil {
+		writeProblem(writer, http.StatusServiceUnavailable, "lectures_unavailable", "lecture catalog is unavailable")
+		return
+	}
+	course, ok := requestedCourse(request)
+	if !ok {
+		writeProblem(writer, http.StatusBadRequest, "invalid_course", "course identity is invalid")
+		return
+	}
+	lectures, err := session.lectures.Lectures(request.Context(), course)
+	if err != nil {
+		writeProblem(writer, http.StatusBadGateway, "lectures_unavailable", "lecture catalog is unavailable")
+		return
+	}
+	projected := make([]tuiproto.Lecture, 0, len(lectures))
+	for _, lecture := range lectures {
+		projected = append(projected, projectLecture(lecture))
+	}
+	writeJSON(writer, http.StatusOK, tuiproto.LectureList{Lectures: projected})
+}
+
+func (session *Session) libraryView(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		methodNotAllowed(writer, http.MethodGet)
+		return
+	}
+	if session.artifacts == nil {
+		writeProblem(writer, http.StatusServiceUnavailable, "library_unavailable", "local lecture library is unavailable")
+		return
+	}
+	records, err := session.artifacts.Artifacts(request.Context())
+	if err != nil {
+		writeProblem(writer, http.StatusInternalServerError, "library_unavailable", "local lecture library is unavailable")
+		return
+	}
+	artifacts := make([]tuiproto.ArtifactSummary, 0, len(records))
+	for _, record := range records {
+		summary := tuiproto.ArtifactSummary{
+			ArtifactID: record.Manifest.ArtifactID,
+			FileCount:  int64(len(record.Files)),
+			ProducedAt: record.Manifest.ProducedAt.UTC().Format(time.RFC3339),
+			Sequence:   int64(record.Manifest.Lecture.SeqNo),
+			Topic:      safePresentationText(record.Manifest.Lecture.Topic),
+		}
+		for _, file := range record.Files {
+			summary.TotalBytes += file.Bytes
+			if file.Present {
+				summary.PresentFileCount++
+			}
+		}
+		artifacts = append(artifacts, summary)
+	}
+	writeJSON(writer, http.StatusOK, tuiproto.ArtifactList{Artifacts: artifacts})
+}
+
+func requestedCourse(request *http.Request) (client.Course, bool) {
+	query := request.URL.Query()
+	if len(query) != 3 {
+		return client.Course{}, false
+	}
+	instituteID, instituteOK := onePositiveInteger(query["instituteId"])
+	subjectID, subjectOK := onePositiveInteger(query["subjectId"])
+	sessionID, sessionOK := onePositiveInteger(query["sessionId"])
+	if !instituteOK || !subjectOK || !sessionOK {
+		return client.Course{}, false
+	}
+	return client.Course{InstituteID: instituteID, SubjectID: subjectID, SessionID: sessionID}, true
+}
+
+func onePositiveInteger(values []string) (int, bool) {
+	if len(values) != 1 {
+		return 0, false
+	}
+	value, err := strconv.Atoi(values[0])
+	return value, err == nil && value > 0
+}
+
+func projectLecture(lecture client.Lecture) tuiproto.Lecture {
+	return tuiproto.Lecture{
+		ClassroomName:   safePresentationText(lecture.ClassroomName),
+		DurationSeconds: int64(lecture.ActualDuration),
+		InstituteID:     int64(lecture.InstituteID),
+		NoAudio:         lecture.NoAudio == 1,
+		ProfessorName:   safePresentationText(lecture.ProfessorName),
+		Sequence:        int64(lecture.SeqNo),
+		SessionID:       int64(lecture.SessionID),
+		SessionName:     safePresentationText(lecture.SessionName),
+		StartTime:       safePresentationText(lecture.StartTime),
+		SubjectID:       int64(lecture.SubjectID),
+		SubjectName:     safePresentationText(lecture.SubjectName),
+		Topic:           safePresentationText(lecture.Topic),
+		TTID:            int64(lecture.TTID),
+		Views:           int64(lecture.Views),
+	}
+}
+
+func projectDiagnostics(diagnostics []Diagnostic) []tuiproto.Diagnostic {
+	projected := make([]tuiproto.Diagnostic, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		projected = append(projected, tuiproto.Diagnostic{
+			Detail: safePresentationText(diagnostic.Detail),
+			Name:   safePresentationText(diagnostic.Name),
+			Status: safePresentationText(diagnostic.Status),
+		})
+	}
+	return projected
+}
+
+func safePresentationText(value string) string {
+	value = secrets.Scrub(value)
+	value = strings.Map(func(character rune) rune {
+		if unicode.IsControl(character) || unicode.In(character, unicode.Cf, unicode.Zl, unicode.Zp) {
+			return ' '
+		}
+		return character
+	}, value)
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func methodNotAllowed(writer http.ResponseWriter, allowed string) {

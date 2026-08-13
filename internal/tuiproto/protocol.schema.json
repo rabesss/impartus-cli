@@ -112,6 +112,165 @@
         }
       }
     },
+    "Diagnostic": {
+      "type": "object",
+      "description": "is one non-blocking dependency or local-state preflight result already scrubbed by the Go parent.",
+      "required": ["detail", "name", "status"],
+      "properties": {
+        "detail": {
+          "type": "string",
+          "description": "Safe human-readable result detail."
+        },
+        "name": {
+          "type": "string",
+          "description": "Stable dependency or subsystem name."
+        },
+        "status": {
+          "type": "string",
+          "description": "Presentation status such as pass, warn, or fail."
+        }
+      }
+    },
+    "DiagnosticList": {
+      "type": "object",
+      "description": "contains startup diagnostics owned by the Go parent.",
+      "required": ["diagnostics"],
+      "properties": {
+        "diagnostics": {
+          "type": "array",
+          "description": "Diagnostics in their stable collection order.",
+          "items": {
+            "$ref": "#/$defs/Diagnostic"
+          }
+        }
+      }
+    },
+    "Lecture": {
+      "type": "object",
+      "description": "is the presentation-safe subset of one live Impartus lecture.",
+      "required": ["classroomName", "durationSeconds", "instituteId", "noAudio", "professorName", "sequence", "sessionId", "sessionName", "startTime", "subjectId", "subjectName", "topic", "ttid", "views"],
+      "properties": {
+        "classroomName": {
+          "type": "string",
+          "description": "Classroom label reported upstream."
+        },
+        "durationSeconds": {
+          "type": "integer",
+          "description": "Advertised lecture duration in seconds."
+        },
+        "instituteId": {
+          "type": "integer",
+          "description": "Upstream institute identifier."
+        },
+        "noAudio": {
+          "type": "boolean",
+          "description": "Whether upstream marks this lecture as lacking audio."
+        },
+        "professorName": {
+          "type": "string",
+          "description": "Lecture owner reported upstream."
+        },
+        "sequence": {
+          "type": "integer",
+          "description": "Human-facing lecture sequence number."
+        },
+        "sessionId": {
+          "type": "integer",
+          "description": "Upstream session identifier."
+        },
+        "sessionName": {
+          "type": "string",
+          "description": "Academic session label."
+        },
+        "startTime": {
+          "type": "string",
+          "description": "Lecture start time as supplied upstream."
+        },
+        "subjectId": {
+          "type": "integer",
+          "description": "Upstream subject identifier."
+        },
+        "subjectName": {
+          "type": "string",
+          "description": "Course name reported on the lecture."
+        },
+        "topic": {
+          "type": "string",
+          "description": "Lecture topic."
+        },
+        "ttid": {
+          "type": "integer",
+          "description": "Stable upstream lecture timetable identifier."
+        },
+        "views": {
+          "type": "integer",
+          "description": "Number of camera views advertised upstream."
+        }
+      }
+    },
+    "LectureList": {
+      "type": "object",
+      "description": "contains the live lectures for one requested course identity.",
+      "required": ["lectures"],
+      "properties": {
+        "lectures": {
+          "type": "array",
+          "description": "Lectures in the application service order.",
+          "items": {
+            "$ref": "#/$defs/Lecture"
+          }
+        }
+      }
+    },
+    "ArtifactSummary": {
+      "type": "object",
+      "description": "is one presentation-safe local library record without exposing filesystem paths.",
+      "required": ["artifactId", "fileCount", "presentFileCount", "producedAt", "sequence", "topic", "totalBytes"],
+      "properties": {
+        "artifactId": {
+          "type": "string",
+          "description": "Canonical logical artifact identity."
+        },
+        "fileCount": {
+          "type": "integer",
+          "description": "Number of materialized files recorded for the artifact."
+        },
+        "presentFileCount": {
+          "type": "integer",
+          "description": "Number of recorded files currently marked present."
+        },
+        "producedAt": {
+          "type": "string",
+          "description": "UTC RFC3339 production timestamp."
+        },
+        "sequence": {
+          "type": "integer",
+          "description": "Human-facing lecture sequence number."
+        },
+        "topic": {
+          "type": "string",
+          "description": "Lecture topic stored in the manifest."
+        },
+        "totalBytes": {
+          "type": "integer",
+          "description": "Total recorded bytes across materialized files."
+        }
+      }
+    },
+    "ArtifactList": {
+      "type": "object",
+      "description": "contains the current durable local lecture library.",
+      "required": ["artifacts"],
+      "properties": {
+        "artifacts": {
+          "type": "array",
+          "description": "Artifacts newest first in the store order.",
+          "items": {
+            "$ref": "#/$defs/ArtifactSummary"
+          }
+        }
+      }
+    },
     "OperationKind": {
       "type": "string",
       "description": "names the operations the session may start. The bounded foundation exposes only a transport self test.",

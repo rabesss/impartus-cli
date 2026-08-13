@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"testing"
 
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/tuihost"
+	"github.com/rabesss/impartus-cli/internal/tuiproto"
 	"github.com/rabesss/impartus-cli/internal/tuisession"
 )
 
@@ -40,6 +42,7 @@ func TestCompiledOpenTUICompletesPrivateSessionSelfTest(t *testing.T) {
 		t.Fatalf("start private TUI session: %v", err)
 	}
 	cleanupIntegrationSession(t, session)
+	assertDiagnosticsReady(t, session)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	if err := tuihost.Run(t.Context(), tuihost.Options{
@@ -63,6 +66,32 @@ func TestCompiledOpenTUICompletesPrivateSessionSelfTest(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("self-test stderr = %q", stderr.String())
+	}
+}
+
+func assertDiagnosticsReady(t *testing.T, session *tuisession.Session) {
+	t.Helper()
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, session.BaseURL()+"/diagnostics", nil)
+	if err != nil {
+		t.Fatalf("create diagnostics request: %v", err)
+	}
+	request.Header.Set(tuiproto.CapabilityHeader, session.Capability())
+	request.Header.Set(tuiproto.ProtocolHeader, tuiproto.ProtocolVersion)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("get diagnostics: %v", err)
+	}
+	defer func() {
+		if closeErr := response.Body.Close(); closeErr != nil {
+			t.Errorf("close diagnostics response: %v", closeErr)
+		}
+	}()
+	var diagnostics tuiproto.DiagnosticList
+	if err := json.NewDecoder(response.Body).Decode(&diagnostics); err != nil {
+		t.Fatalf("decode diagnostics: %v", err)
+	}
+	if response.StatusCode != http.StatusOK || diagnostics.Diagnostics == nil {
+		t.Fatalf("diagnostics = (%d, %#v)", response.StatusCode, diagnostics.Diagnostics)
 	}
 }
 

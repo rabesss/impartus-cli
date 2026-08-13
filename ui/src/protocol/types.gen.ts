@@ -17,6 +17,57 @@ export const PROTOCOL_HEADER = "X-Impartus-Protocol" as const
 export const SUPPORTED_PROTOCOL_HEADER = "X-Impartus-Supported-Protocol" as const
 
 /**
+ * ArtifactList contains the current durable local lecture library.
+ */
+export interface ArtifactList {
+  /**
+   * Artifacts newest first in the store order.
+   */
+  artifacts: ArtifactSummary[]
+}
+
+/**
+ * ArtifactSummary is one presentation-safe local library record without
+ * exposing filesystem paths.
+ */
+export interface ArtifactSummary {
+  /**
+   * Canonical logical artifact identity.
+   */
+  artifactId: string
+
+  /**
+   * Number of materialized files recorded for the artifact.
+   */
+  fileCount: number
+
+  /**
+   * Number of recorded files currently marked present.
+   */
+  presentFileCount: number
+
+  /**
+   * UTC RFC3339 production timestamp.
+   */
+  producedAt: string
+
+  /**
+   * Human-facing lecture sequence number.
+   */
+  sequence: number
+
+  /**
+   * Lecture topic stored in the manifest.
+   */
+  topic: string
+
+  /**
+   * Total recorded bytes across materialized files.
+   */
+  totalBytes: number
+}
+
+/**
  * Bootstrap is the one-use private handoff from the Go parent to its
  * OpenTUI child.
  */
@@ -97,6 +148,37 @@ export interface CourseList {
 }
 
 /**
+ * Diagnostic is one non-blocking dependency or local-state preflight result
+ * already scrubbed by the Go parent.
+ */
+export interface Diagnostic {
+  /**
+   * Safe human-readable result detail.
+   */
+  detail: string
+
+  /**
+   * Stable dependency or subsystem name.
+   */
+  name: string
+
+  /**
+   * Presentation status such as pass, warn, or fail.
+   */
+  status: string
+}
+
+/**
+ * DiagnosticList contains startup diagnostics owned by the Go parent.
+ */
+export interface DiagnosticList {
+  /**
+   * Diagnostics in their stable collection order.
+   */
+  diagnostics: Diagnostic[]
+}
+
+/**
  * Event is one ordered session event. Sequence numbers increase
  * monotonically per session.
  */
@@ -160,6 +242,91 @@ export interface Health {
  * reports which credentials are configured.
  */
 export type HealthStatus = "ok"
+
+/**
+ * Lecture is the presentation-safe subset of one live Impartus lecture.
+ */
+export interface Lecture {
+  /**
+   * Classroom label reported upstream.
+   */
+  classroomName: string
+
+  /**
+   * Advertised lecture duration in seconds.
+   */
+  durationSeconds: number
+
+  /**
+   * Upstream institute identifier.
+   */
+  instituteId: number
+
+  /**
+   * Whether upstream marks this lecture as lacking audio.
+   */
+  noAudio: boolean
+
+  /**
+   * Lecture owner reported upstream.
+   */
+  professorName: string
+
+  /**
+   * Human-facing lecture sequence number.
+   */
+  sequence: number
+
+  /**
+   * Upstream session identifier.
+   */
+  sessionId: number
+
+  /**
+   * Academic session label.
+   */
+  sessionName: string
+
+  /**
+   * Lecture start time as supplied upstream.
+   */
+  startTime: string
+
+  /**
+   * Upstream subject identifier.
+   */
+  subjectId: number
+
+  /**
+   * Course name reported on the lecture.
+   */
+  subjectName: string
+
+  /**
+   * Lecture topic.
+   */
+  topic: string
+
+  /**
+   * Stable upstream lecture timetable identifier.
+   */
+  ttid: number
+
+  /**
+   * Number of camera views advertised upstream.
+   */
+  views: number
+}
+
+/**
+ * LectureList contains the live lectures for one requested course identity.
+ */
+export interface LectureList {
+  /**
+   * Lectures in the application service order.
+   */
+  lectures: Lecture[]
+}
 
 /**
  * Operation is the handle returned when an operation is accepted or

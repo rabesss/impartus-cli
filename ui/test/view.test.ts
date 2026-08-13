@@ -15,15 +15,15 @@ describe("FoundationView", () => {
   test("renders a modern three-region shell on wide terminals", async () => {
     const setup = await createTestRenderer({ height: 40, width: 140 })
     renderers.push(setup)
-    const view = new FoundationView(setup.renderer, foundationState(), { onQuit() {}, onSelfTest() {} })
+    const view = new FoundationView(setup.renderer, foundationState(), callbacks())
 
     await setup.renderOnce()
     const frame = setup.captureCharFrame()
 
     expect(frame).toContain("IMPARTUS")
     expect(frame).toContain("Courses")
-    expect(frame).toContain("Workspace")
-    expect(frame).toContain("Session")
+    expect(frame).toContain("Learning workspace")
+    expect(frame).toContain("Inspector")
     expect(frame).toContain("Distributed Systems")
     view.destroy()
   })
@@ -33,10 +33,18 @@ describe("FoundationView", () => {
     renderers.push(setup)
     let quitCount = 0
     let selfTestCount = 0
+    let openCount = 0
     const view = new FoundationView(setup.renderer, foundationState(), {
+      onBack() {},
+      onDiagnostics() {},
+      onLibrary() {},
+      onOpenCourse() {
+        openCount++
+      },
       onQuit() {
         quitCount++
       },
+      onRetry() {},
       onSelfTest() {
         selfTestCount++
       },
@@ -44,26 +52,30 @@ describe("FoundationView", () => {
 
     await setup.renderOnce()
     expect(setup.captureCharFrame()).toContain("Distributed Systems")
-    expect(setup.captureCharFrame()).not.toContain("Workspace")
+    expect(setup.captureCharFrame()).not.toContain("Inspector")
 
     setup.mockInput.pressKey("?")
     await setup.renderOnce()
-    expect(setup.captureCharFrame()).toContain("Keyboard")
-    expect(setup.captureCharFrame()).toContain("run connection test")
+    expect(setup.captureCharFrame()).toContain("Command guide")
+    expect(setup.captureCharFrame()).toContain("open diagnostics")
 
     setup.mockInput.pressEscape()
     await setup.renderOnce()
+    setup.mockInput.pressEnter()
     setup.mockInput.pressKey("s")
     setup.mockInput.pressKey("q")
     setup.mockInput.pressCtrlC()
     expect(selfTestCount).toBe(1)
     expect(quitCount).toBe(2)
+    expect(openCount).toBe(1)
     view.destroy()
   })
 })
 
 function foundationState(): FoundationState {
   return {
+    activeCourse: undefined,
+    artifacts: [],
     courses: [
       {
         instituteId: 1,
@@ -84,8 +96,26 @@ function foundationState(): FoundationState {
         videoCount: 8,
       },
     ],
+    diagnostics: [],
+    error: undefined,
+    lectures: [],
+    loading: false,
     operation: undefined,
+    screen: "courses",
     selectedCourse: 0,
+    selectedItem: 0,
     status: "Connected",
+  }
+}
+
+function callbacks() {
+  return {
+    onBack() {},
+    onDiagnostics() {},
+    onLibrary() {},
+    onOpenCourse() {},
+    onQuit() {},
+    onRetry() {},
+    onSelfTest() {},
   }
 }

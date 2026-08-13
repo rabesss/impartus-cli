@@ -5,21 +5,37 @@ import { SessionClient } from "./client.ts"
 import type { Event, OperationState } from "./protocol/types.gen.ts"
 import { FoundationView, type FoundationState } from "./view.ts"
 
+let startupStage = "bootstrap"
+
 async function main(): Promise<void> {
   const bootstrap = await consumeBootstrap(process.argv)
+  startupStage = "health check"
   const client = new SessionClient(bootstrap)
   const health = await client.health()
+  startupStage = "course catalog"
   const courses = await client.courses()
+  startupStage = "diagnostics"
+  const diagnostics = await client.diagnostics()
   const state: FoundationState = {
+    activeCourse: undefined,
+    artifacts: [],
     courses: courses.courses,
+    diagnostics: diagnostics.diagnostics,
+    error: undefined,
+    lectures: [],
+    loading: false,
     operation: undefined,
+    screen: "courses",
     selectedCourse: 0,
+    selectedItem: 0,
     status: health.status === "ok" ? "Connected" : "Unavailable",
   }
   if (process.argv.includes("--noninteractive-self-test")) {
+    startupStage = "self-test"
     await runNonInteractiveSelfTest(client, state)
     return
   }
+  startupStage = "interactive renderer"
   await runInteractive(client, state)
 }
 
@@ -43,7 +59,20 @@ async function runInteractive(client: SessionClient, initialState: FoundationSta
     view.update(next)
   }
   const view = new FoundationView(renderer, state, {
+    onBack: () => update({ ...state, error: undefined, loading: false, screen: "courses", selectedItem: 0 }),
+    onDiagnostics: () => {
+      void loadDiagnostics(client, () => state, update, eventsAbort.signal)
+    },
+    onLibrary: () => {
+      void loadLibrary(client, () => state, update, eventsAbort.signal)
+    },
+    onOpenCourse: (course) => {
+      void loadLectures(client, course, () => state, update, eventsAbort.signal)
+    },
     onQuit: () => quit.resolve(),
+    onRetry: () => {
+      void retryScreen(client, () => state, update, eventsAbort.signal)
+    },
     onSelfTest: () => {
       void startSelfTest(client, state, update, eventsAbort.signal)
     },
@@ -112,13 +141,104 @@ async function renderNonInteractiveResult(state: FoundationState, operationID: s
   const view = new FoundationView(renderer, {
     ...state,
     operation: { id: operationID, percent: 100, state: terminal },
-  }, { onQuit() {}, onSelfTest() {} })
+  }, {
+    onBack() {},
+    onDiagnostics() {},
+    onLibrary() {},
+    onOpenCourse() {},
+    onQuit() {},
+    onRetry() {},
+    onSelfTest() {},
+  })
   try {
     renderer.requestRender()
     await renderer.idle()
   } finally {
     view.destroy()
     renderer.destroy()
+  }
+}
+
+async function loadLectures(
+  client: SessionClient,
+  course: FoundationState["activeCourse"] & {},
+  current: () => FoundationState,
+  update: (state: FoundationState) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  update({ ...current(), activeCourse: course, error: undefined, loading: true, screen: "lectures", selectedItem: 0 })
+  try {
+    const result = await client.lectures(course, signal)
+    if (signal.aborted) return
+    update({ ...current(), lectures: result.lectures, loading: false, selectedItem: 0 })
+  } catch {
+    if (!signal.aborted) update({ ...current(), error: "Lecture catalog is unavailable", loading: false })
+  }
+}
+
+async function loadLibrary(
+  client: SessionClient,
+  current: () => FoundationState,
+  update: (state: FoundationState) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  update({ ...current(), error: undefined, loading: true, screen: "library", selectedItem: 0 })
+  try {
+    const result = await client.artifacts(signal)
+    if (signal.aborted) return
+    update({ ...current(), artifacts: result.artifacts, loading: false, selectedItem: 0 })
+  } catch {
+    if (!signal.aborted) update({ ...current(), error: "Local lecture library is unavailable", loading: false })
+  }
+}
+
+async function loadDiagnostics(
+  client: SessionClient,
+  current: () => FoundationState,
+  update: (state: FoundationState) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  update({ ...current(), error: undefined, loading: true, screen: "diagnostics", selectedItem: 0 })
+  try {
+    const result = await client.diagnostics(signal)
+    if (signal.aborted) return
+    update({ ...current(), diagnostics: result.diagnostics, loading: false, selectedItem: 0 })
+  } catch {
+    if (!signal.aborted) update({ ...current(), error: "Diagnostics are unavailable", loading: false })
+  }
+}
+
+async function loadCourses(
+  client: SessionClient,
+  current: () => FoundationState,
+  update: (state: FoundationState) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  update({ ...current(), error: undefined, loading: true, screen: "courses" })
+  try {
+    const result = await client.courses(signal)
+    if (signal.aborted) return
+    update({ ...current(), courses: result.courses, loading: false, selectedCourse: 0 })
+  } catch {
+    if (!signal.aborted) update({ ...current(), error: "Course catalog is unavailable", loading: false })
+  }
+}
+
+async function retryScreen(
+  client: SessionClient,
+  current: () => FoundationState,
+  update: (state: FoundationState) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const state = current()
+  if (state.screen === "lectures" && state.activeCourse !== undefined) {
+    await loadLectures(client, state.activeCourse, current, update, signal)
+  } else if (state.screen === "library") {
+    await loadLibrary(client, current, update, signal)
+  } else if (state.screen === "diagnostics") {
+    await loadDiagnostics(client, current, update, signal)
+  } else {
+    await loadCourses(client, current, update, signal)
   }
 }
 
@@ -173,6 +293,6 @@ function applyEvent(state: FoundationState, event: Event): FoundationState | und
 }
 
 await main().catch(() => {
-  process.stderr.write("impartus-ui: terminal frontend failed\n")
+  process.stderr.write(`impartus-ui: terminal frontend failed during ${startupStage}\n`)
   process.exitCode = 1
 })

@@ -12,7 +12,9 @@ import (
 	"testing"
 	"time"
 
+	artifactpkg "github.com/rabesss/impartus-cli/internal/artifact"
 	"github.com/rabesss/impartus-cli/internal/client"
+	"github.com/rabesss/impartus-cli/internal/library"
 	"github.com/rabesss/impartus-cli/internal/tuiproto"
 	"github.com/rabesss/impartus-cli/internal/tuisession"
 )
@@ -20,6 +22,22 @@ import (
 type catalogStub struct {
 	courses client.Courses
 	err     error
+}
+
+type productProjectionStub struct {
+	catalogStub
+	lectures  client.Lectures
+	artifacts []library.ArtifactRecord
+	course    client.Course
+}
+
+func (stub *productProjectionStub) Lectures(_ context.Context, course client.Course) (client.Lectures, error) {
+	stub.course = course
+	return append(client.Lectures(nil), stub.lectures...), nil
+}
+
+func (stub *productProjectionStub) Artifacts(context.Context) ([]library.ArtifactRecord, error) {
+	return append([]library.ArtifactRecord(nil), stub.artifacts...), nil
 }
 
 func TestSessionStreamsOneTerminalOperationLifecycle(t *testing.T) {
@@ -309,6 +327,98 @@ func TestSessionExposesAuthenticatedHealthAndCourses(t *testing.T) {
 		got.SubjectName != "Distributed Systems" || got.SessionName != "Monsoon 2026" ||
 		got.ProfessorName != "Dr. Rao" || got.VideoCount != 21 {
 		t.Fatalf("course projection = %+v", got)
+	}
+}
+
+func TestSessionProjectsLecturesLibraryAndDiagnosticsWithoutTerminalOrSecretData(t *testing.T) {
+	producedAt := time.Date(2026, time.August, 13, 12, 30, 0, 0, time.UTC)
+	backend := &productProjectionStub{
+		lectures: client.Lectures{{
+			ActualDuration: 3600,
+			ClassroomName:  "Room 7",
+			InstituteID:    11,
+			NoAudio:        0,
+			ProfessorName:  "Dr. Rao",
+			SeqNo:          4,
+			SessionID:      13,
+			SessionName:    "Monsoon",
+			StartTime:      "2026-08-13T10:00:00Z",
+			SubjectID:      12,
+			SubjectName:    "Distributed Systems",
+			Topic:          "Consensus\x1b[31m",
+			TTID:           14,
+			Views:          2,
+		}},
+		artifacts: []library.ArtifactRecord{{
+			Manifest: artifactpkg.Manifest{
+				ArtifactID: "artifact-1",
+				Lecture:    artifactpkg.Lecture{SeqNo: 4, Topic: "Consensus"},
+				ProducedAt: producedAt,
+			},
+			Files: []library.ArtifactFile{
+				{Bytes: 1200, Present: true},
+				{Bytes: 800, Present: false},
+			},
+		}},
+	}
+	session, err := tuisession.Start(t.Context(), tuisession.Options{
+		Catalog:   backend,
+		Lectures:  backend,
+		Artifacts: backend,
+		Diagnostics: []tuisession.Diagnostic{{
+			Name:   "mpv",
+			Status: "warn",
+			Detail: "upstream auth=diagnostic-secret\x1b[2J is unavailable",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	cleanupSession(t, session)
+
+	lectureResponse := sessionRequest(t, session, http.MethodGet, "/lectures?instituteId=11&subjectId=12&sessionId=13", nil)
+	defer closeResponseBody(t, lectureResponse.Body)
+	var lectures tuiproto.LectureList
+	decodeJSON(t, lectureResponse, &lectures)
+	if lectureResponse.StatusCode != http.StatusOK || len(lectures.Lectures) != 1 {
+		t.Fatalf("lectures = (%d, %+v)", lectureResponse.StatusCode, lectures)
+	}
+	if backend.course.InstituteID != 11 || backend.course.SubjectID != 12 || backend.course.SessionID != 13 {
+		t.Fatalf("requested course = %+v", backend.course)
+	}
+	lecture := lectures.Lectures[0]
+	if lecture.TTID != 14 || lecture.Sequence != 4 || lecture.Topic != "Consensus [31m" || lecture.NoAudio {
+		t.Fatalf("projected lecture = %+v", lecture)
+	}
+
+	invalidResponse := sessionRequest(t, session, http.MethodGet, "/lectures?instituteId=11&subjectId=12&sessionId=13&extra=1", nil)
+	defer closeResponseBody(t, invalidResponse.Body)
+	if invalidResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid lecture identity status = %d", invalidResponse.StatusCode)
+	}
+
+	libraryResponse := sessionRequest(t, session, http.MethodGet, "/library", nil)
+	defer closeResponseBody(t, libraryResponse.Body)
+	var artifacts tuiproto.ArtifactList
+	decodeJSON(t, libraryResponse, &artifacts)
+	if len(artifacts.Artifacts) != 1 {
+		t.Fatalf("artifacts = %+v", artifacts)
+	}
+	artifact := artifacts.Artifacts[0]
+	if artifact.ArtifactID != "artifact-1" || artifact.TotalBytes != 2000 || artifact.PresentFileCount != 1 || artifact.ProducedAt != producedAt.Format(time.RFC3339) {
+		t.Fatalf("projected artifact = %+v", artifact)
+	}
+
+	diagnosticResponse := sessionRequest(t, session, http.MethodGet, "/diagnostics", nil)
+	defer closeResponseBody(t, diagnosticResponse.Body)
+	var diagnostics tuiproto.DiagnosticList
+	decodeJSON(t, diagnosticResponse, &diagnostics)
+	if len(diagnostics.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %+v", diagnostics)
+	}
+	detail := diagnostics.Diagnostics[0].Detail
+	if strings.Contains(detail, "diagnostic-secret") || strings.ContainsRune(detail, '\x1b') || !strings.Contains(detail, "REDACTED") {
+		t.Fatalf("unsafe diagnostic detail = %q", detail)
 	}
 }
 

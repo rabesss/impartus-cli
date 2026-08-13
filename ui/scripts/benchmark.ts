@@ -5,6 +5,8 @@ import { FoundationView, type FoundationState } from "../src/view.ts"
 const courseCount = 5_000
 const iterations = 200
 const state: FoundationState = {
+  activeCourse: undefined,
+  artifacts: [],
   courses: Array.from({ length: courseCount }, (_, index) => ({
     instituteId: 1,
     professorName: `Professor ${index}`,
@@ -14,14 +16,28 @@ const state: FoundationState = {
     subjectName: `Course ${String(index + 1).padStart(4, "0")}`,
     videoCount: 24,
   })),
+  diagnostics: [],
+  error: undefined,
+  lectures: [],
+  loading: false,
   operation: undefined,
+  screen: "courses",
   selectedCourse: 0,
+  selectedItem: 0,
   status: "Connected",
 }
 
 const setup = await createTestRenderer({ height: 40, kittyKeyboard: true, width: 140 })
 const started = performance.now()
-const view = new FoundationView(setup.renderer, state, { onQuit() {}, onSelfTest() {} })
+const view = new FoundationView(setup.renderer, state, {
+  onBack() {},
+  onDiagnostics() {},
+  onLibrary() {},
+  onOpenCourse() {},
+  onQuit() {},
+  onRetry() {},
+  onSelfTest() {},
+})
 await setup.renderOnce()
 const coldFrameMilliseconds = performance.now() - started
 

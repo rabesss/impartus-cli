@@ -19,6 +19,37 @@ const (
 	SupportedProtocolHeader = "X-Impartus-Supported-Protocol"
 )
 
+// ArtifactList contains the current durable local lecture library.
+type ArtifactList struct {
+	// Artifacts newest first in the store order.
+	Artifacts []ArtifactSummary `json:"artifacts"`
+}
+
+// ArtifactSummary is one presentation-safe local library record without
+// exposing filesystem paths.
+type ArtifactSummary struct {
+	// Canonical logical artifact identity.
+	ArtifactID string `json:"artifactId"`
+
+	// Number of materialized files recorded for the artifact.
+	FileCount int64 `json:"fileCount"`
+
+	// Number of recorded files currently marked present.
+	PresentFileCount int64 `json:"presentFileCount"`
+
+	// UTC RFC3339 production timestamp.
+	ProducedAt string `json:"producedAt"`
+
+	// Human-facing lecture sequence number.
+	Sequence int64 `json:"sequence"`
+
+	// Lecture topic stored in the manifest.
+	Topic string `json:"topic"`
+
+	// Total recorded bytes across materialized files.
+	TotalBytes int64 `json:"totalBytes"`
+}
+
 // Bootstrap is the one-use private handoff from the Go parent to its
 // OpenTUI child.
 type Bootstrap struct {
@@ -66,6 +97,25 @@ type Course struct {
 type CourseList struct {
 	// Courses in upstream order.
 	Courses []Course `json:"courses"`
+}
+
+// Diagnostic is one non-blocking dependency or local-state preflight result
+// already scrubbed by the Go parent.
+type Diagnostic struct {
+	// Safe human-readable result detail.
+	Detail string `json:"detail"`
+
+	// Stable dependency or subsystem name.
+	Name string `json:"name"`
+
+	// Presentation status such as pass, warn, or fail.
+	Status string `json:"status"`
+}
+
+// DiagnosticList contains startup diagnostics owned by the Go parent.
+type DiagnosticList struct {
+	// Diagnostics in their stable collection order.
+	Diagnostics []Diagnostic `json:"diagnostics"`
 }
 
 // Event is one ordered session event. Sequence numbers increase
@@ -136,6 +186,57 @@ const (
 	// HealthStatusOK is the "ok" HealthStatus value.
 	HealthStatusOK HealthStatus = "ok"
 )
+
+// Lecture is the presentation-safe subset of one live Impartus lecture.
+type Lecture struct {
+	// Classroom label reported upstream.
+	ClassroomName string `json:"classroomName"`
+
+	// Advertised lecture duration in seconds.
+	DurationSeconds int64 `json:"durationSeconds"`
+
+	// Upstream institute identifier.
+	InstituteID int64 `json:"instituteId"`
+
+	// Whether upstream marks this lecture as lacking audio.
+	NoAudio bool `json:"noAudio"`
+
+	// Lecture owner reported upstream.
+	ProfessorName string `json:"professorName"`
+
+	// Human-facing lecture sequence number.
+	Sequence int64 `json:"sequence"`
+
+	// Upstream session identifier.
+	SessionID int64 `json:"sessionId"`
+
+	// Academic session label.
+	SessionName string `json:"sessionName"`
+
+	// Lecture start time as supplied upstream.
+	StartTime string `json:"startTime"`
+
+	// Upstream subject identifier.
+	SubjectID int64 `json:"subjectId"`
+
+	// Course name reported on the lecture.
+	SubjectName string `json:"subjectName"`
+
+	// Lecture topic.
+	Topic string `json:"topic"`
+
+	// Stable upstream lecture timetable identifier.
+	TTID int64 `json:"ttid"`
+
+	// Number of camera views advertised upstream.
+	Views int64 `json:"views"`
+}
+
+// LectureList contains the live lectures for one requested course identity.
+type LectureList struct {
+	// Lectures in the application service order.
+	Lectures []Lecture `json:"lectures"`
+}
 
 // Operation is the handle returned when an operation is accepted or
 // inspected.
