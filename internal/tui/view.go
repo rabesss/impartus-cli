@@ -44,8 +44,8 @@ func (model Model) heading() string {
 // backend-provided text reaches the terminal. Styling is applied only after
 // this boundary, so application-owned ANSI sequences remain intact.
 func terminalText(value string) string {
-	value = secrets.Scrub(value)
 	value = ansi.Strip(value)
+	value = secrets.Scrub(value)
 	value = strings.Map(func(r rune) rune {
 		if r == '\u200d' {
 			return r

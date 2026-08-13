@@ -44,7 +44,7 @@ func (model Model) updateOverlayKey(message tea.KeyPressMsg) (Model, tea.Cmd) {
 
 func overlayControlKey(key string) bool {
 	switch key {
-	case "up", "down", "k", "j", "enter", "esc", "backspace", "?", "ctrl+c":
+	case "up", "down", "enter", "esc", "?", "ctrl+c":
 		return true
 	default:
 		return false

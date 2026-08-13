@@ -115,6 +115,25 @@ func TestPaletteSearchAndRegistryDispatch(t *testing.T) {
 	}
 }
 
+func TestPaletteSearchAcceptsVimLettersAndBackspace(t *testing.T) {
+	t.Parallel()
+	model := workspaceTestModel(80, 24)
+	model, _ = applyWorkspaceMessage(t, model, tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	for _, character := range "junk" {
+		model, _ = applyWorkspaceMessage(t, model, keyMessage(character, string(character)))
+	}
+	if got := model.palette.Value(); got != "junk" {
+		t.Fatalf("palette query = %q, want junk", got)
+	}
+	model, _ = applyWorkspaceMessage(t, model, keyMessage(tea.KeyBackspace, ""))
+	if got := model.palette.Value(); got != "jun" {
+		t.Fatalf("palette query after backspace = %q, want jun", got)
+	}
+	if _, open := model.topOverlay(); !open {
+		t.Fatal("backspace closed the command palette")
+	}
+}
+
 func TestCollectionStateIsIndependentByDomain(t *testing.T) {
 	t.Parallel()
 	model := workspaceTestModel(80, 24)

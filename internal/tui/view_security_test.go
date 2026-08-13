@@ -51,3 +51,19 @@ func TestRenderRedactsCredentialsFromBackendErrors(t *testing.T) {
 		t.Fatalf("rendered backend error omitted redaction marker:\n%s", rendered)
 	}
 }
+
+func TestRenderRedactsCredentialKeysObfuscatedWithANSI(t *testing.T) {
+	t.Parallel()
+
+	model := tui.New(context.Background(), &fakeBackend{coursesErr: errors.New(
+		"catalog failed to\x1b[31mken=ansi-secret",
+	)})
+	model = applyCommand(t, model, model.Init())
+	rendered := model.View().Content
+	if strings.Contains(rendered, "ansi-secret") {
+		t.Fatalf("rendered backend error leaked an ANSI-obfuscated credential:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "token=REDACTED") {
+		t.Fatalf("rendered backend error omitted the normalized redaction marker:\n%s", rendered)
+	}
+}
