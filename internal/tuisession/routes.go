@@ -1,6 +1,7 @@
 package tuisession
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -44,7 +45,35 @@ func (session *Session) operationsRoot(writer http.ResponseWriter, request *http
 		writeProblem(writer, http.StatusBadRequest, "invalid_request", "invalid operation request")
 		return
 	}
-	operation, err := session.operations.start(operationRequest.Kind)
+	var (
+		operation tuiproto.Operation
+		err       error
+	)
+	switch operationRequest.Kind {
+	case tuiproto.OperationKindSelftest:
+		if operationRequest.Lecture != nil {
+			writeProblem(writer, http.StatusBadRequest, "invalid_request", "self-test does not accept a lecture")
+			return
+		}
+		operation, err = session.operations.startSelfTest()
+	case tuiproto.OperationKindDownload:
+		lecture, resolveErr := session.resolveLecture(request.Context(), operationRequest.Lecture)
+		if resolveErr != nil {
+			writeProblem(writer, http.StatusNotFound, "lecture_not_found", "lecture is unavailable")
+			return
+		}
+		operation, err = session.operations.startDownload(lecture)
+	case tuiproto.OperationKindPlayback:
+		lecture, resolveErr := session.resolveLecture(request.Context(), operationRequest.Lecture)
+		if resolveErr != nil {
+			writeProblem(writer, http.StatusNotFound, "lecture_not_found", "lecture is unavailable")
+			return
+		}
+		resume := operationRequest.Resume != nil && *operationRequest.Resume
+		operation, err = session.operations.startPlayback(lecture, resume)
+	default:
+		err = errors.New("unsupported operation kind")
+	}
 	if errors.Is(err, errTooManyOperations) {
 		writeProblem(writer, http.StatusTooManyRequests, "operation_limit", "session operation limit reached")
 		return
@@ -60,12 +89,39 @@ func (session *Session) operationsRoot(writer http.ResponseWriter, request *http
 	writeJSON(writer, http.StatusAccepted, operation)
 }
 
+func (session *Session) resolveLecture(ctx context.Context, identity *tuiproto.LectureIdentity) (client.Lecture, error) {
+	if session.lectures == nil || identity == nil || identity.InstituteID <= 0 || identity.SubjectID <= 0 || identity.SessionID <= 0 || identity.TTID <= 0 {
+		return client.Lecture{}, errors.New("lecture identity is invalid")
+	}
+	course := client.Course{
+		InstituteID: int(identity.InstituteID),
+		SubjectID:   int(identity.SubjectID),
+		SessionID:   int(identity.SessionID),
+	}
+	lectures, err := session.lectures.Lectures(ctx, course)
+	if err != nil {
+		return client.Lecture{}, err
+	}
+	for _, lecture := range lectures {
+		if lecture.InstituteID == course.InstituteID && lecture.SubjectID == course.SubjectID && lecture.SessionID == course.SessionID && lecture.TTID == int(identity.TTID) {
+			return lecture, nil
+		}
+	}
+	return client.Lecture{}, errors.New("lecture not found")
+}
+
 func (session *Session) operationByID(writer http.ResponseWriter, request *http.Request) {
-	identifier := strings.TrimPrefix(request.URL.Path, tuiproto.ProtocolBasePath+"/operations/")
-	if identifier == "" || strings.Contains(identifier, "/") {
+	suffix := strings.TrimPrefix(request.URL.Path, tuiproto.ProtocolBasePath+"/operations/")
+	parts := strings.Split(suffix, "/")
+	if len(parts) == 2 && parts[1] == "commands" {
+		session.playbackCommand(writer, request, parts[0])
+		return
+	}
+	if len(parts) != 1 || parts[0] == "" {
 		writeProblem(writer, http.StatusNotFound, "operation_not_found", "operation not found")
 		return
 	}
+	identifier := parts[0]
 	var (
 		operation tuiproto.Operation
 		err       error
@@ -86,6 +142,36 @@ func (session *Session) operationByID(writer http.ResponseWriter, request *http.
 	}
 	if err != nil {
 		writeProblem(writer, http.StatusInternalServerError, "operation_failed", "operation request failed")
+		return
+	}
+	writeJSON(writer, http.StatusOK, operation)
+}
+
+func (session *Session) playbackCommand(writer http.ResponseWriter, request *http.Request, identifier string) {
+	if request.Method != http.MethodPost {
+		methodNotAllowed(writer, http.MethodPost)
+		return
+	}
+	if identifier == "" {
+		writeProblem(writer, http.StatusNotFound, "operation_not_found", "operation not found")
+		return
+	}
+	var command tuiproto.PlaybackCommand
+	if err := decodeRequestJSON(writer, request, &command); err != nil {
+		writeProblem(writer, http.StatusBadRequest, "invalid_request", "invalid playback command")
+		return
+	}
+	if err := session.operations.controlPlayback(request.Context(), identifier, command); err != nil {
+		if errors.Is(err, errOperationNotFound) {
+			writeProblem(writer, http.StatusNotFound, "operation_not_found", "active playback operation not found")
+			return
+		}
+		writeProblem(writer, http.StatusBadRequest, "invalid_playback_command", "playback command was rejected")
+		return
+	}
+	operation, err := session.operations.get(identifier)
+	if err != nil {
+		writeProblem(writer, http.StatusNotFound, "operation_not_found", "operation not found")
 		return
 	}
 	writeJSON(writer, http.StatusOK, operation)

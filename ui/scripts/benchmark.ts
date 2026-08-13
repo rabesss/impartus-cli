@@ -6,6 +6,7 @@ const courseCount = 5_000
 const iterations = 200
 const state: FoundationState = {
   activeCourse: undefined,
+  activeLecture: undefined,
   artifacts: [],
   courses: Array.from({ length: courseCount }, (_, index) => ({
     instituteId: 1,
@@ -32,8 +33,11 @@ const started = performance.now()
 const view = new FoundationView(setup.renderer, state, {
   onBack() {},
   onDiagnostics() {},
+  onDownload() {},
   onLibrary() {},
   onOpenCourse() {},
+  onPlay() {},
+  onPlaybackCommand() {},
   onQuit() {},
   onRetry() {},
   onSelfTest() {},

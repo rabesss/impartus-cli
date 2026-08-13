@@ -13,6 +13,8 @@ import type {
   Diagnostic,
   Lecture,
   OperationState,
+  OperationKind,
+  PlaybackCommand,
 } from "./protocol/types.gen.ts"
 
 const COLORS = {
@@ -31,16 +33,24 @@ const COLORS = {
 const WIDE_WIDTH = 120
 const MEDIUM_WIDTH = 72
 
-export type FoundationScreen = "courses" | "diagnostics" | "lectures" | "library"
+export type FoundationScreen = "courses" | "diagnostics" | "lectures" | "library" | "playback"
 
 export interface FoundationOperation {
   id: string
+  kind: OperationKind
+  durationSeconds: number
+  muted: boolean
+  paused: boolean
   percent: number
+  positionSeconds: number
+  speed: number
   state: OperationState
+  volume: number
 }
 
 export interface FoundationState {
   activeCourse: Course | undefined
+  activeLecture: Lecture | undefined
   artifacts: ArtifactSummary[]
   courses: Course[]
   diagnostics: Diagnostic[]
@@ -57,8 +67,11 @@ export interface FoundationState {
 export interface FoundationCallbacks {
   onBack(): void
   onDiagnostics(): void
+  onDownload(lecture: Lecture): void
   onLibrary(): void
   onOpenCourse(course: Course): void
+  onPlay(lecture: Lecture): void
+  onPlaybackCommand(command: PlaybackCommand): void
   onQuit(): void
   onRetry(): void
   onSelfTest(): void
@@ -73,6 +86,8 @@ const COMMANDS: readonly Command[] = [
   { key: "↑/k ↓/j", description: "move selection" },
   { key: "enter", description: "open selected course" },
   { key: "l", description: "open local library" },
+  { key: "d", description: "download selected lecture" },
+  { key: "space", description: "pause or resume playback" },
   { key: "!", description: "open diagnostics" },
   { key: "r", description: "retry the current view" },
   { key: "s", description: "run connection test" },
@@ -86,6 +101,8 @@ export class FoundationView {
   #state: FoundationState
   #tree: BoxRenderable | undefined
   #helpVisible = false
+  #filtering = false
+  #filterQuery = ""
 
   public constructor(renderer: CliRenderer, state: FoundationState, callbacks: FoundationCallbacks) {
     this.#renderer = renderer
@@ -97,6 +114,10 @@ export class FoundationView {
   }
 
   public update(state: FoundationState): void {
+    if (state.screen !== this.#state.screen) {
+      this.#filtering = false
+      this.#filterQuery = ""
+    }
     this.#state = normalizeState(state)
     this.#rebuild()
   }
@@ -129,6 +150,10 @@ export class FoundationView {
       }
       return
     }
+    if (this.#filtering) {
+      this.#handleFilterKey(key, name, sequence)
+      return
+    }
     if (sequence === "?" || name === "?") {
       this.#helpVisible = true
       this.#rebuild()
@@ -139,8 +164,19 @@ export class FoundationView {
       return
     }
     if (this.#state.loading) return
+    if (this.#state.screen === "playback") {
+      if (name === "escape" || sequence === "\u001b" || name === "backspace") this.#callbacks.onBack()
+      else this.#handlePlaybackKey(name, sequence)
+      return
+    }
     if (sequence === "l" || name === "l") {
       this.#callbacks.onLibrary()
+      return
+    }
+    if ((sequence === "/" || name === "/") && (this.#state.screen === "courses" || this.#state.screen === "lectures")) {
+      this.#filtering = true
+      this.#resetSelection()
+      this.#rebuild()
       return
     }
     if (sequence === "!" || name === "!") {
@@ -155,28 +191,88 @@ export class FoundationView {
       this.#callbacks.onRetry()
       return
     }
+    if ((sequence === "d" || name === "d") && this.#state.screen === "lectures" && this.#state.operation?.state !== "running") {
+      const lecture = this.#filteredLectures()[this.#state.selectedItem]
+      if (lecture !== undefined) this.#callbacks.onDownload(lecture)
+      return
+    }
     if ((sequence === "s" || name === "s") && this.#state.operation?.state !== "running") {
       this.#callbacks.onSelfTest()
       return
     }
-    if ((name === "return" || name === "enter" || sequence === "\r") && this.#state.screen === "courses") {
-      const course = this.#state.courses[this.#state.selectedCourse]
-      if (course !== undefined) this.#callbacks.onOpenCourse(course)
+    if (name === "return" || name === "enter" || sequence === "\r") {
+      if (this.#state.screen === "courses") {
+        const course = this.#filteredCourses()[this.#state.selectedCourse]
+        if (course !== undefined) this.#callbacks.onOpenCourse(course)
+      } else if (this.#state.screen === "lectures") {
+        const lecture = this.#filteredLectures()[this.#state.selectedItem]
+        if (lecture !== undefined) this.#callbacks.onPlay(lecture)
+      }
       return
     }
     const direction = name === "up" || sequence === "k" ? -1 : name === "down" || sequence === "j" ? 1 : 0
     if (direction !== 0) this.#moveSelection(direction)
   }
 
+  #handleFilterKey(key: KeyEvent, name: string, sequence: string): void {
+    if (name === "escape" || sequence === "\u001b") {
+      this.#filtering = false
+    } else if (name === "return" || name === "enter" || sequence === "\r") {
+      this.#filtering = false
+    } else if (name === "backspace" || sequence === "\u007f" || sequence === "\b") {
+      this.#filterQuery = Array.from(this.#filterQuery).slice(0, -1).join("")
+      this.#resetSelection()
+    } else if (!key.ctrl && Array.from(sequence).length === 1 && sequence >= " " && sequence !== "\u007f") {
+      this.#filterQuery = (this.#filterQuery + sequence).slice(0, 120)
+      this.#resetSelection()
+    }
+    this.#rebuild()
+  }
+
+  #resetSelection(): void {
+    this.#state = {
+      ...this.#state,
+      selectedCourse: this.#state.screen === "courses" ? 0 : this.#state.selectedCourse,
+      selectedItem: this.#state.screen === "lectures" ? 0 : this.#state.selectedItem,
+    }
+  }
+
+  #filteredCourses(): readonly Course[] {
+    const query = normalizedQuery(this.#filterQuery)
+    if (query === "") return this.#state.courses
+    return this.#state.courses.filter((course) => normalizedQuery(`${course.subjectName} ${course.professorName} ${course.sessionName}`).includes(query))
+  }
+
+  #filteredLectures(): readonly Lecture[] {
+    const query = normalizedQuery(this.#filterQuery)
+    if (query === "") return this.#state.lectures
+    return this.#state.lectures.filter((lecture) => normalizedQuery(`${lecture.topic} ${lecture.professorName} ${lecture.classroomName} ${lecture.startTime}`).includes(query))
+  }
+
+  #handlePlaybackKey(name: string, sequence: string): void {
+    const operation = this.#state.operation
+    if (operation?.kind !== "playback" || operation.state !== "running") return
+    if (name === "space" || sequence === " ") this.#callbacks.onPlaybackCommand({ action: "pause", flag: !operation.paused })
+    else if (name === "left") this.#callbacks.onPlaybackCommand({ action: "seek", value: -10 })
+    else if (name === "right") this.#callbacks.onPlaybackCommand({ action: "seek", value: 10 })
+    else if (sequence === "m" || name === "m") this.#callbacks.onPlaybackCommand({ action: "mute", flag: !operation.muted })
+    else if (sequence === "+" || sequence === "=") this.#callbacks.onPlaybackCommand({ action: "volume", value: Math.min(130, operation.volume + 5) })
+    else if (sequence === "-") this.#callbacks.onPlaybackCommand({ action: "volume", value: Math.max(0, operation.volume - 5) })
+    else if (sequence === "]") this.#callbacks.onPlaybackCommand({ action: "speed", value: Math.min(4, operation.speed + 0.25) })
+    else if (sequence === "[") this.#callbacks.onPlaybackCommand({ action: "speed", value: Math.max(0.25, operation.speed - 0.25) })
+    else if (sequence === "v" || name === "v") this.#callbacks.onPlaybackCommand({ action: "cycleVideo" })
+  }
+
   #moveSelection(direction: number): void {
     if (this.#state.screen === "courses") {
-      if (this.#state.courses.length === 0) return
+      const courses = this.#filteredCourses()
+      if (courses.length === 0) return
       this.#state = {
         ...this.#state,
-        selectedCourse: clamp(this.#state.selectedCourse + direction, 0, this.#state.courses.length - 1),
+        selectedCourse: clamp(this.#state.selectedCourse + direction, 0, courses.length - 1),
       }
     } else {
-      const count = currentItemCount(this.#state)
+      const count = this.#state.screen === "lectures" ? this.#filteredLectures().length : currentItemCount(this.#state)
       if (count === 0) return
       this.#state = {
         ...this.#state,
@@ -184,6 +280,22 @@ export class FoundationView {
       }
     }
     this.#rebuild()
+  }
+
+  #renderPlayback(panel: BoxRenderable): void {
+    const lecture = this.#state.activeLecture
+    const operation = this.#state.operation
+    if (lecture === undefined || operation?.kind !== "playback") {
+      panel.add(text(this.#renderer, "Playback is unavailable", COLORS.danger))
+      return
+    }
+    panel.add(text(this.#renderer, `Playing in mpv`, COLORS.success, TextAttributes.BOLD))
+    panel.add(text(this.#renderer, lecture.topic, COLORS.foreground, TextAttributes.BOLD))
+    panel.add(text(this.#renderer, `${formatDuration(operation.positionSeconds)} / ${formatDuration(operation.durationSeconds)}`, COLORS.accent))
+    panel.add(text(this.#renderer, `${operation.paused ? "paused" : "playing"}  ·  ${operation.muted ? "muted" : `volume ${Math.round(operation.volume)}%`}  ·  ${operation.speed.toFixed(2)}x`, COLORS.dim))
+    panel.add(text(this.#renderer, "", COLORS.dim))
+    panel.add(text(this.#renderer, "space pause  ←/→ seek  m mute  +/- volume  [/] speed  v camera", COLORS.dim))
+    if (operation.state !== "running") panel.add(text(this.#renderer, operation.state, operation.state === "failed" ? COLORS.danger : COLORS.success, TextAttributes.BOLD))
   }
 
   #rebuild(): void {
@@ -267,9 +379,9 @@ export class FoundationView {
   #courseRail(width: number | `${number}%`, terminalHeight: number): BoxRenderable {
     const panel = panelBox(this.#renderer, "Courses", width)
     const rows = Math.max(1, terminalHeight - 9)
-    const visible = visibleRange(this.#state.courses, this.#state.selectedCourse, rows)
+    const visible = visibleRange(this.#filteredCourses(), this.#state.selectedCourse, rows)
     if (visible.items.length === 0) {
-      panel.add(text(this.#renderer, "No courses available", COLORS.dim))
+      panel.add(text(this.#renderer, this.#filterQuery === "" ? "No courses available" : "No matching courses", COLORS.dim))
       return panel
     }
     visible.items.forEach((course, index) => {
@@ -295,6 +407,10 @@ export class FoundationView {
       this.#renderCourseOverview(panel)
       return panel
     }
+    if (this.#state.screen === "playback") {
+      this.#renderPlayback(panel)
+      return panel
+    }
     const rows = Math.max(1, terminalHeight - 9)
     if (this.#state.screen === "lectures") this.#renderLectures(panel, rows)
     else if (this.#state.screen === "library") this.#renderArtifacts(panel, rows)
@@ -303,7 +419,7 @@ export class FoundationView {
   }
 
   #renderCourseOverview(panel: BoxRenderable): void {
-    const selected = this.#state.courses[this.#state.selectedCourse]
+    const selected = this.#filteredCourses()[this.#state.selectedCourse]
     if (selected === undefined) {
       panel.add(text(this.#renderer, "No course catalog is available.", COLORS.dim))
       return
@@ -316,9 +432,9 @@ export class FoundationView {
   }
 
   #renderLectures(panel: BoxRenderable, rows: number): void {
-    const visible = visibleRange(this.#state.lectures, this.#state.selectedItem, rows)
+    const visible = visibleRange(this.#filteredLectures(), this.#state.selectedItem, rows)
     if (visible.items.length === 0) {
-      panel.add(text(this.#renderer, "No lectures available", COLORS.dim))
+      panel.add(text(this.#renderer, this.#filterQuery === "" ? "No lectures available" : "No matching lectures", COLORS.dim))
       return
     }
     visible.items.forEach((lecture, index) => {
@@ -356,12 +472,13 @@ export class FoundationView {
     const panel = panelBox(this.#renderer, "Inspector", width)
     if (this.#state.operation !== undefined) {
       const operation = this.#state.operation
-      panel.add(text(this.#renderer, `Session test  ${Math.round(operation.percent)}%`, COLORS.accent, TextAttributes.BOLD))
+      const operationLabel = operation.kind === "download" ? "Lecture download" : operation.kind === "playback" ? "Playback" : "Session test"
+      panel.add(text(this.#renderer, `${operationLabel}  ${Math.round(operation.percent)}%`, COLORS.accent, TextAttributes.BOLD))
       panel.add(text(this.#renderer, operation.state, operation.state === "failed" ? COLORS.danger : COLORS.dim))
       panel.add(text(this.#renderer, "", COLORS.dim))
     }
     if (this.#state.screen === "lectures") {
-      const lecture = this.#state.lectures[this.#state.selectedItem]
+      const lecture = this.#filteredLectures()[this.#state.selectedItem]
       if (lecture !== undefined) {
         panel.add(text(this.#renderer, lecture.topic, COLORS.foreground, TextAttributes.BOLD))
         panel.add(text(this.#renderer, lecture.professorName, COLORS.dim))
@@ -389,7 +506,7 @@ export class FoundationView {
         return panel
       }
     }
-    const course = this.#state.courses[this.#state.selectedCourse]
+    const course = this.#filteredCourses()[this.#state.selectedCourse]
     if (course !== undefined) {
       panel.add(text(this.#renderer, course.subjectName, COLORS.foreground, TextAttributes.BOLD))
       panel.add(text(this.#renderer, course.professorName, COLORS.dim))
@@ -406,12 +523,17 @@ export class FoundationView {
       border: ["top"],
       borderColor: COLORS.border,
       flexDirection: "row",
-      height: 2,
+      height: 3,
       justifyContent: "space-between",
       paddingX: 1,
       width: "100%",
     })
-    footer.add(text(this.#renderer, "↑↓ navigate   enter open   l library   ! health   ? commands", COLORS.dim))
+    const commands = this.#filtering
+      ? `Filter: ${this.#filterQuery}█   enter apply   esc close`
+      : this.#filterQuery !== "" && (this.#state.screen === "courses" || this.#state.screen === "lectures")
+        ? `Filter: ${this.#filterQuery}   / edit   ↑↓ navigate   enter open`
+        : "↑↓ navigate   enter open   / filter   l library   ! health   ? commands"
+    footer.add(text(this.#renderer, commands, this.#filtering ? COLORS.accent : COLORS.dim))
     footer.add(text(this.#renderer, "q quit", COLORS.dim))
     return footer
   }
@@ -519,6 +641,7 @@ function screenTitle(screen: FoundationScreen): string {
   if (screen === "lectures") return "Lecture workspace"
   if (screen === "library") return "Local library"
   if (screen === "diagnostics") return "Diagnostics"
+  if (screen === "playback") return "Now playing"
   return "Learning workspace"
 }
 
@@ -541,6 +664,10 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB`
+}
+
+function normalizedQuery(value: string): string {
+  return value.trim().toLocaleLowerCase()
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

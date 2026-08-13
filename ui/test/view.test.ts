@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { createTestRenderer, type TestRendererSetup } from "@opentui/core/testing"
 
+import type { PlaybackCommand } from "../src/protocol/types.gen.ts"
 import { FoundationView, type FoundationState } from "../src/view.ts"
 
 const renderers: TestRendererSetup[] = []
@@ -37,10 +38,13 @@ describe("FoundationView", () => {
     const view = new FoundationView(setup.renderer, foundationState(), {
       onBack() {},
       onDiagnostics() {},
+      onDownload() {},
       onLibrary() {},
       onOpenCourse() {
         openCount++
       },
+      onPlay() {},
+      onPlaybackCommand() {},
       onQuit() {
         quitCount++
       },
@@ -57,7 +61,7 @@ describe("FoundationView", () => {
     setup.mockInput.pressKey("?")
     await setup.renderOnce()
     expect(setup.captureCharFrame()).toContain("Command guide")
-    expect(setup.captureCharFrame()).toContain("open diagnostics")
+    expect(setup.captureCharFrame()).toContain("download selected")
 
     setup.mockInput.pressEscape()
     await setup.renderOnce()
@@ -70,11 +74,105 @@ describe("FoundationView", () => {
     expect(openCount).toBe(1)
     view.destroy()
   })
+
+  test("filters the live catalog without rendering hidden rows", async () => {
+    const setup = await createTestRenderer({ height: 16, kittyKeyboard: true, width: 60 })
+    renderers.push(setup)
+    let opened = ""
+    const view = new FoundationView(setup.renderer, foundationState(), {
+      ...callbacks(),
+      onOpenCourse(course) {
+        opened = course.subjectName
+      },
+    })
+
+    setup.mockInput.pressKey("/")
+    await setup.mockInput.typeText("compiler")
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Filter: compiler")
+    expect(frame).toContain("Compilers")
+    expect(frame).not.toContain("Distributed Systems")
+
+    setup.mockInput.pressEnter()
+    setup.mockInput.pressEnter()
+    expect(opened).toBe("Compilers")
+    view.destroy()
+  })
+
+  test("renders playback telemetry and routes mpv controls", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const commands: PlaybackCommand[] = []
+    const state = foundationState()
+    const lecture = {
+      classroomName: "Room 7",
+      durationSeconds: 3600,
+      instituteId: 1,
+      noAudio: false,
+      professorName: "Dr. Rao",
+      sequence: 4,
+      sessionId: 2,
+      sessionName: "Monsoon 2026",
+      startTime: "2026-08-13T10:00:00Z",
+      subjectId: 3,
+      subjectName: "Distributed Systems",
+      topic: "Consensus",
+      ttid: 5,
+      views: 2,
+    }
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      activeLecture: lecture,
+      lectures: [lecture],
+      operation: {
+        durationSeconds: 3600,
+        id: "playback-id",
+        kind: "playback",
+        muted: false,
+        paused: false,
+        percent: 25,
+        positionSeconds: 900,
+        speed: 1,
+        state: "running",
+        volume: 100,
+      },
+      screen: "playback",
+    }, {
+      ...callbacks(),
+      onPlaybackCommand(command) {
+        commands.push(command)
+      },
+    })
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Now playing")
+    expect(frame).toContain("15:00 / 01:00:00")
+    expect(frame).toContain("volume 100%")
+
+    await setup.mockInput.typeText(" ")
+    setup.mockInput.pressArrow("right")
+    setup.mockInput.pressKey("m")
+    setup.mockInput.pressKey("+")
+    setup.mockInput.pressKey("]")
+    setup.mockInput.pressKey("v")
+    expect(commands).toEqual([
+      { action: "pause", flag: true },
+      { action: "seek", value: 10 },
+      { action: "mute", flag: true },
+      { action: "volume", value: 105 },
+      { action: "speed", value: 1.25 },
+      { action: "cycleVideo" },
+    ])
+    view.destroy()
+  })
 })
 
 function foundationState(): FoundationState {
   return {
     activeCourse: undefined,
+    activeLecture: undefined,
     artifacts: [],
     courses: [
       {
@@ -112,8 +210,11 @@ function callbacks() {
   return {
     onBack() {},
     onDiagnostics() {},
+    onDownload() {},
     onLibrary() {},
     onOpenCourse() {},
+    onPlay() {},
+    onPlaybackCommand() {},
     onQuit() {},
     onRetry() {},
     onSelfTest() {},

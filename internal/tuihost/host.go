@@ -59,6 +59,7 @@ func Run(ctx context.Context, options Options) (returnErr error) {
 
 	arguments := append(append([]string(nil), options.Arguments...), "--bootstrap", bootstrap.path)
 	command := exec.CommandContext(ctx, options.Executable, arguments...) // #nosec G204 -- exact sidecar is resolved by the trusted Go parent
+	configureCancellation(command)
 	command.Env = childEnvironment(os.Environ())
 	command.Stdin = options.Stdin
 	command.Stdout = options.Stdout

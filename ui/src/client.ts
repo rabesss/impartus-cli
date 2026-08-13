@@ -15,7 +15,9 @@ import {
   type Lecture,
   type LectureList,
   type Operation,
+  type OperationKind,
   type OperationState,
+  type PlaybackCommand,
 } from "./protocol/types.gen.ts"
 
 const EVENT_TYPES = new Set<EventType>([
@@ -28,6 +30,7 @@ const EVENT_TYPES = new Set<EventType>([
   "stream.overflow",
 ])
 const OPERATION_STATES = new Set<OperationState>(["running", "completed", "canceled", "failed"])
+const OPERATION_KINDS = new Set<OperationKind>(["download", "playback", "selftest"])
 
 export class SessionClient {
   readonly #bootstrap: Bootstrap
@@ -92,6 +95,66 @@ export class SessionClient {
       signal,
     )
     if (!isOperation(value)) {
+      throw new Error("Invalid UI session response")
+    }
+    return value
+  }
+
+  public async startDownload(lecture: Lecture, signal?: AbortSignal): Promise<Operation> {
+    const value = await this.#json(
+      "/operations",
+      {
+        body: JSON.stringify({
+          kind: "download",
+          lecture: {
+            instituteId: lecture.instituteId,
+            sessionId: lecture.sessionId,
+            subjectId: lecture.subjectId,
+            ttid: lecture.ttid,
+          },
+        }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      },
+      signal,
+    )
+    if (!isOperation(value) || value.kind !== "download") {
+      throw new Error("Invalid UI session response")
+    }
+    return value
+  }
+
+  public async startPlayback(lecture: Lecture, resume: boolean, signal?: AbortSignal): Promise<Operation> {
+    const value = await this.#json(
+      "/operations",
+      {
+        body: JSON.stringify({
+          kind: "playback",
+          lecture: lectureIdentity(lecture),
+          resume,
+        }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      },
+      signal,
+    )
+    if (!isOperation(value) || value.kind !== "playback") {
+      throw new Error("Invalid UI session response")
+    }
+    return value
+  }
+
+  public async playbackCommand(identifier: string, command: PlaybackCommand, signal?: AbortSignal): Promise<Operation> {
+    const value = await this.#json(
+      `/operations/${encodeURIComponent(identifier)}/commands`,
+      {
+        body: JSON.stringify(command),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      },
+      signal,
+    )
+    if (!isOperation(value) || value.kind !== "playback") {
       throw new Error("Invalid UI session response")
     }
     return value
@@ -286,7 +349,8 @@ function isOperation(value: unknown): value is Operation {
     isRecord(value) &&
     typeof value.id === "string" &&
     value.id.length > 0 &&
-    value.kind === "selftest" &&
+    typeof value.kind === "string" &&
+    OPERATION_KINDS.has(value.kind as OperationKind) &&
     typeof value.state === "string" &&
     OPERATION_STATES.has(value.state as OperationState)
   )
@@ -303,12 +367,27 @@ function isEvent(value: unknown): value is Event {
     return false
   }
   if (value.message !== undefined && typeof value.message !== "string") return false
+  if (value.durationSeconds !== undefined && !isFiniteNonNegative(value.durationSeconds)) return false
+  if (value.muted !== undefined && typeof value.muted !== "boolean") return false
   if (value.operationId !== undefined && typeof value.operationId !== "string") return false
+  if (value.paused !== undefined && typeof value.paused !== "boolean") return false
   if (value.percent !== undefined && (typeof value.percent !== "number" || value.percent < 0 || value.percent > 100)) return false
+  if (value.positionSeconds !== undefined && !isFiniteNonNegative(value.positionSeconds)) return false
+  if (value.speed !== undefined && (typeof value.speed !== "number" || !Number.isFinite(value.speed) || value.speed < 0.25 || value.speed > 4)) return false
   if (value.state !== undefined && (typeof value.state !== "string" || !OPERATION_STATES.has(value.state as OperationState))) {
     return false
   }
+  if (value.volume !== undefined && (typeof value.volume !== "number" || !Number.isFinite(value.volume) || value.volume < 0 || value.volume > 130)) return false
   return true
+}
+
+function lectureIdentity(lecture: Lecture) {
+  return {
+    instituteId: lecture.instituteId,
+    sessionId: lecture.sessionId,
+    subjectId: lecture.subjectId,
+    ttid: lecture.ttid,
+  }
 }
 
 function isInteger(value: unknown): value is number {
@@ -317,6 +396,10 @@ function isInteger(value: unknown): value is number {
 
 function isNonNegativeInteger(value: unknown): value is number {
   return isInteger(value) && value >= 0
+}
+
+function isFiniteNonNegative(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

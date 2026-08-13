@@ -184,9 +184,19 @@ export interface DiagnosticList {
  */
 export interface Event {
   /**
+   * Coalesced playback duration when known.
+   */
+  durationSeconds?: number
+
+  /**
    * Scrubbed human readable detail. Never carries upstream credentials.
    */
   message?: string
+
+  /**
+   * Current playback mute state when known.
+   */
+  muted?: boolean
 
   /**
    * Operation this event belongs to, when the event is operation scoped.
@@ -194,18 +204,38 @@ export interface Event {
   operationId?: string
 
   /**
+   * Current playback pause state when known.
+   */
+  paused?: boolean
+
+  /**
    * Coalesced progress percentage between 0 and 100.
    */
   percent?: number
+
+  /**
+   * Coalesced playback position when known.
+   */
+  positionSeconds?: number
 
   /**
    * Monotonic per-session sequence number.
    */
   sequence: number
 
+  /**
+   * Current playback speed when known.
+   */
+  speed?: number
+
   state?: OperationState
 
   type: EventType
+
+  /**
+   * Current playback volume percentage when known.
+   */
+  volume?: number
 }
 
 /**
@@ -319,6 +349,33 @@ export interface Lecture {
 }
 
 /**
+ * LectureIdentity is the minimal authoritative identity accepted for
+ * lecture mutations. The Go parent re-resolves the full live lecture before
+ * acting.
+ */
+export interface LectureIdentity {
+  /**
+   * Upstream institute identifier.
+   */
+  instituteId: number
+
+  /**
+   * Upstream session identifier.
+   */
+  sessionId: number
+
+  /**
+   * Upstream subject identifier.
+   */
+  subjectId: number
+
+  /**
+   * Stable upstream lecture timetable identifier.
+   */
+  ttid: number
+}
+
+/**
  * LectureList contains the live lectures for one requested course identity.
  */
 export interface LectureList {
@@ -347,13 +404,24 @@ export interface Operation {
  * OperationKind names the operations the session may start. The bounded
  * foundation exposes only a transport self test.
  */
-export type OperationKind = "selftest"
+export type OperationKind = "selftest" | "download" | "playback"
 
 /**
  * OperationRequest is the request body accepted when starting an operation.
  */
 export interface OperationRequest {
   kind: OperationKind
+
+  /**
+   * Lecture identity required by lecture-scoped operations.
+   */
+  lecture?: LectureIdentity
+
+  /**
+   * Whether playback should use an existing durable resume checkpoint when
+   * available.
+   */
+  resume?: boolean
 }
 
 /**
@@ -361,6 +429,30 @@ export interface OperationRequest {
  * running is terminal.
  */
 export type OperationState = "running" | "completed" | "canceled" | "failed"
+
+/**
+ * PlaybackCommand is one typed playback-control request. The action
+ * determines whether flag or value is required.
+ */
+export interface PlaybackCommand {
+  action: PlaybackCommandAction
+
+  /**
+   * Boolean value used by pause and mute.
+   */
+  flag?: boolean
+
+  /**
+   * Numeric value used by seek, volume, and speed.
+   */
+  value?: number
+}
+
+/**
+ * PlaybackCommandAction names one bounded mpv control owned by the Go
+ * playback session.
+ */
+export type PlaybackCommandAction = "pause" | "seek" | "mute" | "volume" | "speed" | "cycleVideo"
 
 /**
  * Problem is the uniform session error body. It never discloses local state

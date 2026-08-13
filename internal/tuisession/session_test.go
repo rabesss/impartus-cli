@@ -6,15 +6,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/rabesss/impartus-cli/internal/app"
 	artifactpkg "github.com/rabesss/impartus-cli/internal/artifact"
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/library"
+	"github.com/rabesss/impartus-cli/internal/player"
 	"github.com/rabesss/impartus-cli/internal/tuiproto"
 	"github.com/rabesss/impartus-cli/internal/tuisession"
 )
@@ -29,6 +33,92 @@ type productProjectionStub struct {
 	lectures  client.Lectures
 	artifacts []library.ArtifactRecord
 	course    client.Course
+}
+
+type actionStub struct {
+	download func(context.Context, client.Lecture) (app.DownloadResult, error)
+	record   func(context.Context, library.PlaybackState) error
+	resume   func(context.Context, client.Lecture) (library.PlaybackState, bool, error)
+	start    func(context.Context, client.Lecture, float64) (app.PlaybackStart, error)
+}
+
+type playbackStub struct {
+	events    chan player.Event
+	ended     chan error
+	controls  chan string
+	closeOnce sync.Once
+}
+
+func newPlaybackStub() *playbackStub {
+	return &playbackStub{
+		events:   make(chan player.Event, 8),
+		ended:    make(chan error, 1),
+		controls: make(chan string, 8),
+	}
+}
+
+func (stub *playbackStub) Events() <-chan player.Event { return stub.events }
+func (stub *playbackStub) WaitForEnd(ctx context.Context) error {
+	select {
+	case err := <-stub.ended:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+func (stub *playbackStub) Pause(_ context.Context, value bool) error {
+	stub.controls <- fmt.Sprintf("pause:%t", value)
+	return nil
+}
+func (stub *playbackStub) SeekRelative(_ context.Context, value float64) error {
+	stub.controls <- fmt.Sprintf("seek:%.0f", value)
+	return nil
+}
+func (stub *playbackStub) SeekAbsolute(context.Context, float64) error { return nil }
+func (stub *playbackStub) SetVolume(_ context.Context, value float64) error {
+	stub.controls <- fmt.Sprintf("volume:%.0f", value)
+	return nil
+}
+func (stub *playbackStub) SetMute(_ context.Context, value bool) error {
+	stub.controls <- fmt.Sprintf("mute:%t", value)
+	return nil
+}
+func (stub *playbackStub) SetSpeed(_ context.Context, value float64) error {
+	stub.controls <- fmt.Sprintf("speed:%.2f", value)
+	return nil
+}
+func (stub *playbackStub) CycleVideo(context.Context) error {
+	stub.controls <- "cycle"
+	return nil
+}
+func (stub *playbackStub) Close(context.Context) error {
+	stub.closeOnce.Do(func() { close(stub.events) })
+	return nil
+}
+
+func (stub actionStub) DownloadLecture(ctx context.Context, lecture client.Lecture) (app.DownloadResult, error) {
+	return stub.download(ctx, lecture)
+}
+
+func (stub actionStub) RecordPlayback(ctx context.Context, state library.PlaybackState) error {
+	if stub.record == nil {
+		return nil
+	}
+	return stub.record(ctx, state)
+}
+
+func (stub actionStub) ResumeLecture(ctx context.Context, lecture client.Lecture) (library.PlaybackState, bool, error) {
+	if stub.resume == nil {
+		return library.PlaybackState{}, false, nil
+	}
+	return stub.resume(ctx, lecture)
+}
+
+func (stub actionStub) StartLecture(ctx context.Context, lecture client.Lecture, resume float64) (app.PlaybackStart, error) {
+	if stub.start == nil {
+		return app.PlaybackStart{}, errors.New("playback is unavailable")
+	}
+	return stub.start(ctx, lecture, resume)
 }
 
 func (stub *productProjectionStub) Lectures(_ context.Context, course client.Course) (client.Lectures, error) {
@@ -143,6 +233,208 @@ func TestSessionCancellationProducesOneCanceledTerminal(t *testing.T) {
 	if len(events) != 2 || events[0].Type != tuiproto.EventTypeOperationStarted ||
 		events[1].Type != tuiproto.EventTypeOperationCanceled {
 		t.Fatalf("cancellation events = %+v, want started then canceled", events)
+	}
+}
+
+func TestDownloadOperationReResolvesLectureAndProducesOneTerminal(t *testing.T) {
+	backend := &productProjectionStub{lectures: client.Lectures{{
+		InstituteID: 11,
+		SessionID:   13,
+		SubjectID:   12,
+		TTID:        14,
+		Topic:       "Authoritative topic",
+	}}}
+	downloaded := make(chan client.Lecture, 1)
+	session, err := tuisession.Start(t.Context(), tuisession.Options{
+		Catalog:  backend,
+		Lectures: backend,
+		Actions: actionStub{download: func(_ context.Context, lecture client.Lecture) (app.DownloadResult, error) {
+			downloaded <- lecture
+			return app.DownloadResult{LibraryRecorded: true}, nil
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	cleanupSession(t, session)
+
+	eventResponse := sessionRequest(t, session, http.MethodGet, "/events", nil)
+	defer closeResponseBody(t, eventResponse.Body)
+	startResponse := sessionRequest(t, session, http.MethodPost, "/operations", tuiproto.OperationRequest{
+		Kind: tuiproto.OperationKindDownload,
+		Lecture: &tuiproto.LectureIdentity{
+			InstituteID: 11,
+			SessionID:   13,
+			SubjectID:   12,
+			TTID:        14,
+		},
+	})
+	defer closeResponseBody(t, startResponse.Body)
+	if startResponse.StatusCode != http.StatusAccepted {
+		t.Fatalf("POST download status = %d", startResponse.StatusCode)
+	}
+	var operation tuiproto.Operation
+	decodeJSON(t, startResponse, &operation)
+	if operation.Kind != tuiproto.OperationKindDownload {
+		t.Fatalf("operation = %+v", operation)
+	}
+
+	select {
+	case lecture := <-downloaded:
+		if lecture.Topic != "Authoritative topic" || lecture.TTID != 14 {
+			t.Fatalf("downloaded lecture = %+v", lecture)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("download operation did not reach the action service")
+	}
+	events := readOperationEvents(t, eventResponse, operation.ID)
+	if len(events) != 2 || events[0].Type != tuiproto.EventTypeOperationStarted || events[1].Type != tuiproto.EventTypeOperationCompleted {
+		t.Fatalf("download events = %+v", events)
+	}
+}
+
+func TestDownloadOperationCancellationWinsAndDoesNotLeakActionError(t *testing.T) {
+	backend := &productProjectionStub{lectures: client.Lectures{{InstituteID: 1, SessionID: 2, SubjectID: 3, TTID: 4}}}
+	entered := make(chan struct{})
+	session, err := tuisession.Start(t.Context(), tuisession.Options{
+		Catalog:  backend,
+		Lectures: backend,
+		Actions: actionStub{download: func(ctx context.Context, _ client.Lecture) (app.DownloadResult, error) {
+			close(entered)
+			<-ctx.Done()
+			return app.DownloadResult{}, errors.New("Authorization: Digest response=download-secret")
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	cleanupSession(t, session)
+	eventResponse := sessionRequest(t, session, http.MethodGet, "/events", nil)
+	defer closeResponseBody(t, eventResponse.Body)
+	startResponse := sessionRequest(t, session, http.MethodPost, "/operations", tuiproto.OperationRequest{
+		Kind:    tuiproto.OperationKindDownload,
+		Lecture: &tuiproto.LectureIdentity{InstituteID: 1, SessionID: 2, SubjectID: 3, TTID: 4},
+	})
+	defer closeResponseBody(t, startResponse.Body)
+	var operation tuiproto.Operation
+	decodeJSON(t, startResponse, &operation)
+	<-entered
+	cancelResponse := sessionRequest(t, session, http.MethodDelete, "/operations/"+operation.ID, nil)
+	defer closeResponseBody(t, cancelResponse.Body)
+	var canceled tuiproto.Operation
+	decodeJSON(t, cancelResponse, &canceled)
+	if canceled.State != tuiproto.OperationStateCanceled {
+		t.Fatalf("canceled operation = %+v", canceled)
+	}
+	events := readOperationEvents(t, eventResponse, operation.ID)
+	if len(events) != 2 || events[1].Type != tuiproto.EventTypeOperationCanceled {
+		t.Fatalf("download cancellation events = %+v", events)
+	}
+	encoded, marshalErr := json.Marshal(events)
+	if marshalErr != nil {
+		t.Fatalf("marshal events: %v", marshalErr)
+	}
+	if strings.Contains(string(encoded), "download-secret") {
+		t.Fatalf("download events leaked action error: %s", encoded)
+	}
+}
+
+func TestPlaybackOperationOwnsResumeControlsTelemetryAndCompletion(t *testing.T) {
+	backend := &productProjectionStub{lectures: client.Lectures{{InstituteID: 1, SessionID: 2, SubjectID: 3, TTID: 4, Topic: "Consensus"}}}
+	playback := newPlaybackStub()
+	recorded := make(chan library.PlaybackState, 1)
+	started := make(chan float64, 1)
+	session, err := tuisession.Start(t.Context(), tuisession.Options{
+		Catalog:  backend,
+		Lectures: backend,
+		Actions: actionStub{
+			download: func(context.Context, client.Lecture) (app.DownloadResult, error) {
+				return app.DownloadResult{}, errors.New("not used")
+			},
+			record: func(_ context.Context, state library.PlaybackState) error {
+				recorded <- state
+				return nil
+			},
+			resume: func(context.Context, client.Lecture) (library.PlaybackState, bool, error) {
+				return library.PlaybackState{ArtifactID: "artifact-1", PositionSeconds: 42}, true, nil
+			},
+			start: func(_ context.Context, _ client.Lecture, resume float64) (app.PlaybackStart, error) {
+				started <- resume
+				return app.PlaybackStart{
+					Session:       playback,
+					InitialEvents: []player.Event{{Name: "property-change", Property: "duration", Data: json.RawMessage("120")}},
+				}, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	cleanupSession(t, session)
+	eventResponse := sessionRequest(t, session, http.MethodGet, "/events", nil)
+	defer closeResponseBody(t, eventResponse.Body)
+	resume := true
+	startResponse := sessionRequest(t, session, http.MethodPost, "/operations", tuiproto.OperationRequest{
+		Kind:    tuiproto.OperationKindPlayback,
+		Lecture: &tuiproto.LectureIdentity{InstituteID: 1, SessionID: 2, SubjectID: 3, TTID: 4},
+		Resume:  &resume,
+	})
+	defer closeResponseBody(t, startResponse.Body)
+	var operation tuiproto.Operation
+	decodeJSON(t, startResponse, &operation)
+	if operation.Kind != tuiproto.OperationKindPlayback {
+		t.Fatalf("playback operation = %+v", operation)
+	}
+	select {
+	case position := <-started:
+		if position != 42 {
+			t.Fatalf("resume position = %f, want 42", position)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("playback did not start")
+	}
+
+	paused := true
+	commandResponse := sessionRequest(t, session, http.MethodPost, "/operations/"+operation.ID+"/commands", tuiproto.PlaybackCommand{
+		Action: tuiproto.PlaybackCommandActionPause,
+		Flag:   &paused,
+	})
+	defer closeResponseBody(t, commandResponse.Body)
+	if commandResponse.StatusCode != http.StatusOK {
+		t.Fatalf("playback command status = %d", commandResponse.StatusCode)
+	}
+	select {
+	case command := <-playback.controls:
+		if command != "pause:true" {
+			t.Fatalf("playback command = %q", command)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("playback control was not delivered")
+	}
+
+	playback.events <- player.Event{Name: "property-change", Property: "time-pos", Data: json.RawMessage("119")}
+	playback.events <- player.Event{Name: "end-file", Reason: "eof"}
+	playback.ended <- nil
+	events := readOperationEvents(t, eventResponse, operation.ID)
+	if len(events) < 4 || events[len(events)-1].Type != tuiproto.EventTypeOperationCompleted {
+		t.Fatalf("playback events = %+v", events)
+	}
+	var observedPosition bool
+	for _, event := range events {
+		if event.PositionSeconds != nil && *event.PositionSeconds == 119 && event.DurationSeconds != nil && *event.DurationSeconds == 120 {
+			observedPosition = true
+		}
+	}
+	if !observedPosition {
+		t.Fatalf("playback telemetry did not include position/duration: %+v", events)
+	}
+	select {
+	case state := <-recorded:
+		if state.ArtifactID != "artifact-1" || state.PositionSeconds != 119 || state.DurationSeconds != 120 || !state.Completed {
+			t.Fatalf("recorded playback = %+v", state)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("playback checkpoint was not recorded")
 	}
 }
 

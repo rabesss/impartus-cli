@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rabesss/impartus-cli/internal/app"
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/library"
 	"github.com/rabesss/impartus-cli/internal/tuiproto"
@@ -67,6 +68,14 @@ type ArtifactCatalog interface {
 	Artifacts(context.Context) ([]library.ArtifactRecord, error)
 }
 
+// Actions owns mutable lecture work. Production uses *app.Service.
+type Actions interface {
+	DownloadLecture(context.Context, client.Lecture) (app.DownloadResult, error)
+	RecordPlayback(context.Context, library.PlaybackState) error
+	ResumeLecture(context.Context, client.Lecture) (library.PlaybackState, bool, error)
+	StartLecture(context.Context, client.Lecture, float64) (app.PlaybackStart, error)
+}
+
 // Diagnostic is one presentation-only startup preflight result.
 type Diagnostic struct {
 	Name   string
@@ -93,6 +102,8 @@ type Options struct {
 	Lectures LectureCatalog
 	// Artifacts supplies local-library projections. Optional during transport-only tests.
 	Artifacts ArtifactCatalog
+	// Actions supplies mutable lecture operations. Optional during read-only tests.
+	Actions Actions
 	// Diagnostics are copied and scrubbed before the session begins serving.
 	Diagnostics []Diagnostic
 	// Version is the parent build version reported by the health probe.
@@ -177,7 +188,7 @@ func newSession(ctx context.Context, listener net.Listener, options Options) (*S
 		serveErr:    make(chan error, 1),
 	}
 	session.id = identity
-	session.operations = newOperationRegistry(sessionCtx, session.events, options.SelfTest)
+	session.operations = newOperationRegistry(sessionCtx, session.events, options.SelfTest, options.Actions)
 	session.server = &http.Server{
 		Handler:           session.guard(session.routes()),
 		MaxHeaderBytes:    maxHeaderBytes,

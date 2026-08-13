@@ -121,25 +121,49 @@ type DiagnosticList struct {
 // Event is one ordered session event. Sequence numbers increase
 // monotonically per session.
 type Event struct {
+	// Coalesced playback duration when known.
+	// This property is optional and absent when not applicable.
+	DurationSeconds *float64 `json:"durationSeconds,omitempty"`
+
 	// Scrubbed human readable detail. Never carries upstream credentials.
 	// This property is optional and absent when not applicable.
 	Message *string `json:"message,omitempty"`
+
+	// Current playback mute state when known.
+	// This property is optional and absent when not applicable.
+	Muted *bool `json:"muted,omitempty"`
 
 	// Operation this event belongs to, when the event is operation scoped.
 	// This property is optional and absent when not applicable.
 	OperationID *string `json:"operationId,omitempty"`
 
+	// Current playback pause state when known.
+	// This property is optional and absent when not applicable.
+	Paused *bool `json:"paused,omitempty"`
+
 	// Coalesced progress percentage between 0 and 100.
 	// This property is optional and absent when not applicable.
 	Percent *float64 `json:"percent,omitempty"`
 
+	// Coalesced playback position when known.
+	// This property is optional and absent when not applicable.
+	PositionSeconds *float64 `json:"positionSeconds,omitempty"`
+
 	// Monotonic per-session sequence number.
 	Sequence int64 `json:"sequence"`
+
+	// Current playback speed when known.
+	// This property is optional and absent when not applicable.
+	Speed *float64 `json:"speed,omitempty"`
 
 	// This property is optional and absent when not applicable.
 	State *OperationState `json:"state,omitempty"`
 
 	Type EventType `json:"type"`
+
+	// Current playback volume percentage when known.
+	// This property is optional and absent when not applicable.
+	Volume *float64 `json:"volume,omitempty"`
 }
 
 // EventType names the ordered session event kinds delivered over the event
@@ -232,6 +256,23 @@ type Lecture struct {
 	Views int64 `json:"views"`
 }
 
+// LectureIdentity is the minimal authoritative identity accepted for
+// lecture mutations. The Go parent re-resolves the full live lecture before
+// acting.
+type LectureIdentity struct {
+	// Upstream institute identifier.
+	InstituteID int64 `json:"instituteId"`
+
+	// Upstream session identifier.
+	SessionID int64 `json:"sessionId"`
+
+	// Upstream subject identifier.
+	SubjectID int64 `json:"subjectId"`
+
+	// Stable upstream lecture timetable identifier.
+	TTID int64 `json:"ttid"`
+}
+
 // LectureList contains the live lectures for one requested course identity.
 type LectureList struct {
 	// Lectures in the application service order.
@@ -256,11 +297,24 @@ type OperationKind string
 const (
 	// OperationKindSelftest is the "selftest" OperationKind value.
 	OperationKindSelftest OperationKind = "selftest"
+	// OperationKindDownload is the "download" OperationKind value.
+	OperationKindDownload OperationKind = "download"
+	// OperationKindPlayback is the "playback" OperationKind value.
+	OperationKindPlayback OperationKind = "playback"
 )
 
 // OperationRequest is the request body accepted when starting an operation.
 type OperationRequest struct {
 	Kind OperationKind `json:"kind"`
+
+	// Lecture identity required by lecture-scoped operations.
+	// This property is optional and absent when not applicable.
+	Lecture *LectureIdentity `json:"lecture,omitempty"`
+
+	// Whether playback should use an existing durable resume checkpoint when
+	// available.
+	// This property is optional and absent when not applicable.
+	Resume *bool `json:"resume,omitempty"`
 }
 
 // OperationState is one operation lifecycle state. Every state except
@@ -276,6 +330,39 @@ const (
 	OperationStateCanceled OperationState = "canceled"
 	// OperationStateFailed is the "failed" OperationState value.
 	OperationStateFailed OperationState = "failed"
+)
+
+// PlaybackCommand is one typed playback-control request. The action
+// determines whether flag or value is required.
+type PlaybackCommand struct {
+	Action PlaybackCommandAction `json:"action"`
+
+	// Boolean value used by pause and mute.
+	// This property is optional and absent when not applicable.
+	Flag *bool `json:"flag,omitempty"`
+
+	// Numeric value used by seek, volume, and speed.
+	// This property is optional and absent when not applicable.
+	Value *float64 `json:"value,omitempty"`
+}
+
+// PlaybackCommandAction names one bounded mpv control owned by the Go
+// playback session.
+type PlaybackCommandAction string
+
+const (
+	// PlaybackCommandActionPause is the "pause" PlaybackCommandAction value.
+	PlaybackCommandActionPause PlaybackCommandAction = "pause"
+	// PlaybackCommandActionSeek is the "seek" PlaybackCommandAction value.
+	PlaybackCommandActionSeek PlaybackCommandAction = "seek"
+	// PlaybackCommandActionMute is the "mute" PlaybackCommandAction value.
+	PlaybackCommandActionMute PlaybackCommandAction = "mute"
+	// PlaybackCommandActionVolume is the "volume" PlaybackCommandAction value.
+	PlaybackCommandActionVolume PlaybackCommandAction = "volume"
+	// PlaybackCommandActionSpeed is the "speed" PlaybackCommandAction value.
+	PlaybackCommandActionSpeed PlaybackCommandAction = "speed"
+	// PlaybackCommandActionCycleVideo is the "cycleVideo" PlaybackCommandAction value.
+	PlaybackCommandActionCycleVideo PlaybackCommandAction = "cycleVideo"
 )
 
 // Problem is the uniform session error body. It never discloses local state

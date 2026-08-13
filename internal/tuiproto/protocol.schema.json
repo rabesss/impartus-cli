@@ -222,6 +222,29 @@
         }
       }
     },
+    "LectureIdentity": {
+      "type": "object",
+      "description": "is the minimal authoritative identity accepted for lecture mutations. The Go parent re-resolves the full live lecture before acting.",
+      "required": ["instituteId", "sessionId", "subjectId", "ttid"],
+      "properties": {
+        "instituteId": {
+          "type": "integer",
+          "description": "Upstream institute identifier."
+        },
+        "sessionId": {
+          "type": "integer",
+          "description": "Upstream session identifier."
+        },
+        "subjectId": {
+          "type": "integer",
+          "description": "Upstream subject identifier."
+        },
+        "ttid": {
+          "type": "integer",
+          "description": "Stable upstream lecture timetable identifier."
+        }
+      }
+    },
     "ArtifactSummary": {
       "type": "object",
       "description": "is one presentation-safe local library record without exposing filesystem paths.",
@@ -274,7 +297,7 @@
     "OperationKind": {
       "type": "string",
       "description": "names the operations the session may start. The bounded foundation exposes only a transport self test.",
-      "enum": ["selftest"]
+      "enum": ["selftest", "download", "playback"]
     },
     "OperationState": {
       "type": "string",
@@ -288,6 +311,37 @@
       "properties": {
         "kind": {
           "$ref": "#/$defs/OperationKind"
+        },
+        "lecture": {
+          "$ref": "#/$defs/LectureIdentity",
+          "description": "Lecture identity required by lecture-scoped operations."
+        },
+        "resume": {
+          "type": "boolean",
+          "description": "Whether playback should use an existing durable resume checkpoint when available."
+        }
+      }
+    },
+    "PlaybackCommandAction": {
+      "type": "string",
+      "description": "names one bounded mpv control owned by the Go playback session.",
+      "enum": ["pause", "seek", "mute", "volume", "speed", "cycleVideo"]
+    },
+    "PlaybackCommand": {
+      "type": "object",
+      "description": "is one typed playback-control request. The action determines whether flag or value is required.",
+      "required": ["action"],
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/PlaybackCommandAction"
+        },
+        "flag": {
+          "type": "boolean",
+          "description": "Boolean value used by pause and mute."
+        },
+        "value": {
+          "type": "number",
+          "description": "Numeric value used by seek, volume, and speed."
         }
       }
     },
@@ -330,6 +384,22 @@
           "type": "string",
           "description": "Scrubbed human readable detail. Never carries upstream credentials."
         },
+        "durationSeconds": {
+          "type": "number",
+          "description": "Coalesced playback duration when known."
+        },
+        "muted": {
+          "type": "boolean",
+          "description": "Current playback mute state when known."
+        },
+        "paused": {
+          "type": "boolean",
+          "description": "Current playback pause state when known."
+        },
+        "positionSeconds": {
+          "type": "number",
+          "description": "Coalesced playback position when known."
+        },
         "operationId": {
           "type": "string",
           "description": "Operation this event belongs to, when the event is operation scoped."
@@ -345,8 +415,16 @@
         "state": {
           "$ref": "#/$defs/OperationState"
         },
+        "speed": {
+          "type": "number",
+          "description": "Current playback speed when known."
+        },
         "type": {
           "$ref": "#/$defs/EventType"
+        },
+        "volume": {
+          "type": "number",
+          "description": "Current playback volume percentage when known."
         }
       }
     },

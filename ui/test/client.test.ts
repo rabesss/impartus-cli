@@ -26,13 +26,17 @@ describe("SessionClient", () => {
     const requests: Array<{ capability: string | null; protocol: string | null; url: string }> = []
     const server = Bun.serve({
       port: 0,
-      fetch(request) {
+      async fetch(request) {
         requests.push({
           capability: request.headers.get("X-Impartus-Capability"),
           protocol: request.headers.get("X-Impartus-Protocol"),
           url: request.url,
         })
         const path = new URL(request.url).pathname
+        if (path.endsWith("/commands")) {
+          await request.json()
+          return Response.json({ id: "operation-id", kind: "playback", state: "running" } satisfies Operation)
+        }
         switch (path) {
           case "/tui/v1/health":
             return Response.json({
@@ -90,10 +94,12 @@ describe("SessionClient", () => {
             return Response.json({
               diagnostics: [{ detail: "available", name: "mpv", status: "pass" }],
             } satisfies DiagnosticList)
-          case "/tui/v1/operations":
-            return Response.json({ id: "operation-id", kind: "selftest", state: "running" } satisfies Operation, {
+          case "/tui/v1/operations": {
+            const body = await request.json() as { kind: "download" | "selftest" }
+            return Response.json({ id: "operation-id", kind: body.kind, state: "running" } satisfies Operation, {
               status: 202,
             })
+          }
           case "/tui/v1/events": {
             const events: Event[] = [
               { sequence: 1, type: "session.ready" },
@@ -133,17 +139,21 @@ describe("SessionClient", () => {
     expect((await client.courses()).courses[0]?.subjectName).toBe("Distributed Systems")
     const course = (await client.courses()).courses[0]
     expect(course).toBeDefined()
-    expect((await client.lectures(course!)).lectures[0]?.topic).toBe("Consensus")
+    const lecture = (await client.lectures(course!)).lectures[0]
+    expect(lecture?.topic).toBe("Consensus")
     expect((await client.artifacts()).artifacts[0]?.totalBytes).toBe(2048)
     expect((await client.diagnostics()).diagnostics[0]?.status).toBe("pass")
     expect((await client.startSelfTest()).id).toBe("operation-id")
+    expect((await client.startDownload(lecture!)).kind).toBe("download")
+    expect((await client.startPlayback(lecture!, true)).kind).toBe("playback")
+    expect((await client.playbackCommand("operation-id", { action: "pause", flag: true })).kind).toBe("playback")
     const events: Event[] = []
     for await (const event of client.events()) {
       events.push(event)
     }
     expect(events.map((event) => event.sequence)).toEqual([1, 2, 3])
 
-    expect(requests).toHaveLength(8)
+    expect(requests).toHaveLength(11)
     for (const request of requests) {
       expect(request.capability).toBe(bootstrap.capability)
       expect(request.protocol).toBe(PROTOCOL_VERSION)

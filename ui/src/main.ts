@@ -2,7 +2,7 @@ import { CliRenderer, createCliRenderer } from "@opentui/core"
 
 import { consumeBootstrap } from "./bootstrap.ts"
 import { SessionClient } from "./client.ts"
-import type { Event, OperationState } from "./protocol/types.gen.ts"
+import type { Event, OperationKind, OperationState, PlaybackCommand } from "./protocol/types.gen.ts"
 import { FoundationView, type FoundationState } from "./view.ts"
 
 let startupStage = "bootstrap"
@@ -18,6 +18,7 @@ async function main(): Promise<void> {
   const diagnostics = await client.diagnostics()
   const state: FoundationState = {
     activeCourse: undefined,
+    activeLecture: undefined,
     artifacts: [],
     courses: courses.courses,
     diagnostics: diagnostics.diagnostics,
@@ -59,15 +60,26 @@ async function runInteractive(client: SessionClient, initialState: FoundationSta
     view.update(next)
   }
   const view = new FoundationView(renderer, state, {
-    onBack: () => update({ ...state, error: undefined, loading: false, screen: "courses", selectedItem: 0 }),
+    onBack: () => {
+      void goBack(client, () => state, update, eventsAbort.signal)
+    },
     onDiagnostics: () => {
       void loadDiagnostics(client, () => state, update, eventsAbort.signal)
+    },
+    onDownload: (lecture) => {
+      void startDownload(client, lecture, () => state, update, eventsAbort.signal)
     },
     onLibrary: () => {
       void loadLibrary(client, () => state, update, eventsAbort.signal)
     },
     onOpenCourse: (course) => {
       void loadLectures(client, course, () => state, update, eventsAbort.signal)
+    },
+    onPlay: (lecture) => {
+      void startPlayback(client, lecture, () => state, update, eventsAbort.signal)
+    },
+    onPlaybackCommand: (command) => {
+      void controlPlayback(client, command, () => state, update, eventsAbort.signal)
     },
     onQuit: () => quit.resolve(),
     onRetry: () => {
@@ -140,12 +152,26 @@ async function renderNonInteractiveResult(state: FoundationState, operationID: s
   })
   const view = new FoundationView(renderer, {
     ...state,
-    operation: { id: operationID, percent: 100, state: terminal },
+    operation: {
+      durationSeconds: 0,
+      id: operationID,
+      kind: "selftest",
+      muted: false,
+      paused: false,
+      percent: 100,
+      positionSeconds: 0,
+      speed: 1,
+      state: terminal,
+      volume: 100,
+    },
   }, {
     onBack() {},
     onDiagnostics() {},
+    onDownload() {},
     onLibrary() {},
     onOpenCourse() {},
+    onPlay() {},
+    onPlaybackCommand() {},
     onQuit() {},
     onRetry() {},
     onSelfTest() {},
@@ -156,6 +182,83 @@ async function renderNonInteractiveResult(state: FoundationState, operationID: s
   } finally {
     view.destroy()
     renderer.destroy()
+  }
+}
+
+async function startPlayback(
+  client: SessionClient,
+  lecture: FoundationState["lectures"][number],
+  current: () => FoundationState,
+  update: (state: FoundationState) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  if (current().operation?.state === "running") return
+  update({ ...current(), activeLecture: lecture, error: undefined, loading: true, screen: "playback" })
+  try {
+    const operation = await client.startPlayback(lecture, true, signal)
+    if (signal.aborted) return
+    update({
+      ...current(),
+      loading: false,
+      operation: newOperation(operation.id, operation.kind, operation.state),
+      status: `Playing ${lecture.topic}`,
+    })
+  } catch {
+    if (!signal.aborted) update({ ...current(), error: "Lecture playback could not start", loading: false })
+  }
+}
+
+async function controlPlayback(
+  client: SessionClient,
+  command: PlaybackCommand,
+  current: () => FoundationState,
+  update: (state: FoundationState) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const operation = current().operation
+  if (operation?.kind !== "playback" || operation.state !== "running") return
+  try {
+    await client.playbackCommand(operation.id, command, signal)
+  } catch {
+    if (!signal.aborted) update({ ...current(), status: "Playback control failed" })
+  }
+}
+
+async function goBack(
+  client: SessionClient,
+  current: () => FoundationState,
+  update: (state: FoundationState) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const state = current()
+  if (state.screen === "playback") {
+    if (state.operation?.kind === "playback" && state.operation.state === "running") {
+      await client.cancelOperation(state.operation.id, signal).catch(() => undefined)
+    }
+    if (!signal.aborted) update({ ...current(), error: undefined, loading: false, screen: "lectures" })
+    return
+  }
+  if (state.screen === "lectures") update({ ...state, error: undefined, loading: false, screen: "courses", selectedItem: 0 })
+  else update({ ...state, error: undefined, loading: false, screen: state.activeCourse === undefined ? "courses" : "lectures", selectedItem: 0 })
+}
+
+async function startDownload(
+  client: SessionClient,
+  lecture: FoundationState["lectures"][number],
+  current: () => FoundationState,
+  update: (state: FoundationState) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  if (current().operation?.state === "running") return
+  try {
+    const operation = await client.startDownload(lecture, signal)
+    update({
+      ...current(),
+      operation: newOperation(operation.id, operation.kind, operation.state),
+      status: `Downloading ${lecture.topic}`,
+    })
+  } catch {
+    if (!signal.aborted) update({ ...current(), error: "Lecture download could not start" })
   }
 }
 
@@ -253,7 +356,7 @@ async function startSelfTest(
     const operation = await client.startSelfTest(signal)
     update({
       ...current,
-      operation: { id: operation.id, percent: 0, state: operation.state },
+      operation: newOperation(operation.id, operation.kind, operation.state),
     })
   } catch {
     update({ ...current, status: "Connection failed" })
@@ -286,10 +389,38 @@ function applyEvent(state: FoundationState, event: Event): FoundationState | und
     ...state,
     operation: {
       ...operation,
+      durationSeconds: event.durationSeconds ?? operation.durationSeconds,
+      muted: event.muted ?? operation.muted,
+      paused: event.paused ?? operation.paused,
       percent: event.percent ?? operation.percent,
+      positionSeconds: event.positionSeconds ?? operation.positionSeconds,
+      speed: event.speed ?? operation.speed,
       state: event.state ?? operation.state,
+      volume: event.volume ?? operation.volume,
     },
+    status: terminalStatus(operation.kind, event.state, event.message) ?? state.status,
   }
+}
+
+function newOperation(id: string, kind: OperationKind, state: OperationState): NonNullable<FoundationState["operation"]> {
+  return {
+    durationSeconds: 0,
+    id,
+    kind,
+    muted: false,
+    paused: false,
+    percent: 0,
+    positionSeconds: 0,
+    speed: 1,
+    state,
+    volume: 100,
+  }
+}
+
+function terminalStatus(kind: OperationKind, state: OperationState | undefined, message: string | undefined): string | undefined {
+  if (state === undefined || state === "running") return message
+  const subject = kind === "download" ? "Download" : kind === "playback" ? "Playback" : "Session test"
+  return message ?? `${subject} ${state}`
 }
 
 await main().catch(() => {
