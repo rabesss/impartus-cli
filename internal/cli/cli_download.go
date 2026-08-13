@@ -86,14 +86,18 @@ func runDownload(args []string) error {
 }
 
 func runDownloadWithDependencies(args []string, deps downloadExecutionDependencies) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runDownloadWithDependenciesContext(ctx, args, deps)
+}
+
+func runDownloadWithDependenciesContext(ctx context.Context, args []string, deps downloadExecutionDependencies) error {
 	if requestedEvents(args) {
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
 		err := runDownloadEventsWithDependenciesContext(ctx, args, os.Stdout, deps, time.Now, "")
 		return downloadCommandError(ctx, err)
 	}
-	_, err := executeDownloadWithDependencies(args, humanDownloadPresentation(), deps)
-	return downloadCommandError(context.Background(), err)
+	_, err := executeDownloadWithDependenciesContext(ctx, args, humanDownloadPresentation(), deps)
+	return downloadCommandError(ctx, err)
 }
 
 func downloadCommandError(ctx context.Context, err error) error {
