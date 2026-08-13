@@ -905,6 +905,7 @@ func TestUserDownloadsLectureAndBrowsesTheLocalLibrary(t *testing.T) {
 }
 
 func TestResponsiveCourseViewsMatchGoldens(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
 	backend := &fakeBackend{courses: client.Courses{
 		{SubjectName: "Distributed Systems", ProfessorName: "Leslie Lamport", VideoCount: 12},
 		{SubjectName: "Linear Algebra", ProfessorName: "Gilbert Strang", VideoCount: 24},
