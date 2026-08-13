@@ -12,6 +12,31 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+func createBootstrapFile(path string) (*os.File, error) {
+	pathPointer, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, fmt.Errorf("encode private OpenTUI bootstrap path: %w", err)
+	}
+	handle, err := windows.CreateFile(
+		pathPointer,
+		windows.GENERIC_WRITE|windows.READ_CONTROL|windows.WRITE_DAC,
+		0,
+		nil,
+		windows.CREATE_NEW,
+		windows.FILE_ATTRIBUTE_NORMAL,
+		0,
+	)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(handle), path)
+	if file == nil {
+		_ = windows.CloseHandle(handle)
+		return nil, errors.New("wrap private OpenTUI bootstrap handle")
+	}
+	return file, nil
+}
+
 func secureBootstrapDirectory(path string) error {
 	pathPointer, err := windows.UTF16PtrFromString(path)
 	if err != nil {

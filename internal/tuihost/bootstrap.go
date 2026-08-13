@@ -32,7 +32,7 @@ func createBootstrap(payload tuiproto.Bootstrap) (_ *bootstrapFile, returnErr er
 	if secureErr := secureBootstrapDirectory(directory); secureErr != nil {
 		return nil, secureErr
 	}
-	file, err := os.OpenFile(bootstrap.path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304 -- path is fixed beneath a fresh private directory
+	file, err := createBootstrapFile(bootstrap.path)
 	if err != nil {
 		return nil, fmt.Errorf("create private OpenTUI bootstrap: %w", err)
 	}

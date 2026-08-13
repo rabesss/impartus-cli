@@ -8,6 +8,10 @@ import (
 	"syscall"
 )
 
+func createBootstrapFile(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304 -- path is fixed beneath a fresh private directory
+}
+
 func secureBootstrapDirectory(path string) error {
 	if err := os.Chmod(path, 0o700); err != nil { // #nosec G302 -- owner-only directory permissions are intentional.
 		return fmt.Errorf("secure private OpenTUI bootstrap directory: %w", err)
