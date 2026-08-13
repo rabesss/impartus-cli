@@ -14,43 +14,6 @@ import (
 	"github.com/rabesss/impartus-cli/internal/config"
 )
 
-func runInteractive() error {
-	if err := ensureFFmpeg(); err != nil {
-		return err
-	}
-
-	ctx := context.Background()
-	cfg, apiClient, err := initClient(ctx)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println("Impartus Video Downloader")
-	fmt.Println("If you are facing any issues, please check the section at https://github.com/rabesss/impartus-cli#faqtroubleshooting")
-	fmt.Println()
-
-	course, err := selectCourseInteractive(ctx, cfg, apiClient)
-	if err != nil {
-		return err
-	}
-
-	selected, err := filterLecturesInteractive(ctx, cfg, apiClient, course)
-	if err != nil {
-		return err
-	}
-	if scopeErr := client.ResolveLectureScope(ctx, cfg, apiClient, selected, course.SubjectID, course.SessionID); scopeErr != nil {
-		return scopeErr
-	}
-
-	presentation := humanDownloadPresentation()
-	result, err := downloadLectures(ctx, cfg, apiClient, selected, presentation)
-	if err != nil {
-		return err
-	}
-	applyLibraryRecording(ctx, result, presentation, recordDownloadedArtifacts)
-	return nil
-}
-
 func selectCourseInteractive(ctx context.Context, cfg *config.Config, apiClient *client.Client) (*client.Course, error) {
 	courses, err := apiClient.GetCourses(ctx, cfg)
 	if err != nil {

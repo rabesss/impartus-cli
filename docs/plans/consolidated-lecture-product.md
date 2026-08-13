@@ -1,9 +1,14 @@
 # Consolidated Impartus lecture product: approved execution plan
 
-Status: proposed for external review
+Status: implemented; frontend architecture superseded by the OpenTUI migration
 Owner: Impartus maintainers
 Planned from: `origin/main` at `70401a18765dcadb1cdba9201863564abd13014c`
 Supersedes: the product boundary in PR #139 and untracked Plan 001 on that branch
+
+Historical note: this plan established the current Go application, player,
+library, watcher, and automation boundaries. Its Bubble Tea frontend choice was
+replaced after v0.1.21 by a compiled OpenTUI presentation sidecar while Go kept
+all credentials, networking, media, persistence, and operation ownership.
 
 ## Outcome
 

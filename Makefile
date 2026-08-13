@@ -1,4 +1,4 @@
-.PHONY: build config-init test run-cli run-api lint clean install pre-commit-install pre-commit quality-gate-install quality-gate quality-gate-scan quality-gate-next docs docs-toc security security-scan security-gitleaks security-gosec security-trivy security-govulncheck
+.PHONY: build build-go build-ui build-release config-init test run-cli run-api lint clean install pre-commit-install pre-commit quality-gate-install quality-gate quality-gate-scan quality-gate-next docs docs-toc security security-scan security-gitleaks security-gosec security-trivy security-govulncheck
 
 DESLOPPIFY_VERSION ?= 1.0.0
 TREE_SITTER_LANGUAGE_PACK_VERSION ?= 1.6.2
@@ -9,11 +9,16 @@ GO_TOOLCHAIN ?= $(shell awk '/^toolchain / { print $$2 }' go.mod)
 CONFIG_FILE ?= config.json
 SAMPLE_CONFIG ?= sample.config.json
 
-# Build the impartus binary
-build:
-	@echo "Building impartus..."
+# Build the Go parent and its adjacent OpenTUI frontend.
+build: build-go build-ui
+	@echo "Build complete: impartus + impartus-ui"
+
+build-go:
 	go build -o impartus .
-	@echo "Build complete!"
+
+build-ui:
+	cd ui && bun install --frozen-lockfile
+	cd ui && bun run build -- --outfile=../impartus-ui
 
 # Create a private config file, or secure an existing one without overwriting it.
 config-init:
@@ -84,21 +89,24 @@ pre-commit:
 # Clean build artifacts
 clean:
 	@echo "Cleaning..."
-	rm -f impartus
+	rm -f impartus impartus-ui impartus.exe impartus-ui.exe
 	rm -f *.log
 	@echo "Clean complete!"
 
-# Install to GOPATH/bin
+# Install the adjacent parent/sidecar pair to GOPATH/bin.
 install: build
 	@echo "Installing to GOPATH/bin..."
-	go install .
+	install -m 0755 impartus "$$(go env GOPATH)/bin/impartus"
+	install -m 0755 impartus-ui "$$(go env GOPATH)/bin/impartus-ui"
 	@echo "Install complete!"
 
 # Build with version info
 build-release:
 	@echo "Building release..."
 	go build -ldflags "-X github.com/rabesss/impartus-cli/internal/buildinfo.Version=$(shell git describe --tags --always --dirty) -X github.com/rabesss/impartus-cli/internal/buildinfo.Date=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" -o impartus .
-	@echo "Release build complete!"
+	cd ui && bun install --frozen-lockfile
+	cd ui && bun run build -- --outfile=../impartus-ui
+	@echo "Release build complete: impartus + impartus-ui"
 
 # Run API with custom port
 run-api-port:
@@ -207,7 +215,9 @@ security: security-gitleaks security-gosec security-trivy security-govulncheck
 # Help target
 help:
 	@echo "Available targets:"
-	@echo "  build              - Build the impartus binary"
+	@echo "  build              - Build the Go parent and adjacent OpenTUI frontend"
+	@echo "  build-go           - Build only the Go parent (non-TUI commands still work)"
+	@echo "  build-ui           - Build only the adjacent OpenTUI frontend"
 	@echo "  config-init        - Create or secure config.json with owner-only permissions"
 	@echo "  test               - Run tests"
 	@echo "  run-cli            - Run CLI in interactive mode"

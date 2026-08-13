@@ -21,7 +21,6 @@
 !go.sum
 !go.mod
 !internal/library/migrations/*.sql
-!internal/tui/testdata/*.golden
 !internal/tuiproto/protocol.schema.json
 !ui/src/protocol/types.gen.ts
 !ui/package.json

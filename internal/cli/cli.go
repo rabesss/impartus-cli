@@ -14,7 +14,6 @@ import (
 )
 
 var (
-	runInteractiveFn        = runInteractive
 	runTUIFn                = runTUI
 	isInteractiveTerminalFn = isInteractiveTerminal
 	runCoursesFn            = runCourses
@@ -80,8 +79,6 @@ func executeHuman(args []string, version, date string) error {
 		return runWatchFn(args[1:])
 	case "tui":
 		return executeHumanTUI(args)
-	case "classic":
-		return executeHumanClassic(args)
 	default:
 		if err := showHelp(version, date); err != nil {
 			return err
@@ -107,16 +104,6 @@ func executeHumanTUI(args []string) error {
 	return runTUIFn()
 }
 
-func executeHumanClassic(args []string) error {
-	if len(args) != 1 {
-		return errors.New("classic does not accept positional arguments")
-	}
-	if _, err := fmt.Fprintln(os.Stderr, "warning: `impartus classic` is deprecated and will be removed after one release; use `impartus tui`"); err != nil {
-		return err
-	}
-	return runInteractiveFn()
-}
-
 func executeJSON(args []string, version, date string) error {
 	command := args[0]
 	switch command {
@@ -138,7 +125,7 @@ func executeJSON(args []string, version, date string) error {
 		return executeJSONLibrary(args[1:])
 	case "watch":
 		return executeJSONWatch(args[1:])
-	case "tui", "classic":
+	case "tui":
 		return newJSONError(command, fmt.Errorf("%s command is not supported in JSON mode", command))
 	case "serve":
 		return executeJSONServe(args[1:])

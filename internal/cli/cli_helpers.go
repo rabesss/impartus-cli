@@ -109,7 +109,6 @@ func showHelpTo(output io.Writer, version, date string) error {
 	}
 	for _, line := range []string{
 		"  tui                                  Browse, play, download, and resume (TUI)",
-		"  classic                              Legacy prompt flow (deprecated)",
 		"  courses                              List courses (JSON)",
 		"  lectures -s <subject> -S <session>   List lectures (JSON)",
 		"  download [flags]                     Download lectures",
@@ -142,7 +141,7 @@ func showHelpTo(output io.Writer, version, date string) error {
 			return err
 		}
 	}
-	_, err := fmt.Fprintln(output, "\nNo command launches the TUI only when stdin and stdout are terminals; use `impartus classic` for the temporary legacy prompt flow.")
+	_, err := fmt.Fprintln(output, "\nNo command launches the TUI only when stdin and stdout are terminals.")
 	return err
 }
 

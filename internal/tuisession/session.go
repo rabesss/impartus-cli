@@ -53,7 +53,7 @@ const (
 
 // Catalog is the read-only application seam projected by the session. The
 // production implementation is *app.Service, so the frontend reaches live
-// state through the same boundary the Bubble Tea frontend uses.
+// state through the shared application boundary rather than owning networking.
 type Catalog interface {
 	Courses(context.Context) (client.Courses, error)
 }

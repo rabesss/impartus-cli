@@ -48,8 +48,7 @@ A Go-based CLI/TUI and HTTP API server for browsing, streaming, and downloading 
 
 ## Features
 
-- **Bubble Tea Terminal Workspace** - Browse/filter courses and lectures, inspect details, control native mpv, download, inspect the local library, and resume recorded artifacts
-- **Legacy Prompt Compatibility** - The previous guided download prompt remains temporarily available as `impartus classic`
+- **OpenTUI Terminal Workspace** - A responsive desktop-style course, lecture, playback, download, library, and diagnostics workspace
 - **Deterministic JSON Mode** - Machine-readable output for automation and AI agent integration
 - **HTTP API with WebSocket Events** - REST API with real-time job progress updates
 - **Multi-View Video Processing** - Support for instructor/dual-view video streams
@@ -65,24 +64,33 @@ A Go-based CLI/TUI and HTTP API server for browsing, streaming, and downloading 
 ### Install
 
 ```bash
-# Install from source
-go install github.com/rabesss/impartus-cli@latest
-
 # Or run the container package
 docker run --rm ghcr.io/rabesss/impartus-cli:main --help
 
-# Or download the latest release asset
+# Download the latest release asset (recommended for the TUI)
 gh release download --repo rabesss/impartus-cli --pattern 'impartus_*_linux_amd64.tar.gz'
+tar -xzf impartus_*_linux_amd64.tar.gz
 
 # Or build from source
 git clone https://github.com/rabesss/impartus-cli
 cd impartus-cli
-go build -o impartus .
+make build
 ```
+
+Keep the release's `impartus` and `impartus-ui` executables together in the
+same directory. The Go parent owns credentials, networking, SQLite, mpv, and
+downloads; the adjacent OpenTUI executable owns terminal presentation only.
+`go install github.com/rabesss/impartus-cli@latest` still builds the headless Go
+commands, but cannot install the compiled TUI sidecar.
+
+Linux TUI release sidecars currently target glibc. The Go parent remains
+CGO-free and its explicit non-TUI commands continue to work without the
+sidecar; musl-only systems should build the UI locally or use those commands.
 
 ### Requirements
 
 - **Go 1.25+** - Go toolchain for building (pinned in `go.mod`; Docker images may use a newer patch release)
+- **Bun 1.3.14** - Required only when building the OpenTUI frontend from source
 - **FFmpeg** - Required for video processing (must be in `PATH`)
 - **mpv** - Required for TUI or CLI playback (must be in `PATH`)
 - **Impartus Account** - Valid credentials for your institution's Impartus platform
@@ -266,20 +274,21 @@ Run without arguments from a real terminal, or invoke the workspace explicitly:
 ./impartus tui
 ```
 
-The Bubble Tea v2 workspace owns the alternate screen while mpv renders in a
-separate native window. It supports live course/lecture browsing, `/` filters,
-`i` details, `enter` playback, `d` download, `l` library, `!` dependency
-diagnostics, resume prompts, and mpv pause/seek/volume/mute/speed/camera controls.
-It never falls back to blocking legacy mpv.
+The compiled OpenTUI workspace owns the alternate screen while mpv renders in a
+separate native window. It uses a desktop-style three-pane layout on wide
+terminals, two panes at medium widths, and a routed single pane on narrow
+terminals. It supports live course/lecture browsing, `/` filters, `enter`
+playback with recorded resume state, `d` download, `l` library, `!` dependency
+diagnostics, and mpv pause/seek/volume/mute/speed/camera controls. Press `?` for
+the command guide. It never falls back to blocking legacy mpv.
+
+The Go parent starts a private, authenticated loopback session for each TUI
+launch and passes one one-use owner-private bootstrap file to the child. The
+capability never appears in argv or the child environment, and the child does
+not inherit Impartus credentials.
 
 No-argument use is TTY-aware: when stdin or stdout is not a terminal, Impartus
-prints help to stderr and exits 2 rather than consuming a pipeline. The previous
-prompt-based download flow is available for one release with a deprecation
-notice:
-
-```bash
-./impartus classic
-```
+prints help to stderr and exits 2 rather than consuming a pipeline.
 
 ### Deterministic JSON Mode
 
@@ -343,7 +352,6 @@ the selection alone.
 |---------|-------------|
 | `impartus` | Launch the TUI when stdin/stdout are terminals; otherwise help + exit 2 |
 | `impartus tui` | Explicitly launch the course/lecture terminal workspace |
-| `impartus classic` | Legacy guided download prompt (deprecated for one release) |
 | `impartus --json` | Capability metadata |
 | `impartus help` | Show usage information |
 | `impartus version` | Show version and build date |
@@ -705,7 +713,7 @@ make pre-commit
 
 | Target | Description |
 |--------|-------------|
-| `make build` | Build the impartus binary |
+| `make build` | Build the Go parent and adjacent OpenTUI frontend |
 | `make test` | Run tests with coverage |
 | `make lint` | Run golangci-lint |
 | `make pre-commit-install` | Install pre-commit hooks |
@@ -763,24 +771,30 @@ impartus/
 │   ├── client/              # Impartus API client, auth, HTTP helpers
 │   ├── downloader/          # Playlist parsing, chunk download/decrypt, ffmpeg
 │   ├── app/                 # Shared catalog/playback orchestration seam
-│   ├── tui/                 # Bubble Tea view state, keys, layout, and app-event translation
+│   ├── tuihost/             # OpenTUI child lifecycle and private bootstrap ownership
+│   ├── tuiproto/            # Generated versioned Go/TypeScript session contract
+│   ├── tuisession/          # Authenticated loopback projections, operations, and events
 │   ├── player/              # Supervised mpv process and bounded JSON IPC
 │   ├── library/             # Pure-Go SQLite artifacts, playback, and local jobs
 │   ├── events/              # Shared synchronous CLI NDJSON lifecycle contract
 │   ├── watch/               # Generic polling, advisory lock, and durable downloads
 │   └── server/              # HTTP API, auth middleware, jobs, WebSocket
+├── ui/                      # OpenTUI TypeScript frontend compiled by Bun
 ├── docs/                    # Documentation
 └── config.json              # User configuration
 ```
 
 ### Key Components
 
-- **`internal/cli`** - CLI command routing, TTY-aware TUI launch, classic compatibility, and deterministic modes
+- **`internal/cli`** - CLI command routing, TTY-aware OpenTUI launch, and deterministic modes
 - **`internal/config`** - Configuration loading, defaults, and validation
 - **`internal/client`** - Impartus API HTTP client with authentication
 - **`internal/downloader`** - Video pipeline: playlist parsing, chunk download, AES decryption, FFmpeg join
 - **`internal/app`** - Shared catalog, playback, download, artifact, library, and resume orchestration boundary
-- **`internal/tui`** - Bubble Tea v2 terminal state only; it performs no HTTP, subprocess, or SQL work directly
+- **`internal/tuihost`** - Resolves and supervises the adjacent frontend while preserving terminal cleanup
+- **`internal/tuiproto`** - One strict schema generated into matching Go and TypeScript types
+- **`internal/tuisession`** - Private per-launch transport that projects safe state and keeps mutable work in Go
+- **`ui`** - OpenTUI rendering, responsive routing, filtering, command help, and session-client validation
 - **`internal/player`** - Private mpv runtime, process-group supervision, bounded JSON IPC, events, and typed controls
 - **`internal/library`** - Private SQLite migrations, artifact paths, verification, resume history, and recoverable local jobs
 - **`internal/events`** - Single-terminal NDJSON lifecycle events for automation

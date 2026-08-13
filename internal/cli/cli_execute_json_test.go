@@ -61,18 +61,16 @@ func TestExplicitTUIOnPipeReturnsExitTwoWithoutLaunching(t *testing.T) {
 	}
 }
 
-func TestClassicPreservesOldPromptForOneRelease(t *testing.T) {
+func TestRemovedClassicCommandIsNotAdvertisedOrDispatched(t *testing.T) {
 	restoreCLIState(t)
-	called := false
-	runInteractiveFn = func() error {
-		called = true
-		return nil
-	}
 	os.Args = []string{"impartus", "classic"}
 
-	stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("dev", "") })
-	if err != nil || !called || stdout != "" || !strings.Contains(stderr, "deprecated") {
-		t.Fatalf("classic = called=%t stdout=%q stderr=%q err=%v", called, stdout, stderr, err)
+	stdout, _, err := captureOutputStreams(t, func() error { return Execute("dev", "") })
+	if err == nil || !strings.Contains(err.Error(), "unknown command: classic") {
+		t.Fatalf("classic error = %v, want removed-command error", err)
+	}
+	if strings.Contains(stdout, "impartus classic") {
+		t.Fatalf("help still advertises classic: %q", stdout)
 	}
 }
 
@@ -90,10 +88,6 @@ func TestExitCodePreservesUsageErrors(t *testing.T) {
 
 func TestExecuteJSONNoSubcommandReturnsCapabilitiesEnvelope(t *testing.T) {
 	restoreCLIState(t)
-	runInteractiveFn = func() error {
-		t.Fatal("interactive mode should not run in --json mode")
-		return nil
-	}
 	os.Args = []string{"impartus", "--json"}
 
 	output, err := captureStdout(t, func() error { return Execute("1.2.3", "2025-01-01") })
