@@ -114,14 +114,25 @@ func downloadCommandError(ctx context.Context, err error) error {
 }
 
 func runDownloadJSON(args []string) (downloadResult, error) {
-	return runDownloadJSONWithDependencies(args, defaultDownloadExecutionDependencies())
+	return runDownloadJSONWithSignalDependencies(args, defaultDownloadExecutionDependencies())
+}
+
+func runDownloadJSONWithSignalDependencies(args []string, deps downloadExecutionDependencies) (downloadResult, error) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	result, err := runDownloadJSONWithDependenciesContext(ctx, args, deps)
+	return result, downloadCommandError(ctx, err)
 }
 
 func runDownloadJSONWithDependencies(args []string, deps downloadExecutionDependencies) (downloadResult, error) {
+	return runDownloadJSONWithDependenciesContext(context.Background(), args, deps)
+}
+
+func runDownloadJSONWithDependenciesContext(ctx context.Context, args []string, deps downloadExecutionDependencies) (downloadResult, error) {
 	if requestedEvents(args) {
 		return downloadResult{}, errors.New("cannot combine --json and --events")
 	}
-	return executeDownloadWithDependencies(args, quietDownloadPresentation(), deps)
+	return executeDownloadWithDependenciesContext(ctx, args, quietDownloadPresentation(), deps)
 }
 
 func executeDownloadWithDependencies(args []string, presentation downloadPresentationOptions, deps downloadExecutionDependencies) (downloadResult, error) {

@@ -177,7 +177,11 @@ func executeJSONLectures(args []string) error {
 func executeJSONDownload(args []string) error {
 	result, err := runDownloadJSONFn(args)
 	if err != nil {
-		return newJSONError("download", err)
+		jsonErr := newJSONError("download", err)
+		if code := ExitCode(err); code != 1 {
+			return &exitCodeError{code: code, err: jsonErr}
+		}
+		return jsonErr
 	}
 	return emitJSONEnvelope(newSuccessEnvelopeWithWarnings("download", result, result.Warnings))
 }

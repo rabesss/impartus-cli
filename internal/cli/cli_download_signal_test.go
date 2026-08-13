@@ -19,18 +19,28 @@ import (
 	"github.com/rabesss/impartus-cli/internal/config"
 )
 
-func TestHumanDownloadSIGINTCleansWorkspace(t *testing.T) {
+func TestDownloadSIGINTCleansWorkspace(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("os.Interrupt is not supported on Windows")
 	}
 
+	for _, mode := range []string{"human", "json"} {
+		t.Run(mode, func(t *testing.T) {
+			testDownloadSIGINTCleansWorkspace(t, mode)
+		})
+	}
+}
+
+func testDownloadSIGINTCleansWorkspace(t *testing.T, mode string) {
+	t.Helper()
 	tempBase := t.TempDir()
 	readyPath := filepath.Join(tempBase, "chunk-requested")
 	commandCtx, cancelCommand := context.WithCancel(context.Background())
 	defer cancelCommand()
-	cmd := exec.CommandContext(commandCtx, os.Args[0], "-test.run=^TestHumanDownloadSIGINTProcessHelper$")
+	cmd := exec.CommandContext(commandCtx, os.Args[0], "-test.run=^TestDownloadSIGINTProcessHelper$")
 	cmd.Env = append(os.Environ(),
 		"IMPARTUS_DOWNLOAD_SIGINT_HELPER=1",
+		"IMPARTUS_DOWNLOAD_SIGINT_MODE="+mode,
 		"IMPARTUS_DOWNLOAD_SIGINT_TEMP_BASE="+tempBase,
 		"IMPARTUS_DOWNLOAD_SIGINT_READY="+readyPath,
 	)
@@ -56,7 +66,7 @@ func TestHumanDownloadSIGINTCleansWorkspace(t *testing.T) {
 			if waitErr := cmd.Wait(); waitErr != nil {
 				t.Logf("helper exit after readiness timeout: %v", waitErr)
 			}
-			t.Fatalf("helper did not begin a real chunk download; workspaces=%v", workspaces)
+			t.Fatalf("%s helper did not begin a real chunk download; workspaces=%v", mode, workspaces)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -74,7 +84,7 @@ func TestHumanDownloadSIGINTCleansWorkspace(t *testing.T) {
 	case err := <-wait:
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 130 {
-			t.Fatalf("helper exit = %v, want status 130", err)
+			t.Fatalf("%s helper exit = %v, want status 130", mode, err)
 		}
 	case <-time.After(10 * time.Second):
 		cancelCommand()
@@ -93,7 +103,7 @@ func TestHumanDownloadSIGINTCleansWorkspace(t *testing.T) {
 	}
 }
 
-func TestHumanDownloadSIGINTProcessHelper(t *testing.T) {
+func TestDownloadSIGINTProcessHelper(t *testing.T) {
 	if os.Getenv("IMPARTUS_DOWNLOAD_SIGINT_HELPER") != "1" {
 		return
 	}
@@ -151,14 +161,28 @@ func TestHumanDownloadSIGINTProcessHelper(t *testing.T) {
 		DownloadWorkersPerLecture: 1,
 		DecryptWorkersPerLecture:  1,
 	}
-	err := runDownloadWithDependencies([]string{"-s", "1", "-S", "2"}, downloadExecutionDependencies{
+	deps := downloadExecutionDependencies{
 		ensureFFmpeg: func() error { return nil },
 		initClient: func(context.Context) (*config.Config, *client.Client, error) {
 			return cfg, client.New(server.Client(), nil), nil
 		},
 		downloadLectures: downloadLectures,
 		recordArtifacts:  func(context.Context, []artifact.Manifest) error { return nil },
-	})
+	}
+	args := []string{"-s", "1", "-S", "2"}
+	var err error
+	if os.Getenv("IMPARTUS_DOWNLOAD_SIGINT_MODE") == "json" {
+		runDownloadJSONFn = func(args []string) (downloadResult, error) {
+			return runDownloadJSONWithSignalDependencies(args, deps)
+		}
+		os.Args = append([]string{"impartus", "--json", "download"}, args...)
+		err = Execute("test", "test")
+	} else {
+		err = runDownloadWithDependencies(args, deps)
+	}
 	server.Close()
+	if err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+	}
 	os.Exit(ExitCode(err))
 }
