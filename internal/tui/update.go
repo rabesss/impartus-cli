@@ -55,26 +55,34 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (model Model) updateCoursesLoaded(message coursesLoadedMsg) (tea.Model, tea.Cmd) {
+	if model.screen != screenCourses || !model.loading {
+		return model, nil
+	}
 	model.loading = false
 	model.err = message.err
 	model.courses = message.courses
-	model.cursor = 0
+	model.clampCursor()
 	return model, nil
 }
 
 func (model Model) updateLecturesLoaded(message lecturesLoadedMsg) (tea.Model, tea.Cmd) {
+	if model.screen != screenCourses || !model.loading || !sameCourse(model.course, message.course) {
+		return model, nil
+	}
 	model.loading = false
 	model.err = message.err
 	if message.err == nil {
-		model.screen = screenLectures
 		model.course = message.course
 		model.lectures = message.lectures
-		model.cursor = 0
+		model = model.transitionScreen(screenLectures, true)
 	}
 	return model, nil
 }
 
 func (model Model) updateResumeLoaded(message resumeLoadedMsg) (tea.Model, tea.Cmd) {
+	if model.screen != screenLectures || !model.loading || model.lecture.TTID != message.lecture.TTID {
+		return model, nil
+	}
 	model.loading = false
 	model.err = message.err
 	if message.err != nil {
@@ -83,7 +91,7 @@ func (model Model) updateResumeLoaded(message resumeLoadedMsg) (tea.Model, tea.C
 	model.lecture = message.lecture
 	model.resume = message.state
 	if message.found && message.state.PositionSeconds > 0 && !message.state.Completed {
-		model.screen = screenResume
+		model = model.transitionScreen(screenResume, false)
 		return model, nil
 	}
 	model.loading = true
@@ -96,15 +104,15 @@ func (model Model) updatePlaybackStarted(message playbackStartedMsg) (tea.Model,
 	model.loading = false
 	model.err = message.err
 	if message.err != nil {
-		model.screen = screenLectures
+		model = model.transitionScreen(screenLectures, false)
 		return model, nil
 	}
 	if nilPlaybackSession(message.playback) {
-		model.screen = screenLectures
+		model = model.transitionScreen(screenLectures, false)
 		model.err = errors.New("playback session was not created")
 		return model, nil
 	}
-	model.screen = screenPlayback
+	model = model.transitionScreen(screenPlayback, false)
 	model.playbackGeneration++
 	model.playbackCtx, model.playbackCancel = context.WithCancel(model.ctx)
 	model.playbackFinishing = false
@@ -172,7 +180,7 @@ func (model Model) updatePlaybackFinished(message playbackFinishedMsg) (tea.Mode
 	model.playbackFinishing = false
 	model.playbackControls = nil
 	model.playbackControlBusy = false
-	model.screen = screenLectures
+	model = model.transitionScreen(screenLectures, false)
 	model.err = message.err
 	if message.err == nil {
 		if message.state.Completed {
@@ -188,6 +196,9 @@ func (model Model) updatePlaybackFinished(message playbackFinishedMsg) (tea.Mode
 }
 
 func (model Model) updateDownloadFinished(message downloadFinishedMsg) (tea.Model, tea.Cmd) {
+	if model.screen != screenLectures || !model.loading || model.lecture.TTID != message.lecture.TTID {
+		return model, nil
+	}
 	model.loading = false
 	model.err = message.err
 	if message.err != nil {
@@ -201,12 +212,15 @@ func (model Model) updateDownloadFinished(message downloadFinishedMsg) (tea.Mode
 }
 
 func (model Model) updateArtifactsLoaded(message artifactsLoadedMsg) (tea.Model, tea.Cmd) {
+	if !model.loading || model.screen == screenPlayback || model.screen == screenResume {
+		return model, nil
+	}
 	model.loading = false
 	model.err = message.err
 	if message.err == nil {
 		model.artifacts = message.artifacts
-		model.screen = screenLibrary
-		model.cursor = 0
+		model = model.transitionScreen(screenLibrary, false)
+		model.navigationCursor = 1
 	}
 	return model, nil
 }
@@ -243,8 +257,9 @@ func (model Model) updatePlaybackControl(message playbackControlMsg) (tea.Model,
 func (model Model) updateWindowSize(message tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	model.width = max(1, message.Width)
 	model.height = max(1, message.Height)
-	model.help.SetWidth(model.width)
 	model.filter.SetWidth(max(1, model.width-12))
+	model.palette.SetWidth(max(1, min(68, model.width-8)))
+	model.focus = model.effectiveFocus()
 	return model, nil
 }
 
@@ -287,62 +302,19 @@ func (model Model) applyPlaybackEvent(event player.Event) (Model, bool, bool) {
 
 func (model Model) updateKey(message tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if message.String() == "ctrl+c" {
-		updated, command, _ := model.updateGlobalKey("ctrl+c")
+		updated, command, _ := model.dispatchCommand("ctrl+c")
 		return updated, command
+	}
+	if _, open := model.topOverlay(); open {
+		return model.updateOverlayKey(message)
 	}
 	if model.filtering {
 		return model.updateFilterKey(message)
 	}
-	key := message.String()
-	if updated, command, handled := model.updateGlobalKey(key); handled {
+	if updated, command, handled := model.dispatchCommand(message.String()); handled {
 		return updated, command
 	}
-
-	switch model.screen {
-	case screenCourses:
-		return model.updateCoursesKey(key)
-	case screenLectures:
-		return model.updateLecturesKey(key)
-	case screenResume:
-		return model.updateResumeKey(key)
-	case screenPlayback:
-		return model.updatePlaybackKey(key)
-	case screenLibrary, screenDiagnostics, screenDetails:
-		return model, nil
-	}
 	return model, nil
-}
-
-func (model Model) updateGlobalKey(key string) (Model, tea.Cmd, bool) {
-	switch key {
-	case "q", "ctrl+c":
-		updated, command := model.quit()
-		return updated, command, true
-	}
-	if model.loading {
-		return model, nil, true
-	}
-	switch key {
-	case "up", "k":
-		return model.moveCursor(-1), nil, true
-	case "down", "j":
-		return model.moveCursor(1), nil, true
-	case "/":
-		updated, command := model.startFiltering()
-		return updated, command, true
-	case "r":
-		updated, command := model.retry()
-		return updated, command, true
-	case "l":
-		updated, command := model.openLibrary()
-		return updated, command, true
-	case "!":
-		return model.openDiagnostics(), nil, true
-	case "esc", "backspace":
-		updated, command := model.goBack()
-		return updated, command, true
-	}
-	return model, nil, false
 }
 
 func (model Model) updateFilterKey(message tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -445,8 +417,8 @@ func (model Model) openDiagnostics() Model {
 		return model
 	}
 	model = model.rememberPrimaryReturnScreen()
-	model.screen = screenDiagnostics
-	model.cursor = 0
+	model = model.transitionScreen(screenDiagnostics, false)
+	model.navigationCursor = 2
 	model.err = nil
 	return model
 }
@@ -463,22 +435,18 @@ func (model Model) goBack() (Model, tea.Cmd) {
 	case screenCourses:
 		return model, nil
 	case screenLectures:
-		model.screen = screenCourses
-		model.cursor = 0
+		model = model.transitionScreen(screenCourses, false)
 		model.err = nil
-		model.filter.Reset()
-		model.filtering = false
 	case screenLibrary, screenDiagnostics:
-		model.screen = model.returnTo
-		model.cursor = 0
+		model = model.transitionScreen(model.returnTo, false)
 		model.err = nil
 	case screenResume:
-		model.screen = screenLectures
+		model = model.transitionScreen(screenLectures, false)
 		model.err = nil
 	case screenPlayback:
 		return model.beginPlaybackFinish(false, false)
 	case screenDetails:
-		model.screen = model.returnTo
+		model = model.transitionScreen(model.returnTo, false)
 	}
 	return model, nil
 }
@@ -492,8 +460,7 @@ func (model Model) updateCoursesKey(key string) (tea.Model, tea.Cmd) {
 		return model, nil
 	}
 	course := visible[model.cursor]
-	model.filter.Reset()
-	model.filtering = false
+	model.course = course
 	model.loading = true
 	model.err = nil
 	return model, model.loadLectures(course)
@@ -505,6 +472,7 @@ func (model Model) updateLecturesKey(key string) (tea.Model, tea.Cmd) {
 		return model, nil
 	}
 	lecture := visible[model.cursor]
+	model.lecture = lecture
 	switch key {
 	case "enter":
 		model.loading = true
@@ -516,9 +484,8 @@ func (model Model) updateLecturesKey(key string) (tea.Model, tea.Cmd) {
 		model.status = "Downloading " + lecture.Topic
 		return model, model.downloadLecture(lecture)
 	case "i":
-		model.lecture = lecture
 		model.returnTo = model.screen
-		model.screen = screenDetails
+		model = model.transitionScreen(screenDetails, false)
 	}
 	return model, nil
 }
@@ -634,4 +601,8 @@ func filterVisible[S ~[]E, E any](items S, filter string, searchable func(E) str
 		}
 	}
 	return visible
+}
+
+func sameCourse(left, right client.Course) bool {
+	return left.InstituteID == right.InstituteID && left.SubjectID == right.SubjectID && left.SessionID == right.SessionID
 }

@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
@@ -104,10 +103,16 @@ type Model struct {
 	width  int
 	height int
 
-	filter    textinput.Model
-	filtering bool
-	help      help.Model
-	keys      keyMap
+	filter           textinput.Model
+	filtering        bool
+	palette          textinput.Model
+	paletteCursor    int
+	focus            paneFocus
+	navigationCursor int
+	overlays         []overlayState
+	collections      map[screen]collectionState
+	styles           styleSet
+	noColor          bool
 
 	watchLifecycle bool
 }
@@ -127,7 +132,11 @@ func NewWithOptions(ctx context.Context, backend Backend, options Options) Model
 	filter.Prompt = "Filter: "
 	filter.Placeholder = "type to narrow results"
 	filter.CharLimit = 120
-	helpModel := help.New()
+	palette := textinput.New()
+	palette.Prompt = "> "
+	palette.Placeholder = "Search commands"
+	palette.CharLimit = 120
+	noColor := noColorEnabled()
 	return Model{
 		ctx:         lifecycle,
 		cancel:      cancel,
@@ -139,8 +148,11 @@ func NewWithOptions(ctx context.Context, backend Backend, options Options) Model
 		screen:      screenCourses,
 		loading:     true,
 		filter:      filter,
-		help:        helpModel,
-		keys:        newKeyMap(),
+		palette:     palette,
+		focus:       paneCollection,
+		collections: make(map[screen]collectionState, 4),
+		styles:      newStyleSet(noColor),
+		noColor:     noColor,
 		width:       80,
 		height:      24,
 		volume:      100,
