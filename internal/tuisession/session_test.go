@@ -1,0 +1,555 @@
+package tuisession_test
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/rabesss/impartus-cli/internal/client"
+	"github.com/rabesss/impartus-cli/internal/tuiproto"
+	"github.com/rabesss/impartus-cli/internal/tuisession"
+)
+
+type catalogStub struct {
+	courses client.Courses
+	err     error
+}
+
+func TestSessionStreamsOneTerminalOperationLifecycle(t *testing.T) {
+	session, err := tuisession.Start(t.Context(), tuisession.Options{
+		Catalog:  catalogStub{},
+		SelfTest: tuisession.SelfTestOptions{Steps: 3, Interval: time.Millisecond},
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	cleanupSession(t, session)
+
+	eventContext, cancelEvents := context.WithCancel(t.Context())
+	defer cancelEvents()
+	eventResponse := sessionRequestContext(eventContext, t, session, http.MethodGet, "/events", nil)
+	defer closeResponseBody(t, eventResponse.Body)
+	if eventResponse.StatusCode != http.StatusOK {
+		t.Fatalf("GET events status = %d, want %d", eventResponse.StatusCode, http.StatusOK)
+	}
+	if got := eventResponse.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/event-stream") {
+		t.Fatalf("events Content-Type = %q", got)
+	}
+
+	startResponse := sessionRequest(t, session, http.MethodPost, "/operations", tuiproto.OperationRequest{
+		Kind: tuiproto.OperationKindSelftest,
+	})
+	defer closeResponseBody(t, startResponse.Body)
+	if startResponse.StatusCode != http.StatusAccepted {
+		t.Fatalf("POST operation status = %d, want %d", startResponse.StatusCode, http.StatusAccepted)
+	}
+	var operation tuiproto.Operation
+	decodeJSON(t, startResponse, &operation)
+	if operation.ID == "" || operation.Kind != tuiproto.OperationKindSelftest || operation.State != tuiproto.OperationStateRunning {
+		t.Fatalf("started operation = %+v", operation)
+	}
+
+	events := readOperationEvents(t, eventResponse, operation.ID)
+	if len(events) != 5 {
+		t.Fatalf("operation events = %+v, want started + 3 progress + completed", events)
+	}
+	wantTypes := []tuiproto.EventType{
+		tuiproto.EventTypeOperationStarted,
+		tuiproto.EventTypeOperationProgress,
+		tuiproto.EventTypeOperationProgress,
+		tuiproto.EventTypeOperationProgress,
+		tuiproto.EventTypeOperationCompleted,
+	}
+	for index, event := range events {
+		if event.Type != wantTypes[index] {
+			t.Fatalf("event[%d].Type = %q, want %q", index, event.Type, wantTypes[index])
+		}
+		if index > 0 && event.Sequence <= events[index-1].Sequence {
+			t.Fatalf("event sequence did not increase: %+v", events)
+		}
+	}
+	if events[3].Percent == nil || *events[3].Percent != 100 {
+		t.Fatalf("final progress = %+v, want 100", events[3].Percent)
+	}
+	if events[4].State == nil || *events[4].State != tuiproto.OperationStateCompleted {
+		t.Fatalf("terminal event state = %+v", events[4].State)
+	}
+
+	getResponse := sessionRequest(t, session, http.MethodGet, "/operations/"+operation.ID, nil)
+	defer closeResponseBody(t, getResponse.Body)
+	var completed tuiproto.Operation
+	decodeJSON(t, getResponse, &completed)
+	if getResponse.StatusCode != http.StatusOK || completed.State != tuiproto.OperationStateCompleted {
+		t.Fatalf("completed operation = (%d, %+v)", getResponse.StatusCode, completed)
+	}
+}
+
+func TestSessionCancellationProducesOneCanceledTerminal(t *testing.T) {
+	session, err := tuisession.Start(t.Context(), tuisession.Options{
+		Catalog:  catalogStub{},
+		SelfTest: tuisession.SelfTestOptions{Steps: 2, Interval: time.Second},
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	cleanupSession(t, session)
+
+	eventContext, cancelEvents := context.WithCancel(t.Context())
+	defer cancelEvents()
+	eventResponse := sessionRequestContext(eventContext, t, session, http.MethodGet, "/events", nil)
+	defer closeResponseBody(t, eventResponse.Body)
+
+	startResponse := sessionRequest(t, session, http.MethodPost, "/operations", tuiproto.OperationRequest{
+		Kind: tuiproto.OperationKindSelftest,
+	})
+	defer closeResponseBody(t, startResponse.Body)
+	var operation tuiproto.Operation
+	decodeJSON(t, startResponse, &operation)
+
+	cancelResponse := sessionRequest(t, session, http.MethodDelete, "/operations/"+operation.ID, nil)
+	defer closeResponseBody(t, cancelResponse.Body)
+	var canceled tuiproto.Operation
+	decodeJSON(t, cancelResponse, &canceled)
+	if cancelResponse.StatusCode != http.StatusOK || canceled.State != tuiproto.OperationStateCanceled {
+		t.Fatalf("canceled operation = (%d, %+v)", cancelResponse.StatusCode, canceled)
+	}
+
+	events := readOperationEvents(t, eventResponse, operation.ID)
+	if len(events) != 2 || events[0].Type != tuiproto.EventTypeOperationStarted ||
+		events[1].Type != tuiproto.EventTypeOperationCanceled {
+		t.Fatalf("cancellation events = %+v, want started then canceled", events)
+	}
+}
+
+func TestParentCancellationClosesTheSession(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	session, err := tuisession.Start(ctx, tuisession.Options{Catalog: catalogStub{}})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	cleanupSession(t, session)
+
+	cancel()
+	deadline := time.Now().Add(time.Second)
+	for {
+		request, requestErr := http.NewRequestWithContext(t.Context(), http.MethodGet, session.BaseURL()+"/health", nil)
+		if requestErr != nil {
+			t.Fatalf("NewRequestWithContext() error = %v", requestErr)
+		}
+		request.Header.Set(tuiproto.ProtocolHeader, tuiproto.ProtocolVersion)
+		request.Header.Set(tuiproto.CapabilityHeader, session.Capability())
+		response, doErr := (&http.Client{Timeout: 100 * time.Millisecond}).Do(request)
+		if doErr != nil {
+			break
+		}
+		if closeErr := response.Body.Close(); closeErr != nil {
+			t.Errorf("close response body: %v", closeErr)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("session continued accepting requests after parent cancellation")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if closeErr := session.Close(); closeErr != nil {
+		t.Fatalf("second Close() error = %v", closeErr)
+	}
+}
+
+func TestCloseCancelsInFlightWorkAndIsIdempotent(t *testing.T) {
+	session, err := tuisession.Start(context.Background(), tuisession.Options{
+		Catalog:  catalogStub{},
+		SelfTest: tuisession.SelfTestOptions{Steps: 2, Interval: time.Hour},
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	startResponse := sessionRequest(t, session, http.MethodPost, "/operations", tuiproto.OperationRequest{
+		Kind: tuiproto.OperationKindSelftest,
+	})
+	defer closeResponseBody(t, startResponse.Body)
+	if startResponse.StatusCode != http.StatusAccepted {
+		t.Fatalf("POST operation status = %d", startResponse.StatusCode)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- session.Close() }()
+	select {
+	case closeErr := <-done:
+		if closeErr != nil {
+			t.Fatalf("Close() error = %v", closeErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close() did not cancel in-flight work promptly")
+	}
+	if closeErr := session.Close(); closeErr != nil {
+		t.Fatalf("second Close() error = %v", closeErr)
+	}
+}
+
+func TestSessionRejectsUnauthenticatedAndMismatchedRequests(t *testing.T) {
+	session, err := tuisession.Start(t.Context(), tuisession.Options{Catalog: catalogStub{}})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	cleanupSession(t, session)
+
+	missingCapability := rawSessionRequest(t, session, http.MethodGet, "/health", nil, map[string]string{
+		tuiproto.ProtocolHeader: tuiproto.ProtocolVersion,
+	})
+	defer closeResponseBody(t, missingCapability.Body)
+	if missingCapability.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("missing capability status = %d, want %d", missingCapability.StatusCode, http.StatusUnauthorized)
+	}
+	missingBody, err := io.ReadAll(missingCapability.Body)
+	if err != nil {
+		t.Fatalf("read missing-capability response: %v", err)
+	}
+	if strings.Contains(string(missingBody), session.Capability()) {
+		t.Fatal("unauthorized response disclosed the session capability")
+	}
+
+	mismatchedProtocol := rawSessionRequest(t, session, http.MethodGet, "/health", nil, map[string]string{
+		tuiproto.ProtocolHeader:   "tui/v999",
+		tuiproto.CapabilityHeader: session.Capability(),
+	})
+	defer closeResponseBody(t, mismatchedProtocol.Body)
+	if mismatchedProtocol.StatusCode != http.StatusUpgradeRequired {
+		t.Fatalf("protocol mismatch status = %d, want %d", mismatchedProtocol.StatusCode, http.StatusUpgradeRequired)
+	}
+	if got := mismatchedProtocol.Header.Get(tuiproto.SupportedProtocolHeader); got != tuiproto.ProtocolVersion {
+		t.Fatalf("supported protocol header = %q, want %q", got, tuiproto.ProtocolVersion)
+	}
+	var mismatch tuiproto.Problem
+	decodeJSON(t, mismatchedProtocol, &mismatch)
+	if mismatch.SupportedProtocol == nil || *mismatch.SupportedProtocol != tuiproto.ProtocolVersion {
+		t.Fatalf("protocol mismatch problem = %+v", mismatch)
+	}
+
+	wrongMethod := sessionRequest(t, session, http.MethodPost, "/health", nil)
+	defer closeResponseBody(t, wrongMethod.Body)
+	if wrongMethod.StatusCode != http.StatusMethodNotAllowed || wrongMethod.Header.Get("Allow") != http.MethodGet {
+		t.Fatalf("POST health = (%d, Allow %q)", wrongMethod.StatusCode, wrongMethod.Header.Get("Allow"))
+	}
+
+	unknown := sessionRequest(t, session, http.MethodGet, "/unknown", nil)
+	defer closeResponseBody(t, unknown.Body)
+	if unknown.StatusCode != http.StatusNotFound || !strings.HasPrefix(unknown.Header.Get("Content-Type"), "application/json") {
+		t.Fatalf("unknown route = (%d, Content-Type %q)", unknown.StatusCode, unknown.Header.Get("Content-Type"))
+	}
+	var notFound tuiproto.Problem
+	decodeJSON(t, unknown, &notFound)
+	if notFound.Code != "not_found" {
+		t.Fatalf("unknown route problem = %+v", notFound)
+	}
+}
+
+func (stub catalogStub) Courses(context.Context) (client.Courses, error) {
+	return append(client.Courses(nil), stub.courses...), stub.err
+}
+
+func TestSessionExposesAuthenticatedHealthAndCourses(t *testing.T) {
+	session, err := tuisession.Start(t.Context(), tuisession.Options{
+		Catalog: catalogStub{courses: client.Courses{{
+			InstituteID:   7,
+			SessionID:     11,
+			SubjectID:     13,
+			SubjectName:   "Distributed Systems",
+			SessionName:   "Monsoon 2026",
+			ProfessorName: "Dr. Rao",
+			VideoCount:    21,
+		}}},
+		Version: "test-version",
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if !strings.HasPrefix(session.Address(), "127.0.0.1:") {
+		t.Fatalf("session address = %q, want an IPv4 loopback listener", session.Address())
+	}
+	t.Cleanup(func() {
+		if closeErr := session.Close(); closeErr != nil {
+			t.Errorf("Close() error = %v", closeErr)
+		}
+	})
+
+	healthResponse := sessionRequest(t, session, http.MethodGet, "/health", nil)
+	defer closeResponseBody(t, healthResponse.Body)
+	if healthResponse.StatusCode != http.StatusOK {
+		t.Fatalf("GET health status = %d, want %d", healthResponse.StatusCode, http.StatusOK)
+	}
+	if got := healthResponse.Header.Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("health Cache-Control = %q, want no-store", got)
+	}
+	var health tuiproto.Health
+	decodeJSON(t, healthResponse, &health)
+	if health.Protocol != tuiproto.ProtocolVersion || health.SessionID != session.ID() ||
+		health.Status != tuiproto.HealthStatusOK || health.Version != "test-version" {
+		t.Fatalf("health = %+v", health)
+	}
+
+	coursesResponse := sessionRequest(t, session, http.MethodGet, "/courses", nil)
+	defer closeResponseBody(t, coursesResponse.Body)
+	if coursesResponse.StatusCode != http.StatusOK {
+		t.Fatalf("GET courses status = %d, want %d", coursesResponse.StatusCode, http.StatusOK)
+	}
+	var courses tuiproto.CourseList
+	decodeJSON(t, coursesResponse, &courses)
+	if len(courses.Courses) != 1 {
+		t.Fatalf("courses = %+v, want one course", courses)
+	}
+	got := courses.Courses[0]
+	if got.InstituteID != 7 || got.SessionID != 11 || got.SubjectID != 13 ||
+		got.SubjectName != "Distributed Systems" || got.SessionName != "Monsoon 2026" ||
+		got.ProfessorName != "Dr. Rao" || got.VideoCount != 21 {
+		t.Fatalf("course projection = %+v", got)
+	}
+}
+
+func TestSessionRejectsInvalidBodiesWithoutLeakingUpstreamErrors(t *testing.T) {
+	session, err := tuisession.Start(t.Context(), tuisession.Options{
+		Catalog: catalogStub{err: errors.New("upstream Authorization: Digest response=body-secret")},
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	cleanupSession(t, session)
+
+	catalogResponse := sessionRequest(t, session, http.MethodGet, "/courses", nil)
+	defer closeResponseBody(t, catalogResponse.Body)
+	catalogBody, readErr := io.ReadAll(catalogResponse.Body)
+	if readErr != nil {
+		t.Fatalf("read catalog failure: %v", readErr)
+	}
+	if catalogResponse.StatusCode != http.StatusBadGateway || strings.Contains(string(catalogBody), "body-secret") {
+		t.Fatalf("catalog failure = (%d, %q)", catalogResponse.StatusCode, catalogBody)
+	}
+
+	for name, requestBody := range map[string]string{
+		"unknown field":  `{"kind":"selftest","extra":true}`,
+		"trailing value": `{"kind":"selftest"} {"kind":"selftest"}`,
+		"oversized":      `{"kind":"selftest","padding":"` + strings.Repeat("x", 2*maxTestRequestBodyBytes) + `"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			response := rawBodySessionRequest(t, session, http.MethodPost, "/operations", requestBody, "application/json")
+			defer closeResponseBody(t, response.Body)
+			if response.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusBadRequest)
+			}
+			var problem tuiproto.Problem
+			decodeJSON(t, response, &problem)
+			if problem.Code != "invalid_request" || problem.Error != "invalid operation request" {
+				t.Fatalf("problem = %+v", problem)
+			}
+		})
+	}
+
+	wrongContentType := rawBodySessionRequest(t, session, http.MethodPost, "/operations", `{"kind":"selftest"}`, "text/plain")
+	defer closeResponseBody(t, wrongContentType.Body)
+	if wrongContentType.StatusCode != http.StatusBadRequest {
+		t.Fatalf("wrong content type status = %d, want %d", wrongContentType.StatusCode, http.StatusBadRequest)
+	}
+}
+
+const maxTestRequestBodyBytes = 4 << 10
+
+func cleanupSession(t *testing.T, session *tuisession.Session) {
+	t.Helper()
+	t.Cleanup(func() {
+		if err := session.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+}
+
+func closeResponseBody(t *testing.T, body io.Closer) {
+	t.Helper()
+	if err := body.Close(); err != nil {
+		t.Errorf("close response body: %v", err)
+	}
+}
+
+func TestSlowEventConsumerReceivesExplicitOverflow(t *testing.T) {
+	session, err := tuisession.Start(t.Context(), tuisession.Options{
+		Catalog:         catalogStub{},
+		EventQueueDepth: 1,
+		SelfTest:        tuisession.SelfTestOptions{Steps: 5000},
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	cleanupSession(t, session)
+
+	eventContext, cancelEvents := context.WithCancel(t.Context())
+	defer cancelEvents()
+	eventResponse := sessionRequestContext(eventContext, t, session, http.MethodGet, "/events", nil)
+	defer closeResponseBody(t, eventResponse.Body)
+
+	startResponse := sessionRequest(t, session, http.MethodPost, "/operations", tuiproto.OperationRequest{
+		Kind: tuiproto.OperationKindSelftest,
+	})
+	defer closeResponseBody(t, startResponse.Body)
+	if startResponse.StatusCode != http.StatusAccepted {
+		t.Fatalf("POST operation status = %d", startResponse.StatusCode)
+	}
+
+	scanner := bufio.NewScanner(eventResponse.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		var event tuiproto.Event
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event); err != nil {
+			t.Fatalf("decode SSE event: %v", err)
+		}
+		if event.Type == tuiproto.EventTypeStreamOverflow {
+			if event.Message == nil || !strings.Contains(*event.Message, "refresh") {
+				t.Fatalf("overflow event = %+v", event)
+			}
+			return
+		}
+		if event.Type == tuiproto.EventTypeOperationCompleted {
+			t.Fatal("slow event consumer silently reached completion without overflow")
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read overflow event: %v", err)
+	}
+	t.Fatal("event stream closed without an overflow event")
+}
+
+func sessionRequest(t *testing.T, session *tuisession.Session, method, path string, body any) *http.Response {
+	t.Helper()
+	return rawSessionRequest(t, session, method, path, body, map[string]string{
+		tuiproto.ProtocolHeader:   tuiproto.ProtocolVersion,
+		tuiproto.CapabilityHeader: session.Capability(),
+	})
+}
+
+func rawSessionRequest(
+	t *testing.T,
+	session *tuisession.Session,
+	method string,
+	path string,
+	body any,
+	headers map[string]string,
+) *http.Response {
+	t.Helper()
+	return rawSessionRequestContext(t.Context(), t, session, method, path, body, headers)
+}
+
+func sessionRequestContext(
+	ctx context.Context,
+	t *testing.T,
+	session *tuisession.Session,
+	method string,
+	path string,
+	body any,
+) *http.Response {
+	t.Helper()
+	return rawSessionRequestContext(ctx, t, session, method, path, body, map[string]string{
+		tuiproto.ProtocolHeader:   tuiproto.ProtocolVersion,
+		tuiproto.CapabilityHeader: session.Capability(),
+	})
+}
+
+func rawSessionRequestContext(
+	ctx context.Context,
+	t *testing.T,
+	session *tuisession.Session,
+	method string,
+	path string,
+	body any,
+	headers map[string]string,
+) *http.Response {
+	t.Helper()
+	var bodyReader io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("marshal request body: %v", err)
+		}
+		bodyReader = bytes.NewReader(encoded)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, session.BaseURL()+path, bodyReader)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext() error = %v", err)
+	}
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	for name, value := range headers {
+		request.Header.Set(name, value)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("Do() error = %v", err)
+	}
+	return response
+}
+
+func rawBodySessionRequest(
+	t *testing.T,
+	session *tuisession.Session,
+	method string,
+	path string,
+	body string,
+	contentType string,
+) *http.Response {
+	t.Helper()
+	request, err := http.NewRequestWithContext(t.Context(), method, session.BaseURL()+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("NewRequestWithContext() error = %v", err)
+	}
+	request.Header.Set(tuiproto.ProtocolHeader, tuiproto.ProtocolVersion)
+	request.Header.Set(tuiproto.CapabilityHeader, session.Capability())
+	request.Header.Set("Content-Type", contentType)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("Do() error = %v", err)
+	}
+	return response
+}
+
+func readOperationEvents(t *testing.T, response *http.Response, operationID string) []tuiproto.Event {
+	t.Helper()
+	scanner := bufio.NewScanner(response.Body)
+	events := make([]tuiproto.Event, 0, 5)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		var event tuiproto.Event
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event); err != nil {
+			t.Fatalf("decode SSE event: %v", err)
+		}
+		if event.OperationID == nil || *event.OperationID != operationID {
+			continue
+		}
+		events = append(events, event)
+		if event.Type == tuiproto.EventTypeOperationCompleted ||
+			event.Type == tuiproto.EventTypeOperationCanceled ||
+			event.Type == tuiproto.EventTypeOperationFailed {
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read SSE stream: %v", err)
+	}
+	return events
+}
+
+func decodeJSON(t *testing.T, response *http.Response, target any) {
+	t.Helper()
+	if err := json.NewDecoder(response.Body).Decode(target); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+}

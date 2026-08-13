@@ -1,0 +1,193 @@
+// Code generated from protocol.schema.json. DO NOT EDIT.
+
+package tuiproto
+
+const (
+	// ProtocolVersion is the protocol identity every session request must declare.
+	ProtocolVersion = "tui/v1"
+
+	// ProtocolBasePath is the versioned public path prefix of the session contract.
+	ProtocolBasePath = "/tui/v1"
+
+	// CapabilityHeader is a session protocol header name.
+	CapabilityHeader = "X-Impartus-Capability"
+
+	// ProtocolHeader is a session protocol header name.
+	ProtocolHeader = "X-Impartus-Protocol"
+
+	// SupportedProtocolHeader is a session protocol header name.
+	SupportedProtocolHeader = "X-Impartus-Supported-Protocol"
+)
+
+// Bootstrap is the one-use private handoff from the Go parent to its
+// OpenTUI child.
+type Bootstrap struct {
+	// Loopback URL of this one foreground session. Never contains credentials.
+	BaseURL string `json:"baseUrl"`
+
+	// Fresh per-launch capability read once from an owner-private bootstrap
+	// file.
+	Capability string `json:"capability"`
+
+	// Exact session protocol identity the child must send.
+	Protocol string `json:"protocol"`
+
+	// Opaque session identity used to reject stale bootstrap state.
+	SessionID string `json:"sessionId"`
+}
+
+// Course is one read-only catalog course projected from the Go application
+// service.
+type Course struct {
+	// Upstream institute identifier.
+	InstituteID int64 `json:"instituteId"`
+
+	// Course owner as reported upstream.
+	ProfessorName string `json:"professorName"`
+
+	// Upstream session identifier.
+	SessionID int64 `json:"sessionId"`
+
+	// Academic session label.
+	SessionName string `json:"sessionName"`
+
+	// Upstream subject identifier.
+	SubjectID int64 `json:"subjectId"`
+
+	// Human readable course name.
+	SubjectName string `json:"subjectName"`
+
+	// Lecture count advertised upstream.
+	VideoCount int64 `json:"videoCount"`
+}
+
+// CourseList is the read-only catalog projection proving the frontend
+// reaches live Go state.
+type CourseList struct {
+	// Courses in upstream order.
+	Courses []Course `json:"courses"`
+}
+
+// Event is one ordered session event. Sequence numbers increase
+// monotonically per session.
+type Event struct {
+	// Scrubbed human readable detail. Never carries upstream credentials.
+	// This property is optional and absent when not applicable.
+	Message *string `json:"message,omitempty"`
+
+	// Operation this event belongs to, when the event is operation scoped.
+	// This property is optional and absent when not applicable.
+	OperationID *string `json:"operationId,omitempty"`
+
+	// Coalesced progress percentage between 0 and 100.
+	// This property is optional and absent when not applicable.
+	Percent *float64 `json:"percent,omitempty"`
+
+	// Monotonic per-session sequence number.
+	Sequence int64 `json:"sequence"`
+
+	// This property is optional and absent when not applicable.
+	State *OperationState `json:"state,omitempty"`
+
+	Type EventType `json:"type"`
+}
+
+// EventType names the ordered session event kinds delivered over the event
+// stream.
+type EventType string
+
+const (
+	// EventTypeSessionReady is the "session.ready" EventType value.
+	EventTypeSessionReady EventType = "session.ready"
+	// EventTypeOperationStarted is the "operation.started" EventType value.
+	EventTypeOperationStarted EventType = "operation.started"
+	// EventTypeOperationProgress is the "operation.progress" EventType value.
+	EventTypeOperationProgress EventType = "operation.progress"
+	// EventTypeOperationCompleted is the "operation.completed" EventType value.
+	EventTypeOperationCompleted EventType = "operation.completed"
+	// EventTypeOperationCanceled is the "operation.canceled" EventType value.
+	EventTypeOperationCanceled EventType = "operation.canceled"
+	// EventTypeOperationFailed is the "operation.failed" EventType value.
+	EventTypeOperationFailed EventType = "operation.failed"
+	// EventTypeStreamOverflow is the "stream.overflow" EventType value.
+	EventTypeStreamOverflow EventType = "stream.overflow"
+)
+
+// Health is the session readiness probe answered before the frontend
+// renders anything.
+type Health struct {
+	// Protocol identity this session speaks.
+	Protocol string `json:"protocol"`
+
+	// Opaque per-launch session identity. Not a credential.
+	SessionID string `json:"sessionId"`
+
+	Status HealthStatus `json:"status"`
+
+	// Parent impartus build version.
+	Version string `json:"version"`
+}
+
+// HealthStatus is the aggregate session readiness value. The session never
+// reports which credentials are configured.
+type HealthStatus string
+
+const (
+	// HealthStatusOK is the "ok" HealthStatus value.
+	HealthStatusOK HealthStatus = "ok"
+)
+
+// Operation is the handle returned when an operation is accepted or
+// inspected.
+type Operation struct {
+	// Session-unique operation identifier.
+	ID string `json:"id"`
+
+	Kind OperationKind `json:"kind"`
+
+	State OperationState `json:"state"`
+}
+
+// OperationKind names the operations the session may start. The bounded
+// foundation exposes only a transport self test.
+type OperationKind string
+
+const (
+	// OperationKindSelftest is the "selftest" OperationKind value.
+	OperationKindSelftest OperationKind = "selftest"
+)
+
+// OperationRequest is the request body accepted when starting an operation.
+type OperationRequest struct {
+	Kind OperationKind `json:"kind"`
+}
+
+// OperationState is one operation lifecycle state. Every state except
+// running is terminal.
+type OperationState string
+
+const (
+	// OperationStateRunning is the "running" OperationState value.
+	OperationStateRunning OperationState = "running"
+	// OperationStateCompleted is the "completed" OperationState value.
+	OperationStateCompleted OperationState = "completed"
+	// OperationStateCanceled is the "canceled" OperationState value.
+	OperationStateCanceled OperationState = "canceled"
+	// OperationStateFailed is the "failed" OperationState value.
+	OperationStateFailed OperationState = "failed"
+)
+
+// Problem is the uniform session error body. It never discloses local state
+// or credentials.
+type Problem struct {
+	// Stable machine readable failure code.
+	Code string `json:"code"`
+
+	// Short actionable failure summary.
+	Error string `json:"error"`
+
+	// Protocol identity this session speaks, sent with protocol upgrade
+	// failures.
+	// This property is optional and absent when not applicable.
+	SupportedProtocol *string `json:"supportedProtocol,omitempty"`
+}

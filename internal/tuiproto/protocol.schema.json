@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/rabesss/impartus-cli/internal/tuiproto/protocol.schema.json",
+  "title": "Impartus experimental OpenTUI session protocol",
+  "description": "Single Go-owned source of truth for the private impartus <-> impartus-ui session contract. Go DTOs and TypeScript protocol types are generated from this document; neither side hand-writes them.",
+  "x-protocol": {
+    "version": "tui/v1",
+    "basePath": "/tui/v1",
+    "headers": {
+      "capability": "X-Impartus-Capability",
+      "protocol": "X-Impartus-Protocol",
+      "supportedProtocol": "X-Impartus-Supported-Protocol"
+    }
+  },
+  "$defs": {
+    "Bootstrap": {
+      "type": "object",
+      "description": "is the one-use private handoff from the Go parent to its OpenTUI child.",
+      "required": ["baseUrl", "capability", "protocol", "sessionId"],
+      "properties": {
+        "baseUrl": {
+          "type": "string",
+          "description": "Loopback URL of this one foreground session. Never contains credentials."
+        },
+        "capability": {
+          "type": "string",
+          "description": "Fresh per-launch capability read once from an owner-private bootstrap file."
+        },
+        "protocol": {
+          "type": "string",
+          "description": "Exact session protocol identity the child must send."
+        },
+        "sessionId": {
+          "type": "string",
+          "description": "Opaque session identity used to reject stale bootstrap state."
+        }
+      }
+    },
+    "HealthStatus": {
+      "type": "string",
+      "description": "is the aggregate session readiness value. The session never reports which credentials are configured.",
+      "enum": ["ok"]
+    },
+    "Health": {
+      "type": "object",
+      "description": "is the session readiness probe answered before the frontend renders anything.",
+      "required": ["protocol", "sessionId", "status", "version"],
+      "properties": {
+        "protocol": {
+          "type": "string",
+          "description": "Protocol identity this session speaks."
+        },
+        "sessionId": {
+          "type": "string",
+          "description": "Opaque per-launch session identity. Not a credential."
+        },
+        "status": {
+          "$ref": "#/$defs/HealthStatus"
+        },
+        "version": {
+          "type": "string",
+          "description": "Parent impartus build version."
+        }
+      }
+    },
+    "Course": {
+      "type": "object",
+      "description": "is one read-only catalog course projected from the Go application service.",
+      "required": ["instituteId", "professorName", "sessionId", "sessionName", "subjectId", "subjectName", "videoCount"],
+      "properties": {
+        "instituteId": {
+          "type": "integer",
+          "description": "Upstream institute identifier."
+        },
+        "professorName": {
+          "type": "string",
+          "description": "Course owner as reported upstream."
+        },
+        "sessionId": {
+          "type": "integer",
+          "description": "Upstream session identifier."
+        },
+        "sessionName": {
+          "type": "string",
+          "description": "Academic session label."
+        },
+        "subjectId": {
+          "type": "integer",
+          "description": "Upstream subject identifier."
+        },
+        "subjectName": {
+          "type": "string",
+          "description": "Human readable course name."
+        },
+        "videoCount": {
+          "type": "integer",
+          "description": "Lecture count advertised upstream."
+        }
+      }
+    },
+    "CourseList": {
+      "type": "object",
+      "description": "is the read-only catalog projection proving the frontend reaches live Go state.",
+      "required": ["courses"],
+      "properties": {
+        "courses": {
+          "type": "array",
+          "description": "Courses in upstream order.",
+          "items": {
+            "$ref": "#/$defs/Course"
+          }
+        }
+      }
+    },
+    "OperationKind": {
+      "type": "string",
+      "description": "names the operations the session may start. The bounded foundation exposes only a transport self test.",
+      "enum": ["selftest"]
+    },
+    "OperationState": {
+      "type": "string",
+      "description": "is one operation lifecycle state. Every state except running is terminal.",
+      "enum": ["running", "completed", "canceled", "failed"]
+    },
+    "OperationRequest": {
+      "type": "object",
+      "description": "is the request body accepted when starting an operation.",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/OperationKind"
+        }
+      }
+    },
+    "Operation": {
+      "type": "object",
+      "description": "is the handle returned when an operation is accepted or inspected.",
+      "required": ["id", "kind", "state"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Session-unique operation identifier."
+        },
+        "kind": {
+          "$ref": "#/$defs/OperationKind"
+        },
+        "state": {
+          "$ref": "#/$defs/OperationState"
+        }
+      }
+    },
+    "EventType": {
+      "type": "string",
+      "description": "names the ordered session event kinds delivered over the event stream.",
+      "enum": [
+        "session.ready",
+        "operation.started",
+        "operation.progress",
+        "operation.completed",
+        "operation.canceled",
+        "operation.failed",
+        "stream.overflow"
+      ]
+    },
+    "Event": {
+      "type": "object",
+      "description": "is one ordered session event. Sequence numbers increase monotonically per session.",
+      "required": ["sequence", "type"],
+      "properties": {
+        "message": {
+          "type": "string",
+          "description": "Scrubbed human readable detail. Never carries upstream credentials."
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Operation this event belongs to, when the event is operation scoped."
+        },
+        "percent": {
+          "type": "number",
+          "description": "Coalesced progress percentage between 0 and 100."
+        },
+        "sequence": {
+          "type": "integer",
+          "description": "Monotonic per-session sequence number."
+        },
+        "state": {
+          "$ref": "#/$defs/OperationState"
+        },
+        "type": {
+          "$ref": "#/$defs/EventType"
+        }
+      }
+    },
+    "Problem": {
+      "type": "object",
+      "description": "is the uniform session error body. It never discloses local state or credentials.",
+      "required": ["code", "error"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Stable machine readable failure code."
+        },
+        "error": {
+          "type": "string",
+          "description": "Short actionable failure summary."
+        },
+        "supportedProtocol": {
+          "type": "string",
+          "description": "Protocol identity this session speaks, sent with protocol upgrade failures."
+        }
+      }
+    }
+  }
+}
