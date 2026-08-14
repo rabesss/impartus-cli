@@ -170,6 +170,9 @@ protection manually with `chmod 600 config.json`.
 | `progressTracking` | object | No | see below | Progress bar tracking configuration |
 | `watch` | object | No | disabled | Generic durable lecture auto-download configuration |
 
+For practical tuning profiles, failure symptoms, and a safe way to benchmark
+your connection, see [Download performance tuning](docs/download-performance.md).
+
 #### Progress Tracking Options
 
 | Field | Type | Default | Description |
@@ -833,3 +836,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [`docs/websocket-events.md`](docs/websocket-events.md) - WebSocket event schemas
 - [`docs/error-codes.md`](docs/error-codes.md) - Error code reference
 - [`docs/runbooks.md`](docs/runbooks.md) - Incident response and troubleshooting
+- [`docs/download-performance.md`](docs/download-performance.md) - Download worker and rate-limit tuning
