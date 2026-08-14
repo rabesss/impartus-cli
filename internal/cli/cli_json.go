@@ -135,7 +135,6 @@ func helpPayload() capabilityPayload {
 			{Name: "library", Usage: "impartus library list|show|verify"},
 			{Name: "watch", Usage: "impartus watch [--subject <id> --session <id>] [--once] [--dry-run] [--events]"},
 			{Name: "tui", Usage: "impartus tui (not available in JSON mode)"},
-			{Name: "classic", Usage: "impartus classic (deprecated; not available in JSON mode)"},
 		},
 	}
 }

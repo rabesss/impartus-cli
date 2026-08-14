@@ -14,7 +14,6 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 func restoreCLIState(t *testing.T) {
 	t.Helper()
 	oldArgs := os.Args
-	oldInteractive := runInteractiveFn
 	oldTUI := runTUIFn
 	oldInteractiveTerminal := isInteractiveTerminalFn
 	oldCourses := runCoursesFn
@@ -32,7 +31,6 @@ func restoreCLIState(t *testing.T) {
 	oldStartAPIServer := startAPIServerFn
 	t.Cleanup(func() {
 		os.Args = oldArgs
-		runInteractiveFn = oldInteractive
 		runTUIFn = oldTUI
 		isInteractiveTerminalFn = oldInteractiveTerminal
 		runCoursesFn = oldCourses

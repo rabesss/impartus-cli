@@ -6,8 +6,12 @@ Thanks for helping improve `impartus-cli`.
 
 ```sh
 go test ./...
-go build -o impartus .
+bun --cwd ui install --frozen-lockfile
+make build
 ```
+
+The TUI ships as an adjacent compiled OpenTUI executable, so local UI work
+requires Bun 1.3.14 as well as the Go toolchain.
 
 If you use the Makefile:
 

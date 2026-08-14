@@ -1,0 +1,90 @@
+name: OpenTUI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/opentui.yml'
+      - 'go.mod'
+      - 'go.sum'
+      - 'internal/tuihost/**'
+      - 'internal/tuiproto/**'
+      - 'internal/tuisession/**'
+      - 'scripts/gen-tui-protocol.go'
+      - 'ui/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/opentui.yml'
+      - 'go.mod'
+      - 'go.sum'
+      - 'internal/tuihost/**'
+      - 'internal/tuiproto/**'
+      - 'internal/tuisession/**'
+      - 'scripts/gen-tui-protocol.go'
+      - 'ui/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-session:
+    name: Native session (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            binary: impartus-ui
+          - os: macos-latest
+            binary: impartus-ui
+          - os: windows-latest
+            binary: impartus-ui.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - name: Install UI dependencies
+        working-directory: ui
+        run: bun install --frozen-lockfile
+      - name: Typecheck and test UI
+        working-directory: ui
+        run: bun run typecheck && bun test
+      - name: Build native UI
+        working-directory: ui
+        run: bun run build -- --outfile=dist/${{ matrix.binary }}
+      - name: Test native private session
+        env:
+          IMPARTUS_UI_TEST_BINARY: ${{ github.workspace }}/ui/dist/${{ matrix.binary }}
+        run: go test ./internal/tuihost -run 'TestCompiledOpenTUI' -count=3 -timeout=90s
+
+  release-targets:
+    name: Cross-compile release sidecars
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - name: Install every native OpenTUI package
+        working-directory: ui
+        run: bun install --frozen-lockfile --os='*' --cpu='*'
+      - name: Build all release targets
+        working-directory: ui
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun run build -- --target=bun-linux-x64 --outfile=dist/impartus-ui-linux-amd64
+          bun run build -- --target=bun-linux-arm64 --outfile=dist/impartus-ui-linux-arm64
+          bun run build -- --target=bun-darwin-x64 --outfile=dist/impartus-ui-darwin-amd64
+          bun run build -- --target=bun-darwin-arm64 --outfile=dist/impartus-ui-darwin-arm64
+          bun run build -- --target=bun-windows-x64 --outfile=dist/impartus-ui-windows-amd64.exe
+          bun run build -- --target=bun-windows-arm64 --outfile=dist/impartus-ui-windows-arm64.exe
+          file dist/*

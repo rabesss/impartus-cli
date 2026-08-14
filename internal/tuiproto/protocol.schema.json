@@ -1,0 +1,451 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/rabesss/impartus-cli/internal/tuiproto/protocol.schema.json",
+  "title": "Impartus experimental OpenTUI session protocol",
+  "description": "Single Go-owned source of truth for the private impartus <-> impartus-ui session contract. Go DTOs and TypeScript protocol types are generated from this document; neither side hand-writes them.",
+  "x-protocol": {
+    "version": "tui/v1",
+    "basePath": "/tui/v1",
+    "headers": {
+      "capability": "X-Impartus-Capability",
+      "protocol": "X-Impartus-Protocol",
+      "supportedProtocol": "X-Impartus-Supported-Protocol"
+    }
+  },
+  "$defs": {
+    "Bootstrap": {
+      "type": "object",
+      "description": "is the one-use private handoff from the Go parent to its OpenTUI child.",
+      "required": ["baseUrl", "capability", "protocol", "sessionId"],
+      "properties": {
+        "baseUrl": {
+          "type": "string",
+          "description": "Loopback URL of this one foreground session. Never contains credentials."
+        },
+        "capability": {
+          "type": "string",
+          "description": "Fresh per-launch capability read once from an owner-private bootstrap file."
+        },
+        "protocol": {
+          "type": "string",
+          "description": "Exact session protocol identity the child must send."
+        },
+        "sessionId": {
+          "type": "string",
+          "description": "Opaque session identity used to reject stale bootstrap state."
+        }
+      }
+    },
+    "HealthStatus": {
+      "type": "string",
+      "description": "is the aggregate session readiness value. The session never reports which credentials are configured.",
+      "enum": ["ok"]
+    },
+    "Health": {
+      "type": "object",
+      "description": "is the session readiness probe answered before the frontend renders anything.",
+      "required": ["protocol", "sessionId", "status", "version"],
+      "properties": {
+        "protocol": {
+          "type": "string",
+          "description": "Protocol identity this session speaks."
+        },
+        "sessionId": {
+          "type": "string",
+          "description": "Opaque per-launch session identity. Not a credential."
+        },
+        "status": {
+          "$ref": "#/$defs/HealthStatus"
+        },
+        "version": {
+          "type": "string",
+          "description": "Parent impartus build version."
+        }
+      }
+    },
+    "Course": {
+      "type": "object",
+      "description": "is one read-only catalog course projected from the Go application service.",
+      "required": ["instituteId", "professorName", "sessionId", "sessionName", "subjectId", "subjectName", "videoCount"],
+      "properties": {
+        "instituteId": {
+          "type": "integer",
+          "description": "Upstream institute identifier."
+        },
+        "professorName": {
+          "type": "string",
+          "description": "Course owner as reported upstream."
+        },
+        "sessionId": {
+          "type": "integer",
+          "description": "Upstream session identifier."
+        },
+        "sessionName": {
+          "type": "string",
+          "description": "Academic session label."
+        },
+        "subjectId": {
+          "type": "integer",
+          "description": "Upstream subject identifier."
+        },
+        "subjectName": {
+          "type": "string",
+          "description": "Human readable course name."
+        },
+        "videoCount": {
+          "type": "integer",
+          "description": "Lecture count advertised upstream."
+        }
+      }
+    },
+    "CourseList": {
+      "type": "object",
+      "description": "is the read-only catalog projection proving the frontend reaches live Go state.",
+      "required": ["courses"],
+      "properties": {
+        "courses": {
+          "type": "array",
+          "description": "Courses in upstream order.",
+          "items": {
+            "$ref": "#/$defs/Course"
+          }
+        }
+      }
+    },
+    "Diagnostic": {
+      "type": "object",
+      "description": "is one non-blocking dependency or local-state preflight result already scrubbed by the Go parent.",
+      "required": ["detail", "name", "status"],
+      "properties": {
+        "detail": {
+          "type": "string",
+          "description": "Safe human-readable result detail."
+        },
+        "name": {
+          "type": "string",
+          "description": "Stable dependency or subsystem name."
+        },
+        "status": {
+          "type": "string",
+          "description": "Presentation status such as pass, warn, or fail."
+        }
+      }
+    },
+    "DiagnosticList": {
+      "type": "object",
+      "description": "contains startup diagnostics owned by the Go parent.",
+      "required": ["diagnostics"],
+      "properties": {
+        "diagnostics": {
+          "type": "array",
+          "description": "Diagnostics in their stable collection order.",
+          "items": {
+            "$ref": "#/$defs/Diagnostic"
+          }
+        }
+      }
+    },
+    "Lecture": {
+      "type": "object",
+      "description": "is the presentation-safe subset of one live Impartus lecture.",
+      "required": ["classroomName", "durationSeconds", "instituteId", "noAudio", "professorName", "sequence", "sessionId", "sessionName", "startTime", "subjectId", "subjectName", "topic", "ttid", "views"],
+      "properties": {
+        "classroomName": {
+          "type": "string",
+          "description": "Classroom label reported upstream."
+        },
+        "durationSeconds": {
+          "type": "integer",
+          "description": "Advertised lecture duration in seconds."
+        },
+        "instituteId": {
+          "type": "integer",
+          "description": "Upstream institute identifier."
+        },
+        "noAudio": {
+          "type": "boolean",
+          "description": "Whether upstream marks this lecture as lacking audio."
+        },
+        "professorName": {
+          "type": "string",
+          "description": "Lecture owner reported upstream."
+        },
+        "sequence": {
+          "type": "integer",
+          "description": "Human-facing lecture sequence number."
+        },
+        "sessionId": {
+          "type": "integer",
+          "description": "Upstream session identifier."
+        },
+        "sessionName": {
+          "type": "string",
+          "description": "Academic session label."
+        },
+        "startTime": {
+          "type": "string",
+          "description": "Lecture start time as supplied upstream."
+        },
+        "subjectId": {
+          "type": "integer",
+          "description": "Upstream subject identifier."
+        },
+        "subjectName": {
+          "type": "string",
+          "description": "Course name reported on the lecture."
+        },
+        "topic": {
+          "type": "string",
+          "description": "Lecture topic."
+        },
+        "ttid": {
+          "type": "integer",
+          "description": "Stable upstream lecture timetable identifier."
+        },
+        "views": {
+          "type": "integer",
+          "description": "Number of camera views advertised upstream."
+        }
+      }
+    },
+    "LectureList": {
+      "type": "object",
+      "description": "contains the live lectures for one requested course identity.",
+      "required": ["lectures"],
+      "properties": {
+        "lectures": {
+          "type": "array",
+          "description": "Lectures in the application service order.",
+          "items": {
+            "$ref": "#/$defs/Lecture"
+          }
+        }
+      }
+    },
+    "LectureIdentity": {
+      "type": "object",
+      "description": "is the minimal authoritative identity accepted for lecture mutations. The Go parent re-resolves the full live lecture before acting.",
+      "required": ["instituteId", "sessionId", "subjectId", "ttid"],
+      "properties": {
+        "instituteId": {
+          "type": "integer",
+          "description": "Upstream institute identifier."
+        },
+        "sessionId": {
+          "type": "integer",
+          "description": "Upstream session identifier."
+        },
+        "subjectId": {
+          "type": "integer",
+          "description": "Upstream subject identifier."
+        },
+        "ttid": {
+          "type": "integer",
+          "description": "Stable upstream lecture timetable identifier."
+        }
+      }
+    },
+    "ArtifactSummary": {
+      "type": "object",
+      "description": "is one presentation-safe local library record without exposing filesystem paths.",
+      "required": ["artifactId", "fileCount", "presentFileCount", "producedAt", "sequence", "topic", "totalBytes"],
+      "properties": {
+        "artifactId": {
+          "type": "string",
+          "description": "Canonical logical artifact identity."
+        },
+        "fileCount": {
+          "type": "integer",
+          "description": "Number of materialized files recorded for the artifact."
+        },
+        "presentFileCount": {
+          "type": "integer",
+          "description": "Number of recorded files currently marked present."
+        },
+        "producedAt": {
+          "type": "string",
+          "description": "UTC RFC3339 production timestamp."
+        },
+        "sequence": {
+          "type": "integer",
+          "description": "Human-facing lecture sequence number."
+        },
+        "topic": {
+          "type": "string",
+          "description": "Lecture topic stored in the manifest."
+        },
+        "totalBytes": {
+          "type": "integer",
+          "description": "Total recorded bytes across materialized files."
+        }
+      }
+    },
+    "ArtifactList": {
+      "type": "object",
+      "description": "contains the current durable local lecture library.",
+      "required": ["artifacts"],
+      "properties": {
+        "artifacts": {
+          "type": "array",
+          "description": "Artifacts newest first in the store order.",
+          "items": {
+            "$ref": "#/$defs/ArtifactSummary"
+          }
+        }
+      }
+    },
+    "OperationKind": {
+      "type": "string",
+      "description": "names the operations the session may start. The bounded foundation exposes only a transport self test.",
+      "enum": ["selftest", "download", "playback"]
+    },
+    "OperationState": {
+      "type": "string",
+      "description": "is one operation lifecycle state. Every state except running is terminal.",
+      "enum": ["running", "completed", "canceled", "failed"]
+    },
+    "OperationRequest": {
+      "type": "object",
+      "description": "is the request body accepted when starting an operation.",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/OperationKind"
+        },
+        "lecture": {
+          "$ref": "#/$defs/LectureIdentity",
+          "description": "Lecture identity required by lecture-scoped operations."
+        },
+        "resume": {
+          "type": "boolean",
+          "description": "Whether playback should use an existing durable resume checkpoint when available."
+        }
+      }
+    },
+    "PlaybackCommandAction": {
+      "type": "string",
+      "description": "names one bounded mpv control owned by the Go playback session.",
+      "enum": ["pause", "seek", "mute", "volume", "speed", "cycleVideo"]
+    },
+    "PlaybackCommand": {
+      "type": "object",
+      "description": "is one typed playback-control request. The action determines whether flag or value is required.",
+      "required": ["action"],
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/PlaybackCommandAction"
+        },
+        "flag": {
+          "type": "boolean",
+          "description": "Boolean value used by pause and mute."
+        },
+        "value": {
+          "type": "number",
+          "description": "Numeric value used by seek, volume, and speed."
+        }
+      }
+    },
+    "Operation": {
+      "type": "object",
+      "description": "is the handle returned when an operation is accepted or inspected.",
+      "required": ["id", "kind", "state"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Session-unique operation identifier."
+        },
+        "kind": {
+          "$ref": "#/$defs/OperationKind"
+        },
+        "state": {
+          "$ref": "#/$defs/OperationState"
+        }
+      }
+    },
+    "EventType": {
+      "type": "string",
+      "description": "names the ordered session event kinds delivered over the event stream.",
+      "enum": [
+        "session.ready",
+        "operation.started",
+        "operation.progress",
+        "operation.completed",
+        "operation.canceled",
+        "operation.failed",
+        "stream.overflow"
+      ]
+    },
+    "Event": {
+      "type": "object",
+      "description": "is one ordered session event. Sequence numbers increase monotonically per session.",
+      "required": ["sequence", "type"],
+      "properties": {
+        "message": {
+          "type": "string",
+          "description": "Scrubbed human readable detail. Never carries upstream credentials."
+        },
+        "durationSeconds": {
+          "type": "number",
+          "description": "Coalesced playback duration when known."
+        },
+        "muted": {
+          "type": "boolean",
+          "description": "Current playback mute state when known."
+        },
+        "paused": {
+          "type": "boolean",
+          "description": "Current playback pause state when known."
+        },
+        "positionSeconds": {
+          "type": "number",
+          "description": "Coalesced playback position when known."
+        },
+        "operationId": {
+          "type": "string",
+          "description": "Operation this event belongs to, when the event is operation scoped."
+        },
+        "percent": {
+          "type": "number",
+          "description": "Coalesced progress percentage between 0 and 100."
+        },
+        "sequence": {
+          "type": "integer",
+          "description": "Monotonic per-session sequence number."
+        },
+        "state": {
+          "$ref": "#/$defs/OperationState"
+        },
+        "speed": {
+          "type": "number",
+          "description": "Current playback speed when known."
+        },
+        "type": {
+          "$ref": "#/$defs/EventType"
+        },
+        "volume": {
+          "type": "number",
+          "description": "Current playback volume percentage when known."
+        }
+      }
+    },
+    "Problem": {
+      "type": "object",
+      "description": "is the uniform session error body. It never discloses local state or credentials.",
+      "required": ["code", "error"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Stable machine readable failure code."
+        },
+        "error": {
+          "type": "string",
+          "description": "Short actionable failure summary."
+        },
+        "supportedProtocol": {
+          "type": "string",
+          "description": "Protocol identity this session speaks, sent with protocol upgrade failures."
+        }
+      }
+    }
+  }
+}

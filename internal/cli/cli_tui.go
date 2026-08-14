@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"golang.org/x/term"
 
 	"github.com/rabesss/impartus-cli/internal/app"
+	"github.com/rabesss/impartus-cli/internal/buildinfo"
 	"github.com/rabesss/impartus-cli/internal/library"
-	"github.com/rabesss/impartus-cli/internal/tui"
+	"github.com/rabesss/impartus-cli/internal/tuihost"
+	"github.com/rabesss/impartus-cli/internal/tuisession"
 )
 
 type exitCodeError struct {
@@ -41,7 +45,8 @@ func isInteractiveTerminal() bool {
 }
 
 func runTUI() error {
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	cfg, apiClient, err := initClient(ctx)
 	if err != nil {
 		return err
@@ -55,10 +60,25 @@ func runTUI() error {
 	if reportErr != nil {
 		return errors.Join(reportErr, store.Close())
 	}
-	diagnostics := make([]tui.Diagnostic, 0, len(report.Checks))
+	diagnostics := make([]tuisession.Diagnostic, 0, len(report.Checks))
 	for _, check := range report.Checks {
-		diagnostics = append(diagnostics, tui.Diagnostic{Name: check.Name, Status: check.Status, Detail: check.Detail})
+		diagnostics = append(diagnostics, tuisession.Diagnostic{Name: check.Name, Status: check.Status, Detail: check.Detail})
 	}
-	runErr := tui.Run(ctx, service, os.Stdin, os.Stdout, tui.Options{Diagnostics: diagnostics})
-	return errors.Join(runErr, store.Close())
+	frontend, err := tuihost.ResolveExecutable(os.Getenv("IMPARTUS_UI_BINARY"))
+	if err != nil {
+		return errors.Join(err, store.Close())
+	}
+	session, err := tuisession.Start(ctx, tuisession.Options{
+		Actions:     service,
+		Artifacts:   service,
+		Catalog:     service,
+		Diagnostics: diagnostics,
+		Lectures:    service,
+		Version:     buildinfo.Version,
+	})
+	if err != nil {
+		return errors.Join(err, store.Close())
+	}
+	runErr := tuihost.Run(ctx, tuihost.Options{Session: session, Executable: frontend})
+	return errors.Join(runErr, session.Close(), store.Close())
 }

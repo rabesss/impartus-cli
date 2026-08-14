@@ -4,7 +4,7 @@
 <!---toc start-->
 
 * [Architecture](#architecture)
-  * [TUI and classic interactive flow](#tui-and-classic-interactive-flow)
+  * [OpenTUI interactive flow](#opentui-interactive-flow)
   * [CLI deterministic JSON mode flow](#cli-deterministic-json-mode-flow)
   * [CLI play command flow](#cli-play-command-flow)
   * [Local library and recovery flow](#local-library-and-recovery-flow)
@@ -19,12 +19,10 @@
 
 This project is CLI-first and API-secondary: the CLI is the primary execution path, and the API is started from `impartus serve` when needed.
 
-## TUI and classic interactive flow
+## OpenTUI interactive flow
 
 The default mode launches `impartus tui` only when stdin and stdout are real
 terminals. A non-TTY no-argument invocation prints help to stderr and exits 2.
-`impartus classic` preserves the previous prompt-based download workflow for one
-release and always prints a deprecation notice.
 
 ```mermaid
 flowchart TD
@@ -34,19 +32,27 @@ flowchart TD
   C -- No --> D{stdin and stdout are TTYs?}
   D -- No --> E[help to stderr + exit 2]
   D -- Yes --> F[load config, login, open library]
-  F --> G[collect non-blocking doctor diagnostics]
-  G --> H[Bubble Tea v2 alternate screen]
-  H --> I[internal/tui state and key bindings]
-  I --> J[internal/app catalog/playback/download/library]
-  J --> K[Impartus API, native mpv, FFmpeg, private SQLite]
-  M[impartus classic] --> N[deprecated prompt workflow]
+  F --> G[start private authenticated loopback session]
+  G --> H[write one-use owner-private bootstrap]
+  H --> I[launch adjacent compiled OpenTUI child]
+  I --> J[responsive UI and strict session client]
+  J --> K[internal/tuisession projections and operations]
+  K --> L[internal/app catalog/playback/download/library]
+  L --> M[Impartus API, native mpv, FFmpeg, private SQLite]
 ```
 
-`internal/tui` owns only view state, responsive layout, generated help, and
-translation between application/player events and Bubble Tea messages. mpv is
-started idle with `--no-terminal`, so Bubble Tea remains the sole terminal
-owner. PTY tests pin alternate-screen restoration on normal quit, rendered
-application error, context cancellation, and recovered panic.
+The Go parent owns login state, the API client, SQLite, downloads, mpv, operation
+cancellation, and the single-terminal event lifecycle. `internal/tuisession`
+projects presentation-shaped data over one ephemeral loopback port. Every
+request requires the per-launch capability and protocol version. The capability
+is passed through a one-use bootstrap file, never argv or the child environment.
+
+The compiled OpenTUI child owns only terminal state, responsive layout, input,
+and rendering. Wide terminals use three panes, medium terminals use two, and
+narrow terminals use one routed pane. mpv is started idle with `--no-terminal`,
+so the OpenTUI child remains the sole terminal owner. Native and PTY tests pin
+bootstrap cleanup, private-session behavior, alternate-screen restoration, and
+responsive rendering.
 
 ## CLI deterministic JSON mode flow
 
@@ -235,8 +241,9 @@ sequenceDiagram
 
 ## Internal package/module boundaries
 
-Core boundaries keep command parsing in `internal/cli`, terminal presentation
-and key state in `internal/tui`, shared
+Core boundaries keep command parsing in `internal/cli`, child lifecycle in
+`internal/tuihost`, the private contract in `internal/tuiproto` and
+`internal/tuisession`, terminal presentation in `ui`, shared
 catalog/playback orchestration in `internal/app`, mpv ownership and JSON IPC in
 `internal/player`, network access in `internal/client`, the media pipeline and
 loopback HLS proxy in `internal/downloader`, stable local media contracts in
@@ -251,7 +258,9 @@ flowchart LR
 
   subgraph Internal
     CLI[internal/cli]
-    TUI[internal/tui]
+    TUIHOST[internal/tuihost]
+    TUISESSION[internal/tuisession]
+    TUIPROTO[internal/tuiproto]
     CFG[internal/config]
     CLT[internal/client]
     DL[internal/downloader]
@@ -263,6 +272,8 @@ flowchart LR
     WATCH[internal/watch]
     SRV[internal/server]
   end
+
+  UI[compiled OpenTUI sidecar]
 
   IMP[(Impartus APIs)]
   FS[(Local files + ffmpeg)]
@@ -276,7 +287,8 @@ flowchart LR
   CLI --> DL
   CLI --> ART
   CLI --> APP
-  CLI --> TUI
+  CLI --> TUIHOST
+  CLI --> TUISESSION
   CLI --> LIB
   CLI --> EVT
   CLI --> WATCH
@@ -285,7 +297,11 @@ flowchart LR
   APP --> DL
   APP --> PLR
   APP --> LIB
-  TUI --> APP
+  TUIHOST --> UI
+  UI --> TUIPROTO
+  UI --> TUISESSION
+  TUISESSION --> TUIPROTO
+  TUISESSION --> APP
   WATCH --> CFG
   WATCH --> CLT
   WATCH --> DL

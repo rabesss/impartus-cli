@@ -21,7 +21,15 @@
 !go.sum
 !go.mod
 !internal/library/migrations/*.sql
-!internal/tui/testdata/*.golden
+!internal/tuiproto/protocol.schema.json
+!ui/src/protocol/types.gen.ts
+!ui/package.json
+!ui/bun.lock
+!ui/tsconfig.json
+!ui/src/*.ts
+!ui/src/**/*.ts
+!ui/test/*.ts
+!ui/scripts/*.ts
 
 !/CHANGELOG.md
 !/Dockerfile
@@ -41,9 +49,14 @@
 !/scripts/test-desloppify-golangci-lint-adapter.sh
 !/scripts/run-quality-gate.sh
 !/scripts/test-quality-gate.sh
+!/scripts/gen-tui-protocol.go
 
 # ...even if they are in subdirectories
 !*/
+
+# OpenTUI dependencies and compiled sidecars stay local.
+ui/node_modules/
+ui/dist/
 
 # Build/coverage artifacts
 coverage*.out
