@@ -99,6 +99,7 @@ const COMMANDS: readonly Command[] = [
 export class FoundationView {
   readonly #renderer: CliRenderer
   readonly #callbacks: FoundationCallbacks
+  #courseLabels: ReadonlyMap<Course, string>
   #state: FoundationState
   #tree: BoxRenderable | undefined
   #helpVisible = false
@@ -108,6 +109,7 @@ export class FoundationView {
   public constructor(renderer: CliRenderer, state: FoundationState, callbacks: FoundationCallbacks) {
     this.#renderer = renderer
     this.#state = normalizeState(state)
+    this.#courseLabels = courseRailLabels(this.#state.courses)
     this.#callbacks = callbacks
     this.#renderer.keyInput.on("keypress", this.#onKeyPress)
     this.#renderer.on(CliRenderEvents.RESIZE, this.#onResize)
@@ -119,7 +121,11 @@ export class FoundationView {
       this.#filtering = false
       this.#filterQuery = ""
     }
-    this.#state = normalizeState(state)
+    const nextState = normalizeState(state)
+    if (!sameCourseCatalog(this.#state.courses, nextState.courses)) {
+      this.#courseLabels = courseRailLabels(nextState.courses)
+    }
+    this.#state = nextState
     this.#rebuild()
   }
 
@@ -387,7 +393,8 @@ export class FoundationView {
     }
     visible.items.forEach((course, index) => {
       const selected = visible.offset + index === this.#state.selectedCourse
-      panel.add(row(this.#renderer, `${selected ? "›" : " "} ${courseRailLabel(course, this.#state.courses)}`, selected))
+      const label = this.#courseLabels.get(course) ?? middleEllipsis(normalizedCourseName(course.subjectName), COURSE_RAIL_LABEL_WIDTH)
+      panel.add(row(this.#renderer, `${selected ? "›" : " "} ${label}`, selected))
     })
     return panel
   }
@@ -600,32 +607,38 @@ function row(renderer: CliRenderer, content: string, selected: boolean): TextRen
   })
 }
 
-export function courseRailLabel(course: Course, courses: readonly Course[]): string {
-  const name = normalizedCourseName(course.subjectName)
-  const peers = courses
-    .filter((candidate) => candidate.instituteId === course.instituteId && candidate.sessionId === course.sessionId)
-    .map((candidate) => normalizedCourseName(candidate.subjectName))
-
-  let label = name
-  if (peers.length > 1) {
-    const underscorePrefixes = peers.map((candidate) => (
-      candidate.includes("_") ? candidate.slice(0, candidate.indexOf("_")).trim() : ""
-    ))
-    const sharedUnderscorePrefix = underscorePrefixes[0] ?? ""
-    const hasSharedUnderscorePrefix = sharedUnderscorePrefix !== "" && underscorePrefixes.every(
-      (prefix) => prefix.toLowerCase() === sharedUnderscorePrefix.toLowerCase(),
-    )
-    if (hasSharedUnderscorePrefix) {
-      label = name.slice(name.indexOf("_") + 1).trim()
-    } else {
-      const commonTokens = commonLeadingTokens(peers)
-      if (commonTokens >= 3) {
-        label = name.split(" ").slice(commonTokens).join(" ").trim()
-      }
-    }
+export function courseRailLabels(courses: readonly Course[]): ReadonlyMap<Course, string> {
+  const cohorts = new Map<string, Array<{ course: Course; name: string }>>()
+  for (const course of courses) {
+    const key = `${course.instituteId}:${course.sessionId}`
+    const cohort = cohorts.get(key) ?? []
+    cohort.push({ course, name: normalizedCourseName(course.subjectName) })
+    cohorts.set(key, cohort)
   }
 
-  return middleEllipsis(label === "" ? name : label, COURSE_RAIL_LABEL_WIDTH)
+  const labels = new Map<Course, string>()
+  for (const cohort of cohorts.values()) {
+    const names = cohort.map(({ name }) => name)
+    const underscorePrefixes = names.map((name) => (
+      name.includes("_") ? name.slice(0, name.indexOf("_")).trim() : ""
+    ))
+    const sharedUnderscorePrefix = underscorePrefixes[0] ?? ""
+    const hasSharedUnderscorePrefix = cohort.length > 1 && sharedUnderscorePrefix !== "" && underscorePrefixes.every(
+      (prefix) => prefix.toLowerCase() === sharedUnderscorePrefix.toLowerCase(),
+    )
+    const commonTokens = cohort.length > 1 && !hasSharedUnderscorePrefix ? commonLeadingTokens(names) : 0
+
+    for (const { course, name } of cohort) {
+      let label = name
+      if (hasSharedUnderscorePrefix) {
+        label = name.slice(name.indexOf("_") + 1).trim()
+      } else if (commonTokens >= 3) {
+        label = name.split(" ").slice(commonTokens).join(" ").trim()
+      }
+      labels.set(course, middleEllipsis(label === "" ? name : label, COURSE_RAIL_LABEL_WIDTH))
+    }
+  }
+  return labels
 }
 
 function normalizedCourseName(value: string): string {
@@ -642,6 +655,10 @@ function commonLeadingTokens(values: readonly string[]): number {
     count++
   }
   return count
+}
+
+function sameCourseCatalog(left: readonly Course[], right: readonly Course[]): boolean {
+  return left.length === right.length && left.every((course, index) => course === right[index])
 }
 
 function middleEllipsis(value: string, width: number): string {

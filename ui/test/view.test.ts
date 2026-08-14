@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { createTestRenderer, type TestRendererSetup } from "@opentui/core/testing"
 
 import type { Course, PlaybackCommand } from "../src/protocol/types.gen.ts"
-import { courseRailLabel, FoundationView, type FoundationState } from "../src/view.ts"
+import { courseRailLabels, FoundationView, type FoundationState } from "../src/view.ts"
 
 const renderers: TestRendererSetup[] = []
 
@@ -24,12 +24,13 @@ describe("FoundationView", () => {
       course("PHY N FY 24 EVEN\u00a0 ENVIRONMENTAL STUDIES", 1450, 7),
     ]
 
-    expect(courseRailLabel(courses[0]!, courses)).toBe("Biomaterials")
-    expect(courseRailLabel(courses[1]!, courses)).toBe("Medical Devices")
-    expect(courseRailLabel(courses[2]!, courses)).toBe("Basic Clinic…(Neurology)")
-    expect(courseRailLabel(courses[3]!, courses)).toBe("Basic Clinic…(Radiology)")
-    expect(courseRailLabel(courses[4]!, courses)).toBe("ENGINEERING CHEMISTRY")
-    expect(courseRailLabel(courses[5]!, courses)).toBe("ENGINEERING …HICS-II 312")
+    const labels = courseRailLabels(courses)
+    expect(labels.get(courses[0]!)).toBe("Biomaterials")
+    expect(labels.get(courses[1]!)).toBe("Medical Devices")
+    expect(labels.get(courses[2]!)).toBe("Basic Clinic…(Neurology)")
+    expect(labels.get(courses[3]!)).toBe("Basic Clinic…(Radiology)")
+    expect(labels.get(courses[4]!)).toBe("ENGINEERING CHEMISTRY")
+    expect(labels.get(courses[5]!)).toBe("ENGINEERING …HICS-II 312")
   })
 
   test("renders a modern three-region shell on wide terminals", async () => {
