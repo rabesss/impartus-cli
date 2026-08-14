@@ -32,6 +32,7 @@ const COLORS = {
 
 const WIDE_WIDTH = 120
 const MEDIUM_WIDTH = 72
+const COURSE_RAIL_LABEL_WIDTH = 24
 
 export type FoundationScreen = "courses" | "diagnostics" | "lectures" | "library" | "playback"
 
@@ -386,7 +387,7 @@ export class FoundationView {
     }
     visible.items.forEach((course, index) => {
       const selected = visible.offset + index === this.#state.selectedCourse
-      panel.add(row(this.#renderer, `${selected ? "›" : " "} ${course.subjectName}`, selected))
+      panel.add(row(this.#renderer, `${selected ? "›" : " "} ${courseRailLabel(course, this.#state.courses)}`, selected))
     })
     return panel
   }
@@ -597,6 +598,59 @@ function row(renderer: CliRenderer, content: string, selected: boolean): TextRen
     truncate: true,
     width: "100%",
   })
+}
+
+export function courseRailLabel(course: Course, courses: readonly Course[]): string {
+  const name = normalizedCourseName(course.subjectName)
+  const peers = courses
+    .filter((candidate) => candidate.instituteId === course.instituteId && candidate.sessionId === course.sessionId)
+    .map((candidate) => normalizedCourseName(candidate.subjectName))
+
+  let label = name
+  if (peers.length > 1) {
+    const underscorePrefixes = peers.map((candidate) => (
+      candidate.includes("_") ? candidate.slice(0, candidate.indexOf("_")).trim() : ""
+    ))
+    const sharedUnderscorePrefix = underscorePrefixes[0] ?? ""
+    const hasSharedUnderscorePrefix = sharedUnderscorePrefix !== "" && underscorePrefixes.every(
+      (prefix) => prefix.toLowerCase() === sharedUnderscorePrefix.toLowerCase(),
+    )
+    if (hasSharedUnderscorePrefix) {
+      label = name.slice(name.indexOf("_") + 1).trim()
+    } else {
+      const commonTokens = commonLeadingTokens(peers)
+      if (commonTokens >= 3) {
+        label = name.split(" ").slice(commonTokens).join(" ").trim()
+      }
+    }
+  }
+
+  return middleEllipsis(label === "" ? name : label, COURSE_RAIL_LABEL_WIDTH)
+}
+
+function normalizedCourseName(value: string): string {
+  return value.replace(/\s+/gu, " ").trim()
+}
+
+function commonLeadingTokens(values: readonly string[]): number {
+  const tokenLists = values.map((value) => value.split(" "))
+  const shortest = Math.min(...tokenLists.map((tokens) => tokens.length))
+  let count = 0
+  while (count < shortest) {
+    const candidate = tokenLists[0]?.[count]?.toLowerCase()
+    if (candidate === undefined || !tokenLists.every((tokens) => tokens[count]?.toLowerCase() === candidate)) break
+    count++
+  }
+  return count
+}
+
+function middleEllipsis(value: string, width: number): string {
+  const characters = Array.from(value)
+  if (characters.length <= width) return value
+  const available = width - 1
+  const leading = Math.ceil(available / 2)
+  const trailing = Math.floor(available / 2)
+  return `${characters.slice(0, leading).join("")}…${characters.slice(-trailing).join("")}`
 }
 
 function text(renderer: CliRenderer, content: string, color: string, attributes = TextAttributes.NONE): TextRenderable {

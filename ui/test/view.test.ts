@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { createTestRenderer, type TestRendererSetup } from "@opentui/core/testing"
 
-import type { PlaybackCommand } from "../src/protocol/types.gen.ts"
-import { FoundationView, type FoundationState } from "../src/view.ts"
+import type { Course, PlaybackCommand } from "../src/protocol/types.gen.ts"
+import { courseRailLabel, FoundationView, type FoundationState } from "../src/view.ts"
 
 const renderers: TestRendererSetup[] = []
 
@@ -13,6 +13,25 @@ afterEach(() => {
 })
 
 describe("FoundationView", () => {
+  test("uses distinguishing subject labels for courses with shared cohort prefixes", () => {
+    const courses: Course[] = [
+      course("BME V SEM 26 ODD_Biomaterials", 1530, 1),
+      course("BME V SEM 26 ODD_Medical Devices", 1530, 2),
+      course("BME V SEM 26 ODD_Basic Clinical Sciences –II (Neurology)", 1530, 3),
+      course("BME V SEM 26 ODD_Basic Clinical Sciences –II (Radiology)", 1530, 4),
+      course("PHY N FY 24 EVEN\u00a0 ENGINEERING CHEMISTRY", 1450, 5),
+      course("PHY N FY 24 EVEN\u00a0 ENGINEERING GRAPHICS-II 312", 1450, 6),
+      course("PHY N FY 24 EVEN\u00a0 ENVIRONMENTAL STUDIES", 1450, 7),
+    ]
+
+    expect(courseRailLabel(courses[0]!, courses)).toBe("Biomaterials")
+    expect(courseRailLabel(courses[1]!, courses)).toBe("Medical Devices")
+    expect(courseRailLabel(courses[2]!, courses)).toBe("Basic Clinic…(Neurology)")
+    expect(courseRailLabel(courses[3]!, courses)).toBe("Basic Clinic…(Radiology)")
+    expect(courseRailLabel(courses[4]!, courses)).toBe("ENGINEERING CHEMISTRY")
+    expect(courseRailLabel(courses[5]!, courses)).toBe("ENGINEERING …HICS-II 312")
+  })
+
   test("renders a modern three-region shell on wide terminals", async () => {
     const setup = await createTestRenderer({ height: 40, width: 140 })
     renderers.push(setup)
@@ -168,6 +187,18 @@ describe("FoundationView", () => {
     view.destroy()
   })
 })
+
+function course(subjectName: string, sessionId: number, subjectId: number): Course {
+  return {
+    instituteId: 1207,
+    professorName: "Professor",
+    sessionId,
+    sessionName: "Session",
+    subjectId,
+    subjectName,
+    videoCount: 1,
+  }
+}
 
 function foundationState(): FoundationState {
   return {
