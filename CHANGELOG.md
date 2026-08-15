@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.1.22](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.21...impartus-cli-v0.1.22) (2026-08-15)
+
+
+### Features
+
+* replace Bubble Tea with OpenTUI workspace ([068feef](https://github.com/rabesss/impartus-cli/commit/068feef6bdbd16c6540e48d6b377e2ac6635be24))
+* **tui:** add live catalog and library workspace ([0675af1](https://github.com/rabesss/impartus-cli/commit/0675af1e490d2fc52f22ad8a151f3a43186ac4af))
+* **tui:** add OpenTUI session foundation ([6e6ace6](https://github.com/rabesss/impartus-cli/commit/6e6ace6bf7f69d58e9f29ca2013e3ef3921fb4d1))
+* **tui:** add playback and packaged launcher ([7f3b431](https://github.com/rabesss/impartus-cli/commit/7f3b431f2419d8878a12acfada27ae20657ef50c))
+
+
+### Bug Fixes
+
+* **cli:** cancel JSON downloads on interrupt ([9287b3b](https://github.com/rabesss/impartus-cli/commit/9287b3b75d647a9b7abc97b31e09985cecdca5ff))
+* **cli:** clean download workspace on interrupt ([0645ad2](https://github.com/rabesss/impartus-cli/commit/0645ad2281223bc847e60ee97ad462a8df4e68be))
+* **cli:** clean download workspace on interrupt ([cbf7cac](https://github.com/rabesss/impartus-cli/commit/cbf7cacbac4ecaa81dc57f2777fc1898962965a6))
+* **tui:** create Windows bootstrap with ACL rights ([3dd454f](https://github.com/rabesss/impartus-cli/commit/3dd454fe5c7367cd9ae3061cd945ba2d9fa7ecd6))
+* **tui:** distinguish shared course prefixes ([9f6f5a1](https://github.com/rabesss/impartus-cli/commit/9f6f5a162de122c33d9acd11c9554a86caf99bf7))
+
+
+### Performance
+
+* **tui:** cache course rail labels ([47d255c](https://github.com/rabesss/impartus-cli/commit/47d255cd2c3fa62885c4def42e00efc01530dd7d))
+
+
+### Refactoring
+
+* **tui:** remove legacy terminal frontend ([a9d5df2](https://github.com/rabesss/impartus-cli/commit/a9d5df242bc714c71deeb796f6596f366eb6cbdf))
+
+
+### Documentation
+
+* add download performance tuning guide ([#153](https://github.com/rabesss/impartus-cli/issues/153)) ([c5d5c98](https://github.com/rabesss/impartus-cli/commit/c5d5c98c71f2b17149550c227951df48ae4b62cb))
+
+
+### CI/CD
+
+* track Pullfrog v0 ([291cae1](https://github.com/rabesss/impartus-cli/commit/291cae18759cada9c0c71b9e2cf93421363fb51c))
+* use Pullfrog custom API connection ([e8bdfc4](https://github.com/rabesss/impartus-cli/commit/e8bdfc4df3289c99219d3ae6e7c8d8a8258a2981))
+
 ## [0.1.21](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.20...impartus-cli-v0.1.21) (2026-08-12)
 
 
