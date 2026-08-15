@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.23](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.22...impartus-cli-v0.1.23) (2026-08-15)
+
+
+### Bug Fixes
+
+* **client:** explain unavailable media quality ([f5dbd8a](https://github.com/rabesss/impartus-cli/commit/f5dbd8a934c76a9bcd74c52c44cb7f2e07640728))
+* **client:** preserve quality diagnostics across APIs ([8c5e5c2](https://github.com/rabesss/impartus-cli/commit/8c5e5c243b4006f9d02bf57c8de2da21dc2a9c45))
+* **container:** build with Go 1.26.6 ([16f945d](https://github.com/rabesss/impartus-cli/commit/16f945d0e8eaa4c5493bea2dc2985534704b5385))
+* improve media QA and container security ([f9d8d9c](https://github.com/rabesss/impartus-cli/commit/f9d8d9c0d62b6196fa5d53d11805e99bdb327a3a))
+
+
+### Testing
+
+* **player:** support fully headless mpv smoke ([e410c55](https://github.com/rabesss/impartus-cli/commit/e410c55f2136a81c7eef8c59d22111fc6bb2ba1d))
+
 ## [0.1.22](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.21...impartus-cli-v0.1.22) (2026-08-15)
 
 
