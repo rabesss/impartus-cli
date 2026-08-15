@@ -86,14 +86,18 @@ func runDownload(args []string) error {
 }
 
 func runDownloadWithDependencies(args []string, deps downloadExecutionDependencies) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runDownloadWithDependenciesContext(ctx, args, deps)
+}
+
+func runDownloadWithDependenciesContext(ctx context.Context, args []string, deps downloadExecutionDependencies) error {
 	if requestedEvents(args) {
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
 		err := runDownloadEventsWithDependenciesContext(ctx, args, os.Stdout, deps, time.Now, "")
 		return downloadCommandError(ctx, err)
 	}
-	_, err := executeDownloadWithDependencies(args, humanDownloadPresentation(), deps)
-	return downloadCommandError(context.Background(), err)
+	_, err := executeDownloadWithDependenciesContext(ctx, args, humanDownloadPresentation(), deps)
+	return downloadCommandError(ctx, err)
 }
 
 func downloadCommandError(ctx context.Context, err error) error {
@@ -110,14 +114,25 @@ func downloadCommandError(ctx context.Context, err error) error {
 }
 
 func runDownloadJSON(args []string) (downloadResult, error) {
-	return runDownloadJSONWithDependencies(args, defaultDownloadExecutionDependencies())
+	return runDownloadJSONWithSignalDependencies(args, defaultDownloadExecutionDependencies())
+}
+
+func runDownloadJSONWithSignalDependencies(args []string, deps downloadExecutionDependencies) (downloadResult, error) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	result, err := runDownloadJSONWithDependenciesContext(ctx, args, deps)
+	return result, downloadCommandError(ctx, err)
 }
 
 func runDownloadJSONWithDependencies(args []string, deps downloadExecutionDependencies) (downloadResult, error) {
+	return runDownloadJSONWithDependenciesContext(context.Background(), args, deps)
+}
+
+func runDownloadJSONWithDependenciesContext(ctx context.Context, args []string, deps downloadExecutionDependencies) (downloadResult, error) {
 	if requestedEvents(args) {
 		return downloadResult{}, errors.New("cannot combine --json and --events")
 	}
-	return executeDownloadWithDependencies(args, quietDownloadPresentation(), deps)
+	return executeDownloadWithDependenciesContext(ctx, args, quietDownloadPresentation(), deps)
 }
 
 func executeDownloadWithDependencies(args []string, presentation downloadPresentationOptions, deps downloadExecutionDependencies) (downloadResult, error) {
