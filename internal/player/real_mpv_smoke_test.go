@@ -61,7 +61,7 @@ func TestRealMPVSmoke(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	session, err := Start(ctx, Options{Binary: "mpv", VideoOutput: "null"})
+	session, err := Start(ctx, Options{Binary: "mpv", VideoOutput: "null", AudioOutput: "null"})
 	if err != nil {
 		t.Fatalf("start real mpv: %v", err)
 	}
