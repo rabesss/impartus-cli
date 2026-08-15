@@ -174,7 +174,7 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 		streamURL := SelectStreamByQuality(streamInfos, cfg.Quality, cfg.AudioOnly)
 		if streamURL == "" {
 			for _, streamInfo := range streamInfos {
-				unavailableQualities[streamInfo.Quality] = struct{}{}
+				recordAcceptedQuality(unavailableQualities, streamInfo.Quality)
 			}
 			continue
 		}
@@ -209,7 +209,7 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 			qualities = append(qualities, quality)
 		}
 		sort.Strings(qualities)
-		return nil, fmt.Errorf("requested quality %q is unavailable; available qualities: %s", cfg.Quality, strings.Join(qualities, ", "))
+		return nil, newQualityUnavailableError(cfg.Quality, qualities)
 	}
 
 	return parsedPlaylists, nil

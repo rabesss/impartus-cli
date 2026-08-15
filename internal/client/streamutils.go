@@ -64,3 +64,20 @@ func SelectStreamByQuality(streamInfos []StreamInfo, quality string, audioOnly b
 	}
 	return ""
 }
+
+func acceptedQualityLabel(upstreamQuality string) string {
+	switch upstreamQuality {
+	case "480":
+		return "450"
+	case "144", "450", "720":
+		return upstreamQuality
+	default:
+		return ""
+	}
+}
+
+func recordAcceptedQuality(qualities map[string]struct{}, upstreamQuality string) {
+	if quality := acceptedQualityLabel(upstreamQuality); quality != "" {
+		qualities[quality] = struct{}{}
+	}
+}

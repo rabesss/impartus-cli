@@ -3,6 +3,7 @@ package client
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // LoginResponse represents the response from the Impartus authentication endpoint.
@@ -41,6 +42,32 @@ type Lectures []Lecture
 // ErrNoLecturesAfterFiltering reports that a valid range became empty only
 // because every selected lecture was marked no-audio.
 var ErrNoLecturesAfterFiltering = errors.New("no lectures available after filtering")
+
+// QualityUnavailableError reports an exact requested quality that Impartus did
+// not expose. Its message contains only validated quality labels, so API
+// boundaries can safely surface it without returning arbitrary upstream text.
+type QualityUnavailableError struct {
+	requested string
+	available []string
+}
+
+func newQualityUnavailableError(requested string, available []string) *QualityUnavailableError {
+	return &QualityUnavailableError{
+		requested: requested,
+		available: append([]string(nil), available...),
+	}
+}
+
+func (err *QualityUnavailableError) Error() string {
+	if err == nil {
+		return "requested quality is unavailable"
+	}
+	requested := acceptedQualityLabel(err.requested)
+	if requested == "" {
+		requested = "unsupported"
+	}
+	return fmt.Sprintf("requested quality %q is unavailable; available qualities: %s", requested, strings.Join(err.available, ", "))
+}
 
 // Lecture likewise mirrors the upstream payload. The downloader uses only a
 // subset of fields, but the full struct is retained so downstream JSON output

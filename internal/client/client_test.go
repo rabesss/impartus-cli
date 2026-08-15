@@ -607,34 +607,52 @@ func TestGetPlaylists_InputValidation(t *testing.T) {
 }
 
 func TestGetPlaylistsExplainsUnavailableQuality(t *testing.T) {
-	const token = "playlist-selection-secret"
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/fetchvideo" {
-			http.NotFound(w, r)
-			return
-		}
-		if _, err := io.WriteString(w, server.URL+"/1280x720/master.m3u8\n"); err != nil {
-			t.Errorf("write stream index: %v", err)
-		}
-	}))
-	defer server.Close()
+	tests := []struct {
+		name             string
+		requestedQuality string
+		upstreamQuality  string
+		availableQuality string
+	}{
+		{name: "exact accepted quality", requestedQuality: "144", upstreamQuality: "720", availableQuality: "720"},
+		{name: "accepted 450 alias", requestedQuality: "144", upstreamQuality: "480", availableQuality: "450"},
+		{name: "unvalidated request is not reflected", requestedQuality: "144-secret", upstreamQuality: "720", availableQuality: "720"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const token = "playlist-selection-secret"
+			var server *httptest.Server
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/fetchvideo" {
+					http.NotFound(w, r)
+					return
+				}
+				if _, err := io.WriteString(w, server.URL+"/1280x"+tt.upstreamQuality+"/master.m3u8\n"); err != nil {
+					t.Errorf("write stream index: %v", err)
+				}
+			}))
+			defer server.Close()
 
-	c := New(server.Client(), nil)
-	_, err := c.GetPlaylists(context.Background(), &config.Config{
-		BaseURL: server.URL,
-		Token:   token,
-		Quality: "144",
-	}, Lectures{{TTID: 42, Topic: "Unavailable quality"}})
-	if err == nil {
-		t.Fatal("GetPlaylists() error = nil, want unavailable-quality diagnostic")
-	}
-	const want = `requested quality "144" is unavailable; available qualities: 720`
-	if err.Error() != want {
-		t.Fatalf("GetPlaylists() error = %q, want %q", err, want)
-	}
-	if strings.Contains(err.Error(), token) {
-		t.Fatalf("GetPlaylists() error leaked token: %q", err)
+			c := New(server.Client(), nil)
+			_, err := c.GetPlaylists(context.Background(), &config.Config{
+				BaseURL: server.URL,
+				Token:   token,
+				Quality: tt.requestedQuality,
+			}, Lectures{{TTID: 42, Topic: "Unavailable quality"}})
+			if err == nil {
+				t.Fatal("GetPlaylists() error = nil, want unavailable-quality diagnostic")
+			}
+			requestedQuality := tt.requestedQuality
+			if requestedQuality == "144-secret" {
+				requestedQuality = "unsupported"
+			}
+			want := `requested quality "` + requestedQuality + `" is unavailable; available qualities: ` + tt.availableQuality
+			if err.Error() != want {
+				t.Fatalf("GetPlaylists() error = %q, want %q", err, want)
+			}
+			if strings.Contains(err.Error(), token) {
+				t.Fatalf("GetPlaylists() error leaked token: %q", err)
+			}
+		})
 	}
 }
 

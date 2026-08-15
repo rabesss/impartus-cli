@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -413,6 +414,81 @@ func TestCreateJobHandler_SuccessWithUpstream(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d, body: %s", rec.Code, rec.Body.String())
 	}
+}
+
+func TestCreateJobReportsUnavailableQuality(t *testing.T) {
+	var upstream *httptest.Server
+	upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/subjects/1/lectures/1":
+			if _, err := io.WriteString(w, `[{"ttid":42,"topic":"Quality check","seqNo":1}]`); err != nil {
+				t.Errorf("write lectures: %v", err)
+			}
+		case "/fetchvideo":
+			if _, err := io.WriteString(w, upstream.URL+"/1280x720/master.m3u8\n"); err != nil {
+				t.Errorf("write stream index: %v", err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	login := func(_ context.Context, cfg *config.Config) (*client.Client, *config.Config, error) {
+		cfg.Token = "mock-token"
+		return client.New(upstream.Client(), nil), cfg, nil
+	}
+	s := NewAPIServerWithLogin("8080", &config.Config{
+		Username:         "user",
+		Password:         "pass",
+		BaseURL:          upstream.URL,
+		DownloadLocation: t.TempDir(),
+		Quality:          "144",
+	}, login)
+	token := setupAuth(t, s)
+
+	request := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/jobs", strings.NewReader(
+		`{"subjectId":1,"sessionId":1,"startIndex":1,"endIndex":1}`,
+	))
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/json")
+	createdResponse := httptest.NewRecorder()
+	s.router.ServeHTTP(createdResponse, request)
+	if createdResponse.Code != http.StatusCreated {
+		t.Fatalf("create job status = %d, body = %s", createdResponse.Code, createdResponse.Body)
+	}
+	var created struct {
+		Data Job `json:"data"`
+	}
+	if err := json.NewDecoder(createdResponse.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created job: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		getRequest := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/jobs/"+created.Data.ID, nil)
+		getRequest.Header.Set("Authorization", "Bearer "+token)
+		getResponse := httptest.NewRecorder()
+		s.router.ServeHTTP(getResponse, getRequest)
+		if getResponse.Code != http.StatusOK {
+			t.Fatalf("get job status = %d, body = %s", getResponse.Code, getResponse.Body)
+		}
+		var result struct {
+			Data Job `json:"data"`
+		}
+		if err := json.NewDecoder(getResponse.Body).Decode(&result); err != nil {
+			t.Fatalf("decode job: %v", err)
+		}
+		if result.Data.Status == StatusFailed {
+			const want = `requested quality "144" is unavailable; available qualities: 720`
+			if result.Data.Error != want {
+				t.Fatalf("job error = %q, want %q", result.Data.Error, want)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("job did not reach failed status")
 }
 
 // ============================================================================
