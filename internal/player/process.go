@@ -50,6 +50,7 @@ type Options struct {
 	QuitTimeout    time.Duration
 	KillTimeout    time.Duration
 	VideoOutput    string
+	AudioOutput    string
 
 	// Tests use the current test binary as a deterministic fake mpv. Production
 	// callers cannot set these fields from outside this package.
@@ -165,6 +166,9 @@ func Start(ctx context.Context, options Options) (*Session, error) {
 	if options.VideoOutput != "" {
 		arguments = append(arguments, "--vo="+options.VideoOutput)
 	}
+	if options.AudioOutput != "" {
+		arguments = append(arguments, "--ao="+options.AudioOutput)
+	}
 
 	// Process-group supervision owns lifecycle cancellation. Using a detached
 	// command context prevents os/exec's default Cancel from killing only the
@@ -236,6 +240,7 @@ func normalizeOptions(options Options) Options {
 		options.KillTimeout = defaultKillTimeout
 	}
 	options.VideoOutput = strings.TrimSpace(options.VideoOutput)
+	options.AudioOutput = strings.TrimSpace(options.AudioOutput)
 	return options
 }
 

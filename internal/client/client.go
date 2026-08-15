@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/rabesss/impartus-cli/internal/config"
@@ -163,6 +164,7 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 	}
 
 	parsedPlaylists := make([]ParsedPlaylist, 0, len(lectures))
+	unavailableQualities := make(map[string]struct{})
 	for _, lecture := range lectures {
 		streamInfos, err := c.getStreamInfos(ctx, cfg.BaseURL, token, lecture)
 		if err != nil {
@@ -171,6 +173,9 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 
 		streamURL := SelectStreamByQuality(streamInfos, cfg.Quality, cfg.AudioOnly)
 		if streamURL == "" {
+			for _, streamInfo := range streamInfos {
+				recordAcceptedQuality(unavailableQualities, streamInfo.Quality)
+			}
 			continue
 		}
 
@@ -197,6 +202,14 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 		parsed.SubjectID = lecture.SubjectID
 		parsed.SessionID = lecture.SessionID
 		parsedPlaylists = append(parsedPlaylists, parsed)
+	}
+	if len(parsedPlaylists) == 0 && len(unavailableQualities) > 0 {
+		qualities := make([]string, 0, len(unavailableQualities))
+		for quality := range unavailableQualities {
+			qualities = append(qualities, quality)
+		}
+		sort.Strings(qualities)
+		return nil, newQualityUnavailableError(cfg.Quality, qualities)
 	}
 
 	return parsedPlaylists, nil

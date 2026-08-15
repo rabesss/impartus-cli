@@ -606,6 +606,92 @@ func TestGetPlaylists_InputValidation(t *testing.T) {
 	}
 }
 
+func TestGetPlaylistsExplainsUnavailableQuality(t *testing.T) {
+	tests := []struct {
+		name             string
+		requestedQuality string
+		upstreamQuality  string
+		availableQuality string
+	}{
+		{name: "exact accepted quality", requestedQuality: "144", upstreamQuality: "720", availableQuality: "720"},
+		{name: "accepted 450 alias", requestedQuality: "144", upstreamQuality: "480", availableQuality: "450"},
+		{name: "unvalidated request is not reflected", requestedQuality: "144-secret", upstreamQuality: "720", availableQuality: "720"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const token = "playlist-selection-secret"
+			var server *httptest.Server
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/fetchvideo" {
+					http.NotFound(w, r)
+					return
+				}
+				if _, err := io.WriteString(w, server.URL+"/1280x"+tt.upstreamQuality+"/master.m3u8\n"); err != nil {
+					t.Errorf("write stream index: %v", err)
+				}
+			}))
+			defer server.Close()
+
+			c := New(server.Client(), nil)
+			_, err := c.GetPlaylists(context.Background(), &config.Config{
+				BaseURL: server.URL,
+				Token:   token,
+				Quality: tt.requestedQuality,
+			}, Lectures{{TTID: 42, Topic: "Unavailable quality"}})
+			if err == nil {
+				t.Fatal("GetPlaylists() error = nil, want unavailable-quality diagnostic")
+			}
+			requestedQuality := tt.requestedQuality
+			if requestedQuality == "144-secret" {
+				requestedQuality = "unsupported"
+			}
+			want := `requested quality "` + requestedQuality + `" is unavailable; available qualities: ` + tt.availableQuality
+			if err.Error() != want {
+				t.Fatalf("GetPlaylists() error = %q, want %q", err, want)
+			}
+			if strings.Contains(err.Error(), token) {
+				t.Fatalf("GetPlaylists() error leaked token: %q", err)
+			}
+		})
+	}
+}
+
+func TestGetPlaylistsPreservesPartialSuccessWithUnavailableQuality(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/fetchvideo":
+			quality := "720"
+			if r.URL.Query().Get("ttid") == "2" {
+				quality = "144"
+			}
+			if _, err := io.WriteString(w, server.URL+"/1280x"+quality+"/master.m3u8\n"); err != nil {
+				t.Errorf("write stream index: %v", err)
+			}
+		case "/1280x144/master.m3u8":
+			if _, err := io.WriteString(w, "#EXTM3U\n#EXTINF:1,\nsegment.ts\n#EXT-X-ENDLIST\n"); err != nil {
+				t.Errorf("write playlist: %v", err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	c := New(server.Client(), nil)
+	playlists, err := c.GetPlaylists(context.Background(), &config.Config{
+		BaseURL: server.URL,
+		Token:   "test-token",
+		Quality: "144",
+	}, Lectures{{TTID: 1}, {TTID: 2}})
+	if err != nil {
+		t.Fatalf("GetPlaylists() error = %v", err)
+	}
+	if len(playlists) != 1 || playlists[0].ID != 2 {
+		t.Fatalf("GetPlaylists() = %+v, want only the matching lecture", playlists)
+	}
+}
+
 func TestLectures_SelectRange(t *testing.T) {
 	lectures := Lectures{
 		{TTID: 1, Topic: "Lecture 1"},

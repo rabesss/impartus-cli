@@ -184,6 +184,33 @@ func TestStartLoadsCapabilityOnlyOverIPC(t *testing.T) {
 	}
 }
 
+func TestStartPassesExplicitHeadlessOutputs(t *testing.T) {
+	argvPath := filepath.Join(t.TempDir(), "argv.txt")
+	options := fakeMPVOptions(t, "normal", argvPath, filepath.Join(t.TempDir(), "load.txt"))
+	options.VideoOutput = "null"
+	options.AudioOutput = "null"
+
+	session, err := Start(context.Background(), options)
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	cleanupSession(t, session)
+	if closeErr := session.Close(context.Background()); closeErr != nil {
+		t.Fatalf("Close() error = %v", closeErr)
+	}
+
+	argv, err := os.ReadFile(argvPath)
+	if err != nil {
+		t.Fatalf("read argv: %v", err)
+	}
+	argvText := string(argv)
+	for _, required := range []string{"--vo=null", "--ao=null"} {
+		if !strings.Contains(argvText, required) {
+			t.Fatalf("argv missing %q: %s", required, argvText)
+		}
+	}
+}
+
 func TestLoadRejectsNonLoopbackCapabilityWithoutLeakingIt(t *testing.T) {
 	options := fakeMPVOptions(t, "normal", filepath.Join(t.TempDir(), "argv.txt"), filepath.Join(t.TempDir(), "load.txt"))
 	session, err := Start(context.Background(), options)
