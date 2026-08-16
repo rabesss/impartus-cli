@@ -174,7 +174,7 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 		streamURL := SelectStreamByQuality(streamInfos, cfg.Quality, cfg.AudioOnly)
 		if streamURL == "" {
 			for _, streamInfo := range streamInfos {
-				recordAcceptedQuality(unavailableQualities, streamInfo.Quality)
+				recordDiagnosticQuality(unavailableQualities, streamInfo.Quality)
 			}
 			continue
 		}

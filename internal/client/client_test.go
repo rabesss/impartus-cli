@@ -606,6 +606,50 @@ func TestGetPlaylists_InputValidation(t *testing.T) {
 	}
 }
 
+func TestGetPlaylistsReportsUnsupportedUpstreamQualitySafely(t *testing.T) {
+	const (
+		token              = "playlist-selection-secret"
+		upstreamBodyMarker = "upstream-response-body-secret"
+	)
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/fetchvideo" {
+			http.NotFound(w, r)
+			return
+		}
+		if _, err := io.WriteString(w, server.URL+"/1280x1080/master.m3u8?token="+token+"\n"+upstreamBodyMarker+"\n"); err != nil {
+			t.Errorf("write stream index: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	c := New(server.Client(), nil)
+	playlists, err := c.GetPlaylists(context.Background(), &config.Config{
+		BaseURL: server.URL,
+		Token:   token,
+		Quality: "144",
+	}, Lectures{{TTID: 42, Topic: "Unsupported upstream quality"}})
+	if err == nil {
+		t.Fatalf("GetPlaylists() = %+v, nil; want typed unavailable-quality diagnostic", playlists)
+	}
+	var qualityErr *QualityUnavailableError
+	if !errors.As(err, &qualityErr) {
+		t.Fatalf("GetPlaylists() error = %T %q, want *QualityUnavailableError", err, err)
+	}
+	const want = `requested quality "144" is unavailable; available qualities: unsupported`
+	if err.Error() != want {
+		t.Fatalf("GetPlaylists() error = %q, want %q", err, want)
+	}
+	if len(playlists) != 0 {
+		t.Fatalf("GetPlaylists() playlists = %+v, want none", playlists)
+	}
+	for _, secret := range []string{"1080", server.URL, token, upstreamBodyMarker} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("GetPlaylists() error reflected upstream data %q: %q", secret, err)
+		}
+	}
+}
+
 func TestGetPlaylistsExplainsUnavailableQuality(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -661,7 +705,7 @@ func TestGetPlaylistsPreservesPartialSuccessWithUnavailableQuality(t *testing.T)
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/fetchvideo":
-			quality := "720"
+			quality := "1080"
 			if r.URL.Query().Get("ttid") == "2" {
 				quality = "144"
 			}
