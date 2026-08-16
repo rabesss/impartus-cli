@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.24](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.23...impartus-cli-v0.1.24) (2026-08-16)
+
+
+### Bug Fixes
+
+* report unsupported media qualities safely ([#156](https://github.com/rabesss/impartus-cli/issues/156)) ([52955fe](https://github.com/rabesss/impartus-cli/commit/52955fea10642ef69e7682548e17b02cf5bc8207))
+
 ## [0.1.23](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.22...impartus-cli-v0.1.23) (2026-08-15)
 
 
