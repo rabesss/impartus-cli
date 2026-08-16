@@ -4,6 +4,8 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+
+	"github.com/rabesss/impartus-cli/internal/selection"
 )
 
 // \d+x\d+ requires at least one digit on each side of "x" so that empty
@@ -66,18 +68,19 @@ func SelectStreamByQuality(streamInfos []StreamInfo, quality string, audioOnly b
 }
 
 func acceptedQualityLabel(upstreamQuality string) string {
-	switch upstreamQuality {
-	case "480":
-		return "450"
-	case "144", "450", "720":
-		return upstreamQuality
-	default:
-		return ""
+	if upstreamQuality == "480" {
+		upstreamQuality = "450"
 	}
+	if selection.ValidQuality(upstreamQuality) {
+		return upstreamQuality
+	}
+	return ""
 }
 
-func recordAcceptedQuality(qualities map[string]struct{}, upstreamQuality string) {
-	if quality := acceptedQualityLabel(upstreamQuality); quality != "" {
-		qualities[quality] = struct{}{}
+func recordDiagnosticQuality(qualities map[string]struct{}, upstreamQuality string) {
+	quality := acceptedQualityLabel(upstreamQuality)
+	if quality == "" {
+		quality = unsupportedQualityLabel
 	}
+	qualities[quality] = struct{}{}
 }

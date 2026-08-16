@@ -43,9 +43,11 @@ type Lectures []Lecture
 // because every selected lecture was marked no-audio.
 var ErrNoLecturesAfterFiltering = errors.New("no lectures available after filtering")
 
+const unsupportedQualityLabel = "unsupported"
+
 // QualityUnavailableError reports an exact requested quality that Impartus did
-// not expose. Its message contains only validated quality labels, so API
-// boundaries can safely surface it without returning arbitrary upstream text.
+// not expose. Its message contains only validated quality labels or a fixed
+// sentinel, so API boundaries never return arbitrary upstream text.
 type QualityUnavailableError struct {
 	requested string
 	available []string
@@ -64,7 +66,7 @@ func (err *QualityUnavailableError) Error() string {
 	}
 	requested := acceptedQualityLabel(err.requested)
 	if requested == "" {
-		requested = "unsupported"
+		requested = unsupportedQualityLabel
 	}
 	return fmt.Sprintf("requested quality %q is unavailable; available qualities: %s", requested, strings.Join(err.available, ", "))
 }

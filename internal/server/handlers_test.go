@@ -417,6 +417,10 @@ func TestCreateJobHandler_SuccessWithUpstream(t *testing.T) {
 }
 
 func TestCreateJobReportsUnavailableQuality(t *testing.T) {
+	const (
+		upstreamToken      = "mock-token"
+		upstreamBodyMarker = "upstream-response-body-secret"
+	)
 	var upstream *httptest.Server
 	upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -425,7 +429,7 @@ func TestCreateJobReportsUnavailableQuality(t *testing.T) {
 				t.Errorf("write lectures: %v", err)
 			}
 		case "/fetchvideo":
-			if _, err := io.WriteString(w, upstream.URL+"/1280x720/master.m3u8\n"); err != nil {
+			if _, err := io.WriteString(w, upstream.URL+"/1280x1080/master.m3u8?token="+upstreamToken+"\n"+upstreamBodyMarker+"\n"); err != nil {
 				t.Errorf("write stream index: %v", err)
 			}
 		default:
@@ -435,7 +439,7 @@ func TestCreateJobReportsUnavailableQuality(t *testing.T) {
 	defer upstream.Close()
 
 	login := func(_ context.Context, cfg *config.Config) (*client.Client, *config.Config, error) {
-		cfg.Token = "mock-token"
+		cfg.Token = upstreamToken
 		return client.New(upstream.Client(), nil), cfg, nil
 	}
 	s := NewAPIServerWithLogin("8080", &config.Config{
@@ -443,8 +447,10 @@ func TestCreateJobReportsUnavailableQuality(t *testing.T) {
 		Password:         "pass",
 		BaseURL:          upstream.URL,
 		DownloadLocation: t.TempDir(),
+		TempDirLocation:  t.TempDir(),
 		Quality:          "144",
 	}, login)
+	t.Cleanup(func() { waitForBackgroundJobWork(t, s) })
 	token := setupAuth(t, s)
 
 	request := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/jobs", strings.NewReader(
@@ -473,16 +479,22 @@ func TestCreateJobReportsUnavailableQuality(t *testing.T) {
 		if getResponse.Code != http.StatusOK {
 			t.Fatalf("get job status = %d, body = %s", getResponse.Code, getResponse.Body)
 		}
+		responseBody := getResponse.Body.String()
 		var result struct {
 			Data Job `json:"data"`
 		}
-		if err := json.NewDecoder(getResponse.Body).Decode(&result); err != nil {
+		if err := json.NewDecoder(strings.NewReader(responseBody)).Decode(&result); err != nil {
 			t.Fatalf("decode job: %v", err)
 		}
 		if result.Data.Status == StatusFailed {
-			const want = `requested quality "144" is unavailable; available qualities: 720`
+			const want = `requested quality "144" is unavailable; available qualities: unsupported`
 			if result.Data.Error != want {
 				t.Fatalf("job error = %q, want %q", result.Data.Error, want)
+			}
+			for _, secret := range []string{"1080", upstream.URL, upstreamToken, upstreamBodyMarker} {
+				if strings.Contains(responseBody, secret) {
+					t.Fatalf("job response reflected upstream data %q: %s", secret, responseBody)
+				}
 			}
 			return
 		}

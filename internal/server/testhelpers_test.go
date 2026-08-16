@@ -57,3 +57,53 @@ func setupAuth(t *testing.T, s *APIServer) string {
 	})
 	return token
 }
+
+// waitForBackgroundJobWork is a test-only barrier. It waits for jobs created by
+// the test to become terminal, then occupies every runner slot so any runner
+// publishing that terminal state must finish its deferred work before cleanup.
+func waitForBackgroundJobWork(t *testing.T, s *APIServer) {
+	t.Helper()
+	if s == nil || s.jobStore == nil || cap(s.jobSem) == 0 {
+		t.Fatal("server has no background job runner slots")
+	}
+
+	timer := time.NewTimer(2 * time.Second)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer timer.Stop()
+	defer ticker.Stop()
+
+	for {
+		allTerminal := true
+		for _, job := range s.jobStore.ListJobCopies() {
+			if !isTerminalStatus(job.Status) {
+				allTerminal = false
+				break
+			}
+		}
+		if allTerminal {
+			break
+		}
+		select {
+		case <-ticker.C:
+		case <-timer.C:
+			t.Fatal("background jobs did not reach a terminal state before test cleanup")
+		}
+	}
+
+	slots := cap(s.jobSem)
+	acquired := 0
+	defer func() {
+		for acquired > 0 {
+			<-s.jobSem
+			acquired--
+		}
+	}()
+	for acquired < slots {
+		select {
+		case s.jobSem <- struct{}{}:
+			acquired++
+		case <-timer.C:
+			t.Fatal("background job runners did not release their work slots before test cleanup")
+		}
+	}
+}
