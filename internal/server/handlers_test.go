@@ -491,7 +491,10 @@ func TestCreateJobReportsUnavailableQuality(t *testing.T) {
 			if result.Data.Error != want {
 				t.Fatalf("job error = %q, want %q", result.Data.Error, want)
 			}
-			for _, secret := range []string{"1080", upstream.URL, upstreamToken, upstreamBodyMarker} {
+			if strings.Contains(result.Data.Error, "1080") {
+				t.Fatalf("job error reflected unsupported upstream quality: %q", result.Data.Error)
+			}
+			for _, secret := range []string{upstream.URL, upstreamToken, upstreamBodyMarker} {
 				if strings.Contains(responseBody, secret) {
 					t.Fatalf("job response reflected upstream data %q: %s", secret, responseBody)
 				}

@@ -67,9 +67,9 @@ func waitForBackgroundJobWork(t *testing.T, s *APIServer) {
 		t.Fatal("server has no background job runner slots")
 	}
 
-	timer := time.NewTimer(2 * time.Second)
+	terminalTimer := time.NewTimer(2 * time.Second)
 	ticker := time.NewTicker(10 * time.Millisecond)
-	defer timer.Stop()
+	defer terminalTimer.Stop()
 	defer ticker.Stop()
 
 	for {
@@ -85,10 +85,13 @@ func waitForBackgroundJobWork(t *testing.T, s *APIServer) {
 		}
 		select {
 		case <-ticker.C:
-		case <-timer.C:
+		case <-terminalTimer.C:
 			t.Fatal("background jobs did not reach a terminal state before test cleanup")
 		}
 	}
+
+	runnerTimer := time.NewTimer(2 * time.Second)
+	defer runnerTimer.Stop()
 
 	slots := cap(s.jobSem)
 	acquired := 0
@@ -102,7 +105,7 @@ func waitForBackgroundJobWork(t *testing.T, s *APIServer) {
 		select {
 		case s.jobSem <- struct{}{}:
 			acquired++
-		case <-timer.C:
+		case <-runnerTimer.C:
 			t.Fatal("background job runners did not release their work slots before test cleanup")
 		}
 	}
