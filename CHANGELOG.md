@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.25](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.24...impartus-cli-v0.1.25) (2026-08-17)
+
+
+### CI/CD
+
+* **deps:** bump docker/login-action from 4.4.0 to 4.6.0 ([#160](https://github.com/rabesss/impartus-cli/issues/160)) ([2dde818](https://github.com/rabesss/impartus-cli/commit/2dde8189e6dcd53d9329aa36a8ca1d3d2c1fe56a))
+* **deps:** bump Factory-AI/droid-action ([#159](https://github.com/rabesss/impartus-cli/issues/159)) ([27509ab](https://github.com/rabesss/impartus-cli/commit/27509ab6d1445c28257e9c052b5bb30acf9424cf))
+* **deps:** bump github/codeql-action/upload-sarif from 4.37.6 to 4.37.7 ([#161](https://github.com/rabesss/impartus-cli/issues/161)) ([a9dac05](https://github.com/rabesss/impartus-cli/commit/a9dac05c85177fa619d6309badeeacf376a596d7))
+* inherit Pullfrog organization config ([8e71309](https://github.com/rabesss/impartus-cli/commit/8e713092ac698450b4bd5860e100d850a2969e4a))
+
 ## [0.1.24](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.23...impartus-cli-v0.1.24) (2026-08-16)
 
 
