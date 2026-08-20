@@ -24,8 +24,8 @@ func resolvedTokenCachePath(cfg *config.Config) string {
 	return path
 }
 
-// readTokenCache reads a token cache only after checking every existing parent
-// component and the final entry. The platform-specific reader uses a
+// readTokenCache reads a token cache only after checking its immediate parent
+// and the final entry. The platform-specific reader uses a
 // no-follow open where the OS supports it, closing the check/use race for the
 // final path component.
 func readTokenCache(path string) ([]byte, error) {
