@@ -137,6 +137,22 @@ func TestTokenCacheRejectsSymlinkedParentAndTarget(t *testing.T) {
 	}
 }
 
+func TestTokenCacheAllowsSymlinkedAncestorWithRealImmediateParent(t *testing.T) {
+	realRoot := t.TempDir()
+	linkedRoot := filepath.Join(t.TempDir(), "cache-root")
+	if err := os.Symlink(realRoot, linkedRoot); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	path := filepath.Join(linkedRoot, "private", "token")
+	if err := writeTokenCache(path, []byte("secret")); err != nil {
+		t.Fatalf("writeTokenCache(safe ancestor symlink) error = %v", err)
+	}
+	got, ok := (&Client{}).readStoredTokenAt(path)
+	if !ok || got != "secret" {
+		t.Fatalf("readStoredTokenAt(safe ancestor symlink) = (%q, %t), want secret true", got, ok)
+	}
+}
+
 func TestLegacyTokenCacheDefaultRemainsDotToken(t *testing.T) {
 	root := t.TempDir()
 	previous, err := os.Getwd()

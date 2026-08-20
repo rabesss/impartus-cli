@@ -139,27 +139,22 @@ func normalizeTokenCachePath(path string) (string, error) {
 	return filepath.Clean(path), nil
 }
 
-// validateTokenCacheDirectory rejects symlinks and non-directories in every
-// existing ancestor. This is intentionally stricter than merely checking the
-// immediate parent: an explicit cache path must never be redirected through a
-// symlinked parent.
+// validateTokenCacheDirectory requires the immediate cache parent to be a real
+// directory. Ancestor symlinks are allowed because supported platforms use
+// them for standard locations (for example /var -> /private/var on macOS), and
+// callers explicitly choose the cache path. The final cache entry is still
+// opened without following symlinks where supported.
 func validateTokenCacheDirectory(path string) error {
 	absolute, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
 		return fmt.Errorf("resolve token cache parent: %w", err)
 	}
-	for current := absolute; ; current = filepath.Dir(current) {
-		info, statErr := os.Lstat(current)
-		if statErr != nil {
-			return fmt.Errorf("inspect token cache parent: %w", statErr)
-		}
-		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-			return errors.New("token cache parent must contain only real directories")
-		}
-		next := filepath.Dir(current)
-		if next == current {
-			break
-		}
+	info, statErr := os.Lstat(absolute)
+	if statErr != nil {
+		return fmt.Errorf("inspect token cache parent: %w", statErr)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return errors.New("token cache parent must be a real directory")
 	}
 	return nil
 }

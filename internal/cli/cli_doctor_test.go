@@ -3,10 +3,13 @@ package cli
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rabesss/impartus-cli/internal/config"
 )
 
 func TestCollectDoctorReportChecksDependenciesAndPaths(t *testing.T) {
@@ -63,6 +66,46 @@ func TestDefaultDoctorOptionsUsesExplicitTokenCachePath(t *testing.T) {
 	check := checkTokenFile(explicit)
 	if check.Status != doctorStatusWarn || !strings.Contains(check.Detail, explicit) {
 		t.Fatalf("missing explicit cache check = %+v, want path metadata without token contents", check)
+	}
+}
+
+func TestDefaultDoctorOptionsUsesConfigTokenCachePath(t *testing.T) {
+	root := t.TempDir()
+	previous, getwdErr := os.Getwd()
+	if getwdErr != nil {
+		t.Fatal(getwdErr)
+	}
+	if chdirErr := os.Chdir(root); chdirErr != nil {
+		t.Fatal(chdirErr)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) }) //nolint:errcheck
+	previousEnv, envWasSet := os.LookupEnv("IMPARTUS_TOKEN_CACHE")
+	if unsetErr := os.Unsetenv("IMPARTUS_TOKEN_CACHE"); unsetErr != nil {
+		t.Fatal(unsetErr)
+	}
+	t.Cleanup(func() {
+		var restoreErr error
+		if envWasSet {
+			restoreErr = os.Setenv("IMPARTUS_TOKEN_CACHE", previousEnv)
+		} else {
+			restoreErr = os.Unsetenv("IMPARTUS_TOKEN_CACHE")
+		}
+		if restoreErr != nil {
+			t.Errorf("restore IMPARTUS_TOKEN_CACHE: %v", restoreErr)
+		}
+	})
+	configured := filepath.Join(root, "state", "token-cache")
+	payload := []byte(fmt.Sprintf(`{"tokenCachePath":%q}`, configured))
+	if writeErr := os.WriteFile(config.ConfigLocation, payload, 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+
+	options, optionsErr := defaultDoctorOptions()
+	if optionsErr != nil {
+		t.Fatal(optionsErr)
+	}
+	if options.tokenPath != configured {
+		t.Fatalf("doctor token path = %q, want config path %q", options.tokenPath, configured)
 	}
 }
 
