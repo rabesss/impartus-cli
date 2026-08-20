@@ -126,6 +126,7 @@ func requestedEvents(args []string) bool {
 	valueFlags := map[string]bool{
 		"--subject": true, "-subject": true, "-s": true,
 		"--session": true, "-session": true, "-S": true,
+		"--ttid": true, "-ttid": true,
 		"--start": true, "-start": true, "--end": true, "-end": true,
 		"--quality": true, "-quality": true, "--views": true, "-views": true,
 		"--format": true, "-format": true, "--output": true, "-output": true, "-o": true,
