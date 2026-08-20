@@ -16,6 +16,11 @@ import (
 // ConfigLocation is the default path to the configuration file.
 const ConfigLocation = "./config.json"
 
+// DefaultTokenCachePath is the backwards-compatible location used for the
+// bearer-token cache when no explicit path is configured. The cache contains
+// credentials and is always written with owner-only permissions.
+const DefaultTokenCachePath = ".token"
+
 // ProgressConfig controls progress bar behavior during downloads.
 type ProgressConfig struct {
 	Enabled         bool   `json:"enabled"`
@@ -34,6 +39,7 @@ type Config struct {
 	Views            string      `json:"views"`
 	DownloadLocation string      `json:"downloadLocation"`
 	Token            string      `json:"token"`
+	TokenCachePath   string      `json:"tokenCachePath,omitempty"`
 	TempDirLocation  string      `json:"tempDirLocation"`
 	NumWorkers       int         `json:"numWorkers"`
 	Slides           bool        `json:"slides"`
@@ -75,6 +81,9 @@ func (c *Config) applyPathDefaults() {
 	}
 	if c.DownloadLocation == "" {
 		c.DownloadLocation = "./downloads"
+	}
+	if strings.TrimSpace(c.TokenCachePath) == "" {
+		c.TokenCachePath = DefaultTokenCachePath
 	}
 }
 
@@ -353,6 +362,7 @@ func applyEnvOverrides(cfg *Config) error {
 	applyStringEnv("IMPARTUS_QUALITY", &cfg.Quality)
 	applyStringEnv("IMPARTUS_VIEWS", &cfg.Views)
 	applyStringEnv("IMPARTUS_DOWNLOAD_LOCATION", &cfg.DownloadLocation)
+	applyStringEnv("IMPARTUS_TOKEN_CACHE", &cfg.TokenCachePath)
 	applyStringEnv("IMPARTUS_TEMP_DIR", &cfg.TempDirLocation)
 	applyStringEnv("IMPARTUS_TEMP_DIR_LOCATION", &cfg.TempDirLocation)
 	applyStringEnv("IMPARTUS_AUDIO_FORMAT", &cfg.AudioFormat)

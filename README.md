@@ -152,6 +152,7 @@ protection manually with `chmod 600 config.json`.
 | `quality` | string | No | `"720"` | Video quality: `144`, `450`, `720` |
 | `views` | string | No | `"both"` | Views: `left`, `right`, `both`, `first`, `second` |
 | `downloadLocation` | string | No | `"./downloads"` | Output directory |
+| `tokenCachePath` | string | No | `".token"` | Private bearer-token cache path; `IMPARTUS_TOKEN_CACHE` overrides it |
 | `tempDirLocation` | string | No | `"./temp"` | Temporary directory |
 | `slides` | bool | No | `false` | Download slides alongside video |
 | `audioOnly` | bool | No | `false` | Download audio only |
@@ -233,6 +234,7 @@ Only the settings listed below have environment-variable overrides. Settings abs
 | `IMPARTUS_QUALITY` | `quality` | `144`, `450`, or `720` |
 | `IMPARTUS_VIEWS` | `views` | `left`, `right`, `both`, `first`, or `second` |
 | `IMPARTUS_DOWNLOAD_LOCATION` | `downloadLocation` | Output directory |
+| `IMPARTUS_TOKEN_CACHE` | `tokenCachePath` | Private bearer-token cache path; defaults to legacy `.token` |
 | `IMPARTUS_TEMP_DIR` | `tempDirLocation` | Temporary directory |
 | `IMPARTUS_TEMP_DIR_LOCATION` | `tempDirLocation` | Compatibility alias for the shorter temporary-directory variable |
 | `IMPARTUS_AUDIO_FORMAT` | `audioFormat` | `mp3`, `m4a`, `aac`, or `opus` |
@@ -382,6 +384,7 @@ the selection alone.
 | `--session` | `-S` | Session ID (required) | Both |
 | `--start` | | Start lecture index (1-based) | Both |
 | `--end` | | End lecture index (1-based, inclusive) | Both |
+| `--ttid` | | Exact positive lecture TTID; mutually exclusive with `--start`/`--end` | Download Only |
 | `--lecture` | `-l` | Specific lecture index (shortcut for start & end) | Play Only |
 | `--mpv-mode` | | `ipc` (supervised default; `legacy` defaults on Windows) or explicit compatibility mode `legacy` | Play Only |
 | `--quality` | | Quality: `144`, `450`, `720` | Both |
@@ -397,6 +400,9 @@ the selection alone.
 ```bash
 # Download lectures 1-5 from course
 ./impartus download -s 123 -S 456 --start 1 --end 5
+
+# Download exactly one lecture by upstream TTID
+./impartus download -s 123 -S 456 --ttid 10913022
 
 # Download in 720p quality
 ./impartus download -s 123 -S 456 --quality 720
@@ -467,9 +473,10 @@ compatibility option; an IPC error never falls back to it.
 
 `impartus doctor` may create the application-owned state directory at
 `$XDG_STATE_HOME/impartus` (or `~/.local/state/impartus`) with mode `0700` so it
-can verify private writable storage. Missing `config.json` and `.token` files
-are warnings because environment-only configuration and a first login are
-supported; an existing credential file with group/world permissions is a
+can verify private writable storage. Missing `config.json` and the configured
+token-cache file (legacy default `.token`) are warnings because environment-only
+configuration and a first login are supported; an existing credential file with
+group/world permissions is a
 blocking failure. The doctor also opens and migrates the local library, verifies
 WAL and private permissions, and fails instead of attempting an automatic
 repair when the database is incompatible.

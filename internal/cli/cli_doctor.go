@@ -48,10 +48,14 @@ func defaultDoctorOptions() (doctorOptions, error) {
 	if err != nil {
 		return doctorOptions{}, err
 	}
+	tokenPath := config.DefaultTokenCachePath
+	if configured := strings.TrimSpace(os.Getenv("IMPARTUS_TOKEN_CACHE")); configured != "" {
+		tokenPath = configured
+	}
 	return doctorOptions{
 		lookPath:     exec.LookPath,
 		configPath:   config.ConfigLocation,
-		tokenPath:    ".token",
+		tokenPath:    tokenPath,
 		stateDir:     stateDir,
 		mpvMode:      defaultMPVModeForOS(runtime.GOOS),
 		checkRuntime: func() error { return player.CheckRuntime("") },
@@ -123,7 +127,7 @@ func checkTokenFile(path string) doctorCheck {
 	}
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return doctorCheck{Name: "token", Status: doctorStatusWarn, Detail: ".token is absent; login will create it when needed"}
+		return doctorCheck{Name: "token", Status: doctorStatusWarn, Detail: fmt.Sprintf("%s is absent; login will create it when needed", path)}
 	}
 	if err != nil {
 		return doctorCheck{Name: "token", Status: doctorStatusFail, Detail: fmt.Sprintf("cannot inspect %s: %v", path, err)}

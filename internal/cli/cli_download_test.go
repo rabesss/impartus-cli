@@ -1,6 +1,9 @@
 package cli
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseDownloadFlags(t *testing.T) {
 	t.Run("valid full flags", func(t *testing.T) {
@@ -19,6 +22,32 @@ func TestParseDownloadFlags(t *testing.T) {
 			t.Errorf("flag values mismatch: %+v", f)
 		}
 	})
+
+	t.Run("accepts exact TTID without a range", func(t *testing.T) {
+		f, err := parseDownloadFlags([]string{"-s", "1", "-S", "2", "--ttid", "987"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if f.ttid != 987 || !f.ttidSet || f.startSet || f.endSet {
+			t.Fatalf("TTID flags = %+v, want exact-only selection", f)
+		}
+	})
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "rejects non-positive TTID", args: []string{"-s", "1", "-S", "2", "--ttid", "0"}, want: "--ttid must be positive"},
+		{name: "rejects TTID with start", args: []string{"-s", "1", "-S", "2", "--ttid", "9", "--start", "1"}, want: "cannot be combined"},
+		{name: "rejects TTID with end", args: []string{"-s", "1", "-S", "2", "--ttid", "9", "--end", "1"}, want: "cannot be combined"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := parseDownloadFlags(tc.args); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("parseDownloadFlags() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
 
 	t.Run("requires subject and session", func(t *testing.T) {
 		if _, err := parseDownloadFlags([]string{"--start", "1"}); err == nil {

@@ -49,6 +49,23 @@ func TestCollectDoctorReportChecksDependenciesAndPaths(t *testing.T) {
 	}
 }
 
+func TestDefaultDoctorOptionsUsesExplicitTokenCachePath(t *testing.T) {
+	explicit := filepath.Join(t.TempDir(), "state", "token-cache")
+	t.Setenv("IMPARTUS_TOKEN_CACHE", explicit)
+	options, err := defaultDoctorOptions()
+	if err != nil {
+		t.Fatalf("defaultDoctorOptions() error = %v", err)
+	}
+	if options.tokenPath != explicit {
+		t.Fatalf("doctor token path = %q, want %q", options.tokenPath, explicit)
+	}
+
+	check := checkTokenFile(explicit)
+	if check.Status != doctorStatusWarn || !strings.Contains(check.Detail, explicit) {
+		t.Fatalf("missing explicit cache check = %+v, want path metadata without token contents", check)
+	}
+}
+
 func TestFinishCommittedLibraryOperationDoesNotRewriteSuccessfulOutcome(t *testing.T) {
 	t.Parallel()
 

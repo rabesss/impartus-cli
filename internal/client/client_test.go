@@ -811,6 +811,120 @@ func TestLectures_SelectRange_DoesNotMutateOriginal(t *testing.T) {
 	}
 }
 
+func TestLectures_SelectForDownloadTTID(t *testing.T) {
+	tests := []struct {
+		name         string
+		lectures     Lectures
+		ttid         int
+		skipNoAudio  bool
+		wantID       int
+		wantFiltered int
+		wantErr      string
+	}{
+		{
+			name: "matches regardless of response order and sequence labels",
+			lectures: Lectures{
+				{TTID: 30, SeqNo: 1},
+				{TTID: 10, SeqNo: 1},
+				{TTID: 20, SeqNo: 1},
+			},
+			ttid:   20,
+			wantID: 20,
+		},
+		{
+			name: "zero matches",
+			lectures: Lectures{
+				{TTID: 10},
+			},
+			ttid:    99,
+			wantErr: "no lecture found for ttid 99",
+		},
+		{
+			name: "duplicate scoped rows are rejected",
+			lectures: Lectures{
+				{TTID: 10, InstituteID: 1, SubjectID: 2, SessionID: 3},
+				{TTID: 10, InstituteID: 9, SubjectID: 2, SessionID: 3},
+			},
+			ttid:    10,
+			wantErr: "multiple lectures found for ttid 10",
+		},
+		{
+			name: "no audio is filtered",
+			lectures: Lectures{
+				{TTID: 10, NoAudio: 1},
+			},
+			ttid:         10,
+			skipNoAudio:  true,
+			wantFiltered: 1,
+			wantErr:      ErrNoLecturesAfterFiltering.Error(),
+		},
+		{
+			name: "no audio remains when explicitly included",
+			lectures: Lectures{
+				{TTID: 10, NoAudio: 1},
+			},
+			ttid:   10,
+			wantID: 10,
+		},
+		{
+			name:    "non-positive ttid",
+			ttid:    0,
+			wantErr: "ttid must be positive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, filtered, err := tt.lectures.SelectForDownloadTTID(tt.ttid, tt.skipNoAudio)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("SelectForDownloadTTID() error = %v", err)
+				}
+				if len(got) != 1 || got[0].TTID != tt.wantID {
+					t.Fatalf("selected = %+v, want one lecture with ttid %d", got, tt.wantID)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("SelectForDownloadTTID() error = %v, want %q", err, tt.wantErr)
+			}
+			if filtered != tt.wantFiltered {
+				t.Fatalf("filtered = %d, want %d", filtered, tt.wantFiltered)
+			}
+		})
+	}
+}
+
+func TestLectures_SelectForDownloadTTID_DoesNotMutateOriginal(t *testing.T) {
+	lectures := Lectures{{TTID: 1}, {TTID: 2}}
+	got, _, err := lectures.SelectForDownloadTTID(2, false)
+	if err != nil {
+		t.Fatalf("SelectForDownloadTTID() error = %v", err)
+	}
+	got[0].TTID = 99
+	if lectures[1].TTID != 2 {
+		t.Fatalf("selected lecture aliases original slice: %+v", lectures)
+	}
+}
+
+func TestLectures_SelectForDownloadTTIDInScope(t *testing.T) {
+	lectures := make(Lectures, 0, 3)
+	lectures = append(lectures,
+		Lecture{TTID: 42, InstituteID: 7, SubjectID: 1, SessionID: 2, Topic: "target"},
+		Lecture{TTID: 42, InstituteID: 8, SubjectID: 9, SessionID: 10, Topic: "other scope"},
+	)
+	selected, filtered, err := lectures.SelectForDownloadTTIDInScope(42, 1, 2, false)
+	if err != nil {
+		t.Fatalf("SelectForDownloadTTIDInScope() error = %v", err)
+	}
+	if filtered != 0 || len(selected) != 1 || selected[0].Topic != "target" {
+		t.Fatalf("scoped selection = %+v, filtered = %d, want target only", selected, filtered)
+	}
+
+	lectures = append(lectures, Lecture{TTID: 42, InstituteID: 9, SubjectID: 1, SessionID: 2})
+	if _, _, err := lectures.SelectForDownloadTTIDInScope(42, 1, 2, false); err == nil || !strings.Contains(err.Error(), "multiple lectures") {
+		t.Fatalf("duplicate in requested scope error = %v, want ambiguity", err)
+	}
+}
+
 func TestPrecompiledRegexes(t *testing.T) {
 	if !uriValueRe.MatchString(`URI="https://example.com/key"`) {
 		t.Error("uriValueRe should match URI= pattern")

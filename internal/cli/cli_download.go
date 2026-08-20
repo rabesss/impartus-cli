@@ -171,7 +171,13 @@ func executeDownloadWithDependenciesContext(ctx context.Context, args []string, 
 		return downloadResult{}, err
 	}
 
-	selected, filteredCount, err := lectures.SelectForDownload(f.start, f.end, cfg.SkipNoAudio)
+	var selected client.Lectures
+	var filteredCount int
+	if f.ttidSet {
+		selected, filteredCount, err = lectures.SelectForDownloadTTIDInScope(f.ttid, f.subject, f.session, cfg.SkipNoAudio)
+	} else {
+		selected, filteredCount, err = lectures.SelectForDownload(f.start, f.end, cfg.SkipNoAudio)
+	}
 	if err != nil {
 		return downloadResult{}, err
 	}

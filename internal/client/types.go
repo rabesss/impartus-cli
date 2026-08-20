@@ -198,3 +198,71 @@ func (l Lectures) SelectForDownload(start, end int, skipNoAudio bool) (Lectures,
 	}
 	return selected, filtered, nil
 }
+
+// SelectForDownloadTTID selects exactly one lecture by its upstream TTID.
+// Unlike range selection, TTID selection never depends on response ordering
+// or sequence labels. Duplicate TTIDs are rejected, including duplicates that
+// differ in their returned scope, so a caller cannot silently download the
+// wrong lecture. The no-audio policy is applied after exact matching.
+func (l Lectures) SelectForDownloadTTID(ttid int, skipNoAudio bool) (Lectures, int, error) {
+	if ttid <= 0 {
+		return nil, 0, errors.New("ttid must be positive")
+	}
+
+	matches := make(Lectures, 0, 1)
+	for _, lecture := range l {
+		if lecture.TTID == ttid {
+			matches = append(matches, lecture)
+		}
+	}
+	if len(matches) == 0 {
+		return nil, 0, fmt.Errorf("no lecture found for ttid %d", ttid)
+	}
+	if len(matches) > 1 {
+		return nil, 0, fmt.Errorf("multiple lectures found for ttid %d", ttid)
+	}
+
+	if skipNoAudio && matches[0].NoAudio == 1 {
+		return nil, 1, fmt.Errorf("%w (selected lecture ttid %d has noaudio=1)", ErrNoLecturesAfterFiltering, ttid)
+	}
+	return append(Lectures(nil), matches...), 0, nil
+}
+
+// SelectForDownloadTTIDInScope selects exactly one TTID from the requested
+// subject/session scope. The upstream lectures endpoint can return rows with
+// omitted scope fields (the client overlays those fields from the request), so
+// zero subject/session fields are treated as compatible here. Non-zero rows
+// from another scope are ignored; duplicate matches inside the requested scope
+// remain an ambiguity and fail closed.
+func (l Lectures) SelectForDownloadTTIDInScope(ttid, subjectID, sessionID int, skipNoAudio bool) (Lectures, int, error) {
+	if subjectID <= 0 || sessionID <= 0 {
+		return nil, 0, errors.New("subject and session must be positive")
+	}
+	if ttid <= 0 {
+		return nil, 0, errors.New("ttid must be positive")
+	}
+
+	matches := make(Lectures, 0, 1)
+	for _, lecture := range l {
+		if lecture.TTID != ttid {
+			continue
+		}
+		if lecture.SubjectID != 0 && lecture.SubjectID != subjectID {
+			continue
+		}
+		if lecture.SessionID != 0 && lecture.SessionID != sessionID {
+			continue
+		}
+		matches = append(matches, lecture)
+	}
+	if len(matches) == 0 {
+		return nil, 0, fmt.Errorf("no lecture found for ttid %d in subject %d session %d", ttid, subjectID, sessionID)
+	}
+	if len(matches) > 1 {
+		return nil, 0, fmt.Errorf("multiple lectures found for ttid %d in subject %d session %d", ttid, subjectID, sessionID)
+	}
+	if skipNoAudio && matches[0].NoAudio == 1 {
+		return nil, 1, fmt.Errorf("%w (selected lecture ttid %d has noaudio=1)", ErrNoLecturesAfterFiltering, ttid)
+	}
+	return append(Lectures(nil), matches...), 0, nil
+}
