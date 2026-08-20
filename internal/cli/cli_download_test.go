@@ -18,8 +18,18 @@ func TestParseDownloadFlags(t *testing.T) {
 		if f.subject != 1 || f.session != 2 || f.start != 1 || f.end != 3 {
 			t.Errorf("ids/range mismatch: %+v", f)
 		}
-		if f.quality != "720" || f.views != "both" || !f.audioOnly || f.format != "mp3" || f.output != "/tmp/out" || !f.skipNoAudio {
+		if f.quality != "720" || f.views != "both" || !f.audioOnly || !f.audioOnlySet || f.format != "mp3" || f.output != "/tmp/out" || !f.skipNoAudio {
 			t.Errorf("flag values mismatch: %+v", f)
+		}
+	})
+
+	t.Run("tracks an explicit false audio-only override", func(t *testing.T) {
+		f, err := parseDownloadFlags([]string{"-s", "1", "-S", "2", "--audio-only=false"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if f.audioOnly || !f.audioOnlySet {
+			t.Fatalf("audio-only flags = %+v, want explicit false override", f)
 		}
 	})
 

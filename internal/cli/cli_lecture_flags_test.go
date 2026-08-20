@@ -321,7 +321,7 @@ func TestAppendOutputPaths(t *testing.T) {
 
 func TestApplyAndValidateFlags_InvalidQuality(t *testing.T) {
 	cfg := &config.Config{}
-	_, err := applyAndValidateFlags(cfg, "99999", "both", false, "mp4", "", false)
+	_, err := applyAndValidateFlags(cfg, "99999", "both", false, false, "mp4", "", false)
 	if err == nil {
 		t.Error("expected error for invalid quality")
 	}
@@ -329,7 +329,7 @@ func TestApplyAndValidateFlags_InvalidQuality(t *testing.T) {
 
 func TestApplyAndValidateFlags_InvalidViews(t *testing.T) {
 	cfg := &config.Config{}
-	_, err := applyAndValidateFlags(cfg, "720", "invalid_view", false, "mp4", "", false)
+	_, err := applyAndValidateFlags(cfg, "720", "invalid_view", false, false, "mp4", "", false)
 	if err == nil {
 		t.Error("expected error for invalid views")
 	}
@@ -337,7 +337,7 @@ func TestApplyAndValidateFlags_InvalidViews(t *testing.T) {
 
 func TestApplyAndValidateFlags_InvalidFormat(t *testing.T) {
 	cfg := &config.Config{}
-	_, err := applyAndValidateFlags(cfg, "720", "both", true, "xyz", "", false)
+	_, err := applyAndValidateFlags(cfg, "720", "both", true, true, "xyz", "", false)
 	if err == nil {
 		t.Error("expected error for invalid audio format")
 	}
@@ -345,7 +345,7 @@ func TestApplyAndValidateFlags_InvalidFormat(t *testing.T) {
 
 func TestApplyAndValidateFlags_ValidFlags(t *testing.T) {
 	cfg := &config.Config{}
-	result, err := applyAndValidateFlags(cfg, "720", "both", true, "mp3", "/tmp/out", true)
+	result, err := applyAndValidateFlags(cfg, "720", "both", true, true, "mp3", "/tmp/out", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -354,5 +354,16 @@ func TestApplyAndValidateFlags_ValidFlags(t *testing.T) {
 	}
 	if !result.AudioOnly {
 		t.Error("AudioOnly should be true")
+	}
+}
+
+func TestApplyAndValidateFlags_ExplicitFalseDisablesConfiguredAudioOnly(t *testing.T) {
+	cfg := &config.Config{AudioOnly: true, AudioFormat: "mp3"}
+	result, err := applyAndValidateFlags(cfg, "450", "left", false, true, "", "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.AudioOnly {
+		t.Fatal("AudioOnly should be false after an explicit CLI override")
 	}
 }

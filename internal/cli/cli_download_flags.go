@@ -18,6 +18,7 @@ type downloadFlags struct {
 	quality        string
 	views          string
 	audioOnly      bool
+	audioOnlySet   bool
 	format         string
 	output         string
 	skipNoAudio    bool
@@ -60,6 +61,8 @@ func parseDownloadFlags(args []string) (downloadFlags, error) {
 			f.startSet = true
 		case "end":
 			f.endSet = true
+		case "audio-only":
+			f.audioOnlySet = true
 		}
 	})
 	if f.subject <= 0 || f.session <= 0 {

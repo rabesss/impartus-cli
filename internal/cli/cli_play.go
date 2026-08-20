@@ -52,7 +52,7 @@ func runPlay(args []string) error {
 		return err
 	}
 
-	cfg, err = applyAndValidateFlags(cfg, f.quality, f.views, false, "", "", f.skipNoAudio)
+	cfg, err = applyAndValidateFlags(cfg, f.quality, f.views, false, false, "", "", f.skipNoAudio)
 	if err != nil {
 		return err
 	}
