@@ -144,7 +144,8 @@ func TestGetDoctorReportIncludesMalformedConfigFailure(t *testing.T) {
 		t.Fatal(chdirErr)
 	}
 	t.Cleanup(func() { _ = os.Chdir(previous) }) //nolint:errcheck
-	t.Setenv("IMPARTUS_TOKEN_CACHE", filepath.Join(root, ".token"))
+	explicitTokenPath := filepath.Join(root, "state", "doctor-token")
+	t.Setenv("IMPARTUS_TOKEN_CACHE", explicitTokenPath)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
 	if writeErr := os.WriteFile(config.ConfigLocation, []byte(`{"tokenCachePath":"`), 0o600); writeErr != nil {
 		t.Fatal(writeErr)
@@ -160,6 +161,10 @@ func TestGetDoctorReportIncludesMalformedConfigFailure(t *testing.T) {
 	configCheck := doctorCheckNamed(t, report, "config")
 	if configCheck.Status != doctorStatusFail || !strings.Contains(configCheck.Detail, "could not parse config json") {
 		t.Fatalf("malformed config check = %+v", configCheck)
+	}
+	tokenCheck := doctorCheckNamed(t, report, "token")
+	if tokenCheck.Status != doctorStatusWarn || !strings.Contains(tokenCheck.Detail, explicitTokenPath) {
+		t.Fatalf("malformed-config token check = %+v, want explicit environment path", tokenCheck)
 	}
 }
 

@@ -176,8 +176,8 @@ mode-0600 temporary file and a no-follow descriptor read; Windows uses a
 protected DACL limited to the current user, SYSTEM, and Administrators plus a
 reparse-point-safe handle open. Publication uses the platform's write-through
 same-directory replacement primitive. A Windows cache created by an older
-release may be rejected once if its inherited ACL is not private; the next
-successful sign-in rewrites it with the protected DACL.
+release may be rejected once when its DACL is inherited instead of protected;
+the next successful sign-in rewrites it with the protected DACL.
 
 For practical tuning profiles, failure symptoms, and a safe way to benchmark
 your connection, see [Download performance tuning](docs/download-performance.md).

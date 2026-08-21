@@ -24,7 +24,7 @@ func TestExactTTIDRoutesOnlyRequestedScopedLecture(t *testing.T) {
 		if err := json.NewEncoder(writer).Encode(client.Lectures{
 			{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 7, SeqNo: 1, Topic: "Earlier row"},
 			{InstituteID: 9, SubjectID: 999, SessionID: 8, TTID: 42, SeqNo: 2, Topic: "Wrong scope"},
-			{InstituteID: 9, SubjectID: 67, SessionID: 99, TTID: 42, SeqNo: 3, Topic: "Wrong session"},
+			{InstituteID: 4, SubjectID: 67, SessionID: 99, TTID: 42, SeqNo: 3, Topic: "Wrong session"},
 			{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 42, SeqNo: 99, Topic: "Requested exact row"},
 		}); err != nil {
 			t.Errorf("encode lecture response: %v", err)
