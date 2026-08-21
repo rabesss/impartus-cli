@@ -253,7 +253,7 @@ export class FoundationView {
   #filteredLectures(): readonly Lecture[] {
     const query = normalizedQuery(this.#filterQuery)
     if (query === "") return this.#state.lectures
-    return this.#state.lectures.filter((lecture) => normalizedQuery(`${lecture.topic} ${lecture.professorName} ${lecture.classroomName} ${lecture.startTime} ${lectureAudioLabel(lecture.noAudio)}`).includes(query))
+    return this.#state.lectures.filter((lecture) => normalizedQuery(`${lecture.topic} ${lecture.professorName} ${lecture.classroomName} ${lecture.startTime}`).includes(query))
   }
 
   #handlePlaybackKey(name: string, sequence: string): void {
@@ -447,7 +447,7 @@ export class FoundationView {
     }
     visible.items.forEach((lecture, index) => {
       const selected = visible.offset + index === this.#state.selectedItem
-      const audio = `  ${lectureAudioLabel(lecture.noAudio)}`
+      const audio = lecture.noAudio ? `  ${lectureAudioLabel(true)}` : ""
       panel.add(row(this.#renderer, `${selected ? "›" : " "} ${padSequence(lecture.sequence)}  ${lecture.topic}${audio}`, selected))
     })
   }
@@ -609,7 +609,7 @@ function row(renderer: CliRenderer, content: string, selected: boolean): TextRen
 }
 
 export function lectureAudioLabel(noAudio: boolean): string {
-  return noAudio ? "🎙× probably no audio" : "🎙 audio reported"
+  return noAudio ? "🎙️× probably no audio" : "🎙️ audio reported"
 }
 
 export function courseRailLabels(courses: readonly Course[]): ReadonlyMap<Course, string> {

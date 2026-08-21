@@ -50,7 +50,7 @@ describe("FoundationView", () => {
   })
 
   test("renders the upstream microphone status in lecture rows and inspector", async () => {
-    const setup = await createTestRenderer({ height: 18, kittyKeyboard: true, width: 76 })
+    const setup = await createTestRenderer({ height: 18, width: 100 })
     renderers.push(setup)
     const state = foundationState()
     const lectures = [lecture(1, "Audio lecture", false), lecture(2, "Visual-only lecture", true)]
@@ -58,7 +58,7 @@ describe("FoundationView", () => {
       ...state,
       lectures,
       screen: "lectures",
-      selectedItem: 1,
+      selectedItem: 0,
     }, callbacks())
 
     await setup.renderOnce()
@@ -67,13 +67,10 @@ describe("FoundationView", () => {
     expect(frame).toContain("Visual-only lecture")
     expect(frame).toContain(lectureAudioLabel(false))
     expect(frame).toContain(lectureAudioLabel(true))
-
-    setup.mockInput.pressKey("/")
-    await setup.mockInput.typeText("probably no audio")
-    await setup.renderOnce()
-    const filteredFrame = setup.captureCharFrame()
-    expect(filteredFrame).not.toContain("Audio lecture")
-    expect(filteredFrame).toContain("Visual-only lecture")
+    const audioRow = frame.split("\n").find((line) => line.includes("Audio lecture"))
+    const visualOnlyRow = frame.split("\n").find((line) => line.includes("Visual-only lecture"))
+    expect(audioRow).not.toContain(lectureAudioLabel(false))
+    expect(visualOnlyRow).toContain(lectureAudioLabel(true))
     view.destroy()
   })
 
