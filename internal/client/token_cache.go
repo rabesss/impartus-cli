@@ -48,10 +48,10 @@ func readTokenCache(path string) ([]byte, error) {
 	return readTokenCacheFile(path)
 }
 
-// writeTokenCache writes a mode-0600 cache through a same-directory temporary
-// file and atomic rename. Existing symlinks and special files are rejected;
-// os.Rename replaces a regular destination without exposing a partially
-// written token to another process.
+// writeTokenCache writes an owner-private cache through a same-directory
+// temporary file and platform-specific replacement. Existing symlinks and
+// special files are rejected, and the temporary file is secured before token
+// bytes are written.
 func writeTokenCache(path string, token []byte) error {
 	path, err := normalizeTokenCachePath(path)
 	if err != nil {
@@ -71,7 +71,7 @@ func writeTokenCache(path string, token []byte) error {
 }
 
 func writeTokenCacheFile(parent, path string, token []byte) error {
-	temp, err := os.CreateTemp(parent, "."+filepath.Base(path)+".tmp-*")
+	temp, err := createTokenCacheTemp(parent, path)
 	if err != nil {
 		return fmt.Errorf("create token cache temporary file: %w", err)
 	}
@@ -83,10 +83,6 @@ func writeTokenCacheFile(parent, path string, token []byte) error {
 		}
 	}()
 
-	if err := temp.Chmod(tokenCacheFileMode); err != nil {
-		_ = temp.Close() //nolint:errcheck // preserve the primary chmod error
-		return fmt.Errorf("secure token cache temporary file: %w", err)
-	}
 	written, writeErr := temp.Write(token)
 	if writeErr == nil && written != len(token) {
 		writeErr = io.ErrShortWrite
@@ -105,13 +101,14 @@ func writeTokenCacheFile(parent, path string, token []byte) error {
 	if parentErr := validateTokenCacheDirectory(parent); parentErr != nil {
 		return parentErr
 	}
-	if err := os.Rename(tempPath, path); err != nil {
+	if targetErr := validateTokenCacheTarget(path); targetErr != nil {
+		return targetErr
+	}
+	if err := replaceTokenCacheFile(tempPath, path); err != nil {
 		return fmt.Errorf("replace token cache atomically: %w", err)
 	}
 	removeTemp = false
-	// The temporary file was chmod'd before rename, so the published entry is
-	// mode 0600 without a post-rename path-following chmod race.
-	return nil
+	return validatePublishedTokenCache(path)
 }
 
 func validateTokenCacheTarget(path string) error {
@@ -145,11 +142,12 @@ func normalizeTokenCachePath(path string) (string, error) {
 // callers explicitly choose the cache path. The final cache entry is still
 // opened without following symlinks where supported.
 func validateTokenCacheDirectory(path string) error {
-	absolute, err := filepath.Abs(filepath.Clean(path))
-	if err != nil {
-		return fmt.Errorf("resolve token cache parent: %w", err)
-	}
-	info, statErr := os.Lstat(absolute)
+	// Inspect the caller's immediate parent expression directly. Converting "."
+	// through filepath.Abs can reintroduce a shell's logical $PWD symlink and
+	// reject the actual current directory even though kernel-relative opens of
+	// ".token" never traverse that symlink.
+	parent := filepath.Clean(path)
+	info, statErr := os.Lstat(parent)
 	if statErr != nil {
 		return fmt.Errorf("inspect token cache parent: %w", statErr)
 	}

@@ -5,6 +5,7 @@
   "quality": "720",
   "views": "both",
   "downloadLocation": "./downloads",
+  "tokenCachePath": ".token",
   "tempDirLocation": "./temp",
   "slides": false,
   "audioOnly": false,

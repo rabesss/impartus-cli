@@ -174,3 +174,42 @@ func TestLegacyTokenCacheDefaultRemainsDotToken(t *testing.T) {
 		t.Fatalf("unexpected alternate token path: %v", err)
 	}
 }
+
+func TestLegacyTokenCacheWorksFromLogicalSymlinkWorkingDirectory(t *testing.T) {
+	root := t.TempDir()
+	realDirectory := filepath.Join(root, "release")
+	logicalDirectory := filepath.Join(root, "current")
+	if err := os.Mkdir(realDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realDirectory, logicalDirectory); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	previousDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousPWD, hadPWD := os.LookupEnv("PWD")
+	t.Cleanup(func() {
+		_ = os.Chdir(previousDirectory) //nolint:errcheck
+		if hadPWD {
+			_ = os.Setenv("PWD", previousPWD) //nolint:errcheck
+		} else {
+			_ = os.Unsetenv("PWD") //nolint:errcheck
+		}
+	})
+	if err := os.Chdir(logicalDirectory); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Setenv("PWD", logicalDirectory); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Client{}).storeToken(&config.Config{}, "logical-cwd-token"); err != nil {
+		t.Fatalf("storeToken() from logical symlink cwd error = %v", err)
+	}
+	if token, ok := (&Client{}).readStoredToken(); !ok || token != "logical-cwd-token" {
+		t.Fatalf("readStoredToken() = (%q, %t), want logical-cwd-token true", token, ok)
+	}
+}

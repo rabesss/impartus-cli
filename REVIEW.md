@@ -23,3 +23,7 @@ Agents that open or update PRs in this repository must keep this section current
 - 2026-08-14: Pullfrog uses the organization-level Custom OAI connection with
   `glm-5.3`. Keep its endpoint and credentials in the Pullfrog console; do
   not add a Pullfrog OpenCode config or a repo-root `opencode.json`.
+- 2026-08-21: Windows credential files need a handle-based no-follow open and
+  a protected owner-private DACL before secret bytes are written. POSIX mode
+  arguments, `Chmod(0600)`, and a preceding `Lstat` do not prove those Windows
+  guarantees; require native tests for the platform-specific implementation.

@@ -109,6 +109,27 @@ func TestDefaultDoctorOptionsUsesConfigTokenCachePath(t *testing.T) {
 	}
 }
 
+func TestDefaultDoctorOptionsRejectsMalformedPrivateConfig(t *testing.T) {
+	root := t.TempDir()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chdirErr := os.Chdir(root); chdirErr != nil {
+		t.Fatal(chdirErr)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) }) //nolint:errcheck
+	t.Setenv("IMPARTUS_TOKEN_CACHE", "")
+	if writeErr := os.WriteFile(config.ConfigLocation, []byte(`{"tokenCachePath":"`), 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+
+	_, err = defaultDoctorOptions()
+	if err == nil || !strings.Contains(err.Error(), "could not parse config json") {
+		t.Fatalf("defaultDoctorOptions() error = %v, want malformed-config failure", err)
+	}
+}
+
 func TestFinishCommittedLibraryOperationDoesNotRewriteSuccessfulOutcome(t *testing.T) {
 	t.Parallel()
 
@@ -129,9 +150,15 @@ func TestCollectDoctorReportFailsUnsafeConfigAndMissingDependency(t *testing.T) 
 	if err := os.WriteFile(configPath, []byte("{}"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
+	if err := os.Chmod(configPath, 0o644); err != nil {
+		t.Fatalf("make config deliberately unsafe: %v", err)
+	}
 	tokenPath := filepath.Join(root, ".token")
 	if err := os.WriteFile(tokenPath, []byte("secret"), 0o644); err != nil {
 		t.Fatalf("write token: %v", err)
+	}
+	if err := os.Chmod(tokenPath, 0o644); err != nil {
+		t.Fatalf("make token deliberately unsafe: %v", err)
 	}
 
 	report := collectDoctorReport(doctorOptions{

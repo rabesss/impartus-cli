@@ -49,10 +49,16 @@ func defaultDoctorOptions() (doctorOptions, error) {
 		return doctorOptions{}, err
 	}
 	tokenPath := config.DefaultTokenCachePath
-	if cfg, parseErr := config.Parse(config.ConfigLocation); parseErr == nil {
+	if _, statErr := os.Stat(config.ConfigLocation); statErr == nil {
+		cfg, parseErr := config.Parse(config.ConfigLocation)
+		if parseErr != nil {
+			return doctorOptions{}, parseErr
+		}
 		if configured := strings.TrimSpace(cfg.TokenCachePath); configured != "" {
 			tokenPath = configured
 		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return doctorOptions{}, fmt.Errorf("inspect config for doctor: %w", statErr)
 	}
 	if configured, set := os.LookupEnv("IMPARTUS_TOKEN_CACHE"); set {
 		if configured = strings.TrimSpace(configured); configured != "" {
