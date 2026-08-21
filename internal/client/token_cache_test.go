@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -54,7 +55,7 @@ func TestNewLoggedInUsesExplicitTokenCachePathAndReusesIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat explicit token cache: %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
+	if got := info.Mode().Perm(); runtime.GOOS != "windows" && got != 0o600 {
 		t.Fatalf("explicit token cache mode = %04o, want 0600", got)
 	}
 
@@ -91,7 +92,7 @@ func TestWriteTokenCacheAtomicallyReplacesRegularFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat replacement cache: %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
+	if got := info.Mode().Perm(); runtime.GOOS != "windows" && got != 0o600 {
 		t.Fatalf("replacement cache mode = %04o, want 0600", got)
 	}
 	matches, err := filepath.Glob(filepath.Join(filepath.Dir(path), ".token.tmp-*"))

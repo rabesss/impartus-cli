@@ -147,7 +147,16 @@ func validateTokenCacheDirectory(path string) error {
 	// reject the actual current directory even though kernel-relative opens of
 	// ".token" never traverse that symlink.
 	parent := filepath.Clean(path)
-	info, statErr := os.Lstat(parent)
+	var info os.FileInfo
+	var statErr error
+	if parent == "." {
+		// The current-directory handle is already resolved by the process. On
+		// Windows, Lstat(".") can still report the shell's logical reparse path;
+		// Stat follows that representation to the real directory.
+		info, statErr = os.Stat(parent)
+	} else {
+		info, statErr = os.Lstat(parent)
+	}
 	if statErr != nil {
 		return fmt.Errorf("inspect token cache parent: %w", statErr)
 	}
