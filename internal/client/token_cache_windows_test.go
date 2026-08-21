@@ -76,6 +76,26 @@ func TestWriteTokenCachePublishesProtectedPrivateDACL(t *testing.T) {
 	}
 }
 
+func TestReadTokenCacheFileRejectsInheritedWorldReadableDACL(t *testing.T) {
+	parent := t.TempDir()
+	grantWorldReadableParent(t, parent)
+	path := filepath.Join(parent, "legacy-token")
+	if err := os.WriteFile(path, []byte("legacy-token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if content, err := readTokenCacheFile(path); err == nil {
+		t.Fatalf("readTokenCacheFile() accepted unsafe inherited ACL and returned %q", content)
+	}
+	if err := writeTokenCache(path, []byte("replacement-token")); err != nil {
+		t.Fatalf("rewrite unsafe legacy cache: %v", err)
+	}
+	content, err := readTokenCacheFile(path)
+	if err != nil || string(content) != "replacement-token" {
+		t.Fatalf("read rewritten private cache = %q, error = %v", content, err)
+	}
+}
+
 func grantWorldReadableParent(t *testing.T, path string) {
 	t.Helper()
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()

@@ -109,7 +109,7 @@ func TestDefaultDoctorOptionsUsesConfigTokenCachePath(t *testing.T) {
 	}
 }
 
-func TestDefaultDoctorOptionsRejectsMalformedPrivateConfig(t *testing.T) {
+func TestDefaultDoctorOptionsCarriesMalformedPrivateConfigIntoReport(t *testing.T) {
 	root := t.TempDir()
 	previous, err := os.Getwd()
 	if err != nil {
@@ -124,9 +124,42 @@ func TestDefaultDoctorOptionsRejectsMalformedPrivateConfig(t *testing.T) {
 		t.Fatal(writeErr)
 	}
 
-	_, err = defaultDoctorOptions()
-	if err == nil || !strings.Contains(err.Error(), "could not parse config json") {
-		t.Fatalf("defaultDoctorOptions() error = %v, want malformed-config failure", err)
+	options, err := defaultDoctorOptions()
+	if err != nil {
+		t.Fatalf("defaultDoctorOptions() error = %v, want reportable config failure", err)
+	}
+	check := doctorCheckNamed(t, collectDoctorReport(options), "config")
+	if check.Status != doctorStatusFail || !strings.Contains(check.Detail, "could not parse config json") {
+		t.Fatalf("malformed config check = %+v", check)
+	}
+}
+
+func TestGetDoctorReportIncludesMalformedConfigFailure(t *testing.T) {
+	root := t.TempDir()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chdirErr := os.Chdir(root); chdirErr != nil {
+		t.Fatal(chdirErr)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) }) //nolint:errcheck
+	t.Setenv("IMPARTUS_TOKEN_CACHE", filepath.Join(root, ".token"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	if writeErr := os.WriteFile(config.ConfigLocation, []byte(`{"tokenCachePath":"`), 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+
+	report, reportErr := getDoctorReport(nil)
+	if reportErr != nil {
+		t.Fatalf("getDoctorReport() error = %v, want structured report", reportErr)
+	}
+	if report.OK || len(report.Checks) != 7 {
+		t.Fatalf("malformed-config report = %+v, want seven checks with failure", report)
+	}
+	configCheck := doctorCheckNamed(t, report, "config")
+	if configCheck.Status != doctorStatusFail || !strings.Contains(configCheck.Detail, "could not parse config json") {
+		t.Fatalf("malformed config check = %+v", configCheck)
 	}
 }
 
