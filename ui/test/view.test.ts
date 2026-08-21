@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { createTestRenderer, type TestRendererSetup } from "@opentui/core/testing"
 
-import type { Course, PlaybackCommand } from "../src/protocol/types.gen.ts"
-import { courseRailLabels, FoundationView, type FoundationState } from "../src/view.ts"
+import type { Course, Lecture, PlaybackCommand } from "../src/protocol/types.gen.ts"
+import { courseRailLabels, FoundationView, lectureAudioLabel, type FoundationState } from "../src/view.ts"
 
 const renderers: TestRendererSetup[] = []
 
@@ -46,6 +46,34 @@ describe("FoundationView", () => {
     expect(frame).toContain("Learning workspace")
     expect(frame).toContain("Inspector")
     expect(frame).toContain("Distributed Systems")
+    view.destroy()
+  })
+
+  test("renders the upstream microphone status in lecture rows and inspector", async () => {
+    const setup = await createTestRenderer({ height: 18, kittyKeyboard: true, width: 76 })
+    renderers.push(setup)
+    const state = foundationState()
+    const lectures = [lecture(1, "Audio lecture", false), lecture(2, "Visual-only lecture", true)]
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      lectures,
+      screen: "lectures",
+      selectedItem: 1,
+    }, callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Audio lecture")
+    expect(frame).toContain("Visual-only lecture")
+    expect(frame).toContain(lectureAudioLabel(false))
+    expect(frame).toContain(lectureAudioLabel(true))
+
+    setup.mockInput.pressKey("/")
+    await setup.mockInput.typeText("probably no audio")
+    await setup.renderOnce()
+    const filteredFrame = setup.captureCharFrame()
+    expect(filteredFrame).not.toContain("Audio lecture")
+    expect(filteredFrame).toContain("Visual-only lecture")
     view.destroy()
   })
 
@@ -198,6 +226,25 @@ function course(subjectName: string, sessionId: number, subjectId: number): Cour
     subjectId,
     subjectName,
     videoCount: 1,
+  }
+}
+
+function lecture(sequence: number, topic: string, noAudio: boolean): Lecture {
+  return {
+    classroomName: "Room 7",
+    durationSeconds: 3600,
+    instituteId: 1207,
+    noAudio,
+    professorName: "Professor",
+    sequence,
+    sessionId: 1530,
+    sessionName: "July - Dec 2026",
+    startTime: "2026-08-21T10:00:00Z",
+    subjectId: 3186296,
+    subjectName: "Medical Devices",
+    topic,
+    ttid: 10913000 + sequence,
+    views: 1,
   }
 }
 

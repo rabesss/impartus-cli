@@ -253,7 +253,7 @@ export class FoundationView {
   #filteredLectures(): readonly Lecture[] {
     const query = normalizedQuery(this.#filterQuery)
     if (query === "") return this.#state.lectures
-    return this.#state.lectures.filter((lecture) => normalizedQuery(`${lecture.topic} ${lecture.professorName} ${lecture.classroomName} ${lecture.startTime}`).includes(query))
+    return this.#state.lectures.filter((lecture) => normalizedQuery(`${lecture.topic} ${lecture.professorName} ${lecture.classroomName} ${lecture.startTime} ${lectureAudioLabel(lecture.noAudio)}`).includes(query))
   }
 
   #handlePlaybackKey(name: string, sequence: string): void {
@@ -447,7 +447,7 @@ export class FoundationView {
     }
     visible.items.forEach((lecture, index) => {
       const selected = visible.offset + index === this.#state.selectedItem
-      const audio = lecture.noAudio ? "  no audio" : ""
+      const audio = `  ${lectureAudioLabel(lecture.noAudio)}`
       panel.add(row(this.#renderer, `${selected ? "›" : " "} ${padSequence(lecture.sequence)}  ${lecture.topic}${audio}`, selected))
     })
   }
@@ -491,6 +491,7 @@ export class FoundationView {
         panel.add(text(this.#renderer, lecture.topic, COLORS.foreground, TextAttributes.BOLD))
         panel.add(text(this.#renderer, lecture.professorName, COLORS.dim))
         panel.add(text(this.#renderer, formatDuration(lecture.durationSeconds), COLORS.accent))
+        panel.add(text(this.#renderer, lectureAudioLabel(lecture.noAudio), lecture.noAudio ? COLORS.danger : COLORS.accent))
         panel.add(text(this.#renderer, `${lecture.views} view${lecture.views === 1 ? "" : "s"}  ·  ${lecture.classroomName}`, COLORS.dim))
         return panel
       }
@@ -605,6 +606,10 @@ function row(renderer: CliRenderer, content: string, selected: boolean): TextRen
     truncate: true,
     width: "100%",
   })
+}
+
+export function lectureAudioLabel(noAudio: boolean): string {
+  return noAudio ? "🎙× probably no audio" : "🎙 audio reported"
 }
 
 export function courseRailLabels(courses: readonly Course[]): ReadonlyMap<Course, string> {
