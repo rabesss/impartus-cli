@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -60,5 +61,46 @@ func TestDoctorStateDirectoryRejectsForeignOwner(t *testing.T) {
 	err = validateDoctorStateDirectoryOwner(path, info)
 	if err == nil || !strings.Contains(err.Error(), "owned by the current user") {
 		t.Fatalf("validateDoctorStateDirectoryOwner() error = %v, want owner rejection", err)
+	}
+}
+
+func TestGetDoctorReportKeepsPermissionDeniedConfigStructured(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permission denial")
+	}
+	root := t.TempDir()
+	workingDirectory := filepath.Join(root, "blocked")
+	if err := os.Mkdir(workingDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workingDirectory, "config.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(workingDirectory); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(workingDirectory, 0o700) //nolint:errcheck
+		_ = os.Chdir(previous)                //nolint:errcheck
+	})
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	if err := os.Chmod(workingDirectory, 0o000); err != nil {
+		t.Fatal(err)
+	}
+
+	report, reportErr := getDoctorReport(nil)
+	if reportErr != nil {
+		t.Fatalf("getDoctorReport() error = %v, want structured report", reportErr)
+	}
+	if report.OK || len(report.Checks) != 7 {
+		t.Fatalf("permission-denied report = %+v, want seven checks with failure", report)
+	}
+	configCheck := doctorCheckNamed(t, report, "config")
+	if configCheck.Status != doctorStatusFail || !strings.Contains(configCheck.Detail, "cannot inspect") {
+		t.Fatalf("permission-denied config check = %+v", configCheck)
 	}
 }

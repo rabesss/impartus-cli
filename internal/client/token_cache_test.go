@@ -104,6 +104,40 @@ func TestWriteTokenCacheAtomicallyReplacesRegularFile(t *testing.T) {
 	}
 }
 
+func TestWriteTokenCacheRejectsMalformedPathsAndInvalidTargets(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "empty", path: "", want: "path is empty"},
+		{name: "whitespace", path: " \t ", want: "path is empty"},
+		{name: "null byte", path: "token\x00cache", want: "null byte"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := writeTokenCache(test.path, []byte("secret")); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("writeTokenCache(%q) error = %v, want containing %q", test.path, err, test.want)
+			}
+		})
+	}
+
+	parentFile := filepath.Join(t.TempDir(), "parent-file")
+	if err := os.WriteFile(parentFile, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTokenCache(filepath.Join(parentFile, "token"), []byte("secret")); err == nil {
+		t.Fatal("writeTokenCache(parent file) error = nil")
+	}
+
+	directoryTarget := filepath.Join(t.TempDir(), "token-directory")
+	if err := os.Mkdir(directoryTarget, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTokenCache(directoryTarget, []byte("secret")); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("writeTokenCache(directory target) error = %v, want regular-file rejection", err)
+	}
+}
+
 func TestTokenCacheRejectsSymlinkedParentAndTarget(t *testing.T) {
 	parentTarget := t.TempDir()
 	parentLink := filepath.Join(t.TempDir(), "cache-parent")
@@ -135,6 +169,22 @@ func TestTokenCacheRejectsSymlinkedParentAndTarget(t *testing.T) {
 	}
 	if got, err := os.ReadFile(target); err != nil || string(got) != "old" {
 		t.Fatalf("symlink target changed: %q, read error = %v", got, err)
+	}
+}
+
+func TestStoreTokenExplainsHowToReplaceLegacySymlinkCache(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "real-token")
+	if err := os.WriteFile(target, []byte("old-token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), ".token")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	err := (&Client{}).storeToken(&config.Config{TokenCachePath: link}, "new-token")
+	if err == nil || !strings.Contains(err.Error(), "tokenCachePath") || !strings.Contains(err.Error(), "regular target") {
+		t.Fatalf("storeToken(symlink cache) error = %v, want actionable regular-target hint", err)
 	}
 }
 

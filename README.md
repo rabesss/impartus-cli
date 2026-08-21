@@ -174,10 +174,14 @@ protection manually with `chmod 600 config.json`.
 The token cache is secured before bearer-token bytes are written. Unix uses a
 mode-0600 temporary file and a no-follow descriptor read; Windows uses a
 protected DACL limited to the current user, SYSTEM, and Administrators plus a
-reparse-point-safe handle open. Publication uses the platform's write-through
-same-directory replacement primitive. A Windows cache created by an older
-release may be rejected once when its DACL is inherited instead of protected;
-the next successful sign-in rewrites it with the protected DACL.
+reparse-point-safe handle open. Publication uses an atomic same-directory
+replacement, with write-through semantics on Windows. A Windows cache created
+by an older release may be rejected once when its DACL is inherited instead of
+protected; the next successful sign-in rewrites it with the protected DACL.
+On Unix, a pre-existing cache with group or other permission bits is likewise
+rejected and rewritten with mode `0600` after the next successful sign-in.
+Symlinked token caches are rejected; point `tokenCachePath` or
+`IMPARTUS_TOKEN_CACHE` directly at the regular target file instead.
 
 For practical tuning profiles, failure symptoms, and a safe way to benchmark
 your connection, see [Download performance tuning](docs/download-performance.md).

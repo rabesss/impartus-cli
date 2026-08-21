@@ -31,6 +31,8 @@ func TestReadTokenCacheFileRejectsFinalReparsePoint(t *testing.T) {
 }
 
 func TestWriteTokenCachePublishesProtectedPrivateDACL(t *testing.T) {
+	const fileAllAccessMask = 0x001F01FF
+
 	parent := t.TempDir()
 	grantWorldReadableParent(t, parent)
 	path := filepath.Join(parent, "cache-token")
@@ -53,13 +55,36 @@ func TestWriteTokenCachePublishesProtectedPrivateDACL(t *testing.T) {
 	if control&windows.SE_DACL_PROTECTED == 0 {
 		t.Fatal("token cache DACL inherits from its permissive parent")
 	}
+	owner, _, err := descriptor.Owner()
+	if err != nil || owner == nil {
+		t.Fatalf("token cache has no owner: %v", err)
+	}
+	current, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !owner.Equals(current.User.Sid) {
+		t.Fatalf("token cache owner = %s, want current user %s", owner.String(), current.User.Sid.String())
+	}
 	dacl, _, err := descriptor.DACL()
 	if err != nil || dacl == nil {
 		t.Fatalf("token cache has no explicit DACL: %v", err)
 	}
-	world, err := windows.CreateWellKnownSid(windows.WinWorldSid)
+	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
 	if err != nil {
 		t.Fatal(err)
+	}
+	administrators, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := map[string]bool{
+		current.User.Sid.String(): true,
+		system.String():           true,
+		administrators.String():   true,
+	}
+	if dacl.AceCount != uint16(len(expected)) {
+		t.Fatalf("token cache ACE count = %d, want %d", dacl.AceCount, len(expected))
 	}
 	for index := uint16(0); index < dacl.AceCount; index++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
@@ -67,12 +92,19 @@ func TestWriteTokenCachePublishesProtectedPrivateDACL(t *testing.T) {
 			t.Fatal(err)
 		}
 		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
-			continue
+			t.Fatalf("token cache ACE %d type = %d, want allow", index, ace.Header.AceType)
 		}
 		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart)) // #nosec G103 -- GetAce returns the documented inline SID
-		if sid.Equals(world) {
-			t.Fatalf("token cache retained a World allow ACE with mask %#x", ace.Mask)
+		if !expected[sid.String()] {
+			t.Fatalf("token cache grants unexpected SID %s mask %#x", sid.String(), ace.Mask)
 		}
+		if ace.Mask != fileAllAccessMask {
+			t.Fatalf("token cache SID %s mask = %#x, want FILE_ALL_ACCESS", sid.String(), ace.Mask)
+		}
+		delete(expected, sid.String())
+	}
+	if len(expected) != 0 {
+		t.Fatalf("token cache is missing trusted GA entries: %v", expected)
 	}
 }
 
