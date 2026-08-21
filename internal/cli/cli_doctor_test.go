@@ -168,6 +168,117 @@ func TestGetDoctorReportIncludesMalformedConfigFailure(t *testing.T) {
 	}
 }
 
+func TestDefaultDoctorOptionsRejectsSymlinkConfigWithoutUsingItsTokenPath(t *testing.T) {
+	root := t.TempDir()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chdirErr := os.Chdir(root); chdirErr != nil {
+		t.Fatal(chdirErr)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) }) //nolint:errcheck
+	unsetDoctorEnvForTest(t, "IMPARTUS_TOKEN_CACHE")
+
+	injectedTokenPath := filepath.Join(root, "must-not-be-inspected.token")
+	payload := []byte(fmt.Sprintf(`{"tokenCachePath":%q}`, injectedTokenPath))
+	if writeErr := os.WriteFile("real-config.json", payload, 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	if symlinkErr := os.Symlink("real-config.json", config.ConfigLocation); symlinkErr != nil {
+		t.Skipf("symlinks unavailable: %v", symlinkErr)
+	}
+	runtimeConfig, err := config.Parse(config.ConfigLocation)
+	if err != nil || runtimeConfig.TokenCachePath != injectedTokenPath {
+		t.Fatalf("runtime parser symlink behavior = (%+v, %v), want current target-path compatibility", runtimeConfig, err)
+	}
+
+	options, err := defaultDoctorOptions()
+	if err != nil {
+		t.Fatalf("defaultDoctorOptions() error = %v", err)
+	}
+	if options.tokenPath != config.DefaultTokenCachePath {
+		t.Fatalf("doctor token path = %q, want default %q instead of symlink target value", options.tokenPath, config.DefaultTokenCachePath)
+	}
+	report := collectDoctorReport(options)
+	configCheck := doctorCheckNamed(t, report, "config")
+	if configCheck.Status != doctorStatusFail || !strings.Contains(configCheck.Detail, "regular file, not a symlink") {
+		t.Fatalf("symlink config check = %+v", configCheck)
+	}
+	if detail := doctorCheckNamed(t, report, "token").Detail; strings.Contains(detail, injectedTokenPath) {
+		t.Fatalf("token check trusted rejected config path: %q", detail)
+	}
+}
+
+func TestGetDoctorReportKeepsConfigSymlinkLoopStructured(t *testing.T) {
+	root := t.TempDir()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chdirErr := os.Chdir(root); chdirErr != nil {
+		t.Fatal(chdirErr)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) }) //nolint:errcheck
+	unsetDoctorEnvForTest(t, "IMPARTUS_TOKEN_CACHE")
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	if symlinkErr := os.Symlink(config.ConfigLocation, config.ConfigLocation); symlinkErr != nil {
+		t.Skipf("symlinks unavailable: %v", symlinkErr)
+	}
+
+	report, reportErr := getDoctorReport(nil)
+	if reportErr != nil {
+		t.Fatalf("getDoctorReport() error = %v, want structured report", reportErr)
+	}
+	if report.OK || len(report.Checks) != 7 {
+		t.Fatalf("symlink-loop report = %+v, want seven checks with failure", report)
+	}
+	configCheck := doctorCheckNamed(t, report, "config")
+	if configCheck.Status != doctorStatusFail || !strings.Contains(configCheck.Detail, "regular file, not a symlink") {
+		t.Fatalf("symlink-loop config check = %+v", configCheck)
+	}
+}
+
+func TestDefaultDoctorOptionsTokenCacheEnvironmentPrecedence(t *testing.T) {
+	root := t.TempDir()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chdirErr := os.Chdir(root); chdirErr != nil {
+		t.Fatal(chdirErr)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) }) //nolint:errcheck
+
+	configTokenPath := filepath.Join(root, "from-config.token")
+	payload := []byte(fmt.Sprintf(`{"tokenCachePath":%q}`, configTokenPath))
+	if writeErr := os.WriteFile(config.ConfigLocation, payload, 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	explicitTokenPath := filepath.Join(root, "from-environment.token")
+	t.Setenv("IMPARTUS_TOKEN_CACHE", explicitTokenPath)
+	options, err := defaultDoctorOptions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.tokenPath != explicitTokenPath {
+		t.Fatalf("doctor token path = %q, want environment override %q", options.tokenPath, explicitTokenPath)
+	}
+
+	for _, value := range []string{"", "  \t "} {
+		t.Run(fmt.Sprintf("blank_%q", value), func(t *testing.T) {
+			t.Setenv("IMPARTUS_TOKEN_CACHE", value)
+			blankOptions, blankErr := defaultDoctorOptions()
+			if blankErr != nil {
+				t.Fatal(blankErr)
+			}
+			if blankOptions.tokenPath != config.DefaultTokenCachePath {
+				t.Fatalf("blank environment token path = %q, want %q", blankOptions.tokenPath, config.DefaultTokenCachePath)
+			}
+		})
+	}
+}
+
 func TestFinishCommittedLibraryOperationDoesNotRewriteSuccessfulOutcome(t *testing.T) {
 	t.Parallel()
 
@@ -399,4 +510,23 @@ func doctorCheckNamed(t *testing.T, report doctorReport, name string) doctorChec
 	}
 	t.Fatalf("missing doctor check %q in %+v", name, report)
 	return doctorCheck{}
+}
+
+func unsetDoctorEnvForTest(t *testing.T, key string) {
+	t.Helper()
+	previous, wasSet := os.LookupEnv(key)
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		var err error
+		if wasSet {
+			err = os.Setenv(key, previous)
+		} else {
+			err = os.Unsetenv(key)
+		}
+		if err != nil {
+			t.Errorf("restore %s: %v", key, err)
+		}
+	})
 }

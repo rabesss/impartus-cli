@@ -29,6 +29,9 @@ func readTokenCacheFile(path string) ([]byte, error) {
 	if !info.Mode().IsRegular() {
 		return nil, errors.New("token cache path must be a regular file, not a symlink or special file")
 	}
+	if permissions := info.Mode().Perm(); permissions&0o077 != 0 {
+		return nil, fmt.Errorf("token cache permissions are %04o, want 0600 or stricter", permissions)
+	}
 	return io.ReadAll(file)
 }
 

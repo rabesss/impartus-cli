@@ -43,7 +43,7 @@ func readTokenCache(path string) ([]byte, error) {
 		return nil, err
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("token cache path must be a regular file, not a symlink or special file")
+		return nil, invalidTokenCacheTargetError()
 	}
 	return readTokenCacheFile(path)
 }
@@ -115,7 +115,7 @@ func validateTokenCacheTarget(path string) error {
 	info, statErr := os.Lstat(path)
 	if statErr == nil {
 		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			return errors.New("token cache path must be a regular file, not a symlink or special file")
+			return invalidTokenCacheTargetError()
 		}
 		return nil
 	}
@@ -123,6 +123,10 @@ func validateTokenCacheTarget(path string) error {
 		return nil
 	}
 	return fmt.Errorf("inspect token cache path: %w", statErr)
+}
+
+func invalidTokenCacheTargetError() error {
+	return errors.New("token cache path must be a regular file, not a symlink or special file; set tokenCachePath or IMPARTUS_TOKEN_CACHE to the regular target path")
 }
 
 func normalizeTokenCachePath(path string) (string, error) {
