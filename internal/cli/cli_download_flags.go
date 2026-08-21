@@ -9,11 +9,16 @@ import (
 type downloadFlags struct {
 	subject        int
 	session        int
+	ttid           int
 	start          int
 	end            int
+	ttidSet        bool
+	startSet       bool
+	endSet         bool
 	quality        string
 	views          string
 	audioOnly      bool
+	audioOnlySet   bool
 	format         string
 	output         string
 	skipNoAudio    bool
@@ -29,6 +34,7 @@ func parseDownloadFlags(args []string) (downloadFlags, error) {
 	fs.IntVar(&f.subject, "s", 0, "Subject ID")
 	fs.IntVar(&f.session, "session", 0, "Session ID")
 	fs.IntVar(&f.session, "S", 0, "Session ID")
+	fs.IntVar(&f.ttid, "ttid", 0, "Exact lecture TTID")
 	fs.IntVar(&f.start, "start", 0, "Start lecture index (1-based)")
 	fs.IntVar(&f.end, "end", 0, "End lecture index (1-based)")
 	fs.StringVar(&f.quality, "quality", "", "Video quality override")
@@ -47,8 +53,26 @@ func parseDownloadFlags(args []string) (downloadFlags, error) {
 	if fs.NArg() > 0 {
 		return downloadFlags{}, errors.New("download does not accept positional arguments")
 	}
+	fs.Visit(func(flag *flag.Flag) {
+		switch flag.Name {
+		case "ttid":
+			f.ttidSet = true
+		case "start":
+			f.startSet = true
+		case "end":
+			f.endSet = true
+		case "audio-only":
+			f.audioOnlySet = true
+		}
+	})
 	if f.subject <= 0 || f.session <= 0 {
 		return downloadFlags{}, errors.New("download requires --subject/-s and --session/-S")
+	}
+	if f.ttidSet && f.ttid <= 0 {
+		return downloadFlags{}, errors.New("download --ttid must be positive")
+	}
+	if f.ttidSet && (f.startSet || f.endSet) {
+		return downloadFlags{}, errors.New("download --ttid cannot be combined with --start/--end")
 	}
 	return f, nil
 }

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -84,7 +83,11 @@ func (c *Client) resolveToken(cfg *config.Config) (string, error) {
 }
 
 func (c *Client) readStoredToken() (string, bool) {
-	tokenBytes, err := os.ReadFile(".token")
+	return c.readStoredTokenAt(config.DefaultTokenCachePath)
+}
+
+func (c *Client) readStoredTokenAt(path string) (string, bool) {
+	tokenBytes, err := readTokenCache(path)
 	if err != nil {
 		return "", false
 	}
@@ -131,7 +134,7 @@ func (c *Client) prepareLogin(cfg *config.Config) (*Client, string, error) {
 }
 
 func (c *Client) tryStoredToken(ctx context.Context, cfg *config.Config, baseURL string) bool {
-	token, ok := c.readStoredToken()
+	token, ok := c.readStoredTokenAt(resolvedTokenCachePath(cfg))
 	if !ok {
 		return false
 	}
@@ -201,11 +204,9 @@ func validateLoginResponse(response *http.Response) error {
 func (c *Client) storeToken(cfg *config.Config, token string) error {
 	cfg.Token = token
 	c.setToken(token)
-	if err := os.WriteFile(".token", []byte(token), 0o600); err != nil {
-		return fmt.Errorf("failed to persist token: %w", err)
-	}
-	if err := os.Chmod(".token", 0o600); err != nil {
-		return fmt.Errorf("failed to enforce .token permissions: %w", err)
+	path := resolvedTokenCachePath(cfg)
+	if err := writeTokenCache(path, []byte(token)); err != nil {
+		return fmt.Errorf("failed to persist token cache: %w", err)
 	}
 	return nil
 }

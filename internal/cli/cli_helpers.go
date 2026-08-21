@@ -130,6 +130,7 @@ func showHelpTo(output io.Writer, version, date string) error {
 	for _, line := range []string{
 		"  --subject,-s        Subject ID", "  --session,-S        Session ID",
 		"  --start             Start lecture index (1-based)", "  --end               End lecture index (1-based)",
+		"  --ttid              Exact lecture TTID (download only; exclusive with --start/--end)",
 		"  --lecture,-l        Specific lecture index (1-based, play only)", "  --quality           Quality override",
 		"  --views             Views override", "  --audio-only        Audio-only mode (download only)",
 		"  --format            Audio format override (download only)", "  --output,-o         Output directory (download only)",

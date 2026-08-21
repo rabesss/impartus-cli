@@ -631,6 +631,11 @@ func TestRequestedEventsMatchesGoBooleanFlagFormsAndLastValueWins(t *testing.T) 
 		{name: "explicit false", args: []string{"--events=false"}, want: false},
 		{name: "last false wins", args: []string{"--events", "--events=false"}, want: false},
 		{name: "last true wins", args: []string{"--events=false", "--events"}, want: true},
+		{
+			name: "exact TTID value does not hide a later events flag",
+			args: []string{"--subject", "3186296", "--session", "1530", "--ttid", "10913022", "--quality", "720", "--views", "left", "--events", "--include-noaudio"},
+			want: true,
+		},
 		{name: "output consumes events token", args: []string{"--output", "--events"}, want: false},
 		{name: "short output consumes events token", args: []string{"-o", "--events"}, want: false},
 		{name: "positional argument stops flags", args: []string{"bogus", "--events"}, want: false},

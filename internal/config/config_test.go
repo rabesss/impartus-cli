@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,7 +23,7 @@ func TestApplyDefaultsAndValidateWithMinimalValidConfig(t *testing.T) {
 	cfg := minimalValidConfig()
 	cfg.ApplyDefaults()
 
-	if cfg.NumWorkers != 5 || cfg.AudioFormat != "mp3" || cfg.TempDirLocation != "./temp" {
+	if cfg.NumWorkers != 5 || cfg.AudioFormat != "mp3" || cfg.TempDirLocation != "./temp" || cfg.TokenCachePath != DefaultTokenCachePath {
 		t.Fatalf("expected core defaults to be applied, got %+v", cfg)
 	}
 	if cfg.RateLimit != 100 || cfg.APIRateLimit != 2 || cfg.HTTPTimeout != "10m" {
@@ -30,6 +31,55 @@ func TestApplyDefaultsAndValidateWithMinimalValidConfig(t *testing.T) {
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected minimal config to validate, got %v", err)
+	}
+}
+
+func TestLoadResolvedTokenCachePathUsesEnvironmentOverride(t *testing.T) {
+	t.Setenv("IMPARTUS_TOKEN_CACHE", filepath.Join(t.TempDir(), "tokens", "cache"))
+	path := writeTempConfig(t, `{
+		"username": "u", "password": "p", "baseUrl": "https://example.com",
+		"quality": "450", "views": "both"
+	}`)
+
+	cfg, err := LoadResolved(path)
+	if err != nil {
+		t.Fatalf("LoadResolved: %v", err)
+	}
+	if want := os.Getenv("IMPARTUS_TOKEN_CACHE"); cfg.TokenCachePath != want {
+		t.Fatalf("TokenCachePath = %q, want environment path %q", cfg.TokenCachePath, want)
+	}
+}
+
+func TestLoadResolvedTokenCachePathReadsConfigField(t *testing.T) {
+	unsetConfigEnv(t, "IMPARTUS_TOKEN_CACHE")
+	want := filepath.Join(t.TempDir(), "token-cache")
+	path := writeTempConfig(t, fmt.Sprintf(`{
+		"username": "u", "password": "p", "baseUrl": "https://example.com",
+		"quality": "450", "views": "both", "tokenCachePath": %q
+	}`, want))
+
+	cfg, err := LoadResolved(path)
+	if err != nil {
+		t.Fatalf("LoadResolved: %v", err)
+	}
+	if cfg.TokenCachePath != want {
+		t.Fatalf("TokenCachePath = %q, want config path %q", cfg.TokenCachePath, want)
+	}
+}
+
+func TestLoadResolvedTokenCachePathDefaultsToLegacyToken(t *testing.T) {
+	unsetConfigEnv(t, "IMPARTUS_TOKEN_CACHE")
+	path := writeTempConfig(t, `{
+		"username": "u", "password": "p", "baseUrl": "https://example.com",
+		"quality": "450", "views": "both"
+	}`)
+
+	cfg, err := LoadResolved(path)
+	if err != nil {
+		t.Fatalf("LoadResolved: %v", err)
+	}
+	if cfg.TokenCachePath != DefaultTokenCachePath {
+		t.Fatalf("TokenCachePath = %q, want legacy default %q", cfg.TokenCachePath, DefaultTokenCachePath)
 	}
 }
 

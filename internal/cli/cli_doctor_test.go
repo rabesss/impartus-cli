@@ -3,10 +3,13 @@ package cli
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rabesss/impartus-cli/internal/config"
 )
 
 func TestCollectDoctorReportChecksDependenciesAndPaths(t *testing.T) {
@@ -49,6 +52,122 @@ func TestCollectDoctorReportChecksDependenciesAndPaths(t *testing.T) {
 	}
 }
 
+func TestDefaultDoctorOptionsUsesExplicitTokenCachePath(t *testing.T) {
+	explicit := filepath.Join(t.TempDir(), "state", "token-cache")
+	t.Setenv("IMPARTUS_TOKEN_CACHE", explicit)
+	options, err := defaultDoctorOptions()
+	if err != nil {
+		t.Fatalf("defaultDoctorOptions() error = %v", err)
+	}
+	if options.tokenPath != explicit {
+		t.Fatalf("doctor token path = %q, want %q", options.tokenPath, explicit)
+	}
+
+	check := checkTokenFile(explicit)
+	if check.Status != doctorStatusWarn || !strings.Contains(check.Detail, explicit) {
+		t.Fatalf("missing explicit cache check = %+v, want path metadata without token contents", check)
+	}
+}
+
+func TestDefaultDoctorOptionsUsesConfigTokenCachePath(t *testing.T) {
+	root := t.TempDir()
+	previous, getwdErr := os.Getwd()
+	if getwdErr != nil {
+		t.Fatal(getwdErr)
+	}
+	if chdirErr := os.Chdir(root); chdirErr != nil {
+		t.Fatal(chdirErr)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) }) //nolint:errcheck
+	previousEnv, envWasSet := os.LookupEnv("IMPARTUS_TOKEN_CACHE")
+	if unsetErr := os.Unsetenv("IMPARTUS_TOKEN_CACHE"); unsetErr != nil {
+		t.Fatal(unsetErr)
+	}
+	t.Cleanup(func() {
+		var restoreErr error
+		if envWasSet {
+			restoreErr = os.Setenv("IMPARTUS_TOKEN_CACHE", previousEnv)
+		} else {
+			restoreErr = os.Unsetenv("IMPARTUS_TOKEN_CACHE")
+		}
+		if restoreErr != nil {
+			t.Errorf("restore IMPARTUS_TOKEN_CACHE: %v", restoreErr)
+		}
+	})
+	configured := filepath.Join(root, "state", "token-cache")
+	payload := []byte(fmt.Sprintf(`{"tokenCachePath":%q}`, configured))
+	if writeErr := os.WriteFile(config.ConfigLocation, payload, 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+
+	options, optionsErr := defaultDoctorOptions()
+	if optionsErr != nil {
+		t.Fatal(optionsErr)
+	}
+	if options.tokenPath != configured {
+		t.Fatalf("doctor token path = %q, want config path %q", options.tokenPath, configured)
+	}
+}
+
+func TestDefaultDoctorOptionsCarriesMalformedPrivateConfigIntoReport(t *testing.T) {
+	root := t.TempDir()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chdirErr := os.Chdir(root); chdirErr != nil {
+		t.Fatal(chdirErr)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) }) //nolint:errcheck
+	t.Setenv("IMPARTUS_TOKEN_CACHE", "")
+	if writeErr := os.WriteFile(config.ConfigLocation, []byte(`{"tokenCachePath":"`), 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+
+	options, err := defaultDoctorOptions()
+	if err != nil {
+		t.Fatalf("defaultDoctorOptions() error = %v, want reportable config failure", err)
+	}
+	check := doctorCheckNamed(t, collectDoctorReport(options), "config")
+	if check.Status != doctorStatusFail || !strings.Contains(check.Detail, "could not parse config json") {
+		t.Fatalf("malformed config check = %+v", check)
+	}
+}
+
+func TestGetDoctorReportIncludesMalformedConfigFailure(t *testing.T) {
+	root := t.TempDir()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chdirErr := os.Chdir(root); chdirErr != nil {
+		t.Fatal(chdirErr)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) }) //nolint:errcheck
+	explicitTokenPath := filepath.Join(root, "state", "doctor-token")
+	t.Setenv("IMPARTUS_TOKEN_CACHE", explicitTokenPath)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	if writeErr := os.WriteFile(config.ConfigLocation, []byte(`{"tokenCachePath":"`), 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+
+	report, reportErr := getDoctorReport(nil)
+	if reportErr != nil {
+		t.Fatalf("getDoctorReport() error = %v, want structured report", reportErr)
+	}
+	if report.OK || len(report.Checks) != 7 {
+		t.Fatalf("malformed-config report = %+v, want seven checks with failure", report)
+	}
+	configCheck := doctorCheckNamed(t, report, "config")
+	if configCheck.Status != doctorStatusFail || !strings.Contains(configCheck.Detail, "could not parse config json") {
+		t.Fatalf("malformed config check = %+v", configCheck)
+	}
+	tokenCheck := doctorCheckNamed(t, report, "token")
+	if tokenCheck.Status != doctorStatusWarn || !strings.Contains(tokenCheck.Detail, explicitTokenPath) {
+		t.Fatalf("malformed-config token check = %+v, want explicit environment path", tokenCheck)
+	}
+}
+
 func TestFinishCommittedLibraryOperationDoesNotRewriteSuccessfulOutcome(t *testing.T) {
 	t.Parallel()
 
@@ -69,9 +188,15 @@ func TestCollectDoctorReportFailsUnsafeConfigAndMissingDependency(t *testing.T) 
 	if err := os.WriteFile(configPath, []byte("{}"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
+	if err := os.Chmod(configPath, 0o644); err != nil {
+		t.Fatalf("make config deliberately unsafe: %v", err)
+	}
 	tokenPath := filepath.Join(root, ".token")
 	if err := os.WriteFile(tokenPath, []byte("secret"), 0o644); err != nil {
 		t.Fatalf("write token: %v", err)
+	}
+	if err := os.Chmod(tokenPath, 0o644); err != nil {
+		t.Fatalf("make token deliberately unsafe: %v", err)
 	}
 
 	report := collectDoctorReport(doctorOptions{

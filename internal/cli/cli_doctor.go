@@ -36,6 +36,7 @@ type doctorReport struct {
 type doctorOptions struct {
 	lookPath     func(string) (string, error)
 	configPath   string
+	configErr    error
 	tokenPath    string
 	stateDir     string
 	mpvMode      string
@@ -48,10 +49,32 @@ func defaultDoctorOptions() (doctorOptions, error) {
 	if err != nil {
 		return doctorOptions{}, err
 	}
+	tokenPath := config.DefaultTokenCachePath
+	var configErr error
+	if _, statErr := os.Stat(config.ConfigLocation); statErr == nil {
+		cfg, parseErr := config.Parse(config.ConfigLocation)
+		if parseErr == nil {
+			if configured := strings.TrimSpace(cfg.TokenCachePath); configured != "" {
+				tokenPath = configured
+			}
+		} else {
+			configErr = parseErr
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return doctorOptions{}, fmt.Errorf("inspect config for doctor: %w", statErr)
+	}
+	if configured, set := os.LookupEnv("IMPARTUS_TOKEN_CACHE"); set {
+		if configured = strings.TrimSpace(configured); configured != "" {
+			tokenPath = configured
+		} else {
+			tokenPath = config.DefaultTokenCachePath
+		}
+	}
 	return doctorOptions{
 		lookPath:     exec.LookPath,
 		configPath:   config.ConfigLocation,
-		tokenPath:    ".token",
+		configErr:    configErr,
+		tokenPath:    tokenPath,
 		stateDir:     stateDir,
 		mpvMode:      defaultMPVModeForOS(runtime.GOOS),
 		checkRuntime: func() error { return player.CheckRuntime("") },
@@ -101,7 +124,7 @@ func collectDoctorReport(options doctorOptions) doctorReport {
 	checks := make([]doctorCheck, 0, 7)
 	checks = append(checks, checkExecutable(options.lookPath, "mpv"))
 	checks = append(checks, checkExecutable(options.lookPath, "ffmpeg"))
-	checks = append(checks, checkConfigFile(options.configPath))
+	checks = append(checks, checkConfigFile(options.configPath, options.configErr))
 	checks = append(checks, checkTokenFile(options.tokenPath))
 	checks = append(checks, checkWritableStateDirectory(options.stateDir))
 	checks = append(checks, checkRuntimeDirectory(options.checkRuntime, options.mpvMode))
@@ -123,7 +146,7 @@ func checkTokenFile(path string) doctorCheck {
 	}
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return doctorCheck{Name: "token", Status: doctorStatusWarn, Detail: ".token is absent; login will create it when needed"}
+		return doctorCheck{Name: "token", Status: doctorStatusWarn, Detail: fmt.Sprintf("%s is absent; login will create it when needed", path)}
 	}
 	if err != nil {
 		return doctorCheck{Name: "token", Status: doctorStatusFail, Detail: fmt.Sprintf("cannot inspect %s: %v", path, err)}
@@ -166,7 +189,7 @@ func checkExecutable(lookPath func(string) (string, error), name string) doctorC
 	return doctorCheck{Name: name, Status: doctorStatusPass, Detail: path}
 }
 
-func checkConfigFile(path string) doctorCheck {
+func checkConfigFile(path string, parseErr error) doctorCheck {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return doctorCheck{Name: "config", Status: doctorStatusWarn, Detail: "config.json is absent; environment-only configuration is supported"}
@@ -178,6 +201,13 @@ func checkConfigFile(path string) doctorCheck {
 		return doctorCheck{Name: "config", Status: doctorStatusFail, Detail: fmt.Sprintf("%s must be a regular file, not a symlink", path)}
 	}
 	privacy := assessDoctorPrivateFilePermissions(runtime.GOOS, path, "contains credentials", info)
+	if parseErr != nil {
+		detail := parseErr.Error()
+		if privacy.Status != doctorStatusPass {
+			detail += "; " + privacy.Detail
+		}
+		return doctorCheck{Name: "config", Status: doctorStatusFail, Detail: detail}
+	}
 	return doctorCheck{Name: "config", Status: privacy.Status, Detail: privacy.Detail}
 }
 

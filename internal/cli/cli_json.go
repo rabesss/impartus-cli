@@ -128,7 +128,7 @@ func helpPayload() capabilityPayload {
 			{Name: "version", Usage: "impartus version"},
 			{Name: "courses", Usage: "impartus courses"},
 			{Name: "lectures", Usage: "impartus lectures --subject <id> --session <id>"},
-			{Name: "download", Usage: "impartus download --subject <id> --session <id> [--start <n>] [--end <n>]"},
+			{Name: "download", Usage: "impartus download --subject <id> --session <id> [--ttid <id> | --start <n> --end <n>]"},
 			{Name: "serve", Usage: "impartus serve [--port <port>]"},
 			{Name: "play", Usage: "impartus play --subject <id> --session <id> [--lecture <n>] (not available in JSON mode)"},
 			{Name: "doctor", Usage: "impartus doctor"},

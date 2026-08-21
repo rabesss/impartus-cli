@@ -157,7 +157,7 @@ func executeDownloadWithDependenciesContext(ctx context.Context, args []string, 
 		return downloadResult{}, err
 	}
 
-	cfg, err = applyAndValidateFlags(cfg, f.quality, f.views, f.audioOnly, f.format, f.output, f.skipNoAudio)
+	cfg, err = applyAndValidateFlags(cfg, f.quality, f.views, f.audioOnly, f.audioOnlySet, f.format, f.output, f.skipNoAudio)
 	if err != nil {
 		return downloadResult{}, err
 	}
@@ -171,7 +171,13 @@ func executeDownloadWithDependenciesContext(ctx context.Context, args []string, 
 		return downloadResult{}, err
 	}
 
-	selected, filteredCount, err := lectures.SelectForDownload(f.start, f.end, cfg.SkipNoAudio)
+	var selected client.Lectures
+	var filteredCount int
+	if f.ttidSet {
+		selected, filteredCount, err = lectures.SelectForDownloadTTIDInScope(f.ttid, f.subject, f.session, cfg.SkipNoAudio)
+	} else {
+		selected, filteredCount, err = lectures.SelectForDownload(f.start, f.end, cfg.SkipNoAudio)
+	}
 	if err != nil {
 		return downloadResult{}, err
 	}
@@ -240,7 +246,7 @@ func writeDownloadLibraryWarning(output io.Writer, warning string) {
 
 // applyAndValidateFlags applies CLI flag overrides to the config and validates them.
 // This ensures invalid flag values fail early, before any remote API calls.
-func applyAndValidateFlags(cfg *config.Config, quality, views string, audioOnly bool, format, output string, skipNoAudio bool) (*config.Config, error) {
+func applyAndValidateFlags(cfg *config.Config, quality, views string, audioOnly, audioOnlySet bool, format, output string, skipNoAudio bool) (*config.Config, error) {
 	// Apply flag overrides
 	if quality != "" {
 		cfg.Quality = quality
@@ -248,8 +254,8 @@ func applyAndValidateFlags(cfg *config.Config, quality, views string, audioOnly 
 	if views != "" {
 		cfg.Views = config.NormalizeViews(views)
 	}
-	if audioOnly {
-		cfg.AudioOnly = true
+	if audioOnlySet {
+		cfg.AudioOnly = audioOnly
 	}
 	if format != "" {
 		cfg.AudioFormat = format
