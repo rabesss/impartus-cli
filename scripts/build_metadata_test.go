@@ -190,14 +190,22 @@ func TestSmokeGOFLAGSPreservesCallerAndMatchesCheckout(t *testing.T) {
 	}
 }
 
-func TestMetadataTestEnvironmentScrubsAmbientMakeState(t *testing.T) {
-	t.Setenv("BUILD_VERSION_DEFAULT", "ambient-version")
-	t.Setenv("MAKEFLAGS", "ambient-flags")
+func TestMetadataTestEnvironmentScrubsAmbientBuildState(t *testing.T) {
+	for _, name := range []string{
+		"BUILD_VERSION_DEFAULT",
+		"MAKEFLAGS",
+		"GOOS",
+		"GOARCH",
+		"CGO_ENABLED",
+	} {
+		t.Setenv(name, "ambient-value")
+	}
 	environment := metadataTestEnvironment()
 	for _, entry := range environment {
 		name, _, _ := strings.Cut(entry, "=")
-		if name == "BUILD_VERSION_DEFAULT" || name == "MAKEFLAGS" {
-			t.Fatalf("metadataTestEnvironment retained %s", name)
+		switch name {
+		case "BUILD_VERSION_DEFAULT", "MAKEFLAGS", "GOOS", "GOARCH", "CGO_ENABLED":
+			t.Fatalf("metadataTestEnvironment retained ambient %s", name)
 		}
 	}
 }
@@ -227,6 +235,7 @@ func metadataTestEnvironment(overrides ...string) []string {
 	excluded := map[string]struct{}{
 		"BUILD_DATE": {}, "SOURCE_DATE_EPOCH": {}, "BUILD_VERSION": {}, "BUILD_VERSION_DEFAULT": {},
 		"GOFLAGS": {}, "MAKEFLAGS": {}, "MFLAGS": {}, "GNUMAKEFLAGS": {}, "MAKEOVERRIDES": {}, "MAKELEVEL": {},
+		"GOOS": {}, "GOARCH": {}, "CGO_ENABLED": {},
 	}
 	environment := make([]string, 0, len(os.Environ())+len(overrides))
 	for _, entry := range os.Environ() {
