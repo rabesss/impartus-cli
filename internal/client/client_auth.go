@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -189,16 +188,12 @@ func (c *Client) newLoginRequest(ctx context.Context, cfg *config.Config, baseUR
 
 func validateLoginResponse(response *http.Response) error {
 	if response.StatusCode == http.StatusUnauthorized {
-		return errors.New("wrong credentials please retry")
+		return &AuthenticationError{Operation: "login", StatusCode: response.StatusCode}
 	}
 	if response.StatusCode == http.StatusOK {
 		return nil
 	}
-	body, readErr := io.ReadAll(response.Body)
-	if readErr != nil {
-		return fmt.Errorf("login failed with status %d and unreadable body: %w", response.StatusCode, readErr)
-	}
-	return fmt.Errorf("login failed with status %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+	return fmt.Errorf("login failed with status %d", response.StatusCode)
 }
 
 func (c *Client) storeToken(cfg *config.Config, token string) error {

@@ -8,23 +8,44 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/downloader"
 )
 
 func TestSanitizeUpstreamErr(t *testing.T) {
 	tests := []struct {
-		name string
-		err  error
-		want string
+		name          string
+		err           error
+		want          string
+		secretMarkers []string
 	}{
-		{"nil", nil, ""},
-		{"canceled", context.Canceled, "job was canceled or timed out"},
-		{"no media outputs", downloader.ErrNoMediaOutputs, "no media outputs available for selected lectures"},
-		{"deadline", context.DeadlineExceeded, "job was canceled or timed out"},
-		{"dns", &net.DNSError{Err: "no such host"}, "upstream connection failed"},
-		{"http status", fmt.Errorf("request failed with status 503"), "upstream API returned HTTP 503"},
-		{"auth scrubs token value", fmt.Errorf("invalid token abc123secret"), "upstream authentication failed"},
-		{"generic", errors.New("something broke"), "upstream API error"},
+		{"nil", nil, "", nil},
+		{"canceled", context.Canceled, "job was canceled or timed out", nil},
+		{"no media outputs", downloader.ErrNoMediaOutputs, "no media outputs available for selected lectures", nil},
+		{"deadline", context.DeadlineExceeded, "job was canceled or timed out", nil},
+		{"dns", &net.DNSError{Err: "no such host"}, "upstream connection failed", nil},
+		{"http status", fmt.Errorf("request failed with status 503"), "upstream API returned HTTP 503", nil},
+		{"untyped http 401 remains status", fmt.Errorf("request failed with status 401"), "upstream API returned HTTP 401", nil},
+		{
+			"typed authentication",
+			&client.AuthenticationError{Operation: "login", StatusCode: 401},
+			"upstream authentication failed",
+			nil,
+		},
+		{
+			"wrapped typed authentication",
+			fmt.Errorf("request failed with response-marker-secret: %w", &client.AuthenticationError{Operation: "subjects", StatusCode: 401}),
+			"upstream authentication failed",
+			[]string{"response-marker-secret"},
+		},
+		{
+			"joined typed authentication",
+			errors.Join(errors.New("joined-body-secret"), &client.AuthenticationError{Operation: "playlist", StatusCode: 401}),
+			"upstream authentication failed",
+			[]string{"joined-body-secret"},
+		},
+		{"auth scrubs token value", fmt.Errorf("invalid token abc123secret"), "upstream authentication failed", []string{"abc123secret"}},
+		{"generic", errors.New("something broke"), "upstream API error", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -32,8 +53,10 @@ func TestSanitizeUpstreamErr(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("sanitizeUpstreamErr(%v) = %q, want %q", tt.err, got, tt.want)
 			}
-			if strings.Contains(got, "abc123secret") {
-				t.Errorf("sanitized message leaked sensitive data: %q", got)
+			for _, marker := range tt.secretMarkers {
+				if strings.Contains(got, marker) {
+					t.Errorf("sanitized message leaked sensitive data %q: %q", marker, got)
+				}
 			}
 		})
 	}
