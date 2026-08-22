@@ -670,7 +670,7 @@ function normalizedKey(key: KeyEvent): string {
   if (name === "escape" || key.sequence === "\u001b") return "escape"
   if (name === "backspace" || key.sequence === "\u007f" || key.sequence === "\b") return "backspace"
   if (["up", "down", "left", "right", "tab", "enter"].includes(name)) return name
-  return key.sequence.length > 0 ? key.sequence : name
+  return key.sequence.length > 0 ? key.sequence.toLocaleLowerCase() : name
 }
 
 function printableInput(key: KeyEvent): boolean { return !key.ctrl && !key.meta && !key.option && graphemes(key.sequence).length === 1 && key.sequence >= " " && key.sequence !== "\u007f" }

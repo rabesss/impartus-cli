@@ -165,6 +165,25 @@ describe("FoundationView", () => {
     view.destroy()
   })
 
+  test("routes shifted letter input through lowercase command bindings", async () => {
+    const setup = await createTestRenderer({ height: 12, kittyKeyboard: true, width: 40 })
+    renderers.push(setup)
+    let libraryCount = 0
+    let quitCount = 0
+    const view = new FoundationView(setup.renderer, foundationState(), {
+      ...callbacks(),
+      onLibrary() { libraryCount++ },
+      onQuit() { quitCount++ },
+    })
+
+    setup.mockInput.pressKey("l", { shift: true })
+    setup.mockInput.pressKey("q", { shift: true })
+
+    expect(libraryCount).toBe(1)
+    expect(quitCount).toBe(1)
+    view.destroy()
+  })
+
   test("filters the live catalog without rendering hidden rows", async () => {
     const setup = await createTestRenderer({ height: 16, kittyKeyboard: true, width: 60 })
     renderers.push(setup)
