@@ -36,6 +36,12 @@ func Execute(version, date string) error {
 	if len(args) == 0 {
 		return executeDefault(jsonMode, version, date)
 	}
+	if help, ok := resolveCommandHelp(args); ok {
+		if jsonMode {
+			return emitJSONEnvelope(newSuccessEnvelope("help", newCommandHelpPayload(help)))
+		}
+		return showCommandHelp(os.Stdout, version, date, help)
+	}
 	if jsonMode {
 		return executeJSON(args, version, date)
 	}

@@ -171,6 +171,10 @@ func printIndentedJSON(value any) error {
 }
 
 func printLibraryVerification(results []library.Verification) error {
+	if len(results) == 0 {
+		_, err := fmt.Fprintln(os.Stdout, "Library is empty; nothing to verify.")
+		return err
+	}
 	for _, result := range results {
 		status := "OK"
 		if !result.OK {

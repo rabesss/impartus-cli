@@ -5,12 +5,62 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/rabesss/impartus-cli/internal/artifact"
 	"github.com/rabesss/impartus-cli/internal/library"
 )
+
+func TestPrintLibraryVerificationEmptyWritesExplicitMessage(t *testing.T) {
+	stdout, stderr, err := captureOutputStreams(t, func() error { return printLibraryVerification(nil) })
+	if err != nil {
+		t.Fatalf("printLibraryVerification(nil) error = %v", err)
+	}
+	if stdout != "Library is empty; nothing to verify.\n" || stderr != "" {
+		t.Fatalf("printLibraryVerification(nil) stdout/stderr = %q/%q", stdout, stderr)
+	}
+}
+
+func TestExecuteEmptyLibraryVerificationHumanAndJSONContracts(t *testing.T) {
+	restoreCLIState(t)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	for _, args := range [][]string{{"library", "verify"}, {"library", "verify", "--hash"}} {
+		os.Args = append([]string{"impartus"}, args...)
+		stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("dev", "") })
+		if err != nil {
+			t.Fatalf("Execute(%v) error = %v", args, err)
+		}
+		if stdout != "Library is empty; nothing to verify.\n" || stderr != "" {
+			t.Fatalf("Execute(%v) stdout/stderr = %q/%q", args, stdout, stderr)
+		}
+	}
+
+	for _, args := range [][]string{{"library", "verify", "--json"}, {"library", "verify", "--hash", "--json"}} {
+		os.Args = append([]string{"impartus"}, args...)
+		stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("dev", "") })
+		if err != nil {
+			t.Fatalf("Execute(%v) error = %v", args, err)
+		}
+		if stderr != "" || strings.Count(stdout, "\n") != 1 {
+			t.Fatalf("Execute(%v) stdout/stderr = %q/%q, want one JSON line and empty stderr", args, stdout, stderr)
+		}
+		var envelope struct {
+			Success bool                   `json:"success"`
+			Data    []library.Verification `json:"data"`
+			Error   *jsonErr               `json:"error"`
+			Meta    jsonMeta               `json:"meta"`
+		}
+		if decodeErr := json.Unmarshal([]byte(stdout), &envelope); decodeErr != nil {
+			t.Fatalf("decode Execute(%v): %v; stdout=%q", args, decodeErr, stdout)
+		}
+		if !envelope.Success || envelope.Data == nil || len(envelope.Data) != 0 || envelope.Error != nil || envelope.Meta.Command != "library.verify" || envelope.Meta.Mode != "json" {
+			t.Fatalf("Execute(%v) envelope = %+v", args, envelope)
+		}
+	}
+}
 
 func TestExecuteJSONLibraryListAndVerify(t *testing.T) {
 	restoreCLIState(t)

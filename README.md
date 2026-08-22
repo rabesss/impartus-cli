@@ -304,8 +304,25 @@ launch and passes one one-use owner-private bootstrap file to the child. The
 capability never appears in argv or the child environment, and the child does
 not inherit Impartus credentials.
 
-No-argument use is TTY-aware: when stdin or stdout is not a terminal, Impartus
-prints help to stderr and exits 2 rather than consuming a pipeline.
+No arguments launch the TUI only when both stdin and stdout are terminals.
+Otherwise, Impartus prints help to stderr and exits 2 rather than consuming a
+pipeline.
+
+### Command Help
+
+Every command in the command reference accepts `--help` and `-h`, including
+`library list`, `library show`, and `library verify`:
+
+```bash
+./impartus courses --help
+./impartus library verify -h
+```
+
+Explicit help is resolved before command parsing or command startup. A help
+token before the argument sentinel (`--`) wins even when another argument is
+invalid, so `./impartus download --start bad --help` prints download help and
+exits 0 without loading credentials or starting command dependencies. A help
+token after `--` remains a literal positional argument.
 
 ### Deterministic JSON Mode
 
@@ -314,6 +331,10 @@ Pass `--json` for machine-readable output:
 ```bash
 # Get capability metadata
 ./impartus --json
+
+# Get command help as one JSON envelope (either flag order is equivalent)
+./impartus download --help --json
+./impartus download --json --help
 
 # List courses
 ./impartus courses --json
@@ -335,6 +356,25 @@ Response envelope:
   }
 }
 ```
+
+Root JSON help (`--json`, `--json --help`, or `--help --json`) keeps the
+capability payload shown above. Command-specific JSON help writes exactly one
+successful envelope with `meta.command` set to `help` and this stable `data`
+schema:
+
+```json
+{
+  "command": "download",
+  "description": "Download lectures and record completed media in the local library.",
+  "usage": [
+    "impartus download --subject <id> --session <id> [--ttid <id> | --start <n> --end <n>] [flags]"
+  ]
+}
+```
+
+`--help --json` and `--json --help` are equivalent. The target command is
+identified by `data.command`; the envelope metadata deliberately identifies the
+operation as `help`.
 
 Successful JSON commands write exactly one response envelope to stdout. They do
 not write progress bars or warning text, and successful downloads leave stderr
@@ -371,6 +411,7 @@ the selection alone.
 | `impartus tui` | Explicitly launch the course/lecture terminal workspace |
 | `impartus --json` | Capability metadata |
 | `impartus help` | Show usage information |
+| `impartus COMMAND --help` / `impartus COMMAND -h` | Show deterministic command-specific help without starting the command |
 | `impartus version` | Show version and build date |
 | `impartus courses` | List available courses |
 | `impartus lectures -s ID -S ID` | List lectures for subject/session |

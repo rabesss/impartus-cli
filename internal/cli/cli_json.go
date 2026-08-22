@@ -51,10 +51,24 @@ type capabilityCommand struct {
 	Usage string `json:"usage"`
 }
 
+type commandHelpPayload struct {
+	Command     string   `json:"command"`
+	Description string   `json:"description"`
+	Usage       []string `json:"usage"`
+}
+
 type versionPayload struct {
 	Name      string `json:"name"`
 	Version   string `json:"version"`
 	BuildDate string `json:"buildDate"`
+}
+
+func newCommandHelpPayload(help commandHelp) commandHelpPayload {
+	return commandHelpPayload{
+		Command:     help.command,
+		Description: help.description,
+		Usage:       append([]string(nil), help.usage...),
+	}
 }
 
 func stripGlobalJSONFlag(args []string) ([]string, bool) {
