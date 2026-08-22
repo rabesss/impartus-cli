@@ -128,6 +128,7 @@ func TestTypedNonLoginFailureReachesSafeJobEventAndAPI(t *testing.T) {
 	defer upstream.Close()
 
 	taskDir := t.TempDir()
+	persistencePath := filepath.Join(taskDir, "jobs-state.json")
 	serverConfig := &config.Config{
 		Username:         "local-user",
 		Password:         "local-password",
@@ -142,7 +143,7 @@ func TestTypedNonLoginFailureReachesSafeJobEventAndAPI(t *testing.T) {
 		loginCfg.Token = tokenMarker
 		return client.New(upstream.Client(), nil), loginCfg, nil
 	}
-	s := newAPIServerFull("8080", serverConfig, login, "", false)
+	s := newAPIServerFull("8080", serverConfig, login, persistencePath, true)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -157,6 +158,7 @@ func TestTypedNonLoginFailureReachesSafeJobEventAndAPI(t *testing.T) {
 	localAPIToken := strings.TrimPrefix(header.Get("Authorization"), "Bearer ")
 	created := createIssue170Job(t, s, header)
 	waitForBackgroundJobWork(t, s)
+	flushTestStore(t, s.jobStore)
 
 	event, rawEvent := readSingleIssue170FailedEvent(t, conn)
 	if event.JobID != created.ID || event.Status != StatusFailed || event.Error != wantSummary {
@@ -169,6 +171,21 @@ func TestTypedNonLoginFailureReachesSafeJobEventAndAPI(t *testing.T) {
 		t.Fatalf("non-login job state = status:%q progress:%v error:%q", got.Status, got.Progress, got.Error)
 	}
 	assertNoIssue170Markers(t, rawJob, localAPIToken, bodyMarker, tokenMarker, upstream.URL)
+
+	persistedBytes, err := os.ReadFile(persistencePath)
+	if err != nil {
+		t.Fatalf("read persisted non-login job: %v", err)
+	}
+	assertNoIssue170Markers(t, string(persistedBytes), localAPIToken, bodyMarker, tokenMarker, upstream.URL)
+
+	restarted := newTestPersistentStore(t, persistencePath)
+	reloaded, ok := restarted.GetJob(created.ID)
+	if !ok {
+		t.Fatal("non-login failed job missing after persistence reload")
+	}
+	if reloaded.Status != StatusFailed || reloaded.Progress != 0 || reloaded.Error != wantSummary {
+		t.Fatalf("reloaded non-login job = status:%q progress:%v error:%q", reloaded.Status, reloaded.Progress, reloaded.Error)
+	}
 }
 
 func createIssue170Job(t *testing.T, s *APIServer, header http.Header) Job {

@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/rabesss/impartus-cli/internal/client"
+	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/downloader"
 )
 
@@ -59,6 +63,51 @@ func TestSanitizeUpstreamErr(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSanitizeUpstreamErrPreservesAggregatedChunkAuthenticationFailure(t *testing.T) {
+	const (
+		bodyMarker = "aggregated-chunk-response-secret"
+		urlMarker  = "aggregated-chunk-url-secret"
+	)
+	keyResponse := append([]byte{0, 0}, []byte("fedcba9876543210")...)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/key" {
+			if _, err := w.Write(keyResponse); err != nil {
+				t.Errorf("write key response: %v", err)
+			}
+			return
+		}
+		http.Error(w, bodyMarker, http.StatusUnauthorized)
+	}))
+	defer upstream.Close()
+
+	cfg := &config.Config{
+		Token:                     "request-token",
+		TempDirLocation:           t.TempDir(),
+		Views:                     "left",
+		EnablePipeline:            true,
+		DownloadWorkersPerLecture: 1,
+		DecryptWorkersPerLecture:  1,
+		RateLimit:                 100,
+		APIRateLimit:              100,
+	}
+	d := downloader.NewWithDiagnosticWriter(cfg, client.New(upstream.Client(), nil), io.Discard)
+	_, err := d.DownloadPlaylist(t.Context(), client.ParsedPlaylist{
+		ID:            42,
+		SeqNo:         1,
+		KeyURL:        upstream.URL + "/key",
+		FirstViewURLs: []string{upstream.URL + "/chunk?access_token=" + urlMarker},
+	}, nil, nil)
+	if !errors.Is(err, client.ErrAuthentication) {
+		t.Fatalf("DownloadPlaylist error = %v, want ErrAuthentication", err)
+	}
+	if got := sanitizeUpstreamErr(err); got != "upstream authentication failed" {
+		t.Fatalf("sanitizeUpstreamErr(aggregated chunk 401) = %q", got)
+	}
+	if strings.Contains(err.Error(), bodyMarker) || strings.Contains(err.Error(), urlMarker) {
+		t.Fatalf("aggregated chunk authentication error leaked upstream marker: %v", err)
 	}
 }
 
