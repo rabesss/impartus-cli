@@ -9,7 +9,7 @@ func TestVersionNotEmpty(t *testing.T) {
 }
 
 func TestDefaultDateValue(t *testing.T) {
-	if Date != "" {
-		t.Errorf("expected default empty Date, got %q", Date)
+	if Date != "unknown" {
+		t.Errorf("expected explicit unknown Date, got %q", Date)
 	}
 }

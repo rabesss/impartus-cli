@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/rabesss/impartus-cli/internal/buildinfo"
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 )
@@ -32,6 +33,7 @@ var (
 
 // Execute runs the root CLI command with the given version and build date.
 func Execute(version, date string) error {
+	date = buildinfo.NormalizeDate(date)
 	args, jsonMode := stripGlobalJSONFlag(os.Args[1:])
 	if len(args) == 0 {
 		return executeDefault(jsonMode, version, date)

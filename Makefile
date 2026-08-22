@@ -1,4 +1,4 @@
-.PHONY: build build-go build-ui build-release config-init test run-cli run-api lint clean install pre-commit-install pre-commit quality-gate-install quality-gate quality-gate-scan quality-gate-next docs docs-toc security security-scan security-gitleaks security-gosec security-trivy security-govulncheck
+.PHONY: build build-go build-go-release build-ui build-release config-init test run-cli run-api lint clean install pre-commit-install pre-commit quality-gate-install quality-gate quality-gate-scan quality-gate-next docs docs-toc security security-scan security-gitleaks security-gosec security-trivy security-govulncheck
 
 DESLOPPIFY_VERSION ?= 1.0.0
 TREE_SITTER_LANGUAGE_PACK_VERSION ?= 1.6.2
@@ -8,17 +8,34 @@ QUALITY_MIN_SCORE ?= 80
 GO_TOOLCHAIN ?= $(shell awk '/^toolchain / { print $$2 }' go.mod)
 CONFIG_FILE ?= config.json
 SAMPLE_CONFIG ?= sample.config.json
+GO_BINARY ?= impartus
+RELEASE_BUILD_GOALS := build-release build-go-release
+
+unexport BUILD_VERSION_DEFAULT
+ifneq ($(filter $(RELEASE_BUILD_GOALS),$(MAKECMDGOALS)),)
+override BUILD_VERSION_DEFAULT := $(shell git describe --tags --always --dirty)
+export BUILD_VERSION_DEFAULT
+endif
 
 # Build the Go parent and its adjacent OpenTUI frontend.
 build: build-go build-ui
 	@echo "Build complete: impartus + impartus-ui"
 
 build-go:
-	go build -o impartus .
+	@resolved_date="$$(GOOS= GOARCH= CGO_ENABLED= go run ./scripts/build-date.go)" || exit 1; \
+	resolved_version="$${BUILD_VERSION:-$${BUILD_VERSION_DEFAULT:-}}"; \
+	version_flag=""; \
+	if [ -n "$$resolved_version" ]; then \
+		case "$$resolved_version" in *[!A-Za-z0-9._+/-]*) echo "resolved build version contains unsupported characters" >&2; exit 1;; esac; \
+		version_flag="-X github.com/rabesss/impartus-cli/internal/buildinfo.Version=$$resolved_version"; \
+	fi; \
+	go build -ldflags "$$version_flag -X github.com/rabesss/impartus-cli/internal/buildinfo.Date=$$resolved_date" -o "$(GO_BINARY)" .
 
 build-ui:
 	cd ui && bun install --frozen-lockfile
 	cd ui && bun run build -- --outfile=../impartus-ui
+
+build-go-release: build-go
 
 # Create a private config file, or secure an existing one without overwriting it.
 config-init:
@@ -96,16 +113,12 @@ clean:
 # Install the adjacent parent/sidecar pair to GOPATH/bin.
 install: build
 	@echo "Installing to GOPATH/bin..."
-	install -m 0755 impartus "$$(go env GOPATH)/bin/impartus"
+	install -m 0755 "$(GO_BINARY)" "$$(go env GOPATH)/bin/impartus"
 	install -m 0755 impartus-ui "$$(go env GOPATH)/bin/impartus-ui"
 	@echo "Install complete!"
 
 # Build with version info
-build-release:
-	@echo "Building release..."
-	go build -ldflags "-X github.com/rabesss/impartus-cli/internal/buildinfo.Version=$(shell git describe --tags --always --dirty) -X github.com/rabesss/impartus-cli/internal/buildinfo.Date=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" -o impartus .
-	cd ui && bun install --frozen-lockfile
-	cd ui && bun run build -- --outfile=../impartus-ui
+build-release: build-go-release build-ui
 	@echo "Release build complete: impartus + impartus-ui"
 
 # Run API with custom port
