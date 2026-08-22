@@ -33,6 +33,7 @@ func TestSafePresentationTextRedactsControlSplitCredentialKeys(t *testing.T) {
 	for name, value := range map[string]string{
 		"c0 control":     "to\x01ken=control-secret",
 		"line separator": "to\u2028ken=separator-secret",
+		"no-break space": "to\u00a0ken=nbsp-secret",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := safePresentationText(value); got != "token=REDACTED" {

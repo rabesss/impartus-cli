@@ -156,7 +156,9 @@ describe("workspace command registry", () => {
     })
 
     expect(commandForKey(context, "s")).toBeUndefined()
-    expect(commandsForHelp(context).map((entry) => entry.command.id)).not.toContain("session.selftest")
+    const help = commandsForHelp(context).map((entry) => entry.command.id)
+    expect(help).not.toContain("session.selftest")
+    expect(help).not.toContain("selection.move")
   })
 
   test("does not let wide-pane focus navigate away from playback", () => {

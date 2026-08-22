@@ -10,6 +10,7 @@ import type {
 import {
   WorkspaceController,
   createFoundationState,
+  newOperation,
   type WorkspaceClient,
 } from "../src/workspace_controller.ts"
 
@@ -174,6 +175,25 @@ describe("WorkspaceController", () => {
     expect(controller.snapshot().collections.lectures).toEqual({ filter: "raft", selected: 4 })
     expect(controller.snapshot().collections.library).toEqual({ filter: "local", selected: 2 })
     expect(controller.snapshot().operation?.percent).toBe(50)
+  })
+
+  test("reconciles a terminal operation event delivered before the start response", () => {
+    const controller = new WorkspaceController(new DeferredClient(), createFoundationState({ loading: true }))
+
+    controller.applyEvent({
+      operationId: "operation-id",
+      sequence: 2,
+      state: "completed",
+      type: "operation.completed",
+    })
+    controller.update((state) => ({
+      ...state,
+      loading: false,
+      operation: newOperation("operation-id", "selftest", "running"),
+    }))
+
+    expect(controller.snapshot().operation?.state).toBe("completed")
+    expect(controller.snapshot().status).toBe("Session test completed")
   })
 
   test("merges partial collection overrides with domain defaults", () => {

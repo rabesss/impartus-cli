@@ -69,6 +69,11 @@ export type FoundationStateOverrides = Partial<Omit<FoundationState, "collection
 
 export class WorkspaceController {
   readonly #client: WorkspaceClient
+
+  // The session can emit an operation event before the matching start
+  // response reaches the UI. Keep the latest event per id only for that short
+  // response window, then reconcile it when the operation is installed.
+  readonly #earlyOperationEvents = new Map<string, Event>()
   readonly #listeners = new Set<WorkspaceListener>()
   #generation = 0
   #state: FoundationState
@@ -200,22 +205,13 @@ export class WorkspaceController {
       return
     }
     const operation = this.#state.operation
-    if (operation === undefined || event.operationId !== operation.id) return
-    this.#set({
-      ...this.#state,
-      operation: {
-        ...operation,
-        durationSeconds: event.durationSeconds ?? operation.durationSeconds,
-        muted: event.muted ?? operation.muted,
-        paused: event.paused ?? operation.paused,
-        percent: event.percent ?? operation.percent,
-        positionSeconds: event.positionSeconds ?? operation.positionSeconds,
-        speed: event.speed ?? operation.speed,
-        state: event.state ?? operation.state,
-        volume: event.volume ?? operation.volume,
-      },
-      status: terminalStatus(operation.kind, event.state, event.message) ?? this.#state.status,
-    })
+    if (operation === undefined || event.operationId !== operation.id) {
+      if (this.#state.loading && this.#state.pending === undefined && event.operationId !== undefined) {
+        this.#earlyOperationEvents.set(event.operationId, event)
+      }
+      return
+    }
+    this.#set(applyOperationEvent(this.#state, event))
   }
 
   #begin(target: CollectionScreen, course?: Course): PendingRequest {
@@ -245,6 +241,15 @@ export class WorkspaceController {
   }
 
   #set(state: FoundationState): void {
+    const operation = state.operation
+    if (operation !== undefined) {
+      const earlyEvent = this.#earlyOperationEvents.get(operation.id)
+      if (earlyEvent !== undefined) {
+        this.#earlyOperationEvents.delete(operation.id)
+        state = applyOperationEvent(state, earlyEvent)
+      }
+    }
+    if (!state.loading || state.pending !== undefined) this.#earlyOperationEvents.clear()
     this.#state = cloneState(state)
     for (const listener of this.#listeners) listener(this.snapshot())
   }
@@ -319,6 +324,26 @@ function courseKey(course: Course): string {
 
 function sameRequest(left: PendingRequest, right: PendingRequest | undefined): boolean {
   return right !== undefined && left.generation === right.generation && left.target === right.target && left.courseKey === right.courseKey
+}
+
+function applyOperationEvent(state: FoundationState, event: Event): FoundationState {
+  const operation = state.operation
+  if (operation === undefined || event.operationId !== operation.id) return state
+  return {
+    ...state,
+    operation: {
+      ...operation,
+      durationSeconds: event.durationSeconds ?? operation.durationSeconds,
+      muted: event.muted ?? operation.muted,
+      paused: event.paused ?? operation.paused,
+      percent: event.percent ?? operation.percent,
+      positionSeconds: event.positionSeconds ?? operation.positionSeconds,
+      speed: event.speed ?? operation.speed,
+      state: event.state ?? operation.state,
+      volume: event.volume ?? operation.volume,
+    },
+    status: terminalStatus(operation.kind, event.state, event.message) ?? state.status,
+  }
 }
 
 function terminalStatus(kind: OperationKind, state: OperationState | undefined, message: string | undefined): string | undefined {

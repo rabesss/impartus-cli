@@ -20,21 +20,23 @@ func safePresentationText(value string) string {
 		if unicode.In(character, unicode.Cf) {
 			continue
 		}
-		if unicode.IsControl(character) || unicode.In(character, unicode.Zl, unicode.Zp) {
-			if unicode.IsSpace(character) {
-				marked.WriteString(marker)
-			}
+		if unicode.IsSpace(character) {
+			marked.WriteString(marker)
+			continue
+		}
+		if unicode.IsControl(character) {
 			continue
 		}
 		marked.WriteRune(character)
 	}
 	markedText := marked.String()
-	// Probe the separator-free form so credential keys cannot be split by
-	// whitespace controls. Keep the marked form only when it redacts identically.
-	joined := strings.ReplaceAll(markedText, marker, "")
-	joinedSafe := secrets.Scrub(joined)
+	// Scrub real word boundaries first, then probe the separator-free form so a
+	// credential key cannot be split by any Unicode whitespace. Use the joined
+	// form only when that second pass discovers an additional credential.
 	markedSafe := secrets.Scrub(markedText)
-	if strings.ReplaceAll(markedSafe, marker, "") != joinedSafe {
+	joined := strings.ReplaceAll(markedSafe, marker, "")
+	joinedSafe := secrets.Scrub(joined)
+	if joinedSafe != joined {
 		return strings.Join(strings.Fields(secrets.Scrub(joinedSafe)), " ")
 	}
 	spacedSafe := strings.ReplaceAll(markedSafe, marker, " ")

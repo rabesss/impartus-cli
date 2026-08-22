@@ -142,6 +142,7 @@ function baseAvailability(): CommandAvailability {
 function moveAvailability(context: CommandContext): CommandAvailability {
   if (context.overlay === "palette" || context.overlay === "navigation") return available(true)
   if (context.overlay === "help") return available(false)
+  if (context.state.screen === "playback") return available(false)
   if (context.focus === "navigation") return available(true)
   if (context.state.loading || context.focus !== "collection") return available(false)
   if (context.state.error !== undefined) return available(true, false, "Retry the current view first")
