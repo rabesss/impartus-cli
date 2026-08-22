@@ -371,6 +371,88 @@ func TestExecuteNonHelpCompatibilityMatrix(t *testing.T) {
 	}
 }
 
+func TestCommandHelpDefinitionsMatchAdvertisedSurface(t *testing.T) {
+	advertised := make(map[string]struct{})
+	for _, command := range helpPayload().Commands {
+		if command.Name == "help" {
+			continue
+		}
+		advertised[command.Name] = struct{}{}
+		if _, ok := commandHelpByName[command.Name]; !ok {
+			t.Errorf("advertised command %q has no command-help definition", command.Name)
+		}
+	}
+	for name := range commandHelpByName {
+		if strings.Contains(name, ".") {
+			continue
+		}
+		if _, ok := advertised[name]; !ok {
+			t.Errorf("top-level command-help definition %q is not advertised", name)
+		}
+	}
+
+	var rootHelp strings.Builder
+	if err := showHelpTo(&rootHelp, "v1", "d1"); err != nil {
+		t.Fatalf("showHelpTo() error = %v", err)
+	}
+	for name := range advertised {
+		if !strings.Contains(rootHelp.String(), "\n  "+name) {
+			t.Errorf("root human help does not advertise %q", name)
+		}
+	}
+	for _, nested := range []string{"library.list", "library.show", "library.verify"} {
+		if _, ok := commandHelpByName[nested]; !ok {
+			t.Errorf("nested advertised command %q has no command-help definition", nested)
+		}
+	}
+}
+
+func TestUnknownCommandHelpDoesNotBecomeSuccessfulHelp(t *testing.T) {
+	restoreCLIState(t)
+
+	os.Args = []string{"impartus", "bogus", "--help"}
+	stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+	if err == nil || !strings.Contains(err.Error(), "unknown command: bogus") || ExitCode(err) != 1 {
+		t.Fatalf("Execute(bogus --help) error = %v, want unknown-command exit 1", err)
+	}
+	if !strings.Contains(stdout, "Usage:") || stderr != "" {
+		t.Fatalf("Execute(bogus --help) stdout/stderr = %q/%q, want root help and empty stderr", stdout, stderr)
+	}
+
+	os.Args = []string{"impartus", "bogus", "--help", "--json"}
+	stdout, stderr, err = captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+	if err == nil || ExitCode(err) != 1 || stdout != "" || stderr != "" {
+		t.Fatalf("Execute(bogus --help --json) stdout/stderr/error = %q/%q/%v", stdout, stderr, err)
+	}
+	var envelope struct {
+		Success bool     `json:"success"`
+		Error   jsonErr  `json:"error"`
+		Meta    jsonMeta `json:"meta"`
+	}
+	if decodeErr := json.Unmarshal([]byte(err.Error()), &envelope); decodeErr != nil {
+		t.Fatalf("decode unknown-command JSON error: %v; raw=%q", decodeErr, err)
+	}
+	if envelope.Success || !strings.Contains(envelope.Error.Message, "unknown command: bogus") || envelope.Meta.Command != "bogus" || envelope.Meta.Mode != "json" {
+		t.Fatalf("unknown-command JSON envelope = %+v", envelope)
+	}
+}
+
+func TestPlayHelpReflectsSelectorFreeInteractiveMode(t *testing.T) {
+	if err := validatePlayFlags(playFlags{}); err != nil {
+		t.Fatalf("selector-free play flags error = %v, want interactive course selection", err)
+	}
+	restoreCLIState(t)
+	installHelpDispatchSentinels(t)
+	os.Args = []string{"impartus", "play", "--help"}
+	stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+	if err != nil || stderr != "" {
+		t.Fatalf("Execute(play --help) stdout/stderr/error = %q/%q/%v", stdout, stderr, err)
+	}
+	if !strings.Contains(stdout, "impartus play [--subject <id> --session <id>] [flags]") {
+		t.Fatalf("play help does not document optional direct selectors: %q", stdout)
+	}
+}
+
 func TestRootHelpExplainsTTYAndNonTTYDefaultBehavior(t *testing.T) {
 	restoreCLIState(t)
 	os.Args = []string{"impartus", "--help"}
