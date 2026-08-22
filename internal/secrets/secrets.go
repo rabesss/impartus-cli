@@ -46,14 +46,21 @@ var userinfoRe = regexp.MustCompile(`(?i)(https?://)[^/\s:@]+:[^/\s@]+@`)
 // Building the regex from sensitiveParams keeps sig/signature and future keys
 // from drifting between URL and body sanitization.
 var sensitiveAssignmentKey = buildSensitiveAssignmentKey()
+var credentialSchemes = []string{"bearer", "basic", "token", "apikey", "oauth"}
 var quotedSecretValue = regexp.MustCompile(
 	`(?i)(\b` + sensitiveAssignmentKey + `"\s*:\s*")((?:\\.|[^"\\])*)`,
+)
+var singleQuotedSecretValue = regexp.MustCompile(
+	`(?i)(\b` + sensitiveAssignmentKey + `'\s*[:=]\s*')((?:\\.|[^'\\])*)`,
+)
+var quotedKeyBareSecretValue = regexp.MustCompile(
+	`(?i)(\b` + sensitiveAssignmentKey + `["']\s*[:=]\s*)[^\s"',;}][^\s,;}]*`,
 )
 var strongCredentialAssignment = regexp.MustCompile(
 	`(?i)(^|[^/\\a-z0-9_-])((?:authorization|proxy[-_]?authorization|auth|(?:x[-_])?api[-_]?key)\s*[:=]\s*)[^\r\n]+`,
 )
 var schemeSecretAssignment = regexp.MustCompile(
-	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*[:=]\s*)(?:bearer|basic|token|apikey|oauth)\s+[^\s,;}]+`,
+	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*[:=]\s*)(?:` + strings.Join(credentialSchemes, "|") + `)\s+[^\s,;}]+`,
 )
 var bareSecretEquals = regexp.MustCompile(
 	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*=\s*)[^\s,;}]+`,
@@ -85,6 +92,17 @@ func isSensitiveParam(key string) bool {
 	return sensitiveParams[strings.ToLower(key)]
 }
 
+// IsCredentialScheme reports whether value is an authentication scheme that
+// gives the following word credential semantics in free-form diagnostics.
+func IsCredentialScheme(value string) bool {
+	for _, scheme := range credentialSchemes {
+		if strings.EqualFold(value, scheme) {
+			return true
+		}
+	}
+	return false
+}
+
 // scrubRawQuery redacts sensitive query-parameter values in a raw string. It
 // operates on literal "?"/"&" boundaries so it works on decoded parameter
 // values and on malformed URLs that url.Parse refuses.
@@ -99,6 +117,31 @@ func scrubRaw(rawURL string) string {
 	return scrubRawQuery(userinfoRe.ReplaceAllString(rawURL, "$1"))
 }
 
+// ScrubURLs redacts credentials from absolute HTTP URLs embedded in text
+// without applying the free-form assignment rules.
+func ScrubURLs(s string) string {
+	if s == "" {
+		return s
+	}
+	return urlTokenRe.ReplaceAllStringFunc(s, RedactURL)
+}
+
+// ScrubCredentialURLs redacts only URL candidates that actually contain
+// credentials. Candidates without credentials are returned byte-for-byte so a
+// caller can use an internal separator marker without re-encoding prose.
+func ScrubCredentialURLs(s string) string {
+	if s == "" {
+		return s
+	}
+	return urlTokenRe.ReplaceAllStringFunc(s, func(rawURL string) string {
+		redacted, changed := redactURL(rawURL)
+		if !changed {
+			return rawURL
+		}
+		return redacted
+	})
+}
+
 // RedactURL returns rawURL with sensitive data scrubbed: embedded HTTP
 // basic-auth userinfo is removed, and sensitive query parameters are replaced
 // with "REDACTED". Tokens nested inside the value of a non-sensitive parameter
@@ -106,30 +149,44 @@ func scrubRaw(rawURL string) string {
 // too, since values are decoded before inspection. If rawURL cannot be parsed,
 // the raw string is scrubbed directly.
 func RedactURL(rawURL string) string {
+	redacted, _ := redactURL(rawURL)
+	return redacted
+}
+
+func redactURL(rawURL string) (string, bool) {
 	if rawURL == "" {
-		return rawURL
+		return rawURL, false
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return scrubRaw(rawURL)
+		redacted := scrubRaw(rawURL)
+		return redacted, redacted != rawURL
 	}
+	changed := u.User != nil
 	u.User = nil // strip embedded HTTP basic-auth credentials
 	// Scrub sensitive keys, and scrub any sensitive URL embedded in the decoded
 	// value of a non-sensitive parameter (covers percent-encoded nested tokens).
 	params := u.Query()
 	for key, vals := range params {
 		if isSensitiveParam(key) {
+			for _, value := range vals {
+				if value != "REDACTED" {
+					changed = true
+					break
+				}
+			}
 			params[key] = []string{"REDACTED"}
 			continue
 		}
 		for i, v := range vals {
 			if scrubbed := scrubRaw(v); scrubbed != v {
 				vals[i] = scrubbed
+				changed = true
 			}
 		}
 	}
 	u.RawQuery = params.Encode()
-	return u.String()
+	return u.String(), changed
 }
 
 // SanitizeError scrubs sensitive URL data from HTTP errors. http.Client.Do and
@@ -166,8 +223,10 @@ func Scrub(s string) string {
 	if s == "" {
 		return s
 	}
-	scrubbed := urlTokenRe.ReplaceAllStringFunc(s, RedactURL)
+	scrubbed := ScrubURLs(s)
 	scrubbed = quotedSecretValue.ReplaceAllString(scrubbed, "${1}REDACTED")
+	scrubbed = singleQuotedSecretValue.ReplaceAllString(scrubbed, "${1}REDACTED")
+	scrubbed = quotedKeyBareSecretValue.ReplaceAllString(scrubbed, "${1}REDACTED")
 	scrubbed = strongCredentialAssignment.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
 	scrubbed = schemeSecretAssignment.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
 	scrubbed = bareSecretEquals.ReplaceAllString(scrubbed, "${1}${2}REDACTED")

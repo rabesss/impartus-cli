@@ -10,33 +10,100 @@ import (
 	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
-var spacedAssignmentCandidate = regexp.MustCompile(`(?i)([a-z0-9_-]+(?: +[a-z0-9_-]+)+)("? *[:=])`)
+var spacedAssignmentCandidate = regexp.MustCompile(`(?i)([a-z0-9_-]+(?: +[a-z0-9_-]+)+)(["']? *[:=])`)
+var spacedSchemeCandidate = regexp.MustCompile(`(?i)([a-z0-9_-]+)(["']? *[:=] *)([a-z0-9_-]+(?: +[a-z0-9_-]+)+)`)
+var spacedURLAssignmentCandidate = regexp.MustCompile(`(?i)([?&]) *([a-z0-9_-]+(?: +[a-z0-9_-]+)*) *= *`)
 
 // safePresentationText removes terminal syntax and invisible key-splitting
 // characters before credential redaction. The returned string is the only
 // human-readable text boundary exposed to the OpenTUI sidecar.
 func safePresentationText(value string) string {
 	value = ansi.Strip(value)
-	var normalized strings.Builder
+	marker := presentationSpaceMarker(value)
+	var marked strings.Builder
 	for _, character := range value {
 		if unicode.In(character, unicode.Cf) {
 			continue
 		}
 		if unicode.IsSpace(character) {
-			normalized.WriteByte(' ')
+			marked.WriteString(marker)
 			continue
 		}
 		if unicode.IsControl(character) {
 			continue
 		}
-		normalized.WriteRune(character)
+		marked.WriteRune(character)
 	}
-	// Scrub ordinary assignments before compacting only a whitespace-split key.
-	// This preserves unrelated word boundaries while still closing key-splitting
-	// bypasses such as "to ken=secret".
-	spacedSafe := secrets.Scrub(normalized.String())
-	splitSafe := secrets.Scrub(compactSplitCredentialKeys(spacedSafe))
+	// Preserve URL tokenization through the URL-only scrub. Compact a sensitive
+	// query key and an obfuscated HTTP scheme before re-marking ordinary spaces,
+	// then restore those word boundaries for free-form assignment handling.
+	spaced := strings.ReplaceAll(marked.String(), marker, " ")
+	markedURLs := compactSensitiveURLAssignments(compactSplitCredentialKeys(spaced))
+	markedURLs = strings.ReplaceAll(markedURLs, " ", marker)
+	markedURLs = compactMarkedHTTPSchemes(markedURLs, marker)
+	spaced = strings.ReplaceAll(secrets.ScrubCredentialURLs(markedURLs), marker, " ")
+	splitSafe := secrets.Scrub(compactSplitCredentialSchemes(compactSplitCredentialKeys(spaced)))
 	return strings.Join(strings.Fields(splitSafe), " ")
+}
+
+func compactSensitiveURLAssignments(value string) string {
+	return spacedURLAssignmentCandidate.ReplaceAllStringFunc(value, func(match string) string {
+		parts := spacedURLAssignmentCandidate.FindStringSubmatch(match)
+		separator, key := parts[1], strings.ReplaceAll(parts[2], " ", "")
+		probe := " " + key + "=probe"
+		if secrets.Scrub(probe) == probe {
+			return match
+		}
+		return separator + key + "="
+	})
+}
+
+func compactMarkedHTTPSchemes(value, marker string) string {
+	var compacted strings.Builder
+	for index := 0; index < len(value); {
+		matched := false
+		for _, scheme := range []string{"https://", "http://"} {
+			end, ok := markedHTTPSchemeEnd(value, index, marker, scheme)
+			if !ok {
+				continue
+			}
+			compacted.WriteString(scheme)
+			index = end
+			matched = true
+			break
+		}
+		if matched {
+			continue
+		}
+		compacted.WriteByte(value[index])
+		index++
+	}
+	return compacted.String()
+}
+
+func markedHTTPSchemeEnd(value string, start int, marker, scheme string) (int, bool) {
+	position := start
+	for index := 0; index < len(scheme); index++ {
+		if position >= len(value) || strings.ToLower(value[position:position+1]) != scheme[index:index+1] {
+			return start, false
+		}
+		position++
+		if index == len(scheme)-1 {
+			continue
+		}
+		for strings.HasPrefix(value[position:], marker) {
+			position += len(marker)
+		}
+	}
+	return position, true
+}
+
+func presentationSpaceMarker(value string) string {
+	marker := "\uE000"
+	for strings.Contains(value, marker) {
+		marker += "\uE001"
+	}
+	return marker
 }
 
 func compactSplitCredentialKeys(value string) string {
@@ -57,6 +124,30 @@ func compactSplitCredentialKeys(value string) string {
 				return match
 			}
 			return words[:start] + candidate + delimiter
+		}
+		return match
+	})
+}
+
+func compactSplitCredentialSchemes(value string) string {
+	return spacedSchemeCandidate.ReplaceAllStringFunc(value, func(match string) string {
+		parts := spacedSchemeCandidate.FindStringSubmatch(match)
+		key, delimiter, words := parts[1], parts[2], parts[3]
+		probe := " " + key + "=probe"
+		if secrets.Scrub(probe) == probe {
+			return match
+		}
+		fields := strings.Fields(words)
+		for end := 2; end <= len(fields); end++ {
+			scheme := strings.Join(fields[:end], "")
+			if !secrets.IsCredentialScheme(scheme) {
+				continue
+			}
+			remainder := strings.Join(fields[end:], " ")
+			if remainder != "" {
+				remainder = " " + remainder
+			}
+			return key + delimiter + scheme + remainder
 		}
 		return match
 	})

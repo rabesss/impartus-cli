@@ -124,6 +124,24 @@ func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 	}
 }
 
+func TestScrub_RedactsQuotedKeysWithNonJSONValues(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		input string
+		want  string
+	}{
+		{input: `"token": bare-secret`, want: `"token": REDACTED`},
+		{input: `"token"=equals-secret`, want: `"token"=REDACTED`},
+		{input: `'token': single-secret`, want: `'token': REDACTED`},
+		{input: `'token': 'quoted secret'`, want: `'token': 'REDACTED'`},
+	} {
+		if got := Scrub(test.input); got != test.want {
+			t.Fatalf("Scrub(%q) = %q, want %q", test.input, got, test.want)
+		}
+	}
+}
+
 func TestScrub_FreeFormCoverageTracksEverySensitiveQueryKey(t *testing.T) {
 	t.Parallel()
 
