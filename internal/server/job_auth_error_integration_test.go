@@ -67,75 +67,20 @@ func TestTypedLoginFailureIsSafeAcrossJobEventAPIAndPersistence(t *testing.T) {
 	waitForWebSocketClients(t, s.wsHub, 1)
 	localAPIToken := strings.TrimPrefix(header.Get("Authorization"), "Bearer ")
 
-	request := httptest.NewRequestWithContext(
-		context.Background(),
-		http.MethodPost,
-		"/api/v1/jobs",
-		strings.NewReader(`{"subjectId":1,"sessionId":1,"startIndex":1,"endIndex":1}`),
-	)
-	request.Header.Set("Authorization", header.Get("Authorization"))
-	request.Header.Set("Content-Type", "application/json")
-	createdResponse := httptest.NewRecorder()
-	s.router.ServeHTTP(createdResponse, request)
-	if createdResponse.Code != http.StatusCreated {
-		t.Fatalf("create job status = %d, body = %s", createdResponse.Code, createdResponse.Body)
-	}
-	var created struct {
-		Data Job `json:"data"`
-	}
-	if err := json.NewDecoder(createdResponse.Body).Decode(&created); err != nil {
-		t.Fatalf("decode created job: %v", err)
-	}
+	created := createIssue170Job(t, s, header)
 
 	waitForBackgroundJobWork(t, s)
 	flushTestStore(t, s.jobStore)
 
-	if err := conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
-		t.Fatalf("SetReadDeadline() failed: %v", err)
+	event, rawEvent := readSingleIssue170FailedEvent(t, conn)
+	if event.JobID != created.ID || event.Status != StatusFailed || event.Error != wantSummary {
+		t.Fatalf("unexpected failed event: %+v", event)
 	}
-	failedEvents := 0
-	for {
-		_, rawEvent, err := conn.ReadMessage()
-		if err != nil {
-			var netErr net.Error
-			if errors.As(err, &netErr) && netErr.Timeout() {
-				break
-			}
-			t.Fatalf("ReadMessage() failed: %v", err)
-		}
-		var event wsEvent
-		if err := json.Unmarshal(rawEvent, &event); err != nil {
-			t.Fatalf("decode websocket event: %v", err)
-		}
-		if event.Type != "job.failed" {
-			continue
-		}
-		failedEvents++
-		if event.JobID != created.Data.ID || event.Status != StatusFailed || event.Error != wantSummary {
-			t.Fatalf("unexpected failed event: %+v", event)
-		}
-		assertNoIssue170Markers(t, string(rawEvent), localAPIToken, usernameMarker, passwordMarker, baseURLMarker, bodyMarker, tokenMarker)
-	}
-	if failedEvents != 1 {
-		t.Fatalf("job.failed event count = %d, want exactly 1", failedEvents)
-	}
+	assertNoIssue170Markers(t, string(rawEvent), localAPIToken, usernameMarker, passwordMarker, baseURLMarker, bodyMarker, tokenMarker)
 
-	getRequest := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/jobs/"+created.Data.ID, nil)
-	getRequest.Header.Set("Authorization", header.Get("Authorization"))
-	getResponse := httptest.NewRecorder()
-	s.router.ServeHTTP(getResponse, getRequest)
-	if getResponse.Code != http.StatusOK {
-		t.Fatalf("get job status = %d, body = %s", getResponse.Code, getResponse.Body)
-	}
-	getBody := getResponse.Body.String()
-	var got struct {
-		Data Job `json:"data"`
-	}
-	if err := json.Unmarshal([]byte(getBody), &got); err != nil {
-		t.Fatalf("decode get job response: %v", err)
-	}
-	if got.Data.Status != StatusFailed || got.Data.Progress != 0 || got.Data.Error != wantSummary {
-		t.Fatalf("job state = status:%q progress:%v error:%q", got.Data.Status, got.Data.Progress, got.Data.Error)
+	got, getBody := getIssue170Job(t, s, header, created.ID)
+	if got.Status != StatusFailed || got.Progress != 0 || got.Error != wantSummary {
+		t.Fatalf("job state = status:%q progress:%v error:%q", got.Status, got.Progress, got.Error)
 	}
 	assertNoIssue170Markers(t, getBody, localAPIToken, usernameMarker, passwordMarker, baseURLMarker, bodyMarker, tokenMarker)
 
@@ -146,7 +91,7 @@ func TestTypedLoginFailureIsSafeAcrossJobEventAPIAndPersistence(t *testing.T) {
 	assertNoIssue170Markers(t, string(persistedBytes), localAPIToken, usernameMarker, passwordMarker, baseURLMarker, bodyMarker, tokenMarker)
 
 	restarted := newTestPersistentStore(t, persistencePath)
-	reloaded, ok := restarted.GetJob(created.Data.ID)
+	reloaded, ok := restarted.GetJob(created.ID)
 	if !ok {
 		t.Fatal("failed job missing after persistence reload")
 	}
@@ -162,6 +107,156 @@ func TestTypedLoginFailureIsSafeAcrossJobEventAPIAndPersistence(t *testing.T) {
 	if cached != nil {
 		t.Fatal("typed login failure poisoned the upstream client cache")
 	}
+}
+
+func TestTypedNonLoginFailureReachesSafeJobEventAndAPI(t *testing.T) {
+	const (
+		bodyMarker  = "issue170-data-response-body-marker"
+		tokenMarker = "issue170-data-token-marker"
+		wantSummary = "upstream authentication failed"
+	)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/subjects/1/lectures/1" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		if _, err := w.Write([]byte(bodyMarker)); err != nil {
+			t.Errorf("write upstream 401 body: %v", err)
+		}
+	}))
+	defer upstream.Close()
+
+	taskDir := t.TempDir()
+	serverConfig := &config.Config{
+		Username:         "local-user",
+		Password:         "local-password",
+		BaseURL:          upstream.URL,
+		TokenCachePath:   filepath.Join(taskDir, "auth-cache"),
+		DownloadLocation: filepath.Join(taskDir, "downloads"),
+		TempDirLocation:  filepath.Join(taskDir, "temporary"),
+		Quality:          "450",
+	}
+	login := func(_ context.Context, cfg *config.Config) (*client.Client, *config.Config, error) {
+		loginCfg := cloneConfig(cfg)
+		loginCfg.Token = tokenMarker
+		return client.New(upstream.Client(), nil), loginCfg, nil
+	}
+	s := newAPIServerFull("8080", serverConfig, login, "", false)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.jobStore.Close(ctx); err != nil {
+			t.Errorf("close in-memory job store: %v", err)
+		}
+	})
+
+	wsURL, header := startWebSocketTestServer(t, s)
+	conn := dialWebSocket(t, wsURL, header)
+	waitForWebSocketClients(t, s.wsHub, 1)
+	created := createIssue170Job(t, s, header)
+	waitForBackgroundJobWork(t, s)
+
+	event, rawEvent := readSingleIssue170FailedEvent(t, conn)
+	if event.JobID != created.ID || event.Status != StatusFailed || event.Error != wantSummary {
+		t.Fatalf("unexpected non-login failed event: %+v", event)
+	}
+	assertNoIssue170Markers(t, string(rawEvent), bodyMarker, tokenMarker, upstream.URL)
+
+	got, rawJob := getIssue170Job(t, s, header, created.ID)
+	if got.Status != StatusFailed || got.Progress != 0 || got.Error != wantSummary {
+		t.Fatalf("non-login job state = status:%q progress:%v error:%q", got.Status, got.Progress, got.Error)
+	}
+	assertNoIssue170Markers(t, rawJob, bodyMarker, tokenMarker, upstream.URL)
+}
+
+func createIssue170Job(t *testing.T, s *APIServer, header http.Header) Job {
+	t.Helper()
+	request := httptest.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		"/api/v1/jobs",
+		strings.NewReader(`{"subjectId":1,"sessionId":1,"startIndex":1,"endIndex":1}`),
+	)
+	request.Header.Set("Authorization", header.Get("Authorization"))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	s.router.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create job status = %d, body = %s", response.Code, response.Body)
+	}
+	var created struct {
+		Data Job `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created job: %v", err)
+	}
+	return created.Data
+}
+
+func getIssue170Job(t *testing.T, s *APIServer, header http.Header, jobID string) (Job, string) {
+	t.Helper()
+	request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/jobs/"+jobID, nil)
+	request.Header.Set("Authorization", header.Get("Authorization"))
+	response := httptest.NewRecorder()
+	s.router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("get job status = %d, body = %s", response.Code, response.Body)
+	}
+	raw := response.Body.String()
+	var got struct {
+		Data Job `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("decode get job response: %v", err)
+	}
+	return got.Data, raw
+}
+
+func readSingleIssue170FailedEvent(t *testing.T, conn websocketReader) (wsEvent, []byte) {
+	t.Helper()
+	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline() failed: %v", err)
+	}
+	for {
+		_, rawEvent, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("ReadMessage() before job.failed: %v", err)
+		}
+		var event wsEvent
+		if err := json.Unmarshal(rawEvent, &event); err != nil {
+			t.Fatalf("decode websocket event: %v", err)
+		}
+		if event.Type != "job.failed" {
+			continue
+		}
+
+		if err := conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+			t.Fatalf("SetReadDeadline() for duplicate drain failed: %v", err)
+		}
+		for {
+			_, extraRaw, readErr := conn.ReadMessage()
+			if readErr != nil {
+				var netErr net.Error
+				if errors.As(readErr, &netErr) && netErr.Timeout() {
+					return event, rawEvent
+				}
+				t.Fatalf("ReadMessage() while checking duplicate events: %v", readErr)
+			}
+			var extra wsEvent
+			if err := json.Unmarshal(extraRaw, &extra); err != nil {
+				t.Fatalf("decode additional websocket event: %v", err)
+			}
+			if extra.Type == "job.failed" {
+				t.Fatalf("received duplicate job.failed event: %+v", extra)
+			}
+		}
+	}
+}
+
+type websocketReader interface {
+	SetReadDeadline(time.Time) error
+	ReadMessage() (messageType int, p []byte, err error)
 }
 
 func assertNoIssue170Markers(t *testing.T, text string, markers ...string) {
