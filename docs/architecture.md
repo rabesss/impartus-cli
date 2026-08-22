@@ -21,24 +21,33 @@ This project is CLI-first and API-secondary: the CLI is the primary execution pa
 
 ## OpenTUI interactive flow
 
-The default mode launches `impartus tui` only when stdin and stdout are real
-terminals. A non-TTY no-argument invocation prints help to stderr and exits 2.
+The default mode launches `impartus tui` only when both stdin and stdout are
+real terminals. A non-TTY no-argument invocation prints help to stderr and
+exits 2. Explicit `--help` or `-h` before an argument sentinel is resolved from
+static command metadata before any human or JSON command runner, so help cannot
+load credentials, access the network or library, check dependencies, bind a
+server, or launch the TUI sidecar.
 
 ```mermaid
 flowchart TD
   A[User runs impartus] --> B[cli.Execute]
-  B --> C{Check json flag}
-  C -- Yes --> L[Dispatch deterministic JSON command]
-  C -- No --> D{stdin and stdout are TTYs?}
-  D -- No --> E[help to stderr + exit 2]
-  D -- Yes --> F[load config, login, open library]
-  F --> G[start private authenticated loopback session]
-  G --> H[write one-use owner-private bootstrap]
-  H --> I[launch adjacent compiled OpenTUI child]
-  I --> J[responsive UI and strict session client]
-  J --> K[internal/tuisession projections and operations]
-  K --> L[internal/app catalog/playback/download/library]
-  L --> M[Impartus API, native mpv, FFmpeg, private SQLite]
+  B --> C[Strip global json flag]
+  C --> D{No command?}
+  D -- Yes --> E{JSON mode?}
+  E -- Yes --> F[Emit capability envelope]
+  E -- No --> G{Both stdin and stdout are TTYs?}
+  G -- No --> H[help to stderr + exit 2]
+  D -- No --> I{Explicit help before sentinel?}
+  I -- Yes --> J[Static human help or one JSON help envelope]
+  I -- No --> K[Dispatch human or deterministic JSON command]
+  G -- Yes --> L[load config, login, open library]
+  L --> M[start private authenticated loopback session]
+  M --> N[write one-use owner-private bootstrap]
+  N --> O[launch adjacent compiled OpenTUI child]
+  O --> P[responsive UI and strict session client]
+  P --> Q[internal/tuisession projections and operations]
+  Q --> R[internal/app catalog/playback/download/library]
+  R --> S[Impartus API, native mpv, FFmpeg, private SQLite]
 ```
 
 The Go parent owns login state, the API client, SQLite, downloads, mpv, operation
@@ -66,7 +75,10 @@ sequenceDiagram
 
   A->>C: impartus --json [command]
   C->>C: stripGlobalJSONFlag(args)
-  alt no command provided
+  C->>C: resolve explicit help before argument sentinel
+  alt command-specific help requested
+    C-->>A: success help envelope with command, description, usage
+  else no command or root help provided
     C-->>A: success help envelope
   else command provided
     C->>J: executeJSON(args)

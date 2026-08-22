@@ -142,7 +142,7 @@ func showHelpTo(output io.Writer, version, date string) error {
 			return err
 		}
 	}
-	_, err := fmt.Fprintln(output, "\nNo command launches the TUI only when stdin and stdout are terminals.")
+	_, err := fmt.Fprintln(output, "\nNo arguments launch the TUI only when both stdin and stdout are terminals; otherwise, help is printed to stderr and the command exits 2.")
 	return err
 }
 
