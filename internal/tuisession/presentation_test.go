@@ -95,3 +95,24 @@ func TestSafePresentationTextRedactsWhitespaceAtEveryCredentialURLBoundary(t *te
 		}
 	}
 }
+
+func TestSafePresentationTextRedactsEscapeAtEveryCredentialBoundary(t *testing.T) {
+	for name, value := range map[string]string{
+		"assignment": "token=assignmentsecret",
+		"query URL":  "https://example.com/path?token=querysecret",
+		"userinfo":   "https://user:password@example.com/",
+	} {
+		t.Run(name, func(t *testing.T) {
+			for index := 1; index < len(value); index++ {
+				got := safePresentationText(value[:index] + "\x1b" + value[index:])
+				compact := strings.ReplaceAll(got, " ", "")
+				if strings.Contains(compact, "assignmentsecret") || strings.Contains(compact, "querysecret") || strings.Contains(compact, "password") || strings.Contains(got, "@") {
+					t.Fatalf("credential split at %d = %q", index, got)
+				}
+				if name != "userinfo" && !strings.Contains(got, "REDACTED") {
+					t.Fatalf("credential split at %d = %q, want redaction marker", index, got)
+				}
+			}
+		})
+	}
+}

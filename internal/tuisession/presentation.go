@@ -18,7 +18,23 @@ var spacedURLAssignmentCandidate = regexp.MustCompile(`(?i)([?&]) *([a-z0-9_-]+(
 // characters before credential redaction. The returned string is the only
 // human-readable text boundary exposed to the OpenTUI sidecar.
 func safePresentationText(value string) string {
-	value = ansi.Strip(value)
+	stripped := ansi.Strip(value)
+	safe, _ := sanitizePresentationText(stripped)
+	if stripped != value {
+		// ANSI parsers legitimately consume the final byte of a short escape
+		// sequence. That byte can also be credential syntax (for example ESC
+		// followed by '=' or a character inside "token"). Re-run detection with
+		// controls removed but printable bytes preserved; if that view exposes a
+		// credential, discard the adversarial message rather than risk returning
+		// a value whose key or delimiter the terminal parser erased.
+		if _, redacted := sanitizePresentationText(value); redacted {
+			return "REDACTED"
+		}
+	}
+	return safe
+}
+
+func sanitizePresentationText(value string) (string, bool) {
 	marker := presentationSpaceMarker(value)
 	var marked strings.Builder
 	for _, character := range value {
@@ -41,9 +57,12 @@ func safePresentationText(value string) string {
 	markedURLs := compactSensitiveURLAssignments(compactSplitCredentialKeys(spaced))
 	markedURLs = strings.ReplaceAll(markedURLs, " ", marker)
 	markedURLs = compactMarkedHTTPSchemes(markedURLs, marker)
-	spaced = strings.ReplaceAll(secrets.ScrubCredentialURLs(markedURLs), marker, " ")
-	splitSafe := secrets.Scrub(compactSplitCredentialSchemes(compactSplitCredentialKeys(spaced)))
-	return strings.Join(strings.Fields(splitSafe), " ")
+	safeURLs := secrets.ScrubCredentialURLs(markedURLs)
+	redacted := safeURLs != markedURLs
+	spaced = strings.ReplaceAll(safeURLs, marker, " ")
+	compacted := compactSplitCredentialSchemes(compactSplitCredentialKeys(spaced))
+	splitSafe := secrets.Scrub(compacted)
+	return strings.Join(strings.Fields(splitSafe), " "), redacted || splitSafe != compacted
 }
 
 func compactSensitiveURLAssignments(value string) string {
