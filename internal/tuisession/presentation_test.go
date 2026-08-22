@@ -52,6 +52,8 @@ func TestSafePresentationTextPreservesSafeWhitespaceBoundaries(t *testing.T) {
 		"ordinary whitespace":       {value: "mpv missing\nrun the installer\tthen retry", want: "mpv missing run the installer then retry"},
 		"credential-shaped spacing": {value: "Q&A: key = value slide", want: "Q&A: key = REDACTED slide"},
 		"mixed credential forms":    {value: "token=first keep to ken=second", want: "token=REDACTED keep token=REDACTED"},
+		"quoted split credential":   {value: `"to ken": "quoted-secret"`, want: `"token": "REDACTED"`},
+		"bare value word boundary":  {value: "token=first second; keep", want: "token=REDACTED second; keep"},
 		"marker collision":          {value: "keep\uE000this\nspacing", want: "keep\uE000this spacing"},
 	} {
 		t.Run(name, func(t *testing.T) {

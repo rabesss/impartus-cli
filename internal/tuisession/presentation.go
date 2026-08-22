@@ -10,7 +10,7 @@ import (
 	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
-var spacedAssignmentCandidate = regexp.MustCompile(`(?i)([a-z0-9_-]+(?: +[a-z0-9_-]+)+)( *[:=])`)
+var spacedAssignmentCandidate = regexp.MustCompile(`(?i)([a-z0-9_-]+(?: +[a-z0-9_-]+)+)("? *[:=])`)
 
 // safePresentationText removes terminal syntax and invisible key-splitting
 // characters before credential redaction. The returned string is the only

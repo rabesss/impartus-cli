@@ -726,7 +726,8 @@ describe("FoundationView", () => {
 
     await setup.renderOnce()
     const frame = setup.captureCharFrame()
-    expect(frame).not.toContain("selection]")
+    expect(frame).not.toContain("No selection")
+    expect(frame).not.toContain("Distributed Systems")
     expect(frame).toContain("q quit")
     expect(frame.trimEnd().split("\n")).toHaveLength(5)
     view.destroy()
