@@ -219,6 +219,8 @@ func TestExecuteJSONRootHelpKeepsCapabilitiesInEitherOrder(t *testing.T) {
 	for _, args := range [][]string{
 		{"--json", "--help"},
 		{"--help", "--json"},
+		{"--json", "-h"},
+		{"-h", "--json"},
 		{"help", "--json"},
 		{"help", "--help", "--json"},
 		{"help", "--json", "--help"},
