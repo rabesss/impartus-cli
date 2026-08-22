@@ -381,6 +381,24 @@ describe("FoundationView", () => {
     view.destroy()
   })
 
+  test("does not advertise disabled filter controls in an errored active-filter footer", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const state = foundationState()
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      collections: { ...state.collections, courses: { filter: "compiler", selected: 0 } },
+      error: "Course catalog is unavailable",
+    }, callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Filter: compiler")
+    expect(frame).not.toContain("/ edit")
+    expect(frame).not.toContain("navigate")
+    view.destroy()
+  })
+
   test("edits the command palette with vim letters and dispatches its match", async () => {
     const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
     renderers.push(setup)

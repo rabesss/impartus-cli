@@ -17,10 +17,10 @@ export function beginPlaybackStart(state: FoundationState, lecture: Lecture): Fo
 
 export function failOperationStart(state: FoundationState, kind: OperationStartKind): FoundationState {
   if (kind === "playback") {
-    return { ...state, error: "Lecture playback could not start", loading: false }
+    return { ...state, error: "Lecture playback could not start", loading: false, status: "Lecture playback could not start" }
   }
   if (kind === "download") {
     return { ...state, error: undefined, loading: false, status: "Lecture download could not start" }
   }
-  return { ...state, error: undefined, loading: false, status: "Connection failed" }
+  return { ...state, loading: false, status: "Connection failed" }
 }

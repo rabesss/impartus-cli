@@ -514,15 +514,20 @@ export class FoundationView {
     const footer = new BoxRenderable(this.#renderer, { alignItems: "center", border: ["top"], borderColor: COLORS.border, flexDirection: "row", height, justifyContent: "space-between", paddingX: 1, width: "100%" })
     const screen = collectionScreen(this.#state.screen)
     const filter = screen === undefined ? "" : this.#state.collections[screen].filter
-    const hints = footerCommands(this.#commandContext())
+    const context = this.#commandContext()
+    const hints = footerCommands(context)
       .filter(({ command }) => command.id !== "app.quit")
       .slice(0, 6)
       .map(({ command }) => `${command.keys[0]} ${command.label}`)
       .join("   ")
+    const activeFilterHints = [
+      commandForKey(context, "/")?.availability.enabled === true ? "/ edit" : undefined,
+      commandForKey(context, "down")?.availability.enabled === true ? "↑↓ navigate" : undefined,
+    ].filter((hint): hint is string => hint !== undefined).join("   ")
     const content = this.#filtering
       ? `Filter: ${filter}█   enter apply   esc close`
       : filter !== ""
-        ? `Filter: ${filter}   / edit   ↑↓ navigate`
+        ? `Filter: ${filter}${activeFilterHints === "" ? "" : `   ${activeFilterHints}`}`
         : hints
     footer.add(text(this.#renderer, content, this.#filtering ? COLORS.accent : COLORS.dim))
     footer.add(text(this.#renderer, "q quit", COLORS.dim))

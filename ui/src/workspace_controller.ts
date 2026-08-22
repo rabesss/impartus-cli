@@ -145,7 +145,10 @@ export class WorkspaceController {
   public async loadLectures(course: Course, signal?: AbortSignal): Promise<void> {
     const switchingCourse = this.#state.activeCourse === undefined || courseKey(this.#state.activeCourse) !== courseKey(course)
     const request = this.#begin("lectures", course)
-    this.#set({ ...this.#state, activeCourse: course, lectures: switchingCourse ? [] : this.#state.lectures, screen: "lectures" })
+    const collections = switchingCourse
+      ? { ...this.#state.collections, lectures: { ...this.#state.collections.lectures, selected: 0 } }
+      : this.#state.collections
+    this.#set({ ...this.#state, activeCourse: course, collections, lectures: switchingCourse ? [] : this.#state.lectures, screen: "lectures" })
     try {
       const result = await this.#client.lectures(course, signal)
       this.#finish(request, (state) => ({

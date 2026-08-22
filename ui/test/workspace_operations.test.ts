@@ -36,10 +36,23 @@ describe("workspace operation transitions", () => {
   })
 
   test("keeps playback-start failure on the playback back path", () => {
-    const state = failOperationStart(createFoundationState({ loading: true, screen: "playback" }), "playback")
+    const state = failOperationStart(createFoundationState({ loading: true, screen: "playback", status: "Starting Lecture" }), "playback")
     expect(state.error).toBe("Lecture playback could not start")
     expect(state.loading).toBe(false)
     expect(state.screen).toBe("playback")
+    expect(state.status).toBe("Lecture playback could not start")
+  })
+
+  test("does not erase a collection error when self-test startup also fails", () => {
+    const state = failOperationStart(createFoundationState({
+      error: "Course catalog is unavailable",
+      loading: true,
+      status: "Connected",
+    }), "selftest")
+
+    expect(state.error).toBe("Course catalog is unavailable")
+    expect(state.loading).toBe(false)
+    expect(state.status).toBe("Connection failed")
   })
 })
 

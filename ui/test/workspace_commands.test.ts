@@ -155,6 +155,28 @@ describe("workspace command registry", () => {
     expect(commandForKey(context, "s")).toBeUndefined()
     expect(commandsForHelp(context).map((entry) => entry.command.id)).not.toContain("session.selftest")
   })
+
+  test("does not let wide-pane focus navigate away from playback", () => {
+    const context = commandContext({
+      operation: {
+        durationSeconds: 60,
+        id: "playback-id",
+        kind: "playback",
+        muted: false,
+        paused: false,
+        percent: 25,
+        positionSeconds: 15,
+        speed: 1,
+        state: "running",
+        volume: 100,
+      },
+      screen: "playback",
+    })
+    const navigation = { ...context, focus: "navigation" as const }
+
+    expect(commandForKey(context, "tab")).toBeUndefined()
+    expect(commandForKey(navigation, "enter")?.availability.enabled).toBe(false)
+  })
 })
 
 function commandContext(overrides: Partial<CommandContext["state"]> & {

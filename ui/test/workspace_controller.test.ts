@@ -77,14 +77,17 @@ describe("WorkspaceController", () => {
       lectures: [testLecture(101)],
       screen: "lectures",
     }))
+    controller.setCollectionState("lectures", { filter: "persist", selected: 20 })
 
     const pending = controller.loadLectures(secondCourse)
     expect(controller.snapshot().lectures).toEqual([])
+    expect(controller.snapshot().collections.lectures).toEqual({ filter: "persist", selected: 0 })
     client.lectureRequests[0]!.reject(new Error("unavailable"))
     await pending
 
     expect(controller.snapshot().activeCourse?.subjectId).toBe(2)
     expect(controller.snapshot().lectures).toEqual([])
+    expect(controller.snapshot().collections.lectures).toEqual({ filter: "persist", selected: 0 })
     expect(controller.snapshot().error).toBe("Lecture catalog is unavailable")
   })
 
