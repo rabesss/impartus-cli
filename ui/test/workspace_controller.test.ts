@@ -196,6 +196,46 @@ describe("WorkspaceController", () => {
     expect(controller.snapshot().status).toBe("Session test completed")
   })
 
+  test("does not reconcile an early event for another operation id", () => {
+    const controller = new WorkspaceController(new DeferredClient(), createFoundationState({ loading: true }))
+
+    controller.applyEvent({
+      operationId: "different-operation",
+      sequence: 2,
+      state: "completed",
+      type: "operation.completed",
+    })
+    controller.update((state) => ({
+      ...state,
+      loading: false,
+      operation: newOperation("installed-operation", "selftest", "running"),
+    }))
+
+    expect(controller.snapshot().operation?.id).toBe("installed-operation")
+    expect(controller.snapshot().operation?.state).toBe("running")
+  })
+
+  test("discards early operation events when a start request fails", () => {
+    const controller = new WorkspaceController(new DeferredClient(), createFoundationState({ loading: true }))
+
+    controller.applyEvent({
+      operationId: "reused-operation",
+      sequence: 2,
+      state: "completed",
+      type: "operation.completed",
+    })
+    controller.update((state) => ({ ...state, loading: false, status: "Start failed" }))
+    controller.update((state) => ({ ...state, loading: true }))
+    controller.update((state) => ({
+      ...state,
+      loading: false,
+      operation: newOperation("reused-operation", "selftest", "running"),
+    }))
+
+    expect(controller.snapshot().operation?.state).toBe("running")
+    expect(controller.snapshot().status).toBe("Start failed")
+  })
+
   test("merges partial collection overrides with domain defaults", () => {
     const state = createFoundationState({
       collections: { lectures: { filter: "raft", selected: 2 } },

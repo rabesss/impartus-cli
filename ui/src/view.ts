@@ -530,6 +530,7 @@ export class FoundationView {
     const screen = collectionScreen(this.#state.screen)
     const filter = screen === undefined ? "" : this.#state.collections[screen].filter
     const context = this.#commandContext()
+    if (context.overlay !== undefined) return footer
     const hints = footerCommands(context)
       .filter(({ command }) => command.id !== "app.quit")
       .slice(0, 6)

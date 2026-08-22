@@ -161,6 +161,20 @@ describe("FoundationView", () => {
     view.destroy()
   })
 
+  test("hides inactive workspace footer commands while an overlay owns input", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const view = new FoundationView(setup.renderer, foundationState(), callbacks())
+
+    setup.mockInput.pressKey("?")
+    await setup.renderOnce()
+    const footer = setup.captureCharFrame().split("\n").slice(-3).join("\n")
+
+    expect(footer).not.toContain("q quit")
+    expect(footer).not.toContain("l Open library")
+    view.destroy()
+  })
+
   test("renders the upstream microphone status in lecture rows and inspector", async () => {
     const setup = await createTestRenderer({ height: 18, width: 100 })
     renderers.push(setup)
