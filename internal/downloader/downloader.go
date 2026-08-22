@@ -373,6 +373,12 @@ func (d *Downloader) fetchDecryptionKey(ctx context.Context, keyURL string) ([]b
 		return nil, err
 	}
 	defer func() { closeErr := resp.Body.Close(); _ = closeErr }()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("decryption key request failed with status %d: %w", resp.StatusCode, &client.AuthenticationError{
+			Operation:  "decryption key",
+			StatusCode: resp.StatusCode,
+		})
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("decryption key request failed with status %d", resp.StatusCode)
 	}

@@ -154,6 +154,7 @@ func TestTypedNonLoginFailureReachesSafeJobEventAndAPI(t *testing.T) {
 	wsURL, header := startWebSocketTestServer(t, s)
 	conn := dialWebSocket(t, wsURL, header)
 	waitForWebSocketClients(t, s.wsHub, 1)
+	localAPIToken := strings.TrimPrefix(header.Get("Authorization"), "Bearer ")
 	created := createIssue170Job(t, s, header)
 	waitForBackgroundJobWork(t, s)
 
@@ -161,13 +162,13 @@ func TestTypedNonLoginFailureReachesSafeJobEventAndAPI(t *testing.T) {
 	if event.JobID != created.ID || event.Status != StatusFailed || event.Error != wantSummary {
 		t.Fatalf("unexpected non-login failed event: %+v", event)
 	}
-	assertNoIssue170Markers(t, string(rawEvent), bodyMarker, tokenMarker, upstream.URL)
+	assertNoIssue170Markers(t, string(rawEvent), localAPIToken, bodyMarker, tokenMarker, upstream.URL)
 
 	got, rawJob := getIssue170Job(t, s, header, created.ID)
 	if got.Status != StatusFailed || got.Progress != 0 || got.Error != wantSummary {
 		t.Fatalf("non-login job state = status:%q progress:%v error:%q", got.Status, got.Progress, got.Error)
 	}
-	assertNoIssue170Markers(t, rawJob, bodyMarker, tokenMarker, upstream.URL)
+	assertNoIssue170Markers(t, rawJob, localAPIToken, bodyMarker, tokenMarker, upstream.URL)
 }
 
 func createIssue170Job(t *testing.T, s *APIServer, header http.Header) Job {
