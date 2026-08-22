@@ -374,7 +374,8 @@ schema:
 
 `--help --json` and `--json --help` are equivalent. The target command is
 identified by `data.command`; the envelope metadata deliberately identifies the
-operation as `help`.
+operation as `help`. Nested library commands use dotted identifiers:
+`library.list`, `library.show`, and `library.verify`.
 
 Successful JSON commands write exactly one response envelope to stdout. They do
 not write progress bars or warning text, and successful downloads leave stderr

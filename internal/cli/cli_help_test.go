@@ -351,6 +351,8 @@ func TestExecuteNonHelpCompatibilityMatrix(t *testing.T) {
 		{name: "serve positional", args: []string{"serve", "extra"}, want: "serve does not accept positional arguments"},
 		{name: "tui positional", args: []string{"tui", "extra"}, want: "tui does not accept positional arguments"},
 		{name: "courses help after sentinel", args: []string{"courses", "--", "--help"}, want: "courses does not accept positional arguments"},
+		{name: "download help after sentinel", args: []string{"download", "--subject", "1", "--session", "2", "--", "--help"}, want: "download does not accept positional arguments"},
+		{name: "JSON courses help after sentinel", args: []string{"courses", "--json", "--", "--help"}, want: "courses does not accept positional arguments"},
 		{name: "library verify help after sentinel", args: []string{"library", "verify", "--", "--help"}, want: "library artifact not found"},
 	}
 
