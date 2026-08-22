@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.1.26](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.25...impartus-cli-v0.1.26) (2026-08-21)
+
+
+### Features
+
+* add exact lecture automation contracts ([dc231f0](https://github.com/rabesss/impartus-cli/commit/dc231f053fffcd47d92837a37db0a593b87671c0))
+* add exact lecture selection and secure token caching ([0568403](https://github.com/rabesss/impartus-cli/commit/05684039f6eb66d696d6420d2de8003f90e79974))
+* show lecture audio status in TUI ([e2616fa](https://github.com/rabesss/impartus-cli/commit/e2616fa31e05279bf3e19cb912e55c76400e092e))
+
+
+### Bug Fixes
+
+* harden cross-platform token caching ([4979ea9](https://github.com/rabesss/impartus-cli/commit/4979ea9153074d18ddb510e4d131fbcc959195d8))
+* harden post-merge credential checks ([204083b](https://github.com/rabesss/impartus-cli/commit/204083baf62ca691f72e62022971526f03321534))
+* harden post-merge credential checks ([56f0582](https://github.com/rabesss/impartus-cli/commit/56f0582f0514d9383f68e2c3a509daafc8624322))
+* honor explicit false audio mode ([b2745e6](https://github.com/rabesss/impartus-cli/commit/b2745e6133012c1b4356426a1cef637e158a152a))
+* keep audio badges terminal-safe ([3fab54f](https://github.com/rabesss/impartus-cli/commit/3fab54fb5beff65a086b607ce16d27cede9285d6))
+* keep legacy token cache portable on Windows ([463e133](https://github.com/rabesss/impartus-cli/commit/463e1334b9a1c355591ff540589b7f62721451b1))
+* preserve events after exact TTID selection ([91175a3](https://github.com/rabesss/impartus-cli/commit/91175a3c6d0ed2b18184f68f390ac1e6de1faf11))
+* preserve portable token cache paths ([fbec741](https://github.com/rabesss/impartus-cli/commit/fbec7413cefcb2f8e075c3e7e5110f6c6bf974d5))
+
+
+### Documentation
+
+* align token cache validation comment ([b339369](https://github.com/rabesss/impartus-cli/commit/b339369f333cf5a07d0cd3e8f3d8a9092d51f506))
+
+
+### Testing
+
+* close PR 167 review gaps ([60f3aad](https://github.com/rabesss/impartus-cli/commit/60f3aad982a3ca8376bae2405cf5ae1f09ed411e))
+* pin final review contracts ([2b11ea9](https://github.com/rabesss/impartus-cli/commit/2b11ea96c037e3e42441b078337d53b075099625))
+
 ## [0.1.25](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.24...impartus-cli-v0.1.25) (2026-08-17)
 
 
