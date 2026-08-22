@@ -144,6 +144,7 @@ function moveAvailability(context: CommandContext): CommandAvailability {
   if (context.overlay === "help") return available(false)
   if (context.focus === "navigation") return available(true)
   if (context.state.loading || context.focus !== "collection") return available(false)
+  if (context.state.error !== undefined) return available(true, false, "Retry the current view first")
   return available(true, collectionCount(context.state) > 1, "Collection has one or fewer items")
 }
 
@@ -153,18 +154,18 @@ function openAvailability(context: CommandContext): CommandAvailability {
   if (context.focus === "navigation") return available(true, !context.state.loading, "A request is pending")
   if (context.focus !== "collection") return available(false)
   const visible = context.state.screen === "courses" || context.state.screen === "lectures"
-  return available(visible, visible && !context.state.loading && collectionCount(context.state) > 0, "No selection")
+  return available(visible, visible && !context.state.loading && context.state.error === undefined && collectionCount(context.state) > 0, context.state.error === undefined ? "No selection" : "Retry the current view first")
 }
 
 function filterAvailability(context: CommandContext): CommandAvailability {
   const visible = context.overlay === undefined && context.focus === "collection" && context.state.screen !== "playback"
-  return available(visible, visible && !context.state.loading, "A request is pending")
+  return available(visible, visible && !context.state.loading && context.state.error === undefined, context.state.error === undefined ? "A request is pending" : "Retry the current view first")
 }
 
 function lectureAvailability(context: CommandContext): CommandAvailability {
   const visible = context.overlay === undefined && context.state.screen === "lectures"
   const running = context.state.operation?.state === "running"
-  return available(visible, visible && !context.state.loading && !running && collectionCount(context.state) > 0, "Lecture action is unavailable")
+  return available(visible, visible && !context.state.loading && context.state.error === undefined && !running && collectionCount(context.state) > 0, "Lecture action is unavailable")
 }
 
 function operationAvailability(context: CommandContext): CommandAvailability {
@@ -204,9 +205,25 @@ function backAvailability(context: CommandContext): CommandAvailability {
 }
 
 function collectionCount(state: FoundationState): number {
-  if (state.screen === "courses") return state.courses.length
-  if (state.screen === "lectures") return state.lectures.length
-  if (state.screen === "library") return state.artifacts.length
-  if (state.screen === "diagnostics") return state.diagnostics.length
+  if (state.screen === "courses") {
+    const query = normalizedQuery(state.collections.courses.filter)
+    return query === "" ? state.courses.length : state.courses.filter((course) => normalizedQuery(`${course.subjectName} ${course.professorName} ${course.sessionName}`).includes(query)).length
+  }
+  if (state.screen === "lectures") {
+    const query = normalizedQuery(state.collections.lectures.filter)
+    return query === "" ? state.lectures.length : state.lectures.filter((lecture) => normalizedQuery(`${lecture.topic} ${lecture.professorName} ${lecture.classroomName} ${lecture.startTime}`).includes(query)).length
+  }
+  if (state.screen === "library") {
+    const query = normalizedQuery(state.collections.library.filter)
+    return query === "" ? state.artifacts.length : state.artifacts.filter((artifact) => normalizedQuery(artifact.topic).includes(query)).length
+  }
+  if (state.screen === "diagnostics") {
+    const query = normalizedQuery(state.collections.diagnostics.filter)
+    return query === "" ? state.diagnostics.length : state.diagnostics.filter((diagnostic) => normalizedQuery(`${diagnostic.name} ${diagnostic.status} ${diagnostic.detail}`).includes(query)).length
+  }
   return 0
+}
+
+function normalizedQuery(value: string): string {
+  return value.trim().toLocaleLowerCase()
 }

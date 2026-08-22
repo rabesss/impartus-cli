@@ -15,17 +15,11 @@ import (
 func safePresentationText(value string) string {
 	value = ansi.Strip(value)
 	value = strings.Map(func(character rune) rune {
-		if unicode.In(character, unicode.Cf) {
+		if unicode.IsControl(character) || unicode.In(character, unicode.Cf, unicode.Zl, unicode.Zp) {
 			return -1
 		}
 		return character
 	}, value)
 	value = secrets.Scrub(value)
-	value = strings.Map(func(character rune) rune {
-		if unicode.IsControl(character) || unicode.In(character, unicode.Zl, unicode.Zp) {
-			return ' '
-		}
-		return character
-	}, value)
 	return strings.Join(strings.Fields(secrets.Scrub(value)), " ")
 }

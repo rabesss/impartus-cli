@@ -361,7 +361,7 @@ export class FoundationView {
 
   #workspacePanel(width: number | "auto" | `${number}%`, bodyHeight: number): BoxRenderable {
     const panel = panelBox(this.#renderer, paneTitle(screenTitle(this.#state.screen), this.#focus === "collection"), width, this.#focus === "collection")
-    if (this.#state.loading) {
+    if (this.#state.pending !== undefined) {
       panel.add(text(this.#renderer, "Loading current workspace…", COLORS.accent, TextAttributes.BOLD))
       return panel
     }
@@ -370,7 +370,7 @@ export class FoundationView {
       panel.add(text(this.#renderer, this.#state.screen === "playback" ? "Press esc to return." : "Press r to retry or esc to return.", COLORS.dim))
       return panel
     }
-    const rows = Math.max(1, bodyHeight - 4)
+    const rows = Math.max(1, Math.floor((Math.max(1, bodyHeight - 4) + 1) / 2))
     if (this.#state.screen === "courses") this.#renderCourses(panel, rows)
     else if (this.#state.screen === "lectures") this.#renderLectures(panel, rows)
     else if (this.#state.screen === "library") this.#renderArtifacts(panel, rows)
@@ -444,6 +444,12 @@ export class FoundationView {
       panel.add(text(this.#renderer, "Playback is unavailable", COLORS.danger))
       return
     }
+    if (operation.state !== "running") {
+      panel.add(text(this.#renderer, `Playback ${operation.state}`, operation.state === "failed" ? COLORS.danger : COLORS.accent, TextAttributes.BOLD))
+      panel.add(text(this.#renderer, lecture.topic, COLORS.foreground, TextAttributes.BOLD))
+      panel.add(text(this.#renderer, "Press esc to return", COLORS.dim))
+      return
+    }
     panel.add(text(this.#renderer, "Playing in mpv", COLORS.success, TextAttributes.BOLD))
     panel.add(text(this.#renderer, lecture.topic, COLORS.foreground, TextAttributes.BOLD))
     panel.add(text(this.#renderer, `${formatDuration(operation.positionSeconds)} / ${formatDuration(operation.durationSeconds)}`, COLORS.accent))
@@ -503,9 +509,16 @@ export class FoundationView {
     const footer = new BoxRenderable(this.#renderer, { alignItems: "center", border: ["top"], borderColor: COLORS.border, flexDirection: "row", height, justifyContent: "space-between", paddingX: 1, width: "100%" })
     const screen = collectionScreen(this.#state.screen)
     const filter = screen === undefined ? "" : this.#state.collections[screen].filter
+    const hints = footerCommands(this.#commandContext())
+      .filter(({ command }) => command.id !== "app.quit")
+      .slice(0, 6)
+      .map(({ command }) => `${command.keys[0]} ${command.label}`)
+      .join("   ")
     const content = this.#filtering
       ? `Filter: ${filter}█   enter apply   esc close`
-      : footerCommands(this.#commandContext()).slice(0, 6).map(({ command }) => `${command.keys[0]} ${command.label}`).join("   ")
+      : filter !== ""
+        ? `Filter: ${filter}   / edit   ↑↓ navigate`
+        : hints
     footer.add(text(this.#renderer, content, this.#filtering ? COLORS.accent : COLORS.dim))
     footer.add(text(this.#renderer, "q quit", COLORS.dim))
     return footer
@@ -525,9 +538,10 @@ export class FoundationView {
   #paletteOverlay(width: number, height: number): BoxRenderable {
     const overlay = overlayBox(this.#renderer, "Command palette", width, height, 16)
     overlay.add(text(this.#renderer, `> ${this.#paletteQuery}█`, COLORS.accent, TextAttributes.BOLD))
-    const matches = this.#paletteMatches().slice(0, Math.max(1, overlay.height - 6))
-    matches.forEach((entry, index) => {
-      const selected = index === this.#paletteCursor
+    const matches = this.#paletteMatches()
+    const visible = visibleRange(matches, this.#paletteCursor, Math.max(1, overlay.height - 6))
+    visible.items.forEach((entry, index) => {
+      const selected = visible.offset + index === this.#paletteCursor
       const reason = entry.availability.enabled || entry.availability.reason === "" ? "" : ` — ${entry.availability.reason}`
       overlay.add(row(this.#renderer, `${selected ? ">" : " "} ${entry.command.label}${reason}`, selected))
     })

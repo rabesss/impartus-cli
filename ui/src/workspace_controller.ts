@@ -63,6 +63,9 @@ export interface WorkspaceClient {
 }
 
 export type WorkspaceListener = (state: FoundationState) => void
+export type FoundationStateOverrides = Partial<Omit<FoundationState, "collections">> & {
+  collections?: Partial<Record<CollectionScreen, CollectionState>>
+}
 
 export class WorkspaceController {
   readonly #client: WorkspaceClient
@@ -140,8 +143,9 @@ export class WorkspaceController {
   }
 
   public async loadLectures(course: Course, signal?: AbortSignal): Promise<void> {
+    const switchingCourse = this.#state.activeCourse === undefined || courseKey(this.#state.activeCourse) !== courseKey(course)
     const request = this.#begin("lectures", course)
-    this.#set({ ...this.#state, activeCourse: course, screen: "lectures" })
+    this.#set({ ...this.#state, activeCourse: course, lectures: switchingCourse ? [] : this.#state.lectures, screen: "lectures" })
     try {
       const result = await this.#client.lectures(course, signal)
       this.#finish(request, (state) => ({
@@ -243,13 +247,14 @@ export class WorkspaceController {
   }
 }
 
-export function createFoundationState(overrides: Partial<FoundationState> = {}): FoundationState {
+export function createFoundationState(overrides: FoundationStateOverrides = {}): FoundationState {
   const collections = defaultCollections()
+  const { collections: collectionOverrides, ...stateOverrides } = overrides
   return cloneState({
     activeCourse: undefined,
     activeLecture: undefined,
     artifacts: [],
-    collections: { ...collections, ...overrides.collections },
+    collections: { ...collections, ...collectionOverrides },
     courses: [],
     diagnostics: [],
     error: undefined,
@@ -259,7 +264,7 @@ export function createFoundationState(overrides: Partial<FoundationState> = {}):
     pending: undefined,
     screen: "courses",
     status: "Connected",
-    ...overrides,
+    ...stateOverrides,
   })
 }
 

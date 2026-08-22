@@ -68,6 +68,26 @@ describe("WorkspaceController", () => {
     expect(controller.snapshot().activeCourse?.subjectId).toBe(2)
   })
 
+  test("clears another course's lectures before a failed switch", async () => {
+    const client = new DeferredClient()
+    const firstCourse = testCourse(1)
+    const secondCourse = testCourse(2)
+    const controller = new WorkspaceController(client, createFoundationState({
+      activeCourse: firstCourse,
+      lectures: [testLecture(101)],
+      screen: "lectures",
+    }))
+
+    const pending = controller.loadLectures(secondCourse)
+    expect(controller.snapshot().lectures).toEqual([])
+    client.lectureRequests[0]!.reject(new Error("unavailable"))
+    await pending
+
+    expect(controller.snapshot().activeCourse?.subjectId).toBe(2)
+    expect(controller.snapshot().lectures).toEqual([])
+    expect(controller.snapshot().error).toBe("Lecture catalog is unavailable")
+  })
+
   test("blocks every screen navigation while a response is pending", async () => {
     const client = new DeferredClient()
     const controller = new WorkspaceController(client, createFoundationState())
@@ -151,6 +171,17 @@ describe("WorkspaceController", () => {
     expect(controller.snapshot().collections.lectures).toEqual({ filter: "raft", selected: 4 })
     expect(controller.snapshot().collections.library).toEqual({ filter: "local", selected: 2 })
     expect(controller.snapshot().operation?.percent).toBe(50)
+  })
+
+  test("merges partial collection overrides with domain defaults", () => {
+    const state = createFoundationState({
+      collections: { lectures: { filter: "raft", selected: 2 } },
+    })
+
+    expect(state.collections.lectures).toEqual({ filter: "raft", selected: 2 })
+    expect(state.collections.courses).toEqual({ filter: "", selected: 0 })
+    expect(state.collections.library).toEqual({ filter: "", selected: 0 })
+    expect(state.collections.diagnostics).toEqual({ filter: "", selected: 0 })
   })
 })
 

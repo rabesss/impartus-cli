@@ -90,6 +90,50 @@ describe("workspace command registry", () => {
     expect(help.map((entry) => entry.command.id)).toContain("collection.filter")
     expect(help.map((entry) => entry.command.id)).toContain("collection.retry")
   })
+
+  test("disables hidden selection actions for errors and empty filter results", () => {
+    const filtered = commandContext({
+      collections: {
+        courses: { filter: "no-match", selected: 0 },
+        diagnostics: { filter: "", selected: 0 },
+        lectures: { filter: "", selected: 0 },
+        library: { filter: "", selected: 0 },
+      },
+      courses: [{
+        instituteId: 1,
+        professorName: "Professor",
+        sessionId: 2,
+        sessionName: "Session",
+        subjectId: 3,
+        subjectName: "Course",
+        videoCount: 1,
+      }],
+    })
+    expect(commandForKey(filtered, "enter")?.availability.enabled).toBe(false)
+
+    const errored = commandContext({
+      error: "Lecture catalog is unavailable",
+      lectures: [{
+        classroomName: "Room",
+        durationSeconds: 60,
+        instituteId: 1,
+        noAudio: false,
+        professorName: "Professor",
+        sequence: 1,
+        sessionId: 2,
+        sessionName: "Session",
+        startTime: "2026-08-22T00:00:00Z",
+        subjectId: 3,
+        subjectName: "Course",
+        topic: "Old lecture",
+        ttid: 4,
+        views: 0,
+      }],
+      screen: "lectures",
+    })
+    expect(commandForKey(errored, "enter")?.availability.enabled).toBe(false)
+    expect(commandForKey(errored, "d")?.availability.enabled).toBe(false)
+  })
 })
 
 function commandContext(overrides: Partial<CommandContext["state"]> & {

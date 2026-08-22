@@ -49,6 +49,22 @@ describe("FoundationView", () => {
     view.destroy()
   })
 
+  test("keeps a long-list selection visible within panel row gaps", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const state = foundationState()
+    const courses = Array.from({ length: 100 }, (_, index) => course(`Course ${String(index).padStart(3, "0")}`, 2000 + index, index + 1))
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      collections: { ...state.collections, courses: { filter: "", selected: 30 } },
+      courses,
+    }, callbacks())
+
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("> Course 030")
+    view.destroy()
+  })
+
   test("moves and activates the focused wide navigation pane", async () => {
     const setup = await createTestRenderer({ height: 32, kittyKeyboard: true, width: 140 })
     renderers.push(setup)
@@ -175,6 +191,8 @@ describe("FoundationView", () => {
     expect(frame).not.toContain("Distributed Systems")
 
     setup.mockInput.pressEnter()
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("Filter: compiler")
     setup.mockInput.pressEnter()
     expect(opened).toBe("Compilers")
     view.destroy()
@@ -230,6 +248,7 @@ describe("FoundationView", () => {
     expect(frame).toContain("Now playing")
     expect(frame).toContain("15:00 / 01:00:00")
     expect(frame).toContain("volume 100%")
+    expect(frame).not.toContain("q Quit")
 
     await setup.mockInput.typeText(" ")
     setup.mockInput.pressArrow("right")
@@ -245,6 +264,57 @@ describe("FoundationView", () => {
       { action: "speed", value: 1.25 },
       { action: "cycleVideo" },
     ])
+    view.destroy()
+  })
+
+  test("renders terminal playback state without live controls", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const state = foundationState()
+    const activeLecture = lecture(1, "Finished lecture", false)
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      activeLecture,
+      operation: {
+        durationSeconds: 60,
+        id: "playback-id",
+        kind: "playback",
+        muted: false,
+        paused: false,
+        percent: 100,
+        positionSeconds: 60,
+        speed: 1,
+        state: "completed",
+        volume: 100,
+      },
+      screen: "playback",
+    }, callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Playback completed")
+    expect(frame).not.toContain("Playing in mpv")
+    expect(frame).not.toContain("space pause")
+    expect(frame).toContain("Press esc to return")
+    view.destroy()
+  })
+
+  test("keeps collections visible while an operation start response is pending", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const state = foundationState()
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      lectures: [lecture(1, "Visible lecture", false)],
+      loading: true,
+      pending: undefined,
+      screen: "lectures",
+    }, callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Visible lecture")
+    expect(frame).not.toContain("Loading current workspace")
     view.destroy()
   })
 
@@ -272,6 +342,24 @@ describe("FoundationView", () => {
     expect(setup.captureCharFrame()).toContain("Open library")
     setup.mockInput.pressEnter()
     expect(libraryCount).toBe(1)
+    view.destroy()
+  })
+
+  test("scrolls the palette cursor instead of activating an off-screen command", async () => {
+    const setup = await createTestRenderer({ height: 12, kittyKeyboard: true, width: 40 })
+    renderers.push(setup)
+    let diagnosticsCount = 0
+    const view = new FoundationView(setup.renderer, foundationState(), {
+      ...callbacks(),
+      onDiagnostics() { diagnosticsCount++ },
+    })
+
+    setup.mockInput.pressKey("p", { ctrl: true })
+    for (let index = 0; index < 6; index++) setup.mockInput.pressArrow("down")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("> Open diagnostics")
+    setup.mockInput.pressEnter()
+    expect(diagnosticsCount).toBe(1)
     view.destroy()
   })
 
