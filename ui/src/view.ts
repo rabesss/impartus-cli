@@ -368,7 +368,12 @@ export class FoundationView {
     }
     if (this.#state.error !== undefined) {
       panel.add(text(this.#renderer, this.#state.error, COLORS.danger, TextAttributes.BOLD))
-      panel.add(text(this.#renderer, this.#state.screen === "playback" ? "Press esc to return." : "Press r to retry or esc to return.", COLORS.dim))
+      const recovery = this.#state.screen === "playback"
+        ? "Press esc to return."
+        : this.#state.screen === "courses"
+          ? "Press r to retry."
+          : "Press r to retry or esc to return."
+      panel.add(text(this.#renderer, recovery, COLORS.dim))
       return panel
     }
     const rows = Math.max(1, Math.floor((Math.max(1, bodyHeight - 4) + 1) / 2))
@@ -499,7 +504,8 @@ export class FoundationView {
         panel.add(text(this.#renderer, course.subjectName, COLORS.foreground, TextAttributes.BOLD))
         panel.add(text(this.#renderer, course.professorName, COLORS.dim))
         panel.add(text(this.#renderer, `${course.videoCount} lectures`, COLORS.accent))
-        panel.add(text(this.#renderer, "enter  open lectures", COLORS.dim))
+        const open = commandForKey(this.#commandContext(), "enter")
+        if (open?.command.id === "selection.open" && open.availability.enabled) panel.add(text(this.#renderer, "enter  open lectures", COLORS.dim))
         return panel
       }
     }

@@ -476,6 +476,22 @@ describe("FoundationView", () => {
     view.destroy()
   })
 
+  test("does not advertise a dead Escape action on the root error screen", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const view = new FoundationView(setup.renderer, {
+      ...foundationState(),
+      error: "Course catalog is unavailable",
+    }, callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Press r to retry.")
+    expect(frame).not.toContain("esc to return")
+    expect(frame).not.toContain("enter  open lectures")
+    view.destroy()
+  })
+
   test("edits the command palette with vim letters and dispatches its match", async () => {
     const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
     renderers.push(setup)
