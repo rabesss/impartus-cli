@@ -56,9 +56,9 @@ describe("FoundationView", () => {
     const lectures = [lecture(1, "Audio lecture", false), lecture(2, "Visual-only lecture", true)]
     const view = new FoundationView(setup.renderer, {
       ...state,
+      collections: { ...state.collections, lectures: { filter: "", selected: 0 } },
       lectures,
       screen: "lectures",
-      selectedItem: 0,
     }, callbacks())
 
     await setup.renderOnce()
@@ -82,6 +82,8 @@ describe("FoundationView", () => {
     let openCount = 0
     const view = new FoundationView(setup.renderer, foundationState(), {
       onBack() {},
+      onCollectionState() {},
+      onCourses() {},
       onDiagnostics() {},
       onDownload() {},
       onLibrary() {},
@@ -106,7 +108,7 @@ describe("FoundationView", () => {
     setup.mockInput.pressKey("?")
     await setup.renderOnce()
     expect(setup.captureCharFrame()).toContain("Command guide")
-    expect(setup.captureCharFrame()).toContain("download selected")
+    expect(setup.captureCharFrame()).toContain("Open command palette")
 
     setup.mockInput.pressEscape()
     await setup.renderOnce()
@@ -124,8 +126,14 @@ describe("FoundationView", () => {
     const setup = await createTestRenderer({ height: 16, kittyKeyboard: true, width: 60 })
     renderers.push(setup)
     let opened = ""
-    const view = new FoundationView(setup.renderer, foundationState(), {
+    let state = foundationState()
+    let view: FoundationView
+    view = new FoundationView(setup.renderer, state, {
       ...callbacks(),
+      onCollectionState(screen, collection) {
+        state = { ...state, collections: { ...state.collections, [screen]: collection } }
+        view.update(state)
+      },
       onOpenCourse(course) {
         opened = course.subjectName
       },
@@ -212,6 +220,61 @@ describe("FoundationView", () => {
     ])
     view.destroy()
   })
+
+  test("edits the command palette with vim letters and dispatches its match", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    let libraryCount = 0
+    const view = new FoundationView(setup.renderer, foundationState(), {
+      ...callbacks(),
+      onLibrary() { libraryCount++ },
+    })
+
+    setup.mockInput.pressKey("p", { ctrl: true })
+    await setup.mockInput.typeText("junk")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("> junk█")
+    setup.mockInput.pressBackspace()
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("> jun█")
+
+    setup.mockInput.pressEscape()
+    setup.mockInput.pressKey("p", { ctrl: true })
+    await setup.mockInput.typeText("library")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("Open library")
+    setup.mockInput.pressEnter()
+    expect(libraryCount).toBe(1)
+    view.destroy()
+  })
+
+  test("restores pane focus after help and blocks pending palette navigation", async () => {
+    const setup = await createTestRenderer({ height: 32, kittyKeyboard: true, width: 140 })
+    renderers.push(setup)
+    let libraryCount = 0
+    const state = foundationState()
+    const view = new FoundationView(setup.renderer, state, {
+      ...callbacks(),
+      onLibrary() { libraryCount++ },
+    })
+
+    setup.mockInput.pressTab()
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("[ACTIVE] Inspector")
+    setup.mockInput.pressKey("?")
+    setup.mockInput.pressEscape()
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("[ACTIVE] Inspector")
+
+    view.update({ ...state, loading: true })
+    setup.mockInput.pressKey("p", { ctrl: true })
+    await setup.mockInput.typeText("library")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("A request is pending")
+    setup.mockInput.pressEnter()
+    expect(libraryCount).toBe(0)
+    view.destroy()
+  })
 })
 
 function course(subjectName: string, sessionId: number, subjectId: number): Course {
@@ -250,6 +313,12 @@ function foundationState(): FoundationState {
     activeCourse: undefined,
     activeLecture: undefined,
     artifacts: [],
+    collections: {
+      courses: { filter: "", selected: 0 },
+      diagnostics: { filter: "", selected: 0 },
+      lectures: { filter: "", selected: 0 },
+      library: { filter: "", selected: 0 },
+    },
     courses: [
       {
         instituteId: 1,
@@ -275,9 +344,8 @@ function foundationState(): FoundationState {
     lectures: [],
     loading: false,
     operation: undefined,
+    pending: undefined,
     screen: "courses",
-    selectedCourse: 0,
-    selectedItem: 0,
     status: "Connected",
   }
 }
@@ -285,6 +353,8 @@ function foundationState(): FoundationState {
 function callbacks() {
   return {
     onBack() {},
+    onCollectionState() {},
+    onCourses() {},
     onDiagnostics() {},
     onDownload() {},
     onLibrary() {},

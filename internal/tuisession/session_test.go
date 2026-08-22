@@ -630,14 +630,14 @@ func TestSessionProjectsLecturesLibraryAndDiagnosticsWithoutTerminalOrSecretData
 			ClassroomName:  "Room 7",
 			InstituteID:    11,
 			NoAudio:        0,
-			ProfessorName:  "Dr. Rao",
+			ProfessorName:  "to\u200bken=professor-secret",
 			SeqNo:          4,
 			SessionID:      13,
 			SessionName:    "Monsoon",
 			StartTime:      "2026-08-13T10:00:00Z",
 			SubjectID:      12,
 			SubjectName:    "Distributed Systems",
-			Topic:          "Consensus\x1b[31m",
+			Topic:          "to\x1b[31mken=lecture-secret",
 			TTID:           14,
 			Views:          2,
 		}},
@@ -679,7 +679,8 @@ func TestSessionProjectsLecturesLibraryAndDiagnosticsWithoutTerminalOrSecretData
 		t.Fatalf("requested course = %+v", backend.course)
 	}
 	lecture := lectures.Lectures[0]
-	if lecture.TTID != 14 || lecture.Sequence != 4 || lecture.Topic != "Consensus [31m" || lecture.NoAudio {
+	if lecture.TTID != 14 || lecture.Sequence != 4 || lecture.Topic != "token=REDACTED" ||
+		lecture.ProfessorName != "token=REDACTED" || lecture.NoAudio {
 		t.Fatalf("projected lecture = %+v", lecture)
 	}
 

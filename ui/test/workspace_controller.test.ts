@@ -1,0 +1,214 @@
+import { describe, expect, test } from "bun:test"
+
+import type {
+  ArtifactList,
+  Course,
+  CourseList,
+  DiagnosticList,
+  LectureList,
+} from "../src/protocol/types.gen.ts"
+import {
+  WorkspaceController,
+  createFoundationState,
+  type WorkspaceClient,
+} from "../src/workspace_controller.ts"
+
+describe("WorkspaceController", () => {
+  test("applies a matching lecture response and clears loading", async () => {
+    const client = new DeferredClient()
+    const controller = new WorkspaceController(client, createFoundationState())
+    const course = testCourse(3)
+
+    const loading = controller.loadLectures(course)
+    expect(controller.snapshot().loading).toBe(true)
+    expect(controller.snapshot().screen).toBe("lectures")
+    client.lectureRequests[0]!.resolve({ lectures: [testLecture(5)] })
+    await loading
+
+    expect(controller.snapshot().lectures.map((lecture) => lecture.ttid)).toEqual([5])
+    expect(controller.snapshot().loading).toBe(false)
+    expect(controller.snapshot().error).toBeUndefined()
+  })
+
+  test("retries lectures on the same course and always releases loading", async () => {
+    const client = new DeferredClient()
+    const course = testCourse(3)
+    const initial = createFoundationState({ activeCourse: course, screen: "lectures" })
+    const controller = new WorkspaceController(client, initial)
+
+    const failed = controller.retry()
+    client.lectureRequests[0]!.reject(new Error("unavailable"))
+    await failed
+    expect(controller.snapshot().error).toBe("Lecture catalog is unavailable")
+    expect(controller.snapshot().loading).toBe(false)
+
+    const succeeded = controller.retry()
+    client.lectureRequests[1]!.resolve({ lectures: [testLecture(8)] })
+    await succeeded
+    expect(controller.snapshot().lectures.map((lecture) => lecture.ttid)).toEqual([8])
+    expect(controller.snapshot().error).toBeUndefined()
+    expect(controller.snapshot().loading).toBe(false)
+  })
+
+  test("ignores stale responses without clearing a newer request", async () => {
+    const client = new DeferredClient()
+    const controller = new WorkspaceController(client, createFoundationState())
+    const first = controller.loadLectures(testCourse(1))
+    const second = controller.loadLectures(testCourse(2))
+
+    client.lectureRequests[0]!.resolve({ lectures: [testLecture(101)] })
+    await first
+    expect(controller.snapshot().loading).toBe(true)
+    expect(controller.snapshot().lectures).toEqual([])
+
+    client.lectureRequests[1]!.resolve({ lectures: [testLecture(202)] })
+    await second
+    expect(controller.snapshot().loading).toBe(false)
+    expect(controller.snapshot().lectures.map((lecture) => lecture.ttid)).toEqual([202])
+    expect(controller.snapshot().activeCourse?.subjectId).toBe(2)
+  })
+
+  test("blocks every screen navigation while a response is pending", async () => {
+    const client = new DeferredClient()
+    const controller = new WorkspaceController(client, createFoundationState())
+    const pending = controller.loadCourses()
+
+    expect(controller.navigate("courses")).toBe(false)
+    expect(controller.navigate("lectures", testCourse(3))).toBe(false)
+    expect(controller.navigate("library")).toBe(false)
+    expect(controller.navigate("diagnostics")).toBe(false)
+    expect(client.courseRequests).toHaveLength(1)
+    expect(client.lectureRequests).toHaveLength(0)
+    expect(client.artifactRequests).toHaveLength(0)
+    expect(client.diagnosticRequests).toHaveLength(0)
+
+    client.courseRequests[0]!.resolve({ courses: [] })
+    await pending
+    expect(controller.snapshot().loading).toBe(false)
+  })
+
+  test("aborting makes a later response a no-op", async () => {
+    const client = new DeferredClient()
+    const controller = new WorkspaceController(client, createFoundationState())
+    const pending = controller.loadLibrary()
+    controller.abort()
+    client.artifactRequests[0]!.resolve({ artifacts: [{
+      artifactId: "late",
+      fileCount: 1,
+      presentFileCount: 1,
+      producedAt: "2026-08-22T00:00:00Z",
+      sequence: 1,
+      topic: "Late",
+      totalBytes: 1,
+    }] })
+    await pending
+
+    expect(controller.snapshot().artifacts).toEqual([])
+    expect(controller.snapshot().loading).toBe(false)
+  })
+
+  test("operation events preserve controller-owned collection state", () => {
+    const initial = createFoundationState({
+      operation: {
+        durationSeconds: 0,
+        id: "operation-id",
+        kind: "download",
+        muted: false,
+        paused: false,
+        percent: 0,
+        positionSeconds: 0,
+        speed: 1,
+        state: "running",
+        volume: 100,
+      },
+    })
+    const controller = new WorkspaceController(new DeferredClient(), initial)
+    controller.setCollectionState("lectures", { filter: "raft", selected: 4 })
+    controller.setCollectionState("library", { filter: "local", selected: 2 })
+
+    controller.applyEvent({
+      operationId: "operation-id",
+      percent: 50,
+      sequence: 2,
+      state: "running",
+      type: "operation.progress",
+    })
+
+    expect(controller.snapshot().collections.lectures).toEqual({ filter: "raft", selected: 4 })
+    expect(controller.snapshot().collections.library).toEqual({ filter: "local", selected: 2 })
+    expect(controller.snapshot().operation?.percent).toBe(50)
+  })
+})
+
+class DeferredClient implements WorkspaceClient {
+  readonly artifactRequests: Array<Deferred<ArtifactList>> = []
+  readonly courseRequests: Array<Deferred<CourseList>> = []
+  readonly diagnosticRequests: Array<Deferred<DiagnosticList>> = []
+  readonly lectureRequests: Array<Deferred<LectureList>> = []
+
+  public artifacts(): Promise<ArtifactList> {
+    const request = deferred<ArtifactList>()
+    this.artifactRequests.push(request)
+    return request.promise
+  }
+
+  public courses(): Promise<CourseList> {
+    const request = deferred<CourseList>()
+    this.courseRequests.push(request)
+    return request.promise
+  }
+
+  public diagnostics(): Promise<DiagnosticList> {
+    const request = deferred<DiagnosticList>()
+    this.diagnosticRequests.push(request)
+    return request.promise
+  }
+
+  public lectures(_course: Course): Promise<LectureList> {
+    const request = deferred<LectureList>()
+    this.lectureRequests.push(request)
+    return request.promise
+  }
+}
+
+interface Deferred<T> {
+  promise: Promise<T>
+  reject(reason: unknown): void
+  resolve(value: T): void
+}
+
+function deferred<T>(): Deferred<T> {
+  const result = Promise.withResolvers<T>()
+  return { promise: result.promise, reject: result.reject, resolve: result.resolve }
+}
+
+function testCourse(subjectId: number): Course {
+  return {
+    instituteId: 1,
+    professorName: "Professor",
+    sessionId: 2,
+    sessionName: "Session",
+    subjectId,
+    subjectName: `Course ${subjectId}`,
+    videoCount: 1,
+  }
+}
+
+function testLecture(ttid: number): LectureList["lectures"][number] {
+  return {
+    classroomName: "Room",
+    durationSeconds: 60,
+    instituteId: 1,
+    noAudio: false,
+    professorName: "Professor",
+    sequence: 1,
+    sessionId: 2,
+    sessionName: "Session",
+    startTime: "2026-08-22T00:00:00Z",
+    subjectId: 3,
+    subjectName: "Course",
+    topic: "Lecture",
+    ttid,
+    views: 0,
+  }
+}
