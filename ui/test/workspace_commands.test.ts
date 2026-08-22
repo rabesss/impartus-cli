@@ -19,6 +19,9 @@ describe("workspace command registry", () => {
       expect(result?.availability.enabled).toBe(false)
       expect(result?.availability.reason).toContain("request")
     }
+    const selfTest = commandForKey(context, "s")
+    expect(selfTest?.availability.enabled).toBe(false)
+    expect(selfTest?.availability.reason).toContain("request")
   })
 
   test("filters palette labels and keys through one registry", () => {
