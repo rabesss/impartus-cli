@@ -163,7 +163,7 @@ export class FoundationView {
       this.#paletteCursor = 0
       this.#rebuild()
     } else if (printableInput(key)) {
-      this.#paletteQuery = (this.#paletteQuery + key.sequence).slice(0, 120)
+      this.#paletteQuery = truncateGraphemes(this.#paletteQuery + key.sequence, 120)
       this.#paletteCursor = 0
       this.#rebuild()
     }
@@ -575,12 +575,14 @@ export class FoundationView {
       overlay.add(row(this.#renderer, `${selected ? ">" : " "} ${entry.command.label}${reason}`, selected))
     })
     if (matches.length === 0) overlay.add(text(this.#renderer, "No matching commands", COLORS.dim))
+    overlay.add(text(this.#renderer, "↑↓ select   Enter run   Esc close", COLORS.dim))
     return overlay
   }
 
   #navigationOverlay(width: number, height: number): BoxRenderable {
     const overlay = overlayBox(this.#renderer, "Navigation", width, height, 10)
     NAVIGATION.forEach((entry, index) => overlay.add(row(this.#renderer, `${index === this.#navigationCursor ? ">" : " "} ${entry.label}`, index === this.#navigationCursor)))
+    overlay.add(text(this.#renderer, "↑↓ select   Enter open   Esc close", COLORS.dim))
     return overlay
   }
 
@@ -645,6 +647,7 @@ function text(renderer: CliRenderer, content: string, color: string, attributes 
 
 export function lectureAudioLabel(noAudio: boolean): string { return noAudio ? "🎙️× probably no audio" : "🎙️ audio reported" }
 export function courseRailLabels(courses: readonly Course[]): ReadonlyMap<Course, string> { return courseLabels(courses) }
+export function truncateGraphemes(value: string, maximum: number): string { return graphemes(value).slice(0, Math.max(0, maximum)).join("") }
 
 function courseLabels(courses: readonly Course[]): ReadonlyMap<Course, string> {
   const cohorts = new Map<string, Array<{ course: Course; name: string }>>()

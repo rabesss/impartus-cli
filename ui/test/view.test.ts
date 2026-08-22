@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { createTestRenderer, type TestRendererSetup } from "@opentui/core/testing"
 
 import type { Course, Lecture, PlaybackCommand } from "../src/protocol/types.gen.ts"
-import { courseRailLabels, FoundationView, lectureAudioLabel, type FoundationState } from "../src/view.ts"
+import { courseRailLabels, FoundationView, lectureAudioLabel, truncateGraphemes, type FoundationState } from "../src/view.ts"
 
 const renderers: TestRendererSetup[] = []
 
@@ -161,7 +161,7 @@ describe("FoundationView", () => {
     view.destroy()
   })
 
-  test("hides inactive workspace footer commands while an overlay owns input", async () => {
+  test("hides inactive footer commands and keeps live overlay guidance", async () => {
     const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
     renderers.push(setup)
     const view = new FoundationView(setup.renderer, foundationState(), callbacks())
@@ -172,6 +172,16 @@ describe("FoundationView", () => {
 
     expect(footer).not.toContain("q quit")
     expect(footer).not.toContain("l Open library")
+
+    setup.mockInput.pressEscape()
+    setup.mockInput.pressKey("p", { ctrl: true })
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("↑↓ select   Enter run   Esc close")
+
+    setup.mockInput.pressEscape()
+    setup.mockInput.pressKey("g")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("↑↓ select   Enter open   Esc close")
     view.destroy()
   })
 
@@ -612,6 +622,14 @@ describe("FoundationView", () => {
     setup.mockInput.pressEnter()
     expect(libraryCount).toBe(1)
     view.destroy()
+  })
+
+  test("keeps the command palette grapheme-safe at its input limit", () => {
+    const query = `${"a\u0301\u0327".repeat(30)}${"x".repeat(29)}😀`
+
+    expect(query.length).toBe(121)
+    expect(truncateGraphemes(query, 120)).toBe(query)
+    expect(truncateGraphemes(query, 59)).toBe(`${"a\u0301\u0327".repeat(30)}${"x".repeat(29)}`)
   })
 
   test("scrolls the palette cursor instead of activating an off-screen command", async () => {
