@@ -43,8 +43,17 @@ func TestSafePresentationTextRedactsControlSplitCredentialKeys(t *testing.T) {
 }
 
 func TestSafePresentationTextPreservesSafeWhitespaceBoundaries(t *testing.T) {
-	const value = "mpv missing\nrun the installer\tthen retry"
-	if got := safePresentationText(value); got != "mpv missing run the installer then retry" {
-		t.Fatalf("safePresentationText() = %q, want safe whitespace boundaries", got)
+	for name, test := range map[string]struct {
+		value string
+		want  string
+	}{
+		"ordinary whitespace": {value: "mpv missing\nrun the installer\tthen retry", want: "mpv missing run the installer then retry"},
+		"marker collision":    {value: "keep\uE000this\nspacing", want: "keep\uE000this spacing"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := safePresentationText(test.value); got != test.want {
+				t.Fatalf("safePresentationText() = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
