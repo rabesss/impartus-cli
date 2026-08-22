@@ -504,8 +504,11 @@ export class FoundationView {
         panel.add(text(this.#renderer, course.subjectName, COLORS.foreground, TextAttributes.BOLD))
         panel.add(text(this.#renderer, course.professorName, COLORS.dim))
         panel.add(text(this.#renderer, `${course.videoCount} lectures`, COLORS.accent))
-        const open = commandForKey(this.#commandContext(), "enter")
-        if (open?.command.id === "selection.open" && open.availability.enabled) panel.add(text(this.#renderer, "enter  open lectures", COLORS.dim))
+        const context = this.#commandContext()
+        const open = commandForKey(context, "enter")
+        if (context.overlay === undefined && context.focus !== "navigation" && open?.command.id === "selection.open" && open.availability.enabled) {
+          panel.add(text(this.#renderer, "enter  open lectures", COLORS.dim))
+        }
         return panel
       }
     }

@@ -121,6 +121,24 @@ describe("FoundationView", () => {
     view.destroy()
   })
 
+  test("hides the course inspector action when navigation or an overlay owns Enter", async () => {
+    const setup = await createTestRenderer({ height: 32, kittyKeyboard: true, width: 140 })
+    renderers.push(setup)
+    const view = new FoundationView(setup.renderer, foundationState(), callbacks())
+
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("enter  open lectures")
+
+    setup.mockInput.pressKey("g")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).not.toContain("enter  open lectures")
+
+    setup.mockInput.pressKey("?")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).not.toContain("enter  open lectures")
+    view.destroy()
+  })
+
   test("renders the upstream microphone status in lecture rows and inspector", async () => {
     const setup = await createTestRenderer({ height: 18, width: 100 })
     renderers.push(setup)
