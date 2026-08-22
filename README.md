@@ -357,10 +357,10 @@ Response envelope:
 }
 ```
 
-Root JSON help (`--json`, `--json --help`, or `--help --json`) keeps the
-capability payload shown above. Command-specific JSON help writes exactly one
-successful envelope with `meta.command` set to `help` and this stable `data`
-schema:
+Root JSON help (`--json`, `--json --help`, or `--help --json`) keeps the root
+capability payload returned by `./impartus --json`, including `data.name` and
+`data.commands`. Command-specific JSON help writes exactly one successful
+envelope with `meta.command` set to `help` and this stable `data` schema:
 
 ```json
 {
