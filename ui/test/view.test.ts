@@ -311,6 +311,31 @@ describe("FoundationView", () => {
     view.destroy()
   })
 
+  test("keeps the compact filter tail and cursor visible while editing", async () => {
+    const setup = await createTestRenderer({ height: 10, kittyKeyboard: true, width: 40 })
+    renderers.push(setup)
+    let state = foundationState()
+    let view: FoundationView
+    view = new FoundationView(setup.renderer, state, {
+      ...callbacks(),
+      onCollectionState(screen, collection) {
+        state = { ...state, collections: { ...state.collections, [screen]: collection } }
+        view.update(state)
+      },
+    })
+
+    setup.mockInput.pressKey("/")
+    await setup.mockInput.typeText("abcdefghijklmnopqrstuvwxyz")
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+
+    expect(frame).toContain("…vwxyz█")
+    expect(frame).toContain("enter apply")
+    expect(frame).toContain("esc close")
+    expect(frame).not.toContain("q quit")
+    view.destroy()
+  })
+
   test("renders playback telemetry and routes mpv controls", async () => {
     const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
     renderers.push(setup)

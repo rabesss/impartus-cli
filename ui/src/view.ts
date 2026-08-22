@@ -539,14 +539,14 @@ export class FoundationView {
       commandForKey(context, "/")?.availability.enabled === true ? "/ edit" : undefined,
       commandForKey(context, "down")?.availability.enabled === true ? "↑↓ navigate" : undefined,
     ].filter((hint): hint is string => hint !== undefined).join("   ")
+    const innerWidth = Math.max(0, this.#renderer.terminalWidth - 2)
+    const quitWidth = this.#filtering ? 0 : Math.min("q quit".length, innerWidth)
+    const contextualWidth = innerWidth - quitWidth
     const content = this.#filtering
-      ? `Filter: ${filter}█   enter apply   esc close`
+      ? editingFilterFooter(filter, contextualWidth)
       : filter !== ""
         ? `Filter: ${filter}${activeFilterHints === "" ? "" : `   ${activeFilterHints}`}`
         : hints
-    const innerWidth = Math.max(0, this.#renderer.terminalWidth - 2)
-    const quitWidth = Math.min("q quit".length, innerWidth)
-    const contextualWidth = innerWidth - quitWidth
     if (contextualWidth > 0) footer.add(new TextRenderable(this.#renderer, { content, fg: this.#filtering ? COLORS.accent : COLORS.dim, height: 1, truncate: true, width: contextualWidth }))
     if (quitWidth > 0) footer.add(new TextRenderable(this.#renderer, { content: "q quit", fg: COLORS.dim, height: 1, truncate: true, width: quitWidth }))
     return footer
@@ -721,3 +721,18 @@ function formatDuration(seconds: number): string {
 function formatBytes(bytes: number): string { if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`; if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`; return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GiB` }
 function normalizedQuery(value: string): string { return value.trim().toLocaleLowerCase() }
 function clamp(value: number, minimum: number, maximum: number): number { return Math.max(minimum, Math.min(maximum, value)) }
+
+function editingFilterFooter(filter: string, width: number): string {
+  const prefix = "Filter: "
+  const suffix = "█  enter apply esc close"
+  const available = Math.max(0, width - graphemes(prefix).length - graphemes(suffix).length)
+  const characters = graphemes(filter)
+  const query = characters.length <= available
+    ? filter
+    : available <= 0
+      ? ""
+      : available === 1
+        ? "…"
+        : `…${characters.slice(-(available - 1)).join("")}`
+  return `${prefix}${query}${suffix}`
+}
