@@ -414,7 +414,7 @@ export class FoundationView {
     const selected = this.#selectedIndex("library", artifacts.length)
     const visible = visibleRange(artifacts, selected, rows)
     if (visible.items.length === 0) {
-      panel.add(text(this.#renderer, "No downloaded lectures yet", COLORS.dim))
+      panel.add(text(this.#renderer, this.#state.collections.library.filter === "" ? "No downloaded lectures yet" : "No matching downloaded lectures", COLORS.dim))
       return
     }
     visible.items.forEach((artifact, index) => {
@@ -428,7 +428,7 @@ export class FoundationView {
     const selected = this.#selectedIndex("diagnostics", diagnostics.length)
     const visible = visibleRange(diagnostics, selected, rows)
     if (visible.items.length === 0) {
-      panel.add(text(this.#renderer, "No diagnostics reported", COLORS.dim))
+      panel.add(text(this.#renderer, this.#state.collections.diagnostics.filter === "" ? "No diagnostics reported" : "No matching diagnostics", COLORS.dim))
       return
     }
     visible.items.forEach((diagnostic, index) => {
@@ -440,6 +440,11 @@ export class FoundationView {
   #renderPlayback(panel: BoxRenderable): void {
     const lecture = this.#state.activeLecture
     const operation = this.#state.operation
+    if (lecture !== undefined && this.#state.loading) {
+      panel.add(text(this.#renderer, "Starting playback…", COLORS.accent, TextAttributes.BOLD))
+      panel.add(text(this.#renderer, lecture.topic, COLORS.foreground, TextAttributes.BOLD))
+      return
+    }
     if (lecture === undefined || operation?.kind !== "playback") {
       panel.add(text(this.#renderer, "Playback is unavailable", COLORS.danger))
       return

@@ -299,6 +299,40 @@ describe("FoundationView", () => {
     view.destroy()
   })
 
+  test("renders playback startup instead of a false or stale terminal state", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const state = foundationState()
+    const activeLecture = lecture(2, "Starting lecture", false)
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      activeLecture,
+      loading: true,
+      operation: {
+        durationSeconds: 60,
+        id: "prior-playback-id",
+        kind: "playback",
+        muted: false,
+        paused: false,
+        percent: 100,
+        positionSeconds: 60,
+        speed: 1,
+        state: "completed",
+        volume: 100,
+      },
+      pending: undefined,
+      screen: "playback",
+    }, callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Starting playback")
+    expect(frame).toContain("Starting lecture")
+    expect(frame).not.toContain("Playback is unavailable")
+    expect(frame).not.toContain("Playback completed")
+    view.destroy()
+  })
+
   test("keeps collections visible while an operation start response is pending", async () => {
     const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
     renderers.push(setup)
@@ -315,6 +349,35 @@ describe("FoundationView", () => {
     const frame = setup.captureCharFrame()
     expect(frame).toContain("Visible lecture")
     expect(frame).not.toContain("Loading current workspace")
+    view.destroy()
+  })
+
+  test("distinguishes filtered-empty library and diagnostics from empty collections", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const state = foundationState()
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      artifacts: [{ artifactId: "artifact-1", fileCount: 1, presentFileCount: 1, producedAt: "2026-08-22T00:00:00Z", sequence: 1, topic: "Downloaded lecture", totalBytes: 10 }],
+      collections: { ...state.collections, library: { filter: "no-match", selected: 0 } },
+      screen: "library",
+    }, callbacks())
+
+    await setup.renderOnce()
+    let frame = setup.captureCharFrame()
+    expect(frame).toContain("No matching downloaded lectures")
+    expect(frame).not.toContain("No downloaded lectures yet")
+
+    view.update({
+      ...state,
+      collections: { ...state.collections, diagnostics: { filter: "no-match", selected: 0 } },
+      diagnostics: [{ detail: "available", name: "mpv", status: "ok" }],
+      screen: "diagnostics",
+    })
+    await setup.renderOnce()
+    frame = setup.captureCharFrame()
+    expect(frame).toContain("No matching diagnostics")
+    expect(frame).not.toContain("No diagnostics reported")
     view.destroy()
   })
 

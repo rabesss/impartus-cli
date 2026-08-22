@@ -134,6 +134,27 @@ describe("workspace command registry", () => {
     expect(commandForKey(errored, "enter")?.availability.enabled).toBe(false)
     expect(commandForKey(errored, "d")?.availability.enabled).toBe(false)
   })
+
+  test("does not expose the session self-test inside playback", () => {
+    const context = commandContext({
+      operation: {
+        durationSeconds: 60,
+        id: "playback-id",
+        kind: "playback",
+        muted: false,
+        paused: false,
+        percent: 100,
+        positionSeconds: 60,
+        speed: 1,
+        state: "completed",
+        volume: 100,
+      },
+      screen: "playback",
+    })
+
+    expect(commandForKey(context, "s")).toBeUndefined()
+    expect(commandsForHelp(context).map((entry) => entry.command.id)).not.toContain("session.selftest")
+  })
 })
 
 function commandContext(overrides: Partial<CommandContext["state"]> & {

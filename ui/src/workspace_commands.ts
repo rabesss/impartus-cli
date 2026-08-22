@@ -170,7 +170,8 @@ function lectureAvailability(context: CommandContext): CommandAvailability {
 
 function operationAvailability(context: CommandContext): CommandAvailability {
   const running = context.state.operation?.state === "running"
-  return available(context.overlay === undefined, !context.state.loading && !running, "An operation is already running")
+  const visible = context.overlay === undefined && context.state.screen !== "playback"
+  return available(visible, visible && !context.state.loading && !running, "An operation is already running")
 }
 
 function playbackAvailability(context: CommandContext): CommandAvailability {

@@ -4,6 +4,7 @@ import { consumeBootstrap } from "./bootstrap.ts"
 import { SessionClient } from "./client.ts"
 import type { OperationState, PlaybackCommand } from "./protocol/types.gen.ts"
 import { FoundationView } from "./view.ts"
+import { beginPlaybackStart, failOperationStart } from "./workspace_operations.ts"
 import {
   WorkspaceController,
   createFoundationState,
@@ -146,7 +147,7 @@ async function startPlayback(
 ): Promise<void> {
   const state = controller.snapshot()
   if (state.operation?.state === "running" || state.loading) return
-  controller.update((current) => ({ ...current, activeLecture: lecture, error: undefined, loading: true, screen: "playback" }))
+  controller.update((current) => beginPlaybackStart(current, lecture))
   try {
     const operation = await client.startPlayback(lecture, true, signal)
     if (signal.aborted) return
@@ -157,7 +158,7 @@ async function startPlayback(
       status: `Playing ${lecture.topic}`,
     }))
   } catch {
-    if (!signal.aborted) controller.update((current) => ({ ...current, error: "Lecture playback could not start", loading: false }))
+    if (!signal.aborted) controller.update((current) => failOperationStart(current, "playback"))
   }
 }
 
@@ -180,7 +181,7 @@ async function startDownload(
       status: `Downloading ${lecture.topic}`,
     }))
   } catch {
-    if (!signal.aborted) controller.update((current) => ({ ...current, error: "Lecture download could not start", loading: false }))
+    if (!signal.aborted) controller.update((current) => failOperationStart(current, "download"))
   }
 }
 
@@ -193,7 +194,7 @@ async function startSelfTest(client: SessionClient, controller: WorkspaceControl
     if (signal.aborted) return
     controller.update((current) => ({ ...current, loading: false, operation: newOperation(operation.id, operation.kind, operation.state) }))
   } catch {
-    if (!signal.aborted) controller.update((current) => ({ ...current, loading: false, status: "Connection failed" }))
+    if (!signal.aborted) controller.update((current) => failOperationStart(current, "selftest"))
   }
 }
 
