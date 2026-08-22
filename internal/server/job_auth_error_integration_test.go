@@ -148,7 +148,7 @@ func TestTypedNonLoginFailureReachesSafeJobEventAndAPI(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := s.jobStore.Close(ctx); err != nil {
-			t.Errorf("close in-memory job store: %v", err)
+			t.Errorf("close persistent job store: %v", err)
 		}
 	})
 
