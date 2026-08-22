@@ -41,6 +41,9 @@ func sanitizeUpstreamErr(err error) string {
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return "upstream connection failed"
 	}
+	if errors.Is(err, client.ErrAuthentication) {
+		return "upstream authentication failed"
+	}
 	// HTTP status code errors — extract status code from formatted error messages
 	errStr := err.Error()
 	if match := httpStatusRe.FindStringSubmatch(errStr); len(match) > 1 {

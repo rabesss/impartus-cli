@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
@@ -50,16 +51,8 @@ func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, i
 	}
 	defer func() { closeErr := resp.Body.Close(); _ = closeErr }()
 
-	if resp.StatusCode != http.StatusOK {
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
-		if readErr != nil {
-			return "", nil, 0, fmt.Errorf("chunk request failed with status %d and unreadable error body: %w", resp.StatusCode, readErr)
-		}
-		message := secrets.Scrub(strings.TrimSpace(string(body)))
-		if message == "" {
-			return "", nil, 0, fmt.Errorf("chunk request failed with status %d for URL %s", resp.StatusCode, secrets.RedactURL(url))
-		}
-		return "", nil, 0, fmt.Errorf("chunk request failed with status %d for URL %s: %s", resp.StatusCode, secrets.RedactURL(url), message)
+	if statusErr := chunkResponseError(resp, url); statusErr != nil {
+		return "", nil, 0, statusErr
 	}
 
 	outFilepath := filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_%s_%04d.ts.temp", id, view, chunk))
@@ -104,6 +97,27 @@ func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, i
 	removePartial = false
 
 	return outFilepath, nil, bytesWritten, nil
+}
+
+func chunkResponseError(resp *http.Response, url string) error {
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("chunk request failed with status %d for URL %s: %w", resp.StatusCode, secrets.RedactURL(url), &client.AuthenticationError{
+			Operation:  "chunk",
+			StatusCode: resp.StatusCode,
+		})
+	}
+	if resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
+	if readErr != nil {
+		return fmt.Errorf("chunk request failed with status %d and unreadable error body: %w", resp.StatusCode, readErr)
+	}
+	message := secrets.Scrub(strings.TrimSpace(string(body)))
+	if message == "" {
+		return fmt.Errorf("chunk request failed with status %d for URL %s", resp.StatusCode, secrets.RedactURL(url))
+	}
+	return fmt.Errorf("chunk request failed with status %d for URL %s: %s", resp.StatusCode, secrets.RedactURL(url), message)
 }
 
 func (d *Downloader) downloadURL(ctx context.Context, url string, id int, chunk int, view string) (string, int64, error) {

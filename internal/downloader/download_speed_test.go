@@ -236,11 +236,11 @@ func TestPipelineFinalizationRejectsIncompleteResultWithoutCancellation(t *testi
 
 func TestPipelineFailureErrorPreservesMixedCancellationDiagnostics(t *testing.T) {
 	failures := []ChunkFailure{
-		{ChunkID: 0, View: "first", Detail: "upstream failed"},
+		{ChunkID: 0, View: "first", Detail: "upstream failed", Authentication: true},
 		{ChunkID: 1, View: "first", Detail: "context canceled", Canceled: true},
 	}
 	err := errors.Join(context.Canceled, pipelineFailureError(failures))
-	if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "upstream failed") {
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, client.ErrAuthentication) || !strings.Contains(err.Error(), "upstream failed") {
 		t.Fatalf("mixed pipeline error = %v", err)
 	}
 }
@@ -357,6 +357,55 @@ func TestDownloadPlaylistPipelineTreatsUnsetRetryLimitAsOneAttempt(t *testing.T)
 	}
 	if got := chunkRequests.Load(); got != 1 {
 		t.Fatalf("chunk requests = %d, want 1 fallback attempt", got)
+	}
+}
+
+func TestDownloadPlaylistPreservesChunkAuthenticationFailure(t *testing.T) {
+	for _, enablePipeline := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pipeline=%t", enablePipeline), func(t *testing.T) {
+			key := []byte("0123456789abcdef")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/key" {
+					writeDownloadSpeedResponse(w, fakeKeyResponse(key))
+					return
+				}
+				if r.URL.Path == "/chunk-auth" {
+					http.Error(w, "must-not-reach-job-summary", http.StatusUnauthorized)
+					return
+				}
+				http.Error(w, "ordinary-upstream-failure", http.StatusServiceUnavailable)
+			}))
+			defer server.Close()
+
+			cfg := &config.Config{
+				Token:                     "test-token",
+				TempDirLocation:           t.TempDir(),
+				Views:                     "left",
+				EnablePipeline:            enablePipeline,
+				DownloadWorkersPerLecture: 1,
+				DecryptWorkersPerLecture:  1,
+				RateLimit:                 100,
+				APIRateLimit:              20,
+			}
+			d := New(cfg, client.New(server.Client(), nil))
+			d.maxRetries = 1
+
+			_, err := d.DownloadPlaylist(t.Context(), client.ParsedPlaylist{
+				ID:     42,
+				SeqNo:  1,
+				KeyURL: server.URL + "/key",
+				FirstViewURLs: []string{
+					server.URL + "/chunk-auth?access_token=must-not-leak",
+					server.URL + "/chunk-other",
+				},
+			}, nil, nil)
+			if !errors.Is(err, client.ErrAuthentication) {
+				t.Fatalf("DownloadPlaylist error = %v, want ErrAuthentication", err)
+			}
+			if strings.Contains(err.Error(), "must-not-leak") || strings.Contains(err.Error(), "must-not-reach-job-summary") {
+				t.Fatalf("DownloadPlaylist authentication error leaked upstream data: %v", err)
+			}
+		})
 	}
 }
 

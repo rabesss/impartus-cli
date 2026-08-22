@@ -121,6 +121,13 @@ Returned by route handlers in `internal/server/server.go`.
 
 ## Job Errors
 
+Background job objects and `job.failed` WebSocket events use sanitized
+`error` summaries rather than adding envelope error codes. Typed upstream
+authentication failures from login, catalog, playlist, chunk, or decryption-key
+requests are persisted and emitted exactly as `upstream authentication failed`.
+Raw upstream response bodies, URLs, usernames, passwords, and tokens are never
+included in that summary.
+
 | Code | Status | Message | Trigger |
 |------|--------|---------|---------|
 | `JOB_NOT_FOUND` | 404 | Job not found | Job ID doesn't exist in store |

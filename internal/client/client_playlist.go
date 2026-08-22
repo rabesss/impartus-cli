@@ -25,6 +25,12 @@ func (c *Client) getStreamInfos(ctx context.Context, baseURL, token string, lect
 	}
 	defer func() { _ = resp.Body.Close() }() //nolint:errcheck
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("stream info request failed with status %d: %w", resp.StatusCode, &AuthenticationError{
+			Operation:  "stream info",
+			StatusCode: resp.StatusCode,
+		})
+	}
 	if resp.StatusCode != http.StatusOK {
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
 		if readErr != nil {

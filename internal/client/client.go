@@ -76,6 +76,12 @@ func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, e
 	}
 	defer func() { _ = resp.Body.Close() }() //nolint:errcheck
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("subjects request failed with status %d: %w", resp.StatusCode, &AuthenticationError{
+			Operation:  "subjects",
+			StatusCode: resp.StatusCode,
+		})
+	}
 	if resp.StatusCode != http.StatusOK {
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
 		if readErr != nil {
@@ -118,6 +124,12 @@ func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Cou
 	}
 	defer func() { _ = resp.Body.Close() }() //nolint:errcheck
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("lectures request failed with status %d: %w", resp.StatusCode, &AuthenticationError{
+			Operation:  "lectures",
+			StatusCode: resp.StatusCode,
+		})
+	}
 	if resp.StatusCode != http.StatusOK {
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
 		if readErr != nil {
@@ -179,28 +191,10 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 			continue
 		}
 
-		resp, err := c.GetAuthorizedWithToken(ctx, streamURL, token)
+		parsed, err := c.getPlaylist(ctx, streamURL, token, lecture)
 		if err != nil {
 			return parsedPlaylists, err
 		}
-		if resp.StatusCode != http.StatusOK {
-			body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
-			_ = resp.Body.Close() //nolint:errcheck
-			if readErr != nil {
-				return parsedPlaylists, fmt.Errorf("playlist request failed with status %d and unreadable body: %w", resp.StatusCode, readErr)
-			}
-			return parsedPlaylists, fmt.Errorf("playlist request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-		}
-
-		scanner := bufio.NewScanner(resp.Body)
-		parsed, parseErr := parsePlaylist(scanner, streamURL, lecture.TTID, lecture.Topic, lecture.SeqNo)
-		_ = resp.Body.Close() //nolint:errcheck
-		if parseErr != nil {
-			return parsedPlaylists, fmt.Errorf("parse playlist for lecture %d (%s): %w", lecture.TTID, lecture.Topic, parseErr)
-		}
-		parsed.InstituteID = lecture.InstituteID
-		parsed.SubjectID = lecture.SubjectID
-		parsed.SessionID = lecture.SessionID
 		parsedPlaylists = append(parsedPlaylists, parsed)
 	}
 	if len(parsedPlaylists) == 0 && len(unavailableQualities) > 0 {
@@ -213,4 +207,37 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 	}
 
 	return parsedPlaylists, nil
+}
+
+func (c *Client) getPlaylist(ctx context.Context, streamURL, token string, lecture Lecture) (ParsedPlaylist, error) {
+	resp, err := c.GetAuthorizedWithToken(ctx, streamURL, token)
+	if err != nil {
+		return ParsedPlaylist{}, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		_ = resp.Body.Close() //nolint:errcheck
+		return ParsedPlaylist{}, fmt.Errorf("playlist request failed with status %d: %w", resp.StatusCode, &AuthenticationError{
+			Operation:  "playlist",
+			StatusCode: resp.StatusCode,
+		})
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
+		_ = resp.Body.Close() //nolint:errcheck
+		if readErr != nil {
+			return ParsedPlaylist{}, fmt.Errorf("playlist request failed with status %d and unreadable body: %w", resp.StatusCode, readErr)
+		}
+		return ParsedPlaylist{}, fmt.Errorf("playlist request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	parsed, parseErr := parsePlaylist(scanner, streamURL, lecture.TTID, lecture.Topic, lecture.SeqNo)
+	_ = resp.Body.Close() //nolint:errcheck
+	if parseErr != nil {
+		return ParsedPlaylist{}, fmt.Errorf("parse playlist for lecture %d (%s): %w", lecture.TTID, lecture.Topic, parseErr)
+	}
+	parsed.InstituteID = lecture.InstituteID
+	parsed.SubjectID = lecture.SubjectID
+	parsed.SessionID = lecture.SessionID
+	return parsed, nil
 }

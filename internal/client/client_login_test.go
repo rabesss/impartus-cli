@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/rabesss/impartus-cli/internal/config"
@@ -27,20 +27,6 @@ func TestNewLoggedIn(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// storeToken writes ".token" to the CWD; isolate it in a temp dir.
-			prev, err := os.Getwd()
-			if err != nil {
-				t.Fatalf("getwd: %v", err)
-			}
-			if chErr := os.Chdir(t.TempDir()); chErr != nil {
-				t.Fatalf("chdir: %v", chErr)
-			}
-			t.Cleanup(func() {
-				if chErr := os.Chdir(prev); chErr != nil {
-					t.Errorf("failed to restore cwd: %v", chErr)
-				}
-			})
-
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/auth/signin" || r.Method != http.MethodPost {
 					w.WriteHeader(http.StatusNotFound)
@@ -55,7 +41,12 @@ func TestNewLoggedIn(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			cfg := &config.Config{Username: "u", Password: "p", BaseURL: srv.URL}
+			cfg := &config.Config{
+				Username:       "u",
+				Password:       "p",
+				BaseURL:        srv.URL,
+				TokenCachePath: filepath.Join(t.TempDir(), "auth-cache"),
+			}
 			c, err := NewLoggedIn(context.Background(), cfg)
 			if tc.wantErr {
 				if err == nil {
