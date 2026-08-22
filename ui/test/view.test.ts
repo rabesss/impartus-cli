@@ -65,6 +65,25 @@ describe("FoundationView", () => {
     view.destroy()
   })
 
+  test("moves upward from the displayed selection after a collection shrinks", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const state = foundationState()
+    let selected = -1
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      collections: { ...state.collections, courses: { filter: "", selected: 10 } },
+      courses: [course("Course 0", 2000, 1), course("Course 1", 2000, 2), course("Course 2", 2000, 3)],
+    }, {
+      ...callbacks(),
+      onCollectionState(_screen, collection) { selected = collection.selected },
+    })
+
+    setup.mockInput.pressArrow("up")
+    expect(selected).toBe(1)
+    view.destroy()
+  })
+
   test("moves and activates the focused wide navigation pane", async () => {
     const setup = await createTestRenderer({ height: 32, kittyKeyboard: true, width: 140 })
     renderers.push(setup)
@@ -80,6 +99,25 @@ describe("FoundationView", () => {
     setup.mockInput.pressEnter()
 
     expect(diagnosticsCount).toBe(1)
+    view.destroy()
+  })
+
+  test("opens the inspected course when the inspector advertises Enter", async () => {
+    const setup = await createTestRenderer({ height: 32, kittyKeyboard: true, width: 140 })
+    renderers.push(setup)
+    let openCount = 0
+    const view = new FoundationView(setup.renderer, foundationState(), {
+      ...callbacks(),
+      onOpenCourse() { openCount++ },
+    })
+
+    setup.mockInput.pressTab()
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("[ACTIVE] Inspector")
+    expect(setup.captureCharFrame()).toContain("enter  open lectures")
+    setup.mockInput.pressEnter()
+
+    expect(openCount).toBe(1)
     view.destroy()
   })
 

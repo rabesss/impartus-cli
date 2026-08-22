@@ -274,7 +274,8 @@ export class FoundationView {
     const count = this.#currentItems().length
     if (count === 0) return
     const current = this.#state.collections[screen]
-    this.#setCollection(screen, { ...current, selected: clamp(current.selected + delta, 0, count - 1) })
+    const selected = this.#selectedIndex(screen, count)
+    this.#setCollection(screen, { ...current, selected: clamp(selected + delta, 0, count - 1) })
   }
 
   #setCollection(screen: CollectionScreen, state: CollectionState): void {

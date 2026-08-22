@@ -155,7 +155,7 @@ function openAvailability(context: CommandContext): CommandAvailability {
     const enabled = !context.state.loading && context.state.screen !== "playback"
     return available(true, enabled, context.state.screen === "playback" ? "Return from playback first" : "A request is pending")
   }
-  if (context.focus !== "collection") return available(false)
+  if (context.focus !== "collection" && context.focus !== "inspector") return available(false)
   const visible = context.state.screen === "courses" || context.state.screen === "lectures"
   return available(visible, visible && !context.state.loading && context.state.error === undefined && collectionCount(context.state) > 0, context.state.error === undefined ? "No selection" : "Retry the current view first")
 }
