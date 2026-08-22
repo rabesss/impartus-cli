@@ -32,20 +32,22 @@ server, or launch the TUI sidecar.
 flowchart TD
   A[User runs impartus] --> B[cli.Execute]
   B --> C[Strip global json flag]
-  C --> D{Explicit help before sentinel?}
-  D -- Yes --> E[Static human help or one JSON help envelope]
-  D -- No --> F{No command and human mode?}
-  F -- No --> L[Dispatch human or deterministic JSON command]
-  F -- Yes --> G{Both stdin and stdout are TTYs?}
+  C --> D{No command?}
+  D -- Yes --> E{JSON mode?}
+  E -- Yes --> F[Emit capability envelope]
+  E -- No --> G{Both stdin and stdout are TTYs?}
   G -- No --> H[help to stderr + exit 2]
-  G -- Yes --> I[load config, login, open library]
-  I --> J[start private authenticated loopback session]
-  J --> K[write one-use owner-private bootstrap]
-  K --> M[launch adjacent compiled OpenTUI child]
-  M --> N[responsive UI and strict session client]
-  N --> O[internal/tuisession projections and operations]
-  O --> P[internal/app catalog/playback/download/library]
-  P --> Q[Impartus API, native mpv, FFmpeg, private SQLite]
+  D -- No --> I{Explicit help before sentinel?}
+  I -- Yes --> J[Static human help or one JSON help envelope]
+  I -- No --> K[Dispatch human or deterministic JSON command]
+  G -- Yes --> L[load config, login, open library]
+  L --> M[start private authenticated loopback session]
+  M --> N[write one-use owner-private bootstrap]
+  N --> O[launch adjacent compiled OpenTUI child]
+  O --> P[responsive UI and strict session client]
+  P --> Q[internal/tuisession projections and operations]
+  Q --> R[internal/app catalog/playback/download/library]
+  R --> S[Impartus API, native mpv, FFmpeg, private SQLite]
 ```
 
 The Go parent owns login state, the API client, SQLite, downloads, mpv, operation

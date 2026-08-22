@@ -108,8 +108,8 @@ func TestExecuteHumanCommandHelpMatrix(t *testing.T) {
 		{name: "courses", args: []string{"courses", "--help"}, usage: "impartus courses"},
 		{name: "courses short", args: []string{"courses", "-h"}, usage: "impartus courses"},
 		{name: "courses positional before help", args: []string{"courses", "extra", "--help"}, usage: "impartus courses"},
-		{name: "library", args: []string{"library", "--help"}, usage: "impartus library list"},
-		{name: "library short", args: []string{"library", "-h"}, usage: "impartus library list"},
+		{name: "library", args: []string{"library", "--help"}, usage: "impartus library list", description: "Inspect and verify the local lecture library."},
+		{name: "library short", args: []string{"library", "-h"}, usage: "impartus library list", description: "Inspect and verify the local lecture library."},
 		{name: "library verify", args: []string{"library", "verify", "--help"}, usage: "impartus library verify [--hash] [artifact-id]"},
 		{name: "library verify short", args: []string{"library", "verify", "-h"}, usage: "impartus library verify [--hash] [artifact-id]"},
 		{name: "library verify flag before help", args: []string{"library", "verify", "--hash", "--help"}, usage: "impartus library verify [--hash] [artifact-id]"},
@@ -175,7 +175,10 @@ func installHelpDispatchSentinels(t *testing.T) {
 	t.Helper()
 	unreachable := func(name string) error { return errors.New(name + " must not run for help") }
 	runTUIFn = func() error { return unreachable("TUI") }
-	isInteractiveTerminalFn = func() bool { t.Fatal("TTY detection must not run for explicit help"); return false }
+	isInteractiveTerminalFn = func() bool {
+		t.Error("TTY detection must not run for explicit help")
+		return false
+	}
 	runCoursesFn = func([]string) error { return unreachable("courses") }
 	runLecturesFn = func([]string) error { return unreachable("lectures") }
 	runDownloadFn = func([]string) error { return unreachable("download") }
@@ -400,8 +403,12 @@ func TestCommandHelpDefinitionsMatchAdvertisedSurface(t *testing.T) {
 	if err := showHelpTo(&rootHelp, "v1", "d1"); err != nil {
 		t.Fatalf("showHelpTo() error = %v", err)
 	}
+	rootHelpLines := strings.Split(rootHelp.String(), "\n")
 	for name := range advertised {
-		if !strings.Contains(rootHelp.String(), "\n  "+name) {
+		prefix := "  " + name
+		if !slices.ContainsFunc(rootHelpLines, func(line string) bool {
+			return line == prefix || strings.HasPrefix(line, prefix+" ")
+		}) {
 			t.Errorf("root human help does not advertise %q", name)
 		}
 	}
