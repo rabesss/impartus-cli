@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strings"
 )
 
 type commandHelp struct {
@@ -97,6 +98,8 @@ func resolveCommandHelp(args []string) (commandHelp, bool) {
 	if name == "library" && len(args) > 1 {
 		if _, ok := commandHelpByName["library."+args[1]]; ok {
 			name = "library." + args[1]
+		} else if !strings.HasPrefix(args[1], "-") {
+			return commandHelp{}, false
 		}
 	}
 	help, ok := commandHelpByName[name]

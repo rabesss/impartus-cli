@@ -116,6 +116,7 @@ func TestExecuteHumanCommandHelpMatrix(t *testing.T) {
 		{name: "version", args: []string{"version", "--help"}, usage: "impartus version"},
 		{name: "version short", args: []string{"version", "-h"}, usage: "impartus version"},
 		{name: "long version alias help", args: []string{"--version", "--help"}, usage: "impartus version"},
+		{name: "single-dash version alias help", args: []string{"-version", "-h"}, usage: "impartus version"},
 		{name: "short version alias help", args: []string{"-v", "-h"}, usage: "impartus version"},
 		{name: "lectures", args: []string{"lectures", "--help"}, usage: "impartus lectures --subject <id> --session <id>"},
 		{name: "lectures short", args: []string{"lectures", "-h"}, usage: "impartus lectures --subject <id> --session <id>"},
@@ -413,6 +414,7 @@ func TestCommandHelpDefinitionsMatchAdvertisedSurface(t *testing.T) {
 
 func TestUnknownCommandHelpDoesNotBecomeSuccessfulHelp(t *testing.T) {
 	restoreCLIState(t)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
 	os.Args = []string{"impartus", "bogus", "--help"}
 	stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
@@ -438,6 +440,20 @@ func TestUnknownCommandHelpDoesNotBecomeSuccessfulHelp(t *testing.T) {
 	}
 	if envelope.Success || !strings.Contains(envelope.Error.Message, "unknown command: bogus") || envelope.Meta.Command != "bogus" || envelope.Meta.Mode != "json" {
 		t.Fatalf("unknown-command JSON envelope = %+v", envelope)
+	}
+
+	for _, args := range [][]string{
+		{"library", "vrfy", "--help"},
+		{"library", "vrfy", "--help", "--json"},
+	} {
+		os.Args = append([]string{"impartus"}, args...)
+		stdout, stderr, err = captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+		if err == nil || ExitCode(err) != 1 || !strings.Contains(err.Error(), "unknown library command: vrfy") {
+			t.Fatalf("Execute(%v) stdout/stderr/error = %q/%q/%v, want unknown nested command", args, stdout, stderr, err)
+		}
+		if stdout != "" || stderr != "" {
+			t.Fatalf("Execute(%v) stdout/stderr = %q/%q, want empty Execute streams", args, stdout, stderr)
+		}
 	}
 }
 
