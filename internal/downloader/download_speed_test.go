@@ -236,11 +236,11 @@ func TestPipelineFinalizationRejectsIncompleteResultWithoutCancellation(t *testi
 
 func TestPipelineFailureErrorPreservesMixedCancellationDiagnostics(t *testing.T) {
 	failures := []ChunkFailure{
-		{ChunkID: 0, View: "first", Detail: "upstream failed"},
+		{ChunkID: 0, View: "first", Detail: "upstream failed", Authentication: true},
 		{ChunkID: 1, View: "first", Detail: "context canceled", Canceled: true},
 	}
 	err := errors.Join(context.Canceled, pipelineFailureError(failures))
-	if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "upstream failed") {
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, client.ErrAuthentication) || !strings.Contains(err.Error(), "upstream failed") {
 		t.Fatalf("mixed pipeline error = %v", err)
 	}
 }
@@ -369,7 +369,11 @@ func TestDownloadPlaylistPreservesChunkAuthenticationFailure(t *testing.T) {
 					writeDownloadSpeedResponse(w, fakeKeyResponse(key))
 					return
 				}
-				http.Error(w, "must-not-reach-job-summary", http.StatusUnauthorized)
+				if r.URL.Path == "/chunk-auth" {
+					http.Error(w, "must-not-reach-job-summary", http.StatusUnauthorized)
+					return
+				}
+				http.Error(w, "ordinary-upstream-failure", http.StatusServiceUnavailable)
 			}))
 			defer server.Close()
 
@@ -387,10 +391,13 @@ func TestDownloadPlaylistPreservesChunkAuthenticationFailure(t *testing.T) {
 			d.maxRetries = 1
 
 			_, err := d.DownloadPlaylist(t.Context(), client.ParsedPlaylist{
-				ID:            42,
-				SeqNo:         1,
-				KeyURL:        server.URL + "/key",
-				FirstViewURLs: []string{server.URL + "/chunk?access_token=must-not-leak"},
+				ID:     42,
+				SeqNo:  1,
+				KeyURL: server.URL + "/key",
+				FirstViewURLs: []string{
+					server.URL + "/chunk-auth?access_token=must-not-leak",
+					server.URL + "/chunk-other",
+				},
 			}, nil, nil)
 			if !errors.Is(err, client.ErrAuthentication) {
 				t.Fatalf("DownloadPlaylist error = %v, want ErrAuthentication", err)
