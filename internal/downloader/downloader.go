@@ -222,9 +222,13 @@ func (d *Downloader) DownloadPlaylist(ctx context.Context, playlist client.Parse
 
 	downloadedPlaylist := DownloadedPlaylist{Playlist: playlist}
 	var firstFailed, secondFailed int
-	downloadedPlaylist.FirstViewChunks, firstFailed = d.downloadViewChunks(ctx, p, tracker, playlist, playlist.FirstViewURLs, firstViewConfig, decryptionKey)
-	downloadedPlaylist.SecondViewChunks, secondFailed = d.downloadViewChunks(ctx, p, tracker, playlist, playlist.SecondViewURLs, secondViewConfig, decryptionKey)
+	var firstAuthenticationFailed, secondAuthenticationFailed bool
+	downloadedPlaylist.FirstViewChunks, firstFailed, firstAuthenticationFailed = d.downloadViewChunks(ctx, p, tracker, playlist, playlist.FirstViewURLs, firstViewConfig, decryptionKey)
+	downloadedPlaylist.SecondViewChunks, secondFailed, secondAuthenticationFailed = d.downloadViewChunks(ctx, p, tracker, playlist, playlist.SecondViewURLs, secondViewConfig, decryptionKey)
 	if firstFailed > 0 || secondFailed > 0 {
+		if firstAuthenticationFailed || secondAuthenticationFailed {
+			return downloadedPlaylist, fmt.Errorf("%w: download incomplete: %d first-view and %d second-view chunks failed", client.ErrAuthentication, firstFailed, secondFailed)
+		}
 		return downloadedPlaylist, fmt.Errorf("download incomplete: %d first-view and %d second-view chunks failed", firstFailed, secondFailed)
 	}
 	return downloadedPlaylist, nil
@@ -304,8 +308,13 @@ func pipelineFailureError(failures []ChunkFailure) error {
 		return nil
 	}
 	details := make([]string, 0, len(failures))
+	authenticationFailed := false
 	for _, failure := range failures {
 		details = append(details, fmt.Sprintf("%s view chunk %d: %s", failure.View, failure.ChunkID, failure.Detail))
+		authenticationFailed = authenticationFailed || failure.Authentication
+	}
+	if authenticationFailed {
+		return fmt.Errorf("%w: %d chunks failed to download: %s", client.ErrAuthentication, len(failures), strings.Join(details, "; "))
 	}
 	return fmt.Errorf("%d chunks failed to download: %s", len(failures), strings.Join(details, "; "))
 }
@@ -391,13 +400,14 @@ func (d *Downloader) fetchDecryptionKey(ctx context.Context, keyURL string) ([]b
 	return derivedKey, nil
 }
 
-func (d *Downloader) downloadViewChunks(ctx context.Context, p *mpb.Progress, tracker *ProgressTracker, playlist client.ParsedPlaylist, urls []string, vc viewConfig, decryptionKey []byte) ([]string, int) {
+func (d *Downloader) downloadViewChunks(ctx context.Context, p *mpb.Progress, tracker *ProgressTracker, playlist client.ParsedPlaylist, urls []string, vc viewConfig, decryptionKey []byte) ([]string, int, bool) {
 	if len(urls) == 0 || !vc.Included(d.config) {
-		return nil, 0
+		return nil, 0, false
 	}
 	bar := d.newViewBar(p, len(urls), playlist.SeqNo, vc.Label)
 	chunks := make([]string, 0, len(urls))
 	failed := 0
+	authenticationFailed := false
 	for i, chunkURL := range urls {
 		chunkPath, err := d.downloadAndDecryptChunk(ctx, chunkURL, playlist.ID, i, vc.Label, decryptionKey, tracker)
 		if bar != nil {
@@ -406,11 +416,12 @@ func (d *Downloader) downloadViewChunks(ctx context.Context, p *mpb.Progress, tr
 		if err != nil || chunkPath == "" {
 			d.logDiagnostic("chunk %d failed for %s view: %s", i, vc.Label, secrets.ScrubError(err))
 			failed++
+			authenticationFailed = authenticationFailed || errors.Is(err, client.ErrAuthentication)
 			continue
 		}
 		chunks = append(chunks, chunkPath)
 	}
-	return chunks, failed
+	return chunks, failed, authenticationFailed
 }
 
 func (d *Downloader) newViewBar(p *mpb.Progress, total, seqNo int, label string) *mpb.Bar {

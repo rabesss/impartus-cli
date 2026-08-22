@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
@@ -77,10 +78,11 @@ type PipelineResult struct {
 // ChunkFailure retains sortable chunk identity separately from its scrubbed
 // root cause so concurrent completion order cannot leak into user output.
 type ChunkFailure struct {
-	ChunkID  int
-	View     string
-	Detail   string
-	Canceled bool
+	ChunkID        int
+	View           string
+	Detail         string
+	Canceled       bool
+	Authentication bool
 }
 
 // LecturePipeline manages concurrent download and decrypt workers for a single lecture.
@@ -306,9 +308,10 @@ func (p *LecturePipeline) Collect() PipelineResult {
 	for decrypted := range p.decryptedChunks {
 		if decrypted.Err != nil {
 			p.failures = append(p.failures, ChunkFailure{
-				ChunkID: decrypted.ChunkID,
-				View:    decrypted.View,
-				Detail:  secrets.ScrubError(decrypted.Err),
+				ChunkID:        decrypted.ChunkID,
+				View:           decrypted.View,
+				Detail:         secrets.ScrubError(decrypted.Err),
+				Authentication: errors.Is(decrypted.Err, client.ErrAuthentication),
 				Canceled: errors.Is(decrypted.Err, context.Canceled) ||
 					errors.Is(decrypted.Err, context.DeadlineExceeded),
 			})

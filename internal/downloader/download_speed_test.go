@@ -360,6 +360,48 @@ func TestDownloadPlaylistPipelineTreatsUnsetRetryLimitAsOneAttempt(t *testing.T)
 	}
 }
 
+func TestDownloadPlaylistPreservesChunkAuthenticationFailure(t *testing.T) {
+	for _, enablePipeline := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pipeline=%t", enablePipeline), func(t *testing.T) {
+			key := []byte("0123456789abcdef")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/key" {
+					writeDownloadSpeedResponse(w, fakeKeyResponse(key))
+					return
+				}
+				http.Error(w, "must-not-reach-job-summary", http.StatusUnauthorized)
+			}))
+			defer server.Close()
+
+			cfg := &config.Config{
+				Token:                     "test-token",
+				TempDirLocation:           t.TempDir(),
+				Views:                     "left",
+				EnablePipeline:            enablePipeline,
+				DownloadWorkersPerLecture: 1,
+				DecryptWorkersPerLecture:  1,
+				RateLimit:                 100,
+				APIRateLimit:              20,
+			}
+			d := New(cfg, client.New(server.Client(), nil))
+			d.maxRetries = 1
+
+			_, err := d.DownloadPlaylist(t.Context(), client.ParsedPlaylist{
+				ID:            42,
+				SeqNo:         1,
+				KeyURL:        server.URL + "/key",
+				FirstViewURLs: []string{server.URL + "/chunk?access_token=must-not-leak"},
+			}, nil, nil)
+			if !errors.Is(err, client.ErrAuthentication) {
+				t.Fatalf("DownloadPlaylist error = %v, want ErrAuthentication", err)
+			}
+			if strings.Contains(err.Error(), "must-not-leak") || strings.Contains(err.Error(), "must-not-reach-job-summary") {
+				t.Fatalf("DownloadPlaylist authentication error leaked upstream data: %v", err)
+			}
+		})
+	}
+}
+
 func TestDownloadPlaylistPipelineOrdersFailureDetailsByChunkNumber(t *testing.T) {
 	const chunkCount = 11
 
