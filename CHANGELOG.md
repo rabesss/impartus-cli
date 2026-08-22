@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.1.27](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.26...impartus-cli-v0.1.27) (2026-08-22)
+
+
+### Bug Fixes
+
+* **api:** preserve typed authentication failures ([ccf37ee](https://github.com/rabesss/impartus-cli/commit/ccf37ee4e90fc1543841d27bcbcac007b7efd749))
+* **api:** preserve typed authentication failures ([10d8407](https://github.com/rabesss/impartus-cli/commit/10d84079c5a35d99c958a9e4706233be1abdca09))
+* **cli:** make command help explicit ([25b847d](https://github.com/rabesss/impartus-cli/commit/25b847de716f92175c15c7a0cd96b03b62df3ed5))
+* **cli:** make command help explicit ([f7827ff](https://github.com/rabesss/impartus-cli/commit/f7827ff3e6f658077b3115222bf1fa979da267a2))
+* **cli:** reject unknown nested help ([27841bf](https://github.com/rabesss/impartus-cli/commit/27841bf8be36001600f399820d637955a29e50dd))
+* **downloader:** preserve aggregated auth failures ([f221e9d](https://github.com/rabesss/impartus-cli/commit/f221e9dafeb5dbcb96bb9adc668939a50d04d25a))
+* **downloader:** type download-stage auth failures ([950b334](https://github.com/rabesss/impartus-cli/commit/950b334d21c09fcc065447caef86af4219cb292e))
+* stamp source build metadata ([#177](https://github.com/rabesss/impartus-cli/issues/177)) ([9c6ece0](https://github.com/rabesss/impartus-cli/commit/9c6ece0948d53c72f48fccc6a969576418694375))
+
+
+### Documentation
+
+* **api:** document job auth failure summary ([177f4ff](https://github.com/rabesss/impartus-cli/commit/177f4ff6d9836634a81b76e10d9e5960ed5c9f8c))
+* **cli:** clarify nested help identifiers ([01af298](https://github.com/rabesss/impartus-cli/commit/01af2985bbd3480e2ffd0a3bb91db40f0166d27d))
+* **cli:** clarify root JSON help payload ([89223ed](https://github.com/rabesss/impartus-cli/commit/89223ed9cb300cede20eec5e97d0bf1d2ff0f8cf))
+
+
+### Testing
+
+* **api:** compose chunk auth job sanitization ([80c6506](https://github.com/rabesss/impartus-cli/commit/80c6506581dfd8aefa3dbd361746a519be2c53a9))
+* **api:** label persistent cleanup accurately ([cc4ee57](https://github.com/rabesss/impartus-cli/commit/cc4ee572a80f141c83beaf55449eb8808b0892d4))
+* **api:** strengthen typed auth job coverage ([bbaa342](https://github.com/rabesss/impartus-cli/commit/bbaa34293fd2cdcf5a270e4c4a4eb3bb6e659285))
+* **cli:** pin help surface contracts ([c5b9cfb](https://github.com/rabesss/impartus-cli/commit/c5b9cfbe28170bb0b2a58502e8ccf1c5d71042aa))
+* **cli:** pin invalid parent help precedence ([7d6d255](https://github.com/rabesss/impartus-cli/commit/7d6d2557f635cca9fca2bf897187438171929a5f))
+* **cli:** pin short JSON help aliases ([b4ac780](https://github.com/rabesss/impartus-cli/commit/b4ac7801d5ceb02f1ab4f17057c34c22ee76e2cd))
+* **cli:** reconcile hosted help findings ([9dd765f](https://github.com/rabesss/impartus-cli/commit/9dd765f38486c32386b6e02d8f6e6059aeb688d6))
+* **downloader:** pin mixed auth precedence ([f50a0c6](https://github.com/rabesss/impartus-cli/commit/f50a0c699771a0f81fc01ad42575fac52703132c))
+
 ## [0.1.26](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.25...impartus-cli-v0.1.26) (2026-08-21)
 
 
