@@ -85,6 +85,17 @@ describe("workspace command registry", () => {
     }
   })
 
+  test("reports the pending request as the active filter blocker", () => {
+    const filter = commandForKey(commandContext({
+      error: "Course catalog is unavailable",
+      loading: true,
+      screen: "courses",
+    }), "/")
+
+    expect(filter?.availability.enabled).toBe(false)
+    expect(filter?.availability.reason).toBe("A request is pending")
+  })
+
   test("evaluates help and palette commands against the underlying workspace", () => {
     const palette = commandsForPalette(commandContext({ overlay: "palette", screen: "library" }), "filter")
     expect(palette.map((entry) => entry.command.id)).toEqual(["collection.filter"])

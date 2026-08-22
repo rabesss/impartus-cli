@@ -31,9 +31,10 @@ func TestHubSanitizesEventMessagesBeforeDelivery(t *testing.T) {
 
 func TestSafePresentationTextRedactsControlSplitCredentialKeys(t *testing.T) {
 	for name, value := range map[string]string{
-		"c0 control":     "to\x01ken=control-secret",
-		"line separator": "to\u2028ken=separator-secret",
-		"no-break space": "to\u00a0ken=nbsp-secret",
+		"c0 control":      "to\x01ken=control-secret",
+		"line separator":  "to\u2028ken=separator-secret",
+		"multiple spaces": "t o k e n=spaced-secret",
+		"no-break space":  "to\u00a0ken=nbsp-secret",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := safePresentationText(value); got != "token=REDACTED" {
@@ -48,8 +49,10 @@ func TestSafePresentationTextPreservesSafeWhitespaceBoundaries(t *testing.T) {
 		value string
 		want  string
 	}{
-		"ordinary whitespace": {value: "mpv missing\nrun the installer\tthen retry", want: "mpv missing run the installer then retry"},
-		"marker collision":    {value: "keep\uE000this\nspacing", want: "keep\uE000this spacing"},
+		"ordinary whitespace":       {value: "mpv missing\nrun the installer\tthen retry", want: "mpv missing run the installer then retry"},
+		"credential-shaped spacing": {value: "Q&A: key = value slide", want: "Q&A: key = REDACTED slide"},
+		"mixed credential forms":    {value: "token=first keep to ken=second", want: "token=REDACTED keep token=REDACTED"},
+		"marker collision":          {value: "keep\uE000this\nspacing", want: "keep\uE000this spacing"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := safePresentationText(test.value); got != test.want {

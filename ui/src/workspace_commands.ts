@@ -174,7 +174,7 @@ function openAvailability(context: CommandContext): CommandAvailability {
 
 function filterAvailability(context: CommandContext): CommandAvailability {
   const visible = context.overlay === undefined && context.focus === "collection" && context.state.screen !== "playback"
-  return available(visible, visible && !context.state.loading && context.state.error === undefined, context.state.error === undefined ? "A request is pending" : "Retry the current view first")
+  return available(visible, visible && !context.state.loading && context.state.error === undefined, context.state.loading ? "A request is pending" : "Retry the current view first")
 }
 
 function lectureAvailability(context: CommandContext): CommandAvailability {
