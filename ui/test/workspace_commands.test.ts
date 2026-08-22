@@ -177,6 +177,44 @@ describe("workspace command registry", () => {
     expect(commandForKey(context, "tab")).toBeUndefined()
     expect(commandForKey(navigation, "enter")?.availability.enabled).toBe(false)
   })
+
+  test("does not advertise lecture playback while another operation is running", () => {
+    const context = commandContext({
+      lectures: [{
+        classroomName: "Room",
+        durationSeconds: 60,
+        instituteId: 1,
+        noAudio: false,
+        professorName: "Professor",
+        sequence: 1,
+        sessionId: 2,
+        sessionName: "Session",
+        startTime: "2026-08-22T00:00:00Z",
+        subjectId: 3,
+        subjectName: "Course",
+        topic: "Lecture",
+        ttid: 4,
+        views: 0,
+      }],
+      operation: {
+        durationSeconds: 0,
+        id: "download-id",
+        kind: "download",
+        muted: false,
+        paused: false,
+        percent: 25,
+        positionSeconds: 0,
+        speed: 1,
+        state: "running",
+        volume: 100,
+      },
+      screen: "lectures",
+    })
+
+    const open = commandForKey(context, "enter")
+    expect(open?.availability.enabled).toBe(false)
+    expect(open?.availability.reason).toContain("operation")
+  })
 })
 
 function commandContext(overrides: Partial<CommandContext["state"]> & {

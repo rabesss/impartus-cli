@@ -157,7 +157,18 @@ function openAvailability(context: CommandContext): CommandAvailability {
   }
   if (context.focus !== "collection" && context.focus !== "inspector") return available(false)
   const visible = context.state.screen === "courses" || context.state.screen === "lectures"
-  return available(visible, visible && !context.state.loading && context.state.error === undefined && collectionCount(context.state) > 0, context.state.error === undefined ? "No selection" : "Retry the current view first")
+  const runningOperation = context.state.screen === "lectures" && context.state.operation?.state === "running"
+  const enabled = visible && !context.state.loading && context.state.error === undefined && !runningOperation && collectionCount(context.state) > 0
+  const reason = context.state.error !== undefined
+    ? "Retry the current view first"
+    : context.state.loading
+      ? "A request is pending"
+      : runningOperation
+        ? "An operation is already running"
+        : enabled
+          ? ""
+          : "No selection"
+  return available(visible, enabled, reason)
 }
 
 function filterAvailability(context: CommandContext): CommandAvailability {

@@ -438,6 +438,26 @@ describe("FoundationView", () => {
     view.destroy()
   })
 
+  test("does not inspect a course when the active domain has no matching selection", async () => {
+    const setup = await createTestRenderer({ height: 32, kittyKeyboard: true, width: 140 })
+    renderers.push(setup)
+    const state = foundationState()
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      collections: { ...state.collections, lectures: { filter: "no-match", selected: 0 } },
+      lectures: [lecture(1, "Visible only without the filter", false)],
+      screen: "lectures",
+    }, callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("No matching lectures")
+    expect(frame).toContain("No selection")
+    expect(frame).not.toContain("enter  open lectures")
+    expect(frame).not.toContain("Distributed Systems")
+    view.destroy()
+  })
+
   test("does not advertise disabled filter controls in an errored active-filter footer", async () => {
     const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
     renderers.push(setup)

@@ -493,13 +493,17 @@ export class FoundationView {
         return panel
       }
     }
-    const course = this.#selectedCourse()
-    if (course !== undefined) {
-      panel.add(text(this.#renderer, course.subjectName, COLORS.foreground, TextAttributes.BOLD))
-      panel.add(text(this.#renderer, course.professorName, COLORS.dim))
-      panel.add(text(this.#renderer, `${course.videoCount} lectures`, COLORS.accent))
-      panel.add(text(this.#renderer, "enter  open lectures", COLORS.dim))
-    } else panel.add(text(this.#renderer, "No selection", COLORS.dim))
+    if (this.#state.screen === "courses") {
+      const course = this.#selectedCourse()
+      if (course !== undefined) {
+        panel.add(text(this.#renderer, course.subjectName, COLORS.foreground, TextAttributes.BOLD))
+        panel.add(text(this.#renderer, course.professorName, COLORS.dim))
+        panel.add(text(this.#renderer, `${course.videoCount} lectures`, COLORS.accent))
+        panel.add(text(this.#renderer, "enter  open lectures", COLORS.dim))
+        return panel
+      }
+    }
+    panel.add(text(this.#renderer, "No selection", COLORS.dim))
     return panel
   }
 
