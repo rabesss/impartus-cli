@@ -362,6 +362,7 @@ export class FoundationView {
 
   #workspacePanel(width: number | "auto" | `${number}%`, bodyHeight: number): BoxRenderable {
     const panel = panelBox(this.#renderer, paneTitle(screenTitle(this.#state.screen), this.#focus === "collection"), width, this.#focus === "collection")
+    panel.flexGrow = 1
     if (this.#state.pending !== undefined) {
       panel.add(text(this.#renderer, "Loading current workspace…", COLORS.accent, TextAttributes.BOLD))
       return panel
@@ -543,8 +544,11 @@ export class FoundationView {
       : filter !== ""
         ? `Filter: ${filter}${activeFilterHints === "" ? "" : `   ${activeFilterHints}`}`
         : hints
-    footer.add(text(this.#renderer, content, this.#filtering ? COLORS.accent : COLORS.dim))
-    footer.add(text(this.#renderer, "q quit", COLORS.dim))
+    const innerWidth = Math.max(0, this.#renderer.terminalWidth - 2)
+    const quitWidth = Math.min("q quit".length, innerWidth)
+    const contextualWidth = innerWidth - quitWidth
+    if (contextualWidth > 0) footer.add(new TextRenderable(this.#renderer, { content, fg: this.#filtering ? COLORS.accent : COLORS.dim, height: 1, truncate: true, width: contextualWidth }))
+    if (quitWidth > 0) footer.add(new TextRenderable(this.#renderer, { content: "q quit", fg: COLORS.dim, height: 1, truncate: true, width: quitWidth }))
     return footer
   }
 
@@ -617,7 +621,7 @@ export class FoundationView {
 }
 
 function bodyBox(renderer: CliRenderer): BoxRenderable {
-  return new BoxRenderable(renderer, { flexDirection: "row", flexGrow: 1, gap: 1, padding: 1, width: "100%" })
+  return new BoxRenderable(renderer, { flexDirection: "row", flexGrow: 1, gap: 1, paddingX: 1, width: "100%" })
 }
 
 function panelBox(renderer: CliRenderer, title: string, width: number | "auto" | `${number}%`, focused: boolean): BoxRenderable {

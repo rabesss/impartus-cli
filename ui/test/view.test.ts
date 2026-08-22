@@ -49,6 +49,21 @@ describe("FoundationView", () => {
     view.destroy()
   })
 
+  test("fills the reserved workspace width when collection content is short", async () => {
+    for (const { height, width } of [{ height: 24, width: 80 }, { height: 32, width: 140 }]) {
+      const setup = await createTestRenderer({ height, width })
+      renderers.push(setup)
+      const view = new FoundationView(setup.renderer, foundationState(), callbacks())
+
+      await setup.renderOnce()
+      const titleRow = setup.captureCharFrame().split("\n").find((line) => line.includes("Inspector"))
+
+      expect(titleRow).toBeDefined()
+      expect(titleRow!.lastIndexOf("╮")).toBe(width - 2)
+      view.destroy()
+    }
+  })
+
   test("keeps a long-list selection visible within panel row gaps", async () => {
     const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
     renderers.push(setup)
@@ -225,6 +240,22 @@ describe("FoundationView", () => {
     expect(selfTestCount).toBe(1)
     expect(quitCount).toBe(2)
     expect(openCount).toBe(1)
+    view.destroy()
+  })
+
+  test("keeps the compact 40x10 workspace and footer from overlapping", async () => {
+    const setup = await createTestRenderer({ height: 10, kittyKeyboard: true, width: 40 })
+    renderers.push(setup)
+    const view = new FoundationView(setup.renderer, foundationState(), callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+
+    expect(frame).toContain("[ACTIVE] Learning workspace")
+    expect(frame).toContain("Distributed Systems")
+    expect(frame).toContain("q quit")
+    expect(frame.split("\n")).toHaveLength(11)
+    expect(frame.split("\n").slice(0, 10).every((line) => line.length === 40)).toBe(true)
     view.destroy()
   })
 
