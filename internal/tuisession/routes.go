@@ -12,10 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/rabesss/impartus-cli/internal/client"
-	"github.com/rabesss/impartus-cli/internal/secrets"
 	"github.com/rabesss/impartus-cli/internal/tuiproto"
 )
 
@@ -365,24 +363,13 @@ func projectDiagnostics(diagnostics []Diagnostic) []tuiproto.Diagnostic {
 	return projected
 }
 
-func safePresentationText(value string) string {
-	value = secrets.Scrub(value)
-	value = strings.Map(func(character rune) rune {
-		if unicode.IsControl(character) || unicode.In(character, unicode.Cf, unicode.Zl, unicode.Zp) {
-			return ' '
-		}
-		return character
-	}, value)
-	return strings.Join(strings.Fields(value), " ")
-}
-
 func methodNotAllowed(writer http.ResponseWriter, allowed string) {
 	writer.Header().Set("Allow", allowed)
 	writeProblem(writer, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 }
 
 func writeProblem(writer http.ResponseWriter, status int, code, message string) {
-	writeJSON(writer, status, tuiproto.Problem{Code: code, Error: secrets.Scrub(message)})
+	writeJSON(writer, status, tuiproto.Problem{Code: code, Error: safePresentationText(message)})
 }
 
 func writeJSON(writer http.ResponseWriter, status int, value any) {

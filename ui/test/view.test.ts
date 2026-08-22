@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { createTestRenderer, type TestRendererSetup } from "@opentui/core/testing"
 
 import type { Course, Lecture, PlaybackCommand } from "../src/protocol/types.gen.ts"
+import { truncateGraphemes } from "../src/text_input.ts"
 import { courseRailLabels, FoundationView, lectureAudioLabel, type FoundationState } from "../src/view.ts"
 
 const renderers: TestRendererSetup[] = []
@@ -49,6 +50,142 @@ describe("FoundationView", () => {
     view.destroy()
   })
 
+  test("fills the reserved workspace width when collection content is short", async () => {
+    for (const { height, width } of [{ height: 24, width: 80 }, { height: 32, width: 140 }]) {
+      const setup = await createTestRenderer({ height, width })
+      renderers.push(setup)
+      const view = new FoundationView(setup.renderer, foundationState(), callbacks())
+
+      await setup.renderOnce()
+      const titleRow = setup.captureCharFrame().split("\n").find((line) => line.includes("Inspector"))
+
+      expect(titleRow).toBeDefined()
+      expect(titleRow!.lastIndexOf("╮")).toBe(width - 2)
+      view.destroy()
+    }
+  })
+
+  test("keeps a long-list selection visible within panel row gaps", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const state = foundationState()
+    const courses = Array.from({ length: 100 }, (_, index) => course(`Course ${String(index).padStart(3, "0")}`, 2000 + index, index + 1))
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      collections: { ...state.collections, courses: { filter: "", selected: 30 } },
+      courses,
+    }, callbacks())
+
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("> Course 030")
+    view.destroy()
+  })
+
+  test("moves upward from the displayed selection after a collection shrinks", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const state = foundationState()
+    let selected = -1
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      collections: { ...state.collections, courses: { filter: "", selected: 10 } },
+      courses: [course("Course 0", 2000, 1), course("Course 1", 2000, 2), course("Course 2", 2000, 3)],
+    }, {
+      ...callbacks(),
+      onCollectionState(_screen, collection) { selected = collection.selected },
+    })
+
+    setup.mockInput.pressArrow("up")
+    expect(selected).toBe(1)
+    view.destroy()
+  })
+
+  test("moves and activates the focused wide navigation pane", async () => {
+    const setup = await createTestRenderer({ height: 32, kittyKeyboard: true, width: 140 })
+    renderers.push(setup)
+    let diagnosticsCount = 0
+    const view = new FoundationView(setup.renderer, foundationState(), {
+      ...callbacks(),
+      onDiagnostics() { diagnosticsCount++ },
+    })
+
+    setup.mockInput.pressKey("g")
+    setup.mockInput.pressArrow("down")
+    setup.mockInput.pressArrow("down")
+    setup.mockInput.pressEnter()
+
+    expect(diagnosticsCount).toBe(1)
+    view.destroy()
+  })
+
+  test("opens the inspected course when the inspector advertises Enter", async () => {
+    const setup = await createTestRenderer({ height: 32, kittyKeyboard: true, width: 140 })
+    renderers.push(setup)
+    let openCount = 0
+    const view = new FoundationView(setup.renderer, foundationState(), {
+      ...callbacks(),
+      onOpenCourse() { openCount++ },
+    })
+
+    setup.mockInput.pressTab()
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("[ACTIVE] Inspector")
+    expect(setup.captureCharFrame()).toContain("enter  open lectures")
+    setup.mockInput.pressEnter()
+
+    expect(openCount).toBe(1)
+    view.destroy()
+  })
+
+  test("hides the course inspector action when navigation or an overlay owns Enter", async () => {
+    const setup = await createTestRenderer({ height: 32, kittyKeyboard: true, width: 140 })
+    renderers.push(setup)
+    const view = new FoundationView(setup.renderer, foundationState(), callbacks())
+
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("enter  open lectures")
+
+    setup.mockInput.pressKey("p", { ctrl: true })
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).not.toContain("enter  open lectures")
+
+    setup.mockInput.pressEscape()
+    setup.mockInput.pressKey("/")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("enter apply")
+    expect(setup.captureCharFrame()).not.toContain("enter  open lectures")
+
+    setup.mockInput.pressEnter()
+    setup.mockInput.pressKey("g")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).not.toContain("enter  open lectures")
+    view.destroy()
+  })
+
+  test("hides inactive footer commands and keeps live overlay guidance", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const view = new FoundationView(setup.renderer, foundationState(), callbacks())
+
+    setup.mockInput.pressKey("?")
+    await setup.renderOnce()
+    const footer = setup.captureCharFrame().split("\n").slice(-3).join("\n")
+
+    expect(footer).not.toContain("q quit")
+    expect(footer).not.toContain("l Open library")
+
+    setup.mockInput.pressEscape()
+    setup.mockInput.pressKey("p", { ctrl: true })
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("↑↓ select   Enter run   Esc close")
+
+    setup.mockInput.pressEscape()
+    setup.mockInput.pressKey("g")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("↑↓ select   Enter open   Esc close")
+    view.destroy()
+  })
+
   test("renders the upstream microphone status in lecture rows and inspector", async () => {
     const setup = await createTestRenderer({ height: 18, width: 100 })
     renderers.push(setup)
@@ -56,9 +193,9 @@ describe("FoundationView", () => {
     const lectures = [lecture(1, "Audio lecture", false), lecture(2, "Visual-only lecture", true)]
     const view = new FoundationView(setup.renderer, {
       ...state,
+      collections: { ...state.collections, lectures: { filter: "", selected: 0 } },
       lectures,
       screen: "lectures",
-      selectedItem: 0,
     }, callbacks())
 
     await setup.renderOnce()
@@ -82,6 +219,8 @@ describe("FoundationView", () => {
     let openCount = 0
     const view = new FoundationView(setup.renderer, foundationState(), {
       onBack() {},
+      onCollectionState() {},
+      onCourses() {},
       onDiagnostics() {},
       onDownload() {},
       onLibrary() {},
@@ -106,10 +245,19 @@ describe("FoundationView", () => {
     setup.mockInput.pressKey("?")
     await setup.renderOnce()
     expect(setup.captureCharFrame()).toContain("Command guide")
-    expect(setup.captureCharFrame()).toContain("download selected")
+    expect(setup.captureCharFrame()).toContain("Open command palette")
 
-    setup.mockInput.pressEscape()
+    setup.mockInput.pressBackspace()
     await setup.renderOnce()
+    expect(setup.captureCharFrame()).not.toContain("Command guide")
+
+    setup.mockInput.pressKey("g")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("Navigation")
+    setup.mockInput.pressBackspace()
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).not.toContain("Navigation")
+
     setup.mockInput.pressEnter()
     setup.mockInput.pressKey("s")
     setup.mockInput.pressKey("q")
@@ -120,12 +268,53 @@ describe("FoundationView", () => {
     view.destroy()
   })
 
+  test("keeps the compact 40x10 workspace and footer from overlapping", async () => {
+    const setup = await createTestRenderer({ height: 10, kittyKeyboard: true, width: 40 })
+    renderers.push(setup)
+    const view = new FoundationView(setup.renderer, foundationState(), callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+
+    expect(frame).toContain("[ACTIVE] Learning workspace")
+    expect(frame).toContain("Distributed Systems")
+    expect(frame).toContain("q quit")
+    expect(frame.split("\n")).toHaveLength(11)
+    expect(frame.split("\n").slice(0, 10).every((line) => line.length === 40)).toBe(true)
+    view.destroy()
+  })
+
+  test("routes shifted letter input through lowercase command bindings", async () => {
+    const setup = await createTestRenderer({ height: 12, kittyKeyboard: true, width: 40 })
+    renderers.push(setup)
+    let libraryCount = 0
+    let quitCount = 0
+    const view = new FoundationView(setup.renderer, foundationState(), {
+      ...callbacks(),
+      onLibrary() { libraryCount++ },
+      onQuit() { quitCount++ },
+    })
+
+    setup.mockInput.pressKey("l", { shift: true })
+    setup.mockInput.pressKey("q", { shift: true })
+
+    expect(libraryCount).toBe(1)
+    expect(quitCount).toBe(1)
+    view.destroy()
+  })
+
   test("filters the live catalog without rendering hidden rows", async () => {
     const setup = await createTestRenderer({ height: 16, kittyKeyboard: true, width: 60 })
     renderers.push(setup)
     let opened = ""
-    const view = new FoundationView(setup.renderer, foundationState(), {
+    let state = foundationState()
+    let view: FoundationView
+    view = new FoundationView(setup.renderer, state, {
       ...callbacks(),
+      onCollectionState(screen, collection) {
+        state = { ...state, collections: { ...state.collections, [screen]: collection } }
+        view.update(state)
+      },
       onOpenCourse(course) {
         opened = course.subjectName
       },
@@ -140,8 +329,58 @@ describe("FoundationView", () => {
     expect(frame).not.toContain("Distributed Systems")
 
     setup.mockInput.pressEnter()
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("Filter: compiler")
     setup.mockInput.pressEnter()
     expect(opened).toBe("Compilers")
+    view.destroy()
+  })
+
+  test("keeps the compact filter tail and cursor visible while editing", async () => {
+    const setup = await createTestRenderer({ height: 10, kittyKeyboard: true, width: 40 })
+    renderers.push(setup)
+    let state = foundationState()
+    let view: FoundationView
+    view = new FoundationView(setup.renderer, state, {
+      ...callbacks(),
+      onCollectionState(screen, collection) {
+        state = { ...state, collections: { ...state.collections, [screen]: collection } }
+        view.update(state)
+      },
+    })
+
+    setup.mockInput.pressKey("/")
+    await setup.mockInput.typeText("abcdefghijklmnopqrstuvwxyz")
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+
+    expect(frame).toContain("…vwxyz█")
+    expect(frame).toContain("enter apply")
+    expect(frame).toContain("esc close")
+    expect(frame).not.toContain("q quit")
+    view.destroy()
+  })
+
+  test("keeps collection filter input grapheme-safe at its limit", async () => {
+    const setup = await createTestRenderer({ height: 16, kittyKeyboard: true, width: 60 })
+    renderers.push(setup)
+    let state = foundationState()
+    let view: FoundationView
+    view = new FoundationView(setup.renderer, state, {
+      ...callbacks(),
+      onCollectionState(screen, collection) {
+        state = { ...state, collections: { ...state.collections, [screen]: collection } }
+        view.update(state)
+      },
+    })
+    const prefix = `${"a\u0301\u0327".repeat(30)}${"x".repeat(29)}`
+    const query = `${prefix}😀`
+
+    setup.mockInput.pressKey("/")
+    await setup.mockInput.typeText(prefix)
+    setup.mockInput.pressKey("😀")
+
+    expect(state.collections.courses.filter).toBe(query)
     view.destroy()
   })
 
@@ -195,6 +434,7 @@ describe("FoundationView", () => {
     expect(frame).toContain("Now playing")
     expect(frame).toContain("15:00 / 01:00:00")
     expect(frame).toContain("volume 100%")
+    expect(frame).not.toContain("q Quit")
 
     await setup.mockInput.typeText(" ")
     setup.mockInput.pressArrow("right")
@@ -210,6 +450,285 @@ describe("FoundationView", () => {
       { action: "speed", value: 1.25 },
       { action: "cycleVideo" },
     ])
+    view.destroy()
+  })
+
+  test("renders terminal playback state without live controls", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const state = foundationState()
+    const activeLecture = lecture(1, "Finished lecture", false)
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      activeLecture,
+      operation: {
+        durationSeconds: 60,
+        id: "playback-id",
+        kind: "playback",
+        muted: false,
+        paused: false,
+        percent: 100,
+        positionSeconds: 60,
+        speed: 1,
+        state: "completed",
+        volume: 100,
+      },
+      screen: "playback",
+    }, callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Playback completed")
+    expect(frame).not.toContain("Playing in mpv")
+    expect(frame).not.toContain("space pause")
+    expect(frame).toContain("Press esc to return")
+    view.destroy()
+  })
+
+  test("renders playback startup instead of a false or stale terminal state", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const state = foundationState()
+    const activeLecture = lecture(2, "Starting lecture", false)
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      activeLecture,
+      loading: true,
+      operation: {
+        durationSeconds: 60,
+        id: "prior-playback-id",
+        kind: "playback",
+        muted: false,
+        paused: false,
+        percent: 100,
+        positionSeconds: 60,
+        speed: 1,
+        state: "completed",
+        volume: 100,
+      },
+      pending: undefined,
+      screen: "playback",
+    }, callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Starting playback")
+    expect(frame).toContain("Starting lecture")
+    expect(frame).not.toContain("Playback is unavailable")
+    expect(frame).not.toContain("Playback completed")
+    view.destroy()
+  })
+
+  test("keeps collections visible while an operation start response is pending", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const state = foundationState()
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      lectures: [lecture(1, "Visible lecture", false)],
+      loading: true,
+      pending: undefined,
+      screen: "lectures",
+    }, callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Visible lecture")
+    expect(frame).not.toContain("Loading current workspace")
+    view.destroy()
+  })
+
+  test("distinguishes filtered-empty library and diagnostics from empty collections", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const state = foundationState()
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      artifacts: [{ artifactId: "artifact-1", fileCount: 1, presentFileCount: 1, producedAt: "2026-08-22T00:00:00Z", sequence: 1, topic: "Downloaded lecture", totalBytes: 10 }],
+      collections: { ...state.collections, library: { filter: "no-match", selected: 0 } },
+      screen: "library",
+    }, callbacks())
+
+    await setup.renderOnce()
+    let frame = setup.captureCharFrame()
+    expect(frame).toContain("No matching downloaded lectures")
+    expect(frame).not.toContain("No downloaded lectures yet")
+
+    view.update({
+      ...state,
+      collections: { ...state.collections, diagnostics: { filter: "no-match", selected: 0 } },
+      diagnostics: [{ detail: "available", name: "mpv", status: "ok" }],
+      screen: "diagnostics",
+    })
+    await setup.renderOnce()
+    frame = setup.captureCharFrame()
+    expect(frame).toContain("No matching diagnostics")
+    expect(frame).not.toContain("No diagnostics reported")
+    view.destroy()
+  })
+
+  test("does not inspect a course when the active domain has no matching selection", async () => {
+    const setup = await createTestRenderer({ height: 32, kittyKeyboard: true, width: 140 })
+    renderers.push(setup)
+    const state = foundationState()
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      collections: { ...state.collections, lectures: { filter: "no-match", selected: 0 } },
+      lectures: [lecture(1, "Visible only without the filter", false)],
+      screen: "lectures",
+    }, callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("No matching lectures")
+    expect(frame).toContain("No selection")
+    expect(frame).not.toContain("enter  open lectures")
+    expect(frame).not.toContain("Distributed Systems")
+    view.destroy()
+  })
+
+  test("does not advertise disabled filter controls in an errored active-filter footer", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const state = foundationState()
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      collections: { ...state.collections, courses: { filter: "compiler", selected: 0 } },
+      error: "Course catalog is unavailable",
+    }, callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Filter: compiler")
+    expect(frame).not.toContain("/ edit")
+    expect(frame).not.toContain("navigate")
+    view.destroy()
+  })
+
+  test("does not advertise a dead Escape action on the root error screen", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const view = new FoundationView(setup.renderer, {
+      ...foundationState(),
+      error: "Course catalog is unavailable",
+    }, callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Press r to retry.")
+    expect(frame).not.toContain("esc to return")
+    expect(frame).not.toContain("enter  open lectures")
+    view.destroy()
+  })
+
+  test("edits the command palette with vim letters and dispatches its match", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    let libraryCount = 0
+    const view = new FoundationView(setup.renderer, foundationState(), {
+      ...callbacks(),
+      onLibrary() { libraryCount++ },
+    })
+
+    setup.mockInput.pressKey("p", { ctrl: true })
+    await setup.mockInput.typeText("junk")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("> junk█")
+    setup.mockInput.pressBackspace()
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("> jun█")
+
+    setup.mockInput.pressEscape()
+    setup.mockInput.pressKey("p", { ctrl: true })
+    await setup.mockInput.typeText("library")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("Open library")
+    setup.mockInput.pressEnter()
+    expect(libraryCount).toBe(1)
+    view.destroy()
+  })
+
+  test("keeps the command palette grapheme-safe at its input limit", () => {
+    const query = `${"a\u0301\u0327".repeat(30)}${"x".repeat(29)}😀`
+
+    expect(query.length).toBe(121)
+    expect(truncateGraphemes(query, 120)).toBe(query)
+    expect(truncateGraphemes(query, 59)).toBe(`${"a\u0301\u0327".repeat(30)}${"x".repeat(29)}`)
+  })
+
+  test("scrolls the palette cursor instead of activating an off-screen command", async () => {
+    const setup = await createTestRenderer({ height: 12, kittyKeyboard: true, width: 40 })
+    renderers.push(setup)
+    let diagnosticsCount = 0
+    const view = new FoundationView(setup.renderer, foundationState(), {
+      ...callbacks(),
+      onDiagnostics() { diagnosticsCount++ },
+    })
+
+    setup.mockInput.pressKey("p", { ctrl: true })
+    for (let index = 0; index < 6; index++) setup.mockInput.pressArrow("down")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("> Open diagnostics")
+    setup.mockInput.pressEnter()
+    expect(diagnosticsCount).toBe(1)
+    view.destroy()
+  })
+
+  test("restores pane focus after help and blocks pending palette navigation", async () => {
+    const setup = await createTestRenderer({ height: 32, kittyKeyboard: true, width: 140 })
+    renderers.push(setup)
+    let libraryCount = 0
+    const state = foundationState()
+    const view = new FoundationView(setup.renderer, state, {
+      ...callbacks(),
+      onLibrary() { libraryCount++ },
+    })
+
+    setup.mockInput.pressTab()
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("[ACTIVE] Inspector")
+    setup.mockInput.pressKey("?")
+    setup.mockInput.pressEscape()
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("[ACTIVE] Inspector")
+
+    view.update({ ...state, loading: true })
+    setup.mockInput.pressKey("p", { ctrl: true })
+    await setup.mockInput.typeText("library")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("A request is pending")
+    setup.mockInput.pressEnter()
+    expect(libraryCount).toBe(0)
+    view.destroy()
+  })
+
+  test("does not advertise retry on an unretryable playback-start error", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const state = foundationState()
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      error: "Lecture playback could not start",
+      screen: "playback",
+    }, callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Press esc to return.")
+    expect(frame).not.toContain("Press r to retry")
+    view.destroy()
+  })
+
+  test("collapses fixed chrome when no workspace row fits", async () => {
+    const setup = await createTestRenderer({ height: 5, kittyKeyboard: true, width: 40 })
+    renderers.push(setup)
+    const view = new FoundationView(setup.renderer, foundationState(), callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).not.toContain("selection]")
+    expect(frame).toContain("q quit")
+    expect(frame.trimEnd().split("\n")).toHaveLength(5)
     view.destroy()
   })
 })
@@ -250,6 +769,12 @@ function foundationState(): FoundationState {
     activeCourse: undefined,
     activeLecture: undefined,
     artifacts: [],
+    collections: {
+      courses: { filter: "", selected: 0 },
+      diagnostics: { filter: "", selected: 0 },
+      lectures: { filter: "", selected: 0 },
+      library: { filter: "", selected: 0 },
+    },
     courses: [
       {
         instituteId: 1,
@@ -275,9 +800,8 @@ function foundationState(): FoundationState {
     lectures: [],
     loading: false,
     operation: undefined,
+    pending: undefined,
     screen: "courses",
-    selectedCourse: 0,
-    selectedItem: 0,
     status: "Connected",
   }
 }
@@ -285,6 +809,8 @@ function foundationState(): FoundationState {
 function callbacks() {
   return {
     onBack() {},
+    onCollectionState() {},
+    onCourses() {},
     onDiagnostics() {},
     onDownload() {},
     onLibrary() {},
