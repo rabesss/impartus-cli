@@ -8,6 +8,7 @@ import {
 } from "@opentui/core"
 
 import type { ArtifactSummary, Course, Diagnostic, Lecture, PlaybackCommand } from "./protocol/types.gen.ts"
+import { graphemes, truncateGraphemes } from "./text_input.ts"
 import {
   commandForKey,
   commandsForHelp,
@@ -194,7 +195,7 @@ export class FoundationView {
     if (normalized === "backspace") {
       this.#setCollection(screen, { filter: graphemes(collection.filter).slice(0, -1).join(""), selected: 0 })
     } else if (printableInput(key)) {
-      this.#setCollection(screen, { filter: (collection.filter + key.sequence).slice(0, 120), selected: 0 })
+      this.#setCollection(screen, { filter: truncateGraphemes(collection.filter + key.sequence, 120), selected: 0 })
     }
   }
 
@@ -647,7 +648,6 @@ function text(renderer: CliRenderer, content: string, color: string, attributes 
 
 export function lectureAudioLabel(noAudio: boolean): string { return noAudio ? "🎙️× probably no audio" : "🎙️ audio reported" }
 export function courseRailLabels(courses: readonly Course[]): ReadonlyMap<Course, string> { return courseLabels(courses) }
-export function truncateGraphemes(value: string, maximum: number): string { return graphemes(value).slice(0, Math.max(0, maximum)).join("") }
 
 function courseLabels(courses: readonly Course[]): ReadonlyMap<Course, string> {
   const cohorts = new Map<string, Array<{ course: Course; name: string }>>()
@@ -713,7 +713,6 @@ function commonLeadingTokens(values: readonly string[]): number {
 
 function sameCourseCatalog(left: readonly Course[], right: readonly Course[]): boolean { return left.length === right.length && left.every((course, index) => course === right[index]) }
 function middleEllipsis(value: string, width: number): string { const characters = graphemes(value); if (characters.length <= width) return value; const available = width - 1; const leading = Math.ceil(available / 2); const trailing = Math.floor(available / 2); return `${characters.slice(0, leading).join("")}…${characters.slice(-trailing).join("")}` }
-function graphemes(value: string): string[] { return Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value), ({ segment }) => segment) }
 function screenTitle(screen: FoundationState["screen"]): string { if (screen === "lectures") return "Lecture workspace"; if (screen === "library") return "Local library"; if (screen === "diagnostics") return "Diagnostics"; if (screen === "playback") return "Now playing"; return "Learning workspace" }
 function padSequence(sequence: number): string { return String(Math.max(0, sequence)).padStart(3, "0") }
 

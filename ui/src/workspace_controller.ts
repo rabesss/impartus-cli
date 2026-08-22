@@ -11,6 +11,7 @@ import type {
   OperationKind,
   OperationState,
 } from "./protocol/types.gen.ts"
+import { truncateGraphemes } from "./text_input.ts"
 
 export type FoundationScreen = "courses" | "diagnostics" | "lectures" | "library" | "playback"
 export type CollectionScreen = Exclude<FoundationScreen, "playback">
@@ -103,7 +104,7 @@ export class WorkspaceController {
       collections: {
         ...this.#state.collections,
         [screen]: {
-          filter: state.filter.slice(0, 120),
+          filter: truncateGraphemes(state.filter, 120),
           selected: Math.max(0, Math.floor(state.selected)),
         },
       },

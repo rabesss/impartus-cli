@@ -2,7 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { createTestRenderer, type TestRendererSetup } from "@opentui/core/testing"
 
 import type { Course, Lecture, PlaybackCommand } from "../src/protocol/types.gen.ts"
-import { courseRailLabels, FoundationView, lectureAudioLabel, truncateGraphemes, type FoundationState } from "../src/view.ts"
+import { truncateGraphemes } from "../src/text_input.ts"
+import { courseRailLabels, FoundationView, lectureAudioLabel, type FoundationState } from "../src/view.ts"
 
 const renderers: TestRendererSetup[] = []
 
@@ -357,6 +358,29 @@ describe("FoundationView", () => {
     expect(frame).toContain("enter apply")
     expect(frame).toContain("esc close")
     expect(frame).not.toContain("q quit")
+    view.destroy()
+  })
+
+  test("keeps collection filter input grapheme-safe at its limit", async () => {
+    const setup = await createTestRenderer({ height: 16, kittyKeyboard: true, width: 60 })
+    renderers.push(setup)
+    let state = foundationState()
+    let view: FoundationView
+    view = new FoundationView(setup.renderer, state, {
+      ...callbacks(),
+      onCollectionState(screen, collection) {
+        state = { ...state, collections: { ...state.collections, [screen]: collection } }
+        view.update(state)
+      },
+    })
+    const prefix = `${"a\u0301\u0327".repeat(30)}${"x".repeat(29)}`
+    const query = `${prefix}😀`
+
+    setup.mockInput.pressKey("/")
+    await setup.mockInput.typeText(prefix)
+    setup.mockInput.pressKey("😀")
+
+    expect(state.collections.courses.filter).toBe(query)
     view.destroy()
   })
 

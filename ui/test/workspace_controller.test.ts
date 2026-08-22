@@ -177,6 +177,15 @@ describe("WorkspaceController", () => {
     expect(controller.snapshot().operation?.percent).toBe(50)
   })
 
+  test("clamps externally supplied filters without splitting graphemes", () => {
+    const controller = new WorkspaceController(new DeferredClient(), createFoundationState())
+    const filter = `${"a\u0301\u0327".repeat(30)}${"x".repeat(29)}😀`
+
+    controller.setCollectionState("courses", { filter, selected: 0 })
+
+    expect(controller.snapshot().collections.courses.filter).toBe(filter)
+  })
+
   test("reconciles a terminal operation event delivered before the start response", () => {
     const controller = new WorkspaceController(new DeferredClient(), createFoundationState({ loading: true }))
 
