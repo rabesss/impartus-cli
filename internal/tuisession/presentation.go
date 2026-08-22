@@ -1,6 +1,7 @@
 package tuisession
 
 import (
+	"net/url"
 	"regexp"
 	"strings"
 	"unicode"
@@ -10,8 +11,8 @@ import (
 	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
-var spacedAssignmentCandidate = regexp.MustCompile(`(?i)([a-z0-9_-]+(?: +[a-z0-9_-]+)+)(["']? *[:=])`)
-var spacedSchemeCandidate = regexp.MustCompile(`(?i)([a-z0-9_-]+)(["']? *[:=] *)([a-z0-9_-]+(?: +[a-z0-9_-]+)+)`)
+var spacedAssignmentCandidate = regexp.MustCompile(`(?i)([a-z0-9_-]+(?: +[a-z0-9_-]+)+)( *["']? *[:=])`)
+var spacedSchemeCandidate = regexp.MustCompile(`(?i)([a-z0-9_-]+)( *["']? *[:=] *)([a-z0-9_-]+(?: +[a-z0-9_-]+)+)`)
 var spacedURLAssignmentCandidate = regexp.MustCompile(`(?i)([?&]) *([a-z0-9_-]+(?: +[a-z0-9_-]+)*) *= *`)
 
 // safePresentationText removes terminal syntax and invisible key-splitting
@@ -19,19 +20,102 @@ var spacedURLAssignmentCandidate = regexp.MustCompile(`(?i)([?&]) *([a-z0-9_-]+(
 // human-readable text boundary exposed to the OpenTUI sidecar.
 func safePresentationText(value string) string {
 	stripped := ansi.Strip(value)
-	safe, _ := sanitizePresentationText(stripped)
-	if stripped != value {
+	safe, redacted := sanitizePresentationText(stripped)
+	if stripped != value && !redacted {
 		// ANSI parsers legitimately consume the final byte of a short escape
-		// sequence. That byte can also be credential syntax (for example ESC
-		// followed by '=' or a character inside "token"). Re-run detection with
-		// controls removed but printable bytes preserved; if that view exposes a
-		// credential, discard the adversarial message rather than risk returning
-		// a value whose key or delimiter the terminal parser erased.
-		if _, redacted := sanitizePresentationText(value); redacted {
-			return "REDACTED"
+		// sequence, while OSC and related strings can hide printable payload.
+		// Those bytes can be credential syntax (for example a character inside
+		// "token"). Re-run detection with both raw printable bytes and terminal
+		// payload preserved. If either view exposes a credential that the normal
+		// stripped view missed, discard the adversarial message. When the normal
+		// view already redacted the credential, retain its useful safe context.
+		for _, candidate := range []string{value, terminalSequencePayloadView(value)} {
+			if _, candidateRedacted := sanitizePresentationText(candidate); candidateRedacted {
+				return "REDACTED"
+			}
 		}
 	}
 	return safe
+}
+
+func terminalSequencePayloadView(value string) string {
+	var payload strings.Builder
+	state := byte(ansi.NormalState)
+	for len(value) > 0 {
+		sequence, width, consumed, nextState := ansi.DecodeSequence(value, state, nil)
+		if consumed <= 0 {
+			payload.WriteString(value)
+			break
+		}
+		state = nextState
+		if width > 0 || !isTerminalSequence(sequence) {
+			payload.WriteString(sequence)
+		} else {
+			payload.WriteString(terminalSequencePayload(sequence))
+		}
+		value = value[consumed:]
+	}
+	return payload.String()
+}
+
+func isTerminalSequence(sequence string) bool {
+	return ansi.HasEscPrefix(sequence) || ansi.HasCsiPrefix(sequence) || isTerminalStringSequence(sequence)
+}
+
+func terminalSequencePayload(sequence string) string {
+	if ansi.HasCsiPrefix(sequence) {
+		return csiCredentialPayload(sequence)
+	}
+	if isTerminalStringSequence(sequence) {
+		return terminalStringPayload(sequence)
+	}
+	if ansi.HasEscPrefix(sequence) && len(sequence) > 1 {
+		return sequence[len(sequence)-1:]
+	}
+	return ""
+}
+
+func isTerminalStringSequence(sequence string) bool {
+	return ansi.HasOscPrefix(sequence) || ansi.HasDcsPrefix(sequence) || ansi.HasApcPrefix(sequence) ||
+		ansi.HasSosPrefix(sequence) || ansi.HasPmPrefix(sequence)
+}
+
+func csiCredentialPayload(sequence string) string {
+	// CSI parameter syntax can consume credential characters beyond the final
+	// command byte. Preserve key/delimiter-shaped bytes while dropping the
+	// introducer and numeric/style parameters so both `ESC[k` inside a key and
+	// `ESC[0=a` across a delimiter reconstruct a detection view.
+	start := 1
+	if ansi.HasEscPrefix(sequence) {
+		start = 2
+	}
+	var payload strings.Builder
+	for _, character := range sequence[start:] {
+		if unicode.IsLetter(character) || strings.ContainsRune("_-:=\"'", character) {
+			payload.WriteRune(character)
+		}
+	}
+	return payload.String()
+}
+
+func terminalStringPayload(sequence string) string {
+	prefix := 1
+	if ansi.HasEscPrefix(sequence) {
+		prefix = 2
+	}
+	end := len(sequence)
+	if end > prefix && (sequence[end-1] == ansi.BEL || sequence[end-1] == ansi.ST) {
+		end--
+	} else if end >= prefix+2 && sequence[end-2:] == "\x1b\\" {
+		end -= 2
+	}
+	body := sequence[prefix:end]
+	if ansi.HasOscPrefix(sequence) {
+		if separator := strings.IndexByte(body, ';'); separator >= 0 {
+			body = body[separator+1:]
+		}
+	}
+	return body
 }
 
 func sanitizePresentationText(value string) (string, bool) {
@@ -59,6 +143,7 @@ func sanitizePresentationText(value string) (string, bool) {
 	markedURLs = compactMarkedHTTPSchemes(markedURLs, marker)
 	safeURLs := secrets.ScrubCredentialURLs(markedURLs)
 	redacted := safeURLs != markedURLs
+	safeURLs = strings.ReplaceAll(safeURLs, url.QueryEscape(marker), marker)
 	spaced = strings.ReplaceAll(safeURLs, marker, " ")
 	compacted := compactSplitCredentialSchemes(compactSplitCredentialKeys(spaced))
 	splitSafe := secrets.Scrub(compacted)

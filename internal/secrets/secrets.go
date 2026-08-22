@@ -48,13 +48,16 @@ var userinfoRe = regexp.MustCompile(`(?i)(https?://)[^/\s:@]+:[^/\s@]+@`)
 var sensitiveAssignmentKey = buildSensitiveAssignmentKey()
 var credentialSchemes = []string{"bearer", "basic", "token", "apikey", "oauth"}
 var quotedSecretValue = regexp.MustCompile(
-	`(?i)(\b` + sensitiveAssignmentKey + `"\s*:\s*")((?:\\.|[^"\\])*)`,
+	`(?i)(\b` + sensitiveAssignmentKey + `\s*["']\s*[:=]\s*")((?:\\.|[^"\\])*)`,
 )
 var singleQuotedSecretValue = regexp.MustCompile(
-	`(?i)(\b` + sensitiveAssignmentKey + `'\s*[:=]\s*')((?:\\.|[^'\\])*)`,
+	`(?i)(\b` + sensitiveAssignmentKey + `\s*["']\s*[:=]\s*')((?:\\.|[^'\\])*)`,
+)
+var quotedKeySchemeSecretValue = regexp.MustCompile(
+	`(?i)(\b` + sensitiveAssignmentKey + `\s*["']\s*[:=]\s*)(?:` + strings.Join(credentialSchemes, "|") + `)\s+[^\s,;}]+`,
 )
 var quotedKeyBareSecretValue = regexp.MustCompile(
-	`(?i)(\b` + sensitiveAssignmentKey + `["']\s*[:=]\s*)[^\s"',;}][^\s,;}]*`,
+	`(?i)(\b` + sensitiveAssignmentKey + `\s*["']\s*[:=]\s*)[^\s"',;}][^\s,;}]*`,
 )
 var strongCredentialAssignment = regexp.MustCompile(
 	`(?i)(^|[^/\\a-z0-9_-])((?:authorization|proxy[-_]?authorization|auth|(?:x[-_])?api[-_]?key)\s*[:=]\s*)[^\r\n]+`,
@@ -123,7 +126,13 @@ func ScrubURLs(s string) string {
 	if s == "" {
 		return s
 	}
-	return urlTokenRe.ReplaceAllStringFunc(s, RedactURL)
+	return urlTokenRe.ReplaceAllStringFunc(s, func(rawURL string) string {
+		redacted, changed := redactURL(rawURL)
+		if !changed {
+			return rawURL
+		}
+		return redacted
+	})
 }
 
 // ScrubCredentialURLs redacts only URL candidates that actually contain
@@ -226,6 +235,7 @@ func Scrub(s string) string {
 	scrubbed := ScrubURLs(s)
 	scrubbed = quotedSecretValue.ReplaceAllString(scrubbed, "${1}REDACTED")
 	scrubbed = singleQuotedSecretValue.ReplaceAllString(scrubbed, "${1}REDACTED")
+	scrubbed = quotedKeySchemeSecretValue.ReplaceAllString(scrubbed, "${1}REDACTED")
 	scrubbed = quotedKeyBareSecretValue.ReplaceAllString(scrubbed, "${1}REDACTED")
 	scrubbed = strongCredentialAssignment.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
 	scrubbed = schemeSecretAssignment.ReplaceAllString(scrubbed, "${1}${2}REDACTED")

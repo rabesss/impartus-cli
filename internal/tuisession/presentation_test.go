@@ -1,6 +1,7 @@
 package tuisession
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -100,18 +101,80 @@ func TestSafePresentationTextRedactsEscapeAtEveryCredentialBoundary(t *testing.T
 	for name, value := range map[string]string{
 		"assignment": "token=assignmentsecret",
 		"query URL":  "https://example.com/path?token=querysecret",
-		"userinfo":   "https://user:password@example.com/",
+		"userinfo":   "https://alice:zzzzzz@example.com/",
 	} {
 		t.Run(name, func(t *testing.T) {
 			for index := 1; index < len(value); index++ {
 				got := safePresentationText(value[:index] + "\x1b" + value[index:])
 				compact := strings.ReplaceAll(got, " ", "")
-				if strings.Contains(compact, "assignmentsecret") || strings.Contains(compact, "querysecret") || strings.Contains(compact, "password") || strings.Contains(got, "@") {
+				if strings.Contains(compact, "assignmentsecret") || strings.Contains(compact, "querysecret") || strings.Contains(compact, "zzz") || strings.Contains(got, "@") {
 					t.Fatalf("credential split at %d = %q", index, got)
 				}
+				// URL userinfo is removed rather than replaced with a marker; the
+				// repeated-secret assertion above catches even partial exposure.
 				if name != "userinfo" && !strings.Contains(got, "REDACTED") {
 					t.Fatalf("credential split at %d = %q, want redaction marker", index, got)
 				}
+			}
+		})
+	}
+}
+
+func TestSafePresentationTextRejectsCompleteEscapeSequenceCredentialSplits(t *testing.T) {
+	for name, value := range map[string]string{
+		"CSI final byte":        "to\x1b[ken=csi-secret",
+		"CSI crosses delimiter": "token\x1b[0=assignmentsecret",
+		"OSC body":              "to\x1b]k\x07en=osc-secret",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := safePresentationText(value)
+			if strings.Contains(got, "secret") || !strings.Contains(got, "REDACTED") {
+				t.Fatalf("safePresentationText() = %q, want credential redaction", got)
+			}
+		})
+	}
+}
+
+func TestSafePresentationTextPreservesContextWhenANSISurroundsCredentialValue(t *testing.T) {
+	const value = "retry token=\x1b[31msecret\x1b[0m after refresh"
+	const want = "retry token=REDACTED after refresh"
+	if got := safePresentationText(value); got != want {
+		t.Fatalf("safePresentationText() = %q, want %q", got, want)
+	}
+}
+
+func TestSafePresentationTextDoesNotExposeInternalMarkersInCredentialURLs(t *testing.T) {
+	const value = "https://exa mple.com/?token=url-secret"
+	const want = "https://exa mple.com/?token=REDACTED"
+	if got := safePresentationText(value); got != want {
+		t.Fatalf("safePresentationText() = %q, want %q", got, want)
+	}
+}
+
+func TestSafePresentationTextRedactsSplitQuotedKeysWithTrailingWhitespace(t *testing.T) {
+	for whitespaceName, separator := range map[string]string{
+		"space":          " ",
+		"no-break space": "\u00a0",
+		"tab":            "\t",
+		"line separator": "\u2028",
+		"thin space":     "\u2009",
+		"ideographic":    "\u3000",
+		"vertical tab":   "\v",
+	} {
+		t.Run(whitespaceName, func(t *testing.T) {
+			for shapeName, value := range map[string]string{
+				"quoted key":       fmt.Sprintf(`"token%s": "spotleak"`, separator),
+				"JSON key":         fmt.Sprintf(`{"token%s": "spotleak"}`, separator),
+				"single quoted":    fmt.Sprintf(`'token%s': spotleak`, separator),
+				"split quoted key": fmt.Sprintf(`"to%sken%s": "spotleak"`, separator, separator),
+				"suffix key":       fmt.Sprintf(`"client_secret%s": "spotleak"`, separator),
+			} {
+				t.Run(shapeName, func(t *testing.T) {
+					got := safePresentationText(value)
+					if strings.Contains(got, "spotleak") || !strings.Contains(got, "REDACTED") {
+						t.Fatalf("safePresentationText() = %q, want credential redaction", got)
+					}
+				})
 			}
 		})
 	}

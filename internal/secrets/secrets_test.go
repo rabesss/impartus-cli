@@ -73,6 +73,15 @@ func TestScrubError_StripsEmbeddedURLs(t *testing.T) {
 	}
 }
 
+func TestScrubPreservesCredentialFreeURLsByteForByte(t *testing.T) {
+	t.Parallel()
+
+	const input = "retry https://example.com/path?tokenquerysecret after refresh"
+	if got := Scrub(input); got != input {
+		t.Fatalf("Scrub(%q) = %q, want byte-for-byte preservation", input, got)
+	}
+}
+
 func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 	t.Parallel()
 
@@ -135,6 +144,12 @@ func TestScrub_RedactsQuotedKeysWithNonJSONValues(t *testing.T) {
 		{input: `"token"=equals-secret`, want: `"token"=REDACTED`},
 		{input: `'token': single-secret`, want: `'token': REDACTED`},
 		{input: `'token': 'quoted secret'`, want: `'token': 'REDACTED'`},
+		{input: `"token ": "secret"`, want: `"token ": "REDACTED"`},
+		{input: `'token ': 'secret'`, want: `'token ': 'REDACTED'`},
+		{input: `"token": 'secret'`, want: `"token": 'REDACTED'`},
+		{input: `'token': "secret"`, want: `'token': "REDACTED"`},
+		{input: `"token"="secret"`, want: `"token"="REDACTED"`},
+		{input: `"token": bearer s3cr3t`, want: `"token": REDACTED`},
 	} {
 		if got := Scrub(test.input); got != test.want {
 			t.Fatalf("Scrub(%q) = %q, want %q", test.input, got, test.want)
