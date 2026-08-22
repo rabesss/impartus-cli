@@ -41,3 +41,10 @@ func TestSafePresentationTextRedactsControlSplitCredentialKeys(t *testing.T) {
 		})
 	}
 }
+
+func TestSafePresentationTextPreservesSafeWhitespaceBoundaries(t *testing.T) {
+	const value = "mpv missing\nrun the installer\tthen retry"
+	if got := safePresentationText(value); got != "mpv missing run the installer then retry" {
+		t.Fatalf("safePresentationText() = %q, want safe whitespace boundaries", got)
+	}
+}
