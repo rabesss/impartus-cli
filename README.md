@@ -77,6 +77,24 @@ cd impartus-cli
 make build
 ```
 
+`make build` and `make build-go` stamp one current UTC RFC3339 build date into
+the Go binary. Reproducible builds can provide an explicit timestamp or the
+standard Unix-seconds epoch; an explicit non-empty `BUILD_DATE` takes
+precedence:
+
+```bash
+make build BUILD_DATE=2026-08-22T10:20:30Z
+make build SOURCE_DATE_EPOCH=0
+```
+
+For these Make targets, invalid metadata fails the build instead of silently
+using the wall clock.
+Direct unstamped `go build` binaries report `Build Date: unknown`; JSON version
+output keeps the `buildDate` field and uses the same value. A local Docker build
+without a `BUILD_DATE` argument likewise displays `unknown` through this runtime
+fallback; container label/timestamp selection remains owned by the packaging
+workflow.
+
 Keep the release's `impartus` and `impartus-ui` executables together in the
 same directory. The Go parent owns credentials, networking, SQLite, mpv, and
 downloads; the adjacent OpenTUI executable owns terminal presentation only.

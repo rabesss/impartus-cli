@@ -5,5 +5,5 @@ var (
 	// Version is the application version, set at build time.
 	Version = "0.1.26" // x-release-please-version
 	// Date is the build date, set at build time.
-	Date = ""
+	Date = UnknownDate
 )
