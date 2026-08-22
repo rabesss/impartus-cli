@@ -49,6 +49,24 @@ describe("FoundationView", () => {
     view.destroy()
   })
 
+  test("moves and activates the focused wide navigation pane", async () => {
+    const setup = await createTestRenderer({ height: 32, kittyKeyboard: true, width: 140 })
+    renderers.push(setup)
+    let diagnosticsCount = 0
+    const view = new FoundationView(setup.renderer, foundationState(), {
+      ...callbacks(),
+      onDiagnostics() { diagnosticsCount++ },
+    })
+
+    setup.mockInput.pressKey("g")
+    setup.mockInput.pressArrow("down")
+    setup.mockInput.pressArrow("down")
+    setup.mockInput.pressEnter()
+
+    expect(diagnosticsCount).toBe(1)
+    view.destroy()
+  })
+
   test("renders the upstream microphone status in lecture rows and inspector", async () => {
     const setup = await createTestRenderer({ height: 18, width: 100 })
     renderers.push(setup)
@@ -110,8 +128,17 @@ describe("FoundationView", () => {
     expect(setup.captureCharFrame()).toContain("Command guide")
     expect(setup.captureCharFrame()).toContain("Open command palette")
 
-    setup.mockInput.pressEscape()
+    setup.mockInput.pressBackspace()
     await setup.renderOnce()
+    expect(setup.captureCharFrame()).not.toContain("Command guide")
+
+    setup.mockInput.pressKey("g")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("Navigation")
+    setup.mockInput.pressBackspace()
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).not.toContain("Navigation")
+
     setup.mockInput.pressEnter()
     setup.mockInput.pressKey("s")
     setup.mockInput.pressKey("q")
@@ -273,6 +300,36 @@ describe("FoundationView", () => {
     expect(setup.captureCharFrame()).toContain("A request is pending")
     setup.mockInput.pressEnter()
     expect(libraryCount).toBe(0)
+    view.destroy()
+  })
+
+  test("does not advertise retry on an unretryable playback-start error", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const state = foundationState()
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      error: "Lecture playback could not start",
+      screen: "playback",
+    }, callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Press esc to return.")
+    expect(frame).not.toContain("Press r to retry")
+    view.destroy()
+  })
+
+  test("collapses fixed chrome when no workspace row fits", async () => {
+    const setup = await createTestRenderer({ height: 5, kittyKeyboard: true, width: 40 })
+    renderers.push(setup)
+    const view = new FoundationView(setup.renderer, foundationState(), callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).not.toContain("selection]")
+    expect(frame).toContain("q quit")
+    expect(frame.trimEnd().split("\n")).toHaveLength(5)
     view.destroy()
   })
 })

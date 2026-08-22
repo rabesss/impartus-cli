@@ -113,6 +113,7 @@ export class WorkspaceController {
   }
 
   public async retry(signal?: AbortSignal): Promise<void> {
+    if (this.#state.loading) return
     if (this.#state.screen === "lectures" && this.#state.activeCourse !== undefined) {
       await this.loadLectures(this.#state.activeCourse, signal)
     } else if (this.#state.screen === "library") {

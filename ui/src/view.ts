@@ -131,7 +131,7 @@ export class FoundationView {
       return
     }
     if (overlay?.kind === "help") {
-      if (normalized === "escape" || normalized === "?") this.#closeOverlay()
+      if (normalized === "escape" || normalized === "backspace" || normalized === "?") this.#closeOverlay()
       return
     }
     if (this.#filtering) {
@@ -170,7 +170,7 @@ export class FoundationView {
   }
 
   #handleNavigationKey(normalized: string): void {
-    if (normalized === "escape") {
+    if (normalized === "escape" || normalized === "backspace") {
       this.#closeOverlay()
     } else if (["up", "down", "j", "k"].includes(normalized)) {
       const delta = normalized === "up" || normalized === "k" ? -1 : 1
@@ -318,10 +318,10 @@ export class FoundationView {
     const height = this.#renderer.terminalHeight
     const layout = this.#layout()
     const shell = new BoxRenderable(this.#renderer, { backgroundColor: COLORS.background, flexDirection: "column", height: "100%", id: "app-shell", width: "100%" })
-    shell.add(this.#header())
-    shell.add(this.#body(layout))
-    if (layout.activity.height > 0) shell.add(this.#activityDock())
-    shell.add(this.#footer())
+    if (layout.header.height > 0) shell.add(this.#header(layout.header.height))
+    if (layout.collection.height > 0) shell.add(this.#body(layout))
+    if (layout.activity.height > 0) shell.add(this.#activityDock(layout.activity.height))
+    if (layout.footer.height > 0) shell.add(this.#footer(layout.footer.height))
     const overlay = this.#topOverlay()
     if (overlay?.kind === "help") shell.add(this.#helpOverlay(width, height))
     else if (overlay?.kind === "palette") shell.add(this.#paletteOverlay(width, height))
@@ -329,8 +329,8 @@ export class FoundationView {
     return shell
   }
 
-  #header(): BoxRenderable {
-    const header = new BoxRenderable(this.#renderer, { alignItems: "center", border: ["bottom"], borderColor: COLORS.border, flexDirection: "row", height: 3, justifyContent: "space-between", paddingX: 2, width: "100%" })
+  #header(height: number): BoxRenderable {
+    const header = new BoxRenderable(this.#renderer, { alignItems: "center", border: ["bottom"], borderColor: COLORS.border, flexDirection: "row", height, justifyContent: "space-between", paddingX: 2, width: "100%" })
     header.add(text(this.#renderer, `IMPARTUS  /  ${screenTitle(this.#state.screen)}`, COLORS.foreground, TextAttributes.BOLD))
     header.add(text(this.#renderer, `● ${this.#state.status}`, this.#state.status === "Connected" ? COLORS.success : COLORS.warning))
     return header
@@ -367,7 +367,7 @@ export class FoundationView {
     }
     if (this.#state.error !== undefined) {
       panel.add(text(this.#renderer, this.#state.error, COLORS.danger, TextAttributes.BOLD))
-      panel.add(text(this.#renderer, "Press r to retry or esc to return.", COLORS.dim))
+      panel.add(text(this.#renderer, this.#state.screen === "playback" ? "Press esc to return." : "Press r to retry or esc to return.", COLORS.dim))
       return panel
     }
     const rows = Math.max(1, bodyHeight - 4)
@@ -491,16 +491,16 @@ export class FoundationView {
     return panel
   }
 
-  #activityDock(): BoxRenderable {
-    const dock = new BoxRenderable(this.#renderer, { border: ["top"], borderColor: this.#focus === "activity" ? COLORS.accent : COLORS.border, flexDirection: "row", height: 3, justifyContent: "space-between", paddingX: 2, width: "100%" })
+  #activityDock(height: number): BoxRenderable {
+    const dock = new BoxRenderable(this.#renderer, { border: ["top"], borderColor: this.#focus === "activity" ? COLORS.accent : COLORS.border, flexDirection: "row", height, justifyContent: "space-between", paddingX: 2, width: "100%" })
     const operation = this.#state.operation
     dock.add(text(this.#renderer, `${this.#focus === "activity" ? "[ACTIVE] " : ""}${this.#state.error ?? this.#state.status}`, this.#state.error === undefined ? COLORS.dim : COLORS.danger))
     if (operation !== undefined) dock.add(text(this.#renderer, `${operation.kind} ${operation.state} ${Math.round(operation.percent)}%`, COLORS.accent))
     return dock
   }
 
-  #footer(): BoxRenderable {
-    const footer = new BoxRenderable(this.#renderer, { alignItems: "center", border: ["top"], borderColor: COLORS.border, flexDirection: "row", height: 3, justifyContent: "space-between", paddingX: 1, width: "100%" })
+  #footer(height: number): BoxRenderable {
+    const footer = new BoxRenderable(this.#renderer, { alignItems: "center", border: ["top"], borderColor: COLORS.border, flexDirection: "row", height, justifyContent: "space-between", paddingX: 1, width: "100%" })
     const screen = collectionScreen(this.#state.screen)
     const filter = screen === undefined ? "" : this.#state.collections[screen].filter
     const content = this.#filtering

@@ -87,6 +87,20 @@ describe("WorkspaceController", () => {
     expect(controller.snapshot().loading).toBe(false)
   })
 
+  test("does not start a retry while another response is pending", async () => {
+    const client = new DeferredClient()
+    const controller = new WorkspaceController(client, createFoundationState())
+    const pending = controller.loadCourses()
+    const retry = controller.retry()
+    const requestCount = client.courseRequests.length
+
+    for (const request of client.courseRequests) request.resolve({ courses: [] })
+    await Promise.all([pending, retry])
+
+    expect(requestCount).toBe(1)
+    expect(controller.snapshot().loading).toBe(false)
+  })
+
   test("aborting makes a later response a no-op", async () => {
     const client = new DeferredClient()
     const controller = new WorkspaceController(client, createFoundationState())

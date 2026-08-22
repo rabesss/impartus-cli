@@ -63,12 +63,42 @@ describe("workspace command registry", () => {
     expect(commandForKey(context, "down")?.command.id).toBe("selection.move")
     expect(commandForKey(context, "up")?.command.id).toBe("selection.move")
   })
+
+  test("moves and opens the focused wide navigation pane", () => {
+    const context = commandContext({ focus: "navigation" })
+    expect(commandForKey(context, "j")?.availability.enabled).toBe(true)
+    expect(commandForKey(context, "enter")?.availability.enabled).toBe(true)
+
+    const pending = commandContext({ focus: "navigation", loading: true })
+    expect(commandForKey(pending, "j")?.availability.enabled).toBe(true)
+    expect(commandForKey(pending, "enter")?.availability.enabled).toBe(false)
+  })
+
+  test("offers filtering for every collection domain", () => {
+    for (const screen of ["courses", "lectures", "library", "diagnostics"] as const) {
+      const filter = commandForKey(commandContext({ screen }), "/")
+      expect(filter?.command.id).toBe("collection.filter")
+      expect(filter?.availability.enabled).toBe(true)
+    }
+  })
+
+  test("evaluates help and palette commands against the underlying workspace", () => {
+    const palette = commandsForPalette(commandContext({ overlay: "palette", screen: "library" }), "filter")
+    expect(palette.map((entry) => entry.command.id)).toEqual(["collection.filter"])
+
+    const help = commandsForHelp(commandContext({ overlay: "help", screen: "library" }))
+    expect(help.map((entry) => entry.command.id)).toContain("collection.filter")
+    expect(help.map((entry) => entry.command.id)).toContain("collection.retry")
+  })
 })
 
-function commandContext(overrides: Partial<CommandContext["state"]> & { overlay?: CommandContext["overlay"] }): CommandContext {
-  const { overlay, ...stateOverrides } = overrides
+function commandContext(overrides: Partial<CommandContext["state"]> & {
+  focus?: CommandContext["focus"]
+  overlay?: CommandContext["overlay"]
+}): CommandContext {
+  const { focus = "collection", overlay, ...stateOverrides } = overrides
   return {
-    focus: "collection",
+    focus,
     layout: calculateLayout(140, 32, false),
     overlay,
     state: createFoundationState(stateOverrides),

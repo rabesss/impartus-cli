@@ -60,6 +60,8 @@ const COMMANDS: readonly CommandDefinition[] = [
   command("selection.move", "Move selection", "Move through the focused list", ["up", "down", "j", "k"], false, true, moveAvailability),
   command("selection.open", "Open selection", "Open or play the selected item", ["enter"], false, true, openAvailability),
   command("collection.filter", "Filter collection", "Edit the current collection filter", ["/"], true, true, filterAvailability),
+  command("overlay.palette", "Open command palette", "Search contextual workspace commands", ["ctrl+p"], false, true, baseAvailability),
+  command("overlay.help", "Open help", "Show contextual command help", ["?"], false, true, baseAvailability),
   command("lecture.download", "Download lecture", "Start a Go-owned lecture download", ["d"], true, true, lectureAvailability),
   command("session.selftest", "Run connection test", "Start the private session self-test", ["s"], true, true, operationAvailability),
   command("playback.control", "Control playback", "Use the direct mpv playback keys", ["space", "left", "right", "m", "+", "=", "-", "[", "]", "v"], false, true, playbackAvailability),
@@ -70,8 +72,6 @@ const COMMANDS: readonly CommandDefinition[] = [
   command("navigation.courses", "Open courses", "Show the live course catalog", ["c"], true, false, sectionAvailability),
   command("navigation.library", "Open library", "Show the local lecture library", ["l"], true, true, sectionAvailability),
   command("navigation.diagnostics", "Open diagnostics", "Show local diagnostics", ["!"], true, true, sectionAvailability),
-  command("overlay.palette", "Open command palette", "Search contextual workspace commands", ["ctrl+p"], false, true, baseAvailability),
-  command("overlay.help", "Open help", "Show contextual command help", ["?"], false, true, baseAvailability),
   command("navigation.back", "Close or go back", "Close the top overlay or return", ["escape", "backspace"], false, true, backAvailability),
   command("app.quit", "Quit", "Close the private UI session", ["q", "ctrl+c"], true, true, baseAvailability),
 ]
@@ -88,8 +88,9 @@ export function commandForKey(context: CommandContext, key: string): AvailableCo
 
 export function commandsForPalette(context: CommandContext, query: string): readonly AvailableCommand[] {
   const needle = query.trim().toLocaleLowerCase()
+  const workspace = { ...context, overlay: undefined }
   return COMMANDS.flatMap((candidate) => {
-    const availability = candidate.availability(context)
+    const availability = candidate.availability(workspace)
     if (!candidate.palette || !availability.visible) return []
     const haystack = `${candidate.id} ${candidate.label} ${candidate.keys.join(" ")}`.toLocaleLowerCase()
     return needle === "" || haystack.includes(needle) ? [availableCommand(candidate, availability)] : []
@@ -97,8 +98,9 @@ export function commandsForPalette(context: CommandContext, query: string): read
 }
 
 export function commandsForHelp(context: CommandContext): readonly AvailableCommand[] {
+  const workspace = { ...context, overlay: undefined }
   return COMMANDS.flatMap((candidate) => {
-    const availability = candidate.availability(context)
+    const availability = candidate.availability(workspace)
     return availability.visible ? [availableCommand(candidate, availability)] : []
   })
 }
@@ -139,20 +141,23 @@ function baseAvailability(): CommandAvailability {
 
 function moveAvailability(context: CommandContext): CommandAvailability {
   if (context.overlay === "palette" || context.overlay === "navigation") return available(true)
-  if (context.overlay === "help" || context.state.loading || context.focus !== "collection") return available(false)
+  if (context.overlay === "help") return available(false)
+  if (context.focus === "navigation") return available(true)
+  if (context.state.loading || context.focus !== "collection") return available(false)
   return available(true, collectionCount(context.state) > 1, "Collection has one or fewer items")
 }
 
 function openAvailability(context: CommandContext): CommandAvailability {
   if (context.overlay === "palette" || context.overlay === "navigation") return available(true)
-  if (context.overlay === "help" || context.focus !== "collection") return available(false)
+  if (context.overlay === "help") return available(false)
+  if (context.focus === "navigation") return available(true, !context.state.loading, "A request is pending")
+  if (context.focus !== "collection") return available(false)
   const visible = context.state.screen === "courses" || context.state.screen === "lectures"
   return available(visible, visible && !context.state.loading && collectionCount(context.state) > 0, "No selection")
 }
 
 function filterAvailability(context: CommandContext): CommandAvailability {
-  const visible = context.overlay === undefined && context.focus === "collection" &&
-    (context.state.screen === "courses" || context.state.screen === "lectures")
+  const visible = context.overlay === undefined && context.focus === "collection" && context.state.screen !== "playback"
   return available(visible, visible && !context.state.loading, "A request is pending")
 }
 
