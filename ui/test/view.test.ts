@@ -129,11 +129,18 @@ describe("FoundationView", () => {
     await setup.renderOnce()
     expect(setup.captureCharFrame()).toContain("enter  open lectures")
 
-    setup.mockInput.pressKey("g")
+    setup.mockInput.pressKey("p", { ctrl: true })
     await setup.renderOnce()
     expect(setup.captureCharFrame()).not.toContain("enter  open lectures")
 
-    setup.mockInput.pressKey("?")
+    setup.mockInput.pressEscape()
+    setup.mockInput.pressKey("/")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("enter apply")
+    expect(setup.captureCharFrame()).not.toContain("enter  open lectures")
+
+    setup.mockInput.pressEnter()
+    setup.mockInput.pressKey("g")
     await setup.renderOnce()
     expect(setup.captureCharFrame()).not.toContain("enter  open lectures")
     view.destroy()

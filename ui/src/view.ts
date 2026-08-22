@@ -506,7 +506,7 @@ export class FoundationView {
         panel.add(text(this.#renderer, `${course.videoCount} lectures`, COLORS.accent))
         const context = this.#commandContext()
         const open = commandForKey(context, "enter")
-        if (context.overlay === undefined && context.focus !== "navigation" && open?.command.id === "selection.open" && open.availability.enabled) {
+        if (!this.#filtering && context.overlay === undefined && context.focus !== "navigation" && open?.command.id === "selection.open" && open.availability.enabled) {
           panel.add(text(this.#renderer, "enter  open lectures", COLORS.dim))
         }
         return panel
