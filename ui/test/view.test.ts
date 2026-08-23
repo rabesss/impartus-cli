@@ -41,21 +41,31 @@ describe("FoundationView", () => {
   test("renders authentication recovery while keeping local commands available", async () => {
     const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 140 })
     renderers.push(setup)
+    let courses = 0
+    const handlers = callbacks()
+    handlers.onCourses = () => { courses++ }
     const state = foundationState()
     const view = new FoundationView(setup.renderer, {
       ...state,
       authStatus: "unavailable",
       courses: [],
       status: "Authentication unavailable — press r to retry",
-    }, callbacks())
+    }, handlers)
 
     await setup.renderOnce()
     const frame = setup.captureCharFrame()
     expect(frame).toContain("Authentication unavailable")
+    expect(frame).toContain("Authentication is unavailable")
     expect(frame).toContain("press r to retry")
+    expect(frame).not.toContain("No courses available")
+    expect(frame).toContain("Courses [auth]")
     expect(frame).toContain("Local library")
     expect(frame).toContain("Diagnostics")
     expect(frame).toContain("q quit")
+    setup.mockInput.pressKey("g")
+    setup.mockInput.pressEnter()
+    await setup.renderOnce()
+    expect(courses).toBe(0)
     view.destroy()
   })
 

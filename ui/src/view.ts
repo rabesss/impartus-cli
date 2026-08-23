@@ -367,7 +367,9 @@ export class FoundationView {
     NAVIGATION.forEach((entry, index) => {
       const selected = index === this.#navigationCursor && this.#focus === "navigation"
       const active = entry.screen === this.#state.screen || (entry.screen === "courses" && this.#state.screen === "lectures")
-      panel.add(row(this.#renderer, `${selected ? ">" : " "} ${active ? "●" : "○"} ${entry.label}`, selected))
+      const unavailable = entry.screen === "courses" && this.#state.authStatus !== "ready"
+      const label = unavailable ? `${entry.label} [auth]` : entry.label
+      panel.add(row(this.#renderer, `${selected ? ">" : " "} ${active ? "●" : "○"} ${label}`, selected))
     })
     return panel
   }
@@ -387,6 +389,11 @@ export class FoundationView {
           ? "Press r to retry."
           : "Press r to retry or esc to return."
       panel.add(text(this.#renderer, recovery, COLORS.dim))
+      return panel
+    }
+    if (this.#state.screen === "courses" && this.#state.authStatus !== "ready") {
+      panel.add(text(this.#renderer, "Authentication is unavailable", COLORS.warning, TextAttributes.BOLD))
+      panel.add(text(this.#renderer, "Press r to retry. Local library and diagnostics remain available.", COLORS.dim))
       return panel
     }
     const rows = Math.max(1, Math.floor((Math.max(1, bodyHeight - 4) + 1) / 2))
