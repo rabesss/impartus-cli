@@ -82,7 +82,7 @@ func (coordinator *tuiAuthenticationCoordinator) Status() tuiproto.AuthStatus {
 	return tuiproto.AuthStatusUnavailable
 }
 
-func (coordinator *tuiAuthenticationCoordinator) Retry(ctx context.Context) error {
+func (coordinator *tuiAuthenticationCoordinator) Retry(ctx context.Context) (err error) {
 	coordinator.retryMu.Lock()
 	if active := coordinator.activeRetry; active != nil {
 		coordinator.retryMu.Unlock()
@@ -97,12 +97,22 @@ func (coordinator *tuiAuthenticationCoordinator) Retry(ctx context.Context) erro
 	coordinator.activeRetry = active
 	coordinator.retryMu.Unlock()
 
-	err := coordinator.retryOnce(ctx)
-	coordinator.retryMu.Lock()
-	active.err = err
-	close(active.done)
-	coordinator.activeRetry = nil
-	coordinator.retryMu.Unlock()
+	defer func() {
+		recovered := recover()
+		coordinator.retryMu.Lock()
+		active.err = err
+		if recovered != nil {
+			active.err = errTUIAuthenticationUnavailable
+		}
+		close(active.done)
+		coordinator.activeRetry = nil
+		coordinator.retryMu.Unlock()
+		if recovered != nil {
+			panic(recovered)
+		}
+	}()
+
+	err = coordinator.retryOnce(ctx)
 	return err
 }
 

@@ -216,6 +216,43 @@ func TestTUIAuthenticationCoordinatorCoalescesOverlappingRetriesAndLetsWaiterCan
 	}
 }
 
+func TestTUIAuthenticationCoordinatorRecoversAfterRetryPanic(t *testing.T) {
+	var loads atomic.Int64
+	coordinator := newTUIAuthenticationCoordinator(
+		&tuiArtifactStoreStub{},
+		func() (*config.Config, error) {
+			if loads.Add(1) == 1 {
+				panic("injected retry panic")
+			}
+			return &config.Config{Username: "user", Password: "password"}, nil
+		},
+		func(context.Context, *config.Config) (tuiRemoteService, error) {
+			return &tuiRemoteStub{courseName: "Recovered"}, nil
+		},
+	)
+
+	func() {
+		defer func() {
+			if recovered := recover(); recovered == nil {
+				t.Fatal("Retry() did not propagate the injected panic")
+			}
+		}()
+		if err := coordinator.Retry(t.Context()); err != nil {
+			t.Fatalf("Retry() returned an error instead of panicking: %v", err)
+		}
+		t.Fatal("Retry() returned nil instead of panicking")
+	}()
+
+	retryCtx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
+	defer cancel()
+	if err := coordinator.Retry(retryCtx); err != nil {
+		t.Fatalf("Retry() after panic error = %v", err)
+	}
+	if coordinator.Status() != tuiproto.AuthStatusReady || loads.Load() != 2 {
+		t.Fatalf("recovered state = %q, config loads %d", coordinator.Status(), loads.Load())
+	}
+}
+
 func TestRecoverableTUIAuthenticationErrorClassification(t *testing.T) {
 	if !isRecoverableTUIAuthenticationError(config.ErrCredentialsRequired) {
 		t.Fatal("missing credentials must be recoverable")
