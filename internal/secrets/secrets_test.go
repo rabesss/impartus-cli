@@ -82,6 +82,22 @@ func TestScrubPreservesCredentialFreeURLsByteForByte(t *testing.T) {
 	}
 }
 
+func TestScrubURLHelpersStayEquivalent(t *testing.T) {
+	t.Parallel()
+
+	for _, input := range []string{
+		"",
+		"retry https://example.com/path?tokenquerysecret after refresh",
+		"https://example.com/path?token=url-secret&keep=1",
+		"https://alice:password@example.com/path",
+		"nested https://example.com/?next=https%3A%2F%2Finner.example%2F%3Ftoken%3Dnested-secret",
+	} {
+		if got, want := ScrubURLs(input), ScrubCredentialURLs(input); got != want {
+			t.Fatalf("URL scrub helpers disagree for %q: ScrubURLs = %q, ScrubCredentialURLs = %q", input, got, want)
+		}
+	}
+}
+
 func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 	t.Parallel()
 

@@ -123,16 +123,7 @@ func scrubRaw(rawURL string) string {
 // ScrubURLs redacts credentials from absolute HTTP URLs embedded in text
 // without applying the free-form assignment rules.
 func ScrubURLs(s string) string {
-	if s == "" {
-		return s
-	}
-	return urlTokenRe.ReplaceAllStringFunc(s, func(rawURL string) string {
-		redacted, changed := redactURL(rawURL)
-		if !changed {
-			return rawURL
-		}
-		return redacted
-	})
+	return ScrubCredentialURLs(s)
 }
 
 // ScrubCredentialURLs redacts only URL candidates that actually contain
