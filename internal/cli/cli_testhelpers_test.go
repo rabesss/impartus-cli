@@ -27,7 +27,13 @@ func restoreCLIState(t *testing.T) {
 	oldWatch := runWatchFn
 	oldWatchJSON := runWatchJSONFn
 	oldLoadResolved := loadResolvedFn
+	oldLoadTUIResolved := loadTUIResolvedFn
 	oldNewLoggedIn := newLoggedInFn
+	oldOpenTUILibrary := openTUILibraryFn
+	oldGetTUIDoctorReport := getTUIDoctorReportFn
+	oldResolveTUIExecutable := resolveTUIExecutableFn
+	oldStartTUISession := startTUISessionFn
+	oldRunTUIHost := runTUIHostFn
 	oldStartAPIServer := startAPIServerFn
 	t.Cleanup(func() {
 		os.Args = oldArgs
@@ -44,7 +50,13 @@ func restoreCLIState(t *testing.T) {
 		runWatchFn = oldWatch
 		runWatchJSONFn = oldWatchJSON
 		loadResolvedFn = oldLoadResolved
+		loadTUIResolvedFn = oldLoadTUIResolved
 		newLoggedInFn = oldNewLoggedIn
+		openTUILibraryFn = oldOpenTUILibrary
+		getTUIDoctorReportFn = oldGetTUIDoctorReport
+		resolveTUIExecutableFn = oldResolveTUIExecutable
+		startTUISessionFn = oldStartTUISession
+		runTUIHostFn = oldRunTUIHost
 		startAPIServerFn = oldStartAPIServer
 	})
 }

@@ -11,6 +11,33 @@ import {
 import { createFoundationState } from "../src/workspace_controller.ts"
 
 describe("workspace command registry", () => {
+  test("disables remote commands while keeping recovery and local workspace commands available", () => {
+    const context = commandContext({ authStatus: "unavailable", screen: "courses" })
+    for (const key of ["/", "c", "enter"]) {
+      const result = commandForKey(context, key)
+      expect(result?.availability.enabled).toBe(false)
+      expect(result?.availability.reason).toContain("Authentication")
+    }
+    const lectureContext = commandContext({
+      authStatus: "unavailable",
+      lectures: [testLecture()],
+      screen: "lectures",
+    })
+    expect(commandForKey(lectureContext, "d")?.availability.enabled).toBe(false)
+    expect(commandForKey(lectureContext, "d")?.availability.reason).toContain("Authentication")
+    const navigationContext = commandContext({
+      authStatus: "unavailable",
+      focus: "navigation",
+      navigationTarget: "courses",
+      screen: "courses",
+    })
+    expect(commandForKey(navigationContext, "enter")?.availability.enabled).toBe(false)
+    expect(commandForKey(navigationContext, "enter")?.availability.reason).toContain("Authentication")
+    for (const key of ["l", "!", "r", "s", "?", "q"]) {
+      expect(commandForKey(context, key)?.availability.enabled).toBe(true)
+    }
+  })
+
   test("disables every screen-changing command while a response is pending", () => {
     const context = commandContext({ loading: true, screen: "lectures" })
     for (const key of ["c", "g", "l", "!"]) {
@@ -256,13 +283,34 @@ describe("workspace command registry", () => {
 
 function commandContext(overrides: Partial<CommandContext["state"]> & {
   focus?: CommandContext["focus"]
+  navigationTarget?: CommandContext["navigationTarget"]
   overlay?: CommandContext["overlay"]
 }): CommandContext {
-  const { focus = "collection", overlay, ...stateOverrides } = overrides
+  const { focus = "collection", navigationTarget, overlay, ...stateOverrides } = overrides
   return {
     focus,
     layout: calculateLayout(140, 32, false),
+    navigationTarget,
     overlay,
     state: createFoundationState(stateOverrides),
+  }
+}
+
+function testLecture() {
+  return {
+    classroomName: "Room",
+    durationSeconds: 60,
+    instituteId: 1,
+    noAudio: false,
+    professorName: "Professor",
+    sequence: 1,
+    sessionId: 2,
+    sessionName: "Session",
+    startTime: "2026-08-22T00:00:00Z",
+    subjectId: 3,
+    subjectName: "Course",
+    topic: "Lecture",
+    ttid: 4,
+    views: 0,
   }
 }

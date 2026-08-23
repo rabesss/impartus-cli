@@ -178,8 +178,13 @@ export class FoundationView {
       this.#navigationCursor = (this.#navigationCursor + delta + NAVIGATION.length) % NAVIGATION.length
       this.#rebuild()
     } else if (normalized === "enter") {
-      this.#closeOverlay(false)
-      this.#dispatchNavigationSelection()
+      const open = commandForKey(this.#commandContext(), "enter")
+      if (open?.availability.enabled === true) {
+        this.#closeOverlay(false)
+        this.#dispatchNavigationSelection()
+      } else {
+        this.#rebuild()
+      }
     }
   }
 
@@ -299,7 +304,13 @@ export class FoundationView {
   #topOverlay(): OverlayState | undefined { return this.#overlays.at(-1) }
 
   #commandContext(): CommandContext {
-    return { focus: effectiveFocus(this.#focus, this.#layout()), layout: this.#layout(), overlay: this.#topOverlay()?.kind, state: this.#state }
+    return {
+      focus: effectiveFocus(this.#focus, this.#layout()),
+      layout: this.#layout(),
+      navigationTarget: NAVIGATION[this.#navigationCursor]?.screen,
+      overlay: this.#topOverlay()?.kind,
+      state: this.#state,
+    }
   }
 
   #layout(): WorkspaceLayout {
@@ -333,8 +344,11 @@ export class FoundationView {
 
   #header(height: number): BoxRenderable {
     const header = new BoxRenderable(this.#renderer, { alignItems: "center", border: ["bottom"], borderColor: COLORS.border, flexDirection: "row", height, justifyContent: "space-between", paddingX: 2, width: "100%" })
-    header.add(text(this.#renderer, `IMPARTUS  /  ${screenTitle(this.#state.screen)}`, COLORS.foreground, TextAttributes.BOLD))
-    header.add(text(this.#renderer, `● ${this.#state.status}`, this.#state.status === "Connected" ? COLORS.success : COLORS.warning))
+    const narrowRecovery = this.#state.authStatus !== "ready" && this.#renderer.terminalWidth < 60
+    const title = narrowRecovery ? "IMPARTUS  /  Workspace" : `IMPARTUS  /  ${screenTitle(this.#state.screen)}`
+    const status = this.#state.authStatus !== "ready" && this.#renderer.terminalWidth < 100 ? "Auth unavailable" : this.#state.status
+    header.add(text(this.#renderer, title, COLORS.foreground, TextAttributes.BOLD))
+    header.add(text(this.#renderer, `● ${status}`, this.#state.status === "Connected" ? COLORS.success : COLORS.warning))
     return header
   }
 
@@ -356,7 +370,9 @@ export class FoundationView {
     NAVIGATION.forEach((entry, index) => {
       const selected = index === this.#navigationCursor && this.#focus === "navigation"
       const active = entry.screen === this.#state.screen || (entry.screen === "courses" && this.#state.screen === "lectures")
-      panel.add(row(this.#renderer, `${selected ? ">" : " "} ${active ? "●" : "○"} ${entry.label}`, selected))
+      const unavailable = entry.screen === "courses" && this.#state.authStatus !== "ready"
+      const label = unavailable ? `${entry.label} [auth]` : entry.label
+      panel.add(row(this.#renderer, `${selected ? ">" : " "} ${active ? "●" : "○"} ${label}`, selected))
     })
     return panel
   }
@@ -376,6 +392,15 @@ export class FoundationView {
           ? "Press r to retry."
           : "Press r to retry or esc to return."
       panel.add(text(this.#renderer, recovery, COLORS.dim))
+      return panel
+    }
+    if (this.#state.screen === "courses" && this.#state.authStatus !== "ready") {
+      if (bodyHeight <= 4) {
+        panel.add(text(this.#renderer, "Auth unavailable; press r to retry", COLORS.warning, TextAttributes.BOLD))
+        return panel
+      }
+      panel.add(text(this.#renderer, "Authentication is unavailable", COLORS.warning, TextAttributes.BOLD))
+      panel.add(text(this.#renderer, "Press r to retry. Local library and diagnostics remain available.", COLORS.dim))
       return panel
     }
     const rows = Math.max(1, Math.floor((Math.max(1, bodyHeight - 4) + 1) / 2))
@@ -582,8 +607,16 @@ export class FoundationView {
 
   #navigationOverlay(width: number, height: number): BoxRenderable {
     const overlay = overlayBox(this.#renderer, "Navigation", width, height, 10)
-    NAVIGATION.forEach((entry, index) => overlay.add(row(this.#renderer, `${index === this.#navigationCursor ? ">" : " "} ${entry.label}`, index === this.#navigationCursor)))
-    overlay.add(text(this.#renderer, "↑↓ select   Enter open   Esc close", COLORS.dim))
+    NAVIGATION.forEach((entry, index) => {
+      const unavailable = entry.screen === "courses" && this.#state.authStatus !== "ready"
+      const reason = unavailable ? " — Authentication is unavailable" : ""
+      overlay.add(row(this.#renderer, `${index === this.#navigationCursor ? ">" : " "} ${entry.label}${reason}`, index === this.#navigationCursor))
+    })
+    const open = commandForKey(this.#commandContext(), "enter")
+    const hint = open?.availability.enabled === false && open.availability.reason !== ""
+      ? `↑↓ select   ${open.availability.reason}   Esc close`
+      : "↑↓ select   Enter open   Esc close"
+    overlay.add(text(this.#renderer, hint, COLORS.dim))
     return overlay
   }
 

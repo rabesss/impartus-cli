@@ -14,6 +14,98 @@ afterEach(() => {
 })
 
 describe("FoundationView", () => {
+  test("keeps unavailable Courses disabled in the compact navigation overlay", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    let courses = 0
+    const handlers = callbacks()
+    handlers.onCourses = () => { courses++ }
+    const state = foundationState()
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      authStatus: "unavailable",
+      courses: [],
+      status: "Authentication unavailable",
+    }, handlers)
+
+    setup.mockInput.pressKey("g")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("Courses — Authentication is unavailable")
+    expect(setup.captureCharFrame()).not.toContain("Enter open")
+    setup.mockInput.pressEnter()
+    await setup.renderOnce()
+    expect(courses).toBe(0)
+    expect(setup.captureCharFrame()).toContain("Navigation")
+    view.destroy()
+  })
+
+  test("opens an available local destination from the compact navigation overlay", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    let library = 0
+    let state: FoundationState = {
+      ...foundationState(),
+      authStatus: "unavailable",
+      courses: [],
+      status: "Authentication unavailable",
+    }
+    let view: FoundationView
+    const handlers = callbacks()
+    handlers.onLibrary = () => {
+      library++
+      state = { ...state, screen: "library" }
+      view.update(state)
+    }
+    view = new FoundationView(setup.renderer, state, handlers)
+
+    setup.mockInput.pressKey("g")
+    setup.mockInput.pressKey("j")
+    setup.mockInput.pressEnter()
+    await setup.renderOnce()
+
+    expect(library).toBe(1)
+    expect(setup.captureCharFrame()).not.toContain("Navigation")
+    view.destroy()
+  })
+
+  test("renders authentication recovery while keeping local commands available", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 140 })
+    renderers.push(setup)
+    let courses = 0
+    let retries = 0
+    const handlers = callbacks()
+    handlers.onCourses = () => { courses++ }
+    handlers.onRetry = () => { retries++ }
+    const state = foundationState()
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      authStatus: "unavailable",
+      courses: [],
+      status: "Authentication unavailable — press r to retry",
+    }, handlers)
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Authentication unavailable")
+    expect(frame).toContain("Authentication is unavailable")
+    expect(frame).toContain("press r to retry")
+    expect(frame).not.toContain("No courses available")
+    expect(frame).toContain("Courses [auth]")
+    expect(frame).toContain("Local library")
+    expect(frame).toContain("Diagnostics")
+    expect(frame).toContain("q quit")
+    expect(frame).not.toContain("/ Filter collection")
+    setup.mockInput.pressKey("/")
+    setup.mockInput.pressKey("r")
+    await setup.renderOnce()
+    expect(retries).toBe(1)
+    setup.mockInput.pressKey("g")
+    setup.mockInput.pressEnter()
+    await setup.renderOnce()
+    expect(courses).toBe(0)
+    view.destroy()
+  })
+
   test("uses distinguishing subject labels for courses with shared cohort prefixes", () => {
     const courses: Course[] = [
       course("BME V SEM 26 ODD_Biomaterials", 1530, 1),
@@ -281,6 +373,41 @@ describe("FoundationView", () => {
     expect(frame).toContain("q quit")
     expect(frame.split("\n")).toHaveLength(11)
     expect(frame.split("\n").slice(0, 10).every((line) => line.length === 40)).toBe(true)
+    view.destroy()
+  })
+
+  test("keeps compact authentication recovery visible and bounded", async () => {
+    const setup = await createTestRenderer({ height: 10, kittyKeyboard: true, width: 40 })
+    renderers.push(setup)
+    const view = new FoundationView(setup.renderer, {
+      ...foundationState(),
+      authStatus: "unavailable",
+      courses: [],
+      status: "Authentication unavailable — press r to retry",
+    }, callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Auth unavailable; press r to retry")
+    expect(frame.split("\n")).toHaveLength(11)
+    expect(frame.split("\n").slice(0, 10).every((line) => line.length === 40)).toBe(true)
+    view.destroy()
+  })
+
+  test("compacts unavailable authentication status in the medium-width header", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const view = new FoundationView(setup.renderer, {
+      ...foundationState(),
+      authStatus: "unavailable",
+      courses: [],
+      status: "Authentication unavailable — press r to retry",
+    }, callbacks())
+
+    await setup.renderOnce()
+    const header = setup.captureCharFrame().split("\n").slice(0, 3).join("\n")
+    expect(header).toContain("Auth unavailable")
+    expect(header).not.toContain("press r to retry")
     view.destroy()
   })
 
@@ -769,6 +896,7 @@ function foundationState(): FoundationState {
   return {
     activeCourse: undefined,
     activeLecture: undefined,
+    authStatus: "ready",
     artifacts: [],
     collections: {
       courses: { filter: "", selected: 0 },

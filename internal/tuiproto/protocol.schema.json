@@ -4,8 +4,8 @@
   "title": "Impartus experimental OpenTUI session protocol",
   "description": "Single Go-owned source of truth for the private impartus <-> impartus-ui session contract. Go DTOs and TypeScript protocol types are generated from this document; neither side hand-writes them.",
   "x-protocol": {
-    "version": "tui/v1",
-    "basePath": "/tui/v1",
+    "version": "tui/v2",
+    "basePath": "/tui/v2",
     "headers": {
       "capability": "X-Impartus-Capability",
       "protocol": "X-Impartus-Protocol",
@@ -36,6 +36,11 @@
         }
       }
     },
+    "AuthStatus": {
+      "type": "string",
+      "description": "is the closed upstream authentication readiness projected to the child without exposing credential state.",
+      "enum": ["ready", "unavailable"]
+    },
     "HealthStatus": {
       "type": "string",
       "description": "is the aggregate session readiness value. The session never reports which credentials are configured.",
@@ -43,9 +48,12 @@
     },
     "Health": {
       "type": "object",
-      "description": "is the session readiness probe answered before the frontend renders anything.",
-      "required": ["protocol", "sessionId", "status", "version"],
+      "description": "is the session transport and safe upstream authentication readiness probe.",
+      "required": ["authStatus", "protocol", "sessionId", "status", "version"],
       "properties": {
+        "authStatus": {
+          "$ref": "#/$defs/AuthStatus"
+        },
         "protocol": {
           "type": "string",
           "description": "Protocol identity this session speaks."

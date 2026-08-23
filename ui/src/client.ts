@@ -4,6 +4,7 @@ import {
   PROTOCOL_VERSION,
   type ArtifactList,
   type ArtifactSummary,
+  type AuthStatus,
   type Bootstrap,
   type Course,
   type CourseList,
@@ -18,6 +19,7 @@ import {
   type OperationKind,
   type OperationState,
   type PlaybackCommand,
+  type Problem,
 } from "./protocol/types.gen.ts"
 
 const EVENT_TYPES = new Set<EventType>([
@@ -31,6 +33,18 @@ const EVENT_TYPES = new Set<EventType>([
 ])
 const OPERATION_STATES = new Set<OperationState>(["running", "completed", "canceled", "failed"])
 const OPERATION_KINDS = new Set<OperationKind>(["download", "playback", "selftest"])
+const AUTH_STATUSES = new Set<AuthStatus>(["ready", "unavailable"])
+const MAX_PROBLEM_BYTES = 4 * 1024
+
+export class SessionProblemError extends Error {
+  public readonly code: string
+
+  public constructor(problem: Problem) {
+    super(problem.error)
+    this.name = "SessionProblemError"
+    this.code = problem.code
+  }
+}
 
 export class SessionClient {
   readonly #bootstrap: Bootstrap
@@ -41,6 +55,14 @@ export class SessionClient {
 
   public async health(signal?: AbortSignal): Promise<Health> {
     const value = await this.#json("/health", { method: "GET" }, signal)
+    if (!isHealth(value) || value.protocol !== this.#bootstrap.protocol || value.sessionId !== this.#bootstrap.sessionId) {
+      throw new Error("Invalid UI session response")
+    }
+    return value
+  }
+
+  public async retryAuthentication(signal?: AbortSignal): Promise<Health> {
+    const value = await this.#json("/auth/retry", { method: "POST" }, signal)
     if (!isHealth(value) || value.protocol !== this.#bootstrap.protocol || value.sessionId !== this.#bootstrap.sessionId) {
       throw new Error("Invalid UI session response")
     }
@@ -236,7 +258,8 @@ export class SessionClient {
       throw new Error("UI session is unavailable")
     }
     if (!response.ok) {
-      await response.body?.cancel().catch(() => undefined)
+      const problem = await readSafeProblem(response)
+      if (problem !== undefined) throw new SessionProblemError(problem)
       throw new Error(`UI session request failed (${response.status})`)
     }
     return response
@@ -267,12 +290,58 @@ function parseEventBlock(block: string): Event | undefined {
 function isHealth(value: unknown): value is Health {
   return (
     isRecord(value) &&
+    typeof value.authStatus === "string" &&
+    AUTH_STATUSES.has(value.authStatus as AuthStatus) &&
     value.protocol === PROTOCOL_VERSION &&
     typeof value.sessionId === "string" &&
     value.sessionId.length > 0 &&
     value.status === "ok" &&
     typeof value.version === "string"
   )
+}
+
+async function readSafeProblem(response: Response): Promise<Problem | undefined> {
+  const body = response.body
+  if (body === null) return undefined
+  const reader = body.getReader()
+  const chunks: Uint8Array[] = []
+  let length = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      length += value.byteLength
+      if (length > MAX_PROBLEM_BYTES) return undefined
+      chunks.push(value)
+    }
+  } catch {
+    return undefined
+  } finally {
+    await reader.cancel().catch(() => undefined)
+    reader.releaseLock()
+  }
+  const bytes = new Uint8Array(length)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  let value: unknown
+  try {
+    value = JSON.parse(new TextDecoder().decode(bytes)) as unknown
+  } catch {
+    return undefined
+  }
+  if (!isRecord(value)) {
+    return undefined
+  }
+  if (value.code === "auth_unavailable" && value.error === "upstream authentication is unavailable") {
+    return { code: value.code, error: value.error }
+  }
+  if (value.code === "configuration_invalid" && value.error === "configuration is invalid") {
+    return { code: value.code, error: value.error }
+  }
+  return undefined
 }
 
 function isCourseList(value: unknown): value is CourseList {

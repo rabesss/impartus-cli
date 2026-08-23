@@ -15,7 +15,7 @@ afterEach(async () => {
 describe("consumeBootstrap", () => {
   test("reads one private bootstrap and removes it immediately", async () => {
     const expected: Bootstrap = {
-      baseUrl: "http://127.0.0.1:43123/tui/v1",
+      baseUrl: "http://127.0.0.1:43123/tui/v2",
       capability: "a".repeat(43),
       protocol: PROTOCOL_VERSION,
       sessionId: "session-id",

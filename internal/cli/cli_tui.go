@@ -13,6 +13,7 @@ import (
 
 	"github.com/rabesss/impartus-cli/internal/app"
 	"github.com/rabesss/impartus-cli/internal/buildinfo"
+	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/library"
 	"github.com/rabesss/impartus-cli/internal/tuihost"
 	"github.com/rabesss/impartus-cli/internal/tuisession"
@@ -22,6 +23,14 @@ type exitCodeError struct {
 	code int
 	err  error
 }
+
+var (
+	openTUILibraryFn       = library.Open
+	getTUIDoctorReportFn   = getDoctorReport
+	resolveTUIExecutableFn = tuihost.ResolveExecutable
+	startTUISessionFn      = tuisession.Start
+	runTUIHostFn           = tuihost.Run
+)
 
 func (err *exitCodeError) Error() string { return err.err.Error() }
 func (err *exitCodeError) Unwrap() error { return err.err }
@@ -47,16 +56,11 @@ func isInteractiveTerminal() bool {
 func runTUI() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	cfg, apiClient, err := initClient(ctx)
-	if err != nil {
-		return err
-	}
-	store, err := library.Open(ctx, library.Options{})
+	store, err := openTUILibraryFn(ctx, library.Options{})
 	if err != nil {
 		return fmt.Errorf("open local lecture library: %w", err)
 	}
-	service := app.NewWithLibraryAndDiagnosticWriter(cfg, apiClient, store, io.Discard)
-	report, reportErr := getDoctorReport(nil)
+	report, reportErr := getTUIDoctorReportFn(nil)
 	if reportErr != nil {
 		return errors.Join(reportErr, store.Close())
 	}
@@ -64,21 +68,32 @@ func runTUI() error {
 	for _, check := range report.Checks {
 		diagnostics = append(diagnostics, tuisession.Diagnostic{Name: check.Name, Status: check.Status, Detail: check.Detail})
 	}
-	frontend, err := tuihost.ResolveExecutable(os.Getenv("IMPARTUS_UI_BINARY"))
+	frontend, err := resolveTUIExecutableFn(os.Getenv("IMPARTUS_UI_BINARY"))
 	if err != nil {
 		return errors.Join(err, store.Close())
 	}
-	session, err := tuisession.Start(ctx, tuisession.Options{
-		Actions:     service,
-		Artifacts:   service,
-		Catalog:     service,
-		Diagnostics: diagnostics,
-		Lectures:    service,
-		Version:     buildinfo.Version,
+	authentication := newTUIAuthenticationCoordinator(store, loadTUIConfig, func(ctx context.Context, cfg *config.Config) (tuiRemoteService, error) {
+		apiClient, loginErr := newLoggedInFn(ctx, cfg)
+		if loginErr != nil {
+			return nil, loginErr
+		}
+		return app.NewWithLibraryAndDiagnosticWriter(cfg, apiClient, store, io.Discard), nil
+	})
+	if authErr := authentication.Retry(ctx); authErr != nil && !isRecoverableTUIAuthenticationError(authErr) {
+		return errors.Join(authErr, store.Close())
+	}
+	session, err := startTUISessionFn(ctx, tuisession.Options{
+		Actions:        authentication,
+		Artifacts:      authentication,
+		Authentication: authentication,
+		Catalog:        authentication,
+		Diagnostics:    diagnostics,
+		Lectures:       authentication,
+		Version:        buildinfo.Version,
 	})
 	if err != nil {
 		return errors.Join(err, store.Close())
 	}
-	runErr := tuihost.Run(ctx, tuihost.Options{Session: session, Executable: frontend})
+	runErr := runTUIHostFn(ctx, tuihost.Options{Session: session, Executable: frontend})
 	return errors.Join(runErr, session.Close(), store.Close())
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/rabesss/impartus-cli/internal/buildinfo"
 	"github.com/rabesss/impartus-cli/internal/client"
@@ -28,6 +29,7 @@ var (
 	runWatchFn              = runWatch
 	runWatchJSONFn          = runWatchJSON
 	loadResolvedFn          = config.LoadResolved
+	loadTUIResolvedFn       = config.LoadResolvedForTUI
 	newLoggedInFn           = client.NewLoggedIn
 )
 
@@ -301,6 +303,18 @@ func loadConfig() (*config.Config, error) {
 	cfg, err := loadResolvedFn("")
 	if err != nil {
 		return nil, err
+	}
+	cfg.Views = config.NormalizeViews(cfg.Views)
+	return cfg, nil
+}
+
+func loadTUIConfig() (*config.Config, error) {
+	cfg, err := loadTUIResolvedFn("")
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
+		return nil, config.ErrCredentialsRequired
 	}
 	cfg.Views = config.NormalizeViews(cfg.Views)
 	return cfg, nil

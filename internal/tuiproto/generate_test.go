@@ -3,6 +3,7 @@ package tuiproto_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -64,13 +65,26 @@ func TestProtocolDocumentDeclaresSessionContract(t *testing.T) {
 	if document.Protocol.Version != tuiproto.ProtocolVersion {
 		t.Fatalf("schema protocol version = %q, generated constant = %q", document.Protocol.Version, tuiproto.ProtocolVersion)
 	}
+	if document.Protocol.Version != "tui/v2" {
+		t.Fatalf("schema protocol version = %q, want tui/v2 for required authentication readiness", document.Protocol.Version)
+	}
 	if document.Protocol.BasePath != tuiproto.ProtocolBasePath {
 		t.Fatalf("schema base path = %q, generated constant = %q", document.Protocol.BasePath, tuiproto.ProtocolBasePath)
 	}
-	for _, required := range []string{"Bootstrap", "Health", "CourseList", "Event", "Operation", "Problem"} {
+	for _, required := range []string{"AuthStatus", "Bootstrap", "Health", "CourseList", "Event", "Operation", "Problem"} {
 		if _, ok := document.Defs[required]; !ok {
 			t.Fatalf("protocol schema is missing required definition %s", required)
 		}
+	}
+	health := document.Defs["Health"]
+	if _, ok := health.Properties["authStatus"]; !ok {
+		t.Fatal("protocol Health is missing required authStatus")
+	}
+	if !slices.Contains(health.Required, "authStatus") {
+		t.Fatal("protocol Health does not require authStatus")
+	}
+	if authStatus := document.Defs["AuthStatus"].Enum; !slices.Equal(authStatus, []string{"ready", "unavailable"}) {
+		t.Fatalf("protocol AuthStatus enum = %v, want [ready unavailable]", authStatus)
 	}
 }
 

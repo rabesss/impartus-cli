@@ -22,7 +22,7 @@ const helperCapability = "bootstrap-capability-must-stay-private"
 
 type sessionStub struct{}
 
-func (sessionStub) BaseURL() string    { return "http://127.0.0.1:43123/tui/v1" }
+func (sessionStub) BaseURL() string    { return "http://127.0.0.1:43123/tui/v2" }
 func (sessionStub) Capability() string { return helperCapability }
 func (sessionStub) ID() string         { return "session-test-id" }
 
