@@ -157,6 +157,9 @@ func TestValidateMissingCredentialsUsesTypedIdentity(t *testing.T) {
 }
 
 func TestLoadResolvedForTUIAllowsOnlyMissingCredentials(t *testing.T) {
+	unsetConfigEnv(t, "IMPARTUS_USERNAME")
+	unsetConfigEnv(t, "IMPARTUS_PASSWORD")
+
 	t.Run("otherwise valid configuration", func(t *testing.T) {
 		path := writeTempConfig(t, `{
 			"baseUrl": "https://example.com", "quality": "450", "views": "both"
