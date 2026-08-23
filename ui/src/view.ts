@@ -180,10 +180,10 @@ export class FoundationView {
     } else if (normalized === "enter") {
       const open = commandForKey(this.#commandContext(), "enter")
       if (open?.availability.enabled === true) {
-      this.#closeOverlay(false)
-      this.#dispatchNavigationSelection()
+        this.#closeOverlay(false)
+        this.#dispatchNavigationSelection()
       } else {
-      this.#rebuild()
+        this.#rebuild()
       }
     }
   }
