@@ -157,8 +157,7 @@ func TestValidateMissingCredentialsUsesTypedIdentity(t *testing.T) {
 }
 
 func TestLoadResolvedForTUIAllowsOnlyMissingCredentials(t *testing.T) {
-	unsetConfigEnv(t, "IMPARTUS_USERNAME")
-	unsetConfigEnv(t, "IMPARTUS_PASSWORD")
+	unsetAllConfigEnv(t)
 
 	t.Run("otherwise valid configuration", func(t *testing.T) {
 		path := writeTempConfig(t, `{
@@ -614,6 +613,43 @@ func unsetConfigEnv(t *testing.T, key string) {
 			t.Errorf("restore %s: %v", key, err)
 		}
 	})
+}
+
+func unsetAllConfigEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"IMPARTUS_ALLOW_REMOTE_ACCESS",
+		"IMPARTUS_API_RATE_LIMIT",
+		"IMPARTUS_AUDIO_FORMAT",
+		"IMPARTUS_AUDIO_ONLY",
+		"IMPARTUS_BASE_URL",
+		"IMPARTUS_DOWNLOAD_LOCATION",
+		"IMPARTUS_ENABLE_JITTER",
+		"IMPARTUS_ENABLE_PIPELINE",
+		"IMPARTUS_HTTP_TIMEOUT",
+		"IMPARTUS_LISTEN_ADDR",
+		"IMPARTUS_NUM_WORKERS",
+		"IMPARTUS_PASSWORD",
+		"IMPARTUS_PROGRESS_TRACKING_ENABLED",
+		"IMPARTUS_QUALITY",
+		"IMPARTUS_RATE_LIMIT",
+		"IMPARTUS_SKIP_NO_AUDIO",
+		"IMPARTUS_SLIDES",
+		"IMPARTUS_TEMP_DIR",
+		"IMPARTUS_TEMP_DIR_LOCATION",
+		"IMPARTUS_TOKEN_CACHE",
+		"IMPARTUS_USERNAME",
+		"IMPARTUS_VIEWS",
+		"IMPARTUS_WATCH_AUDIO_FORMAT",
+		"IMPARTUS_WATCH_ENABLED",
+		"IMPARTUS_WATCH_MAX_LECTURES_PER_CYCLE",
+		"IMPARTUS_WATCH_MAX_RETRIES",
+		"IMPARTUS_WATCH_POLL_INTERVAL",
+		"IMPARTUS_WATCH_QUALITY",
+		"IMPARTUS_WATCH_VIEWS",
+	} {
+		unsetConfigEnv(t, key)
+	}
 }
 
 func TestLoadResolvedNoConfigFileHonorsPipelineEnvOptOut(t *testing.T) {

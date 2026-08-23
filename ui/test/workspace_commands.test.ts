@@ -13,7 +13,7 @@ import { createFoundationState } from "../src/workspace_controller.ts"
 describe("workspace command registry", () => {
   test("disables remote commands while keeping recovery and local workspace commands available", () => {
     const context = commandContext({ authStatus: "unavailable", screen: "courses" })
-    for (const key of ["c", "enter"]) {
+    for (const key of ["/", "c", "enter"]) {
       const result = commandForKey(context, key)
       expect(result?.availability.enabled).toBe(false)
       expect(result?.availability.reason).toContain("Authentication")

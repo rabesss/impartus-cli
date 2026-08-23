@@ -93,7 +93,7 @@ func (coordinator *tuiAuthenticationCoordinator) Retry(ctx context.Context) erro
 	candidate, err := coordinator.build(ctx, cfg)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			return err
+			return context.Canceled
 		}
 		return &tuiAuthenticationAttemptError{err: err}
 	}

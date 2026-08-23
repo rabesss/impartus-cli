@@ -185,6 +185,8 @@ function openAvailability(context: CommandContext): CommandAvailability {
 
 function filterAvailability(context: CommandContext): CommandAvailability {
   const visible = context.overlay === undefined && context.focus === "collection" && context.state.screen !== "playback"
+  const remoteUnavailable = context.state.authStatus !== "ready" && (context.state.screen === "courses" || context.state.screen === "lectures")
+  if (visible && remoteUnavailable) return available(true, false, "Authentication is unavailable")
   return available(visible, visible && !context.state.loading && context.state.error === undefined, context.state.loading ? "A request is pending" : "Retry the current view first")
 }
 

@@ -42,8 +42,10 @@ describe("FoundationView", () => {
     const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 140 })
     renderers.push(setup)
     let courses = 0
+    let retries = 0
     const handlers = callbacks()
     handlers.onCourses = () => { courses++ }
+    handlers.onRetry = () => { retries++ }
     const state = foundationState()
     const view = new FoundationView(setup.renderer, {
       ...state,
@@ -62,6 +64,11 @@ describe("FoundationView", () => {
     expect(frame).toContain("Local library")
     expect(frame).toContain("Diagnostics")
     expect(frame).toContain("q quit")
+    expect(frame).not.toContain("/ Filter collection")
+    setup.mockInput.pressKey("/")
+    setup.mockInput.pressKey("r")
+    await setup.renderOnce()
+    expect(retries).toBe(1)
     setup.mockInput.pressKey("g")
     setup.mockInput.pressEnter()
     await setup.renderOnce()
@@ -334,6 +341,24 @@ describe("FoundationView", () => {
     expect(frame).toContain("[ACTIVE] Learning workspace")
     expect(frame).toContain("Distributed Systems")
     expect(frame).toContain("q quit")
+    expect(frame.split("\n")).toHaveLength(11)
+    expect(frame.split("\n").slice(0, 10).every((line) => line.length === 40)).toBe(true)
+    view.destroy()
+  })
+
+  test("keeps compact authentication recovery visible and bounded", async () => {
+    const setup = await createTestRenderer({ height: 10, kittyKeyboard: true, width: 40 })
+    renderers.push(setup)
+    const view = new FoundationView(setup.renderer, {
+      ...foundationState(),
+      authStatus: "unavailable",
+      courses: [],
+      status: "Authentication unavailable — press r to retry",
+    }, callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Auth unavailable; press r to retry")
     expect(frame.split("\n")).toHaveLength(11)
     expect(frame.split("\n").slice(0, 10).every((line) => line.length === 40)).toBe(true)
     view.destroy()

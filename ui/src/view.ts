@@ -344,8 +344,11 @@ export class FoundationView {
 
   #header(height: number): BoxRenderable {
     const header = new BoxRenderable(this.#renderer, { alignItems: "center", border: ["bottom"], borderColor: COLORS.border, flexDirection: "row", height, justifyContent: "space-between", paddingX: 2, width: "100%" })
-    header.add(text(this.#renderer, `IMPARTUS  /  ${screenTitle(this.#state.screen)}`, COLORS.foreground, TextAttributes.BOLD))
-    header.add(text(this.#renderer, `● ${this.#state.status}`, this.#state.status === "Connected" ? COLORS.success : COLORS.warning))
+    const narrowRecovery = this.#state.authStatus !== "ready" && this.#renderer.terminalWidth < 60
+    const title = narrowRecovery ? "IMPARTUS  /  Workspace" : `IMPARTUS  /  ${screenTitle(this.#state.screen)}`
+    const status = this.#state.authStatus !== "ready" && this.#renderer.terminalWidth < 100 ? "Auth unavailable" : this.#state.status
+    header.add(text(this.#renderer, title, COLORS.foreground, TextAttributes.BOLD))
+    header.add(text(this.#renderer, `● ${status}`, this.#state.status === "Connected" ? COLORS.success : COLORS.warning))
     return header
   }
 
@@ -392,6 +395,10 @@ export class FoundationView {
       return panel
     }
     if (this.#state.screen === "courses" && this.#state.authStatus !== "ready") {
+      if (bodyHeight <= 4) {
+        panel.add(text(this.#renderer, "Auth unavailable; press r to retry", COLORS.warning, TextAttributes.BOLD))
+        return panel
+      }
       panel.add(text(this.#renderer, "Authentication is unavailable", COLORS.warning, TextAttributes.BOLD))
       panel.add(text(this.#renderer, "Press r to retry. Local library and diagnostics remain available.", COLORS.dim))
       return panel

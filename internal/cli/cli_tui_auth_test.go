@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -202,6 +203,25 @@ func TestTUIAuthenticationCoordinatorClassifiesCandidateFailuresWithoutLeakingDe
 	}
 	if strings.Contains(err.Error(), secret) {
 		t.Fatalf("Retry() error disclosed candidate detail: %q", err)
+	}
+}
+
+func TestTUIAuthenticationCoordinatorScrubsCanceledCandidateDetails(t *testing.T) {
+	secret := "canceled login response secret"
+	coordinator := newTUIAuthenticationCoordinator(
+		&tuiArtifactStoreStub{},
+		func() (*config.Config, error) { return &config.Config{Username: "user", Password: "password"}, nil },
+		func(context.Context, *config.Config) (tuiRemoteService, error) {
+			return nil, fmt.Errorf("login canceled: %w: %s", context.Canceled, secret)
+		},
+	)
+
+	err := coordinator.Retry(t.Context())
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Retry() error = %v, want context.Canceled identity", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("Retry() cancellation disclosed candidate detail: %q", err)
 	}
 }
 
