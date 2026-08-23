@@ -57,6 +57,15 @@ func safePresentationText(value string) string {
 		) {
 			return "REDACTED"
 		}
+		_, selectorEvidence := sanitizePresentationText(terminalSequenceOSCSelectorView(value))
+		if selectorEvidence.HasUnexplainedValues(
+			baselineEvidence,
+			directEvidence,
+			normalizePresentationEvidence,
+			terminalSequenceOSCSelectorView,
+		) {
+			return "REDACTED"
+		}
 	}
 	return safe
 }
@@ -70,6 +79,14 @@ func rawPresentationEvidenceView(value string) string {
 }
 
 func terminalSequencePayloadView(value string) string {
+	return terminalSequenceDetectionView(value, false)
+}
+
+func terminalSequenceOSCSelectorView(value string) string {
+	return terminalSequenceDetectionView(value, true)
+}
+
+func terminalSequenceDetectionView(value string, oscSelector bool) string {
 	var payload strings.Builder
 	state := byte(ansi.NormalState)
 	for len(value) > 0 {
@@ -81,6 +98,8 @@ func terminalSequencePayloadView(value string) string {
 		state = nextState
 		if width > 0 || !isTerminalSequence(sequence) {
 			payload.WriteString(sequence)
+		} else if oscSelector && ansi.HasOscPrefix(sequence) {
+			payload.WriteString(terminalStringSelector(sequence))
 		} else {
 			payload.WriteString(terminalSequencePayload(sequence))
 		}
@@ -130,6 +149,24 @@ func csiCredentialPayload(sequence string) string {
 }
 
 func terminalStringPayload(sequence string) string {
+	body := terminalStringBody(sequence)
+	if ansi.HasOscPrefix(sequence) {
+		if separator := strings.IndexByte(body, ';'); separator >= 0 {
+			body = body[separator+1:]
+		}
+	}
+	return body
+}
+
+func terminalStringSelector(sequence string) string {
+	body := terminalStringBody(sequence)
+	if separator := strings.IndexByte(body, ';'); separator >= 0 {
+		return body[:separator]
+	}
+	return body
+}
+
+func terminalStringBody(sequence string) string {
 	prefix := 1
 	if ansi.HasEscPrefix(sequence) {
 		prefix = 2
@@ -140,13 +177,7 @@ func terminalStringPayload(sequence string) string {
 	} else if end >= prefix+2 && sequence[end-2:] == "\x1b\\" {
 		end -= 2
 	}
-	body := sequence[prefix:end]
-	if ansi.HasOscPrefix(sequence) {
-		if separator := strings.IndexByte(body, ';'); separator >= 0 {
-			body = body[separator+1:]
-		}
-	}
-	return body
+	return sequence[prefix:end]
 }
 
 func sanitizePresentationText(value string) (string, secrets.RedactionEvidence) {

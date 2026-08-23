@@ -125,11 +125,11 @@ func TestSafePresentationTextRejectsCompleteEscapeSequenceCredentialSplits(t *te
 		"CSI final byte":        "to\x1b[ken=csi-secret",
 		"CSI crosses delimiter": "token\x1b[0=assignmentsecret",
 		"OSC body":              "to\x1b]k\x07en=osc-secret",
+		"OSC selector split":    "to\x1b]k;0\x07en=hunter2",
 	} {
 		t.Run(name, func(t *testing.T) {
-			got := safePresentationText(value)
-			if strings.Contains(got, "secret") || !strings.Contains(got, "REDACTED") {
-				t.Fatalf("safePresentationText() = %q, want credential redaction", got)
+			if got := safePresentationText(value); got != "REDACTED" {
+				t.Fatalf("safePresentationText() = %q, want REDACTED", got)
 			}
 		})
 	}
