@@ -325,6 +325,12 @@ launch and passes one one-use owner-private bootstrap file to the child. The
 capability never appears in argv or the child environment, and the child does
 not inherit Impartus credentials.
 
+If credentials are missing or invalid, or login is temporarily unavailable,
+the workspace still opens in recovery mode. Local library, diagnostics, help,
+self-test, and quit remain available while remote catalog and lecture actions
+stay disabled. Correct the local configuration, then press `r` to authenticate
+and load the catalog in the same process.
+
 No arguments launch the TUI only when both stdin and stdout are terminals.
 Otherwise, Impartus prints help to stderr and exits 2 rather than consuming a
 pipeline.

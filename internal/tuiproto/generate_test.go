@@ -3,6 +3,7 @@ package tuiproto_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -78,6 +79,12 @@ func TestProtocolDocumentDeclaresSessionContract(t *testing.T) {
 	health := document.Defs["Health"]
 	if _, ok := health.Properties["authStatus"]; !ok {
 		t.Fatal("protocol Health is missing required authStatus")
+	}
+	if !slices.Contains(health.Required, "authStatus") {
+		t.Fatal("protocol Health does not require authStatus")
+	}
+	if authStatus := document.Defs["AuthStatus"].Enum; !slices.Equal(authStatus, []string{"ready", "unavailable"}) {
+		t.Fatalf("protocol AuthStatus enum = %v, want [ready unavailable]", authStatus)
 	}
 }
 

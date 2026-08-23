@@ -174,6 +174,30 @@ describe("SessionClient", () => {
     expect(requests.find((request) => request.url.includes("/lectures?"))?.url).toContain("subjectId=3")
   })
 
+  test("rejects retry health from a different private session", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        return Response.json({
+          authStatus: "ready",
+          protocol: PROTOCOL_VERSION,
+          sessionId: "different-session",
+          status: "ok",
+          version: "test",
+        } satisfies Health)
+      },
+    })
+    servers.push(server)
+    const client = new SessionClient({
+      baseUrl: `http://127.0.0.1:${server.port}/tui/v2`,
+      capability: "c".repeat(43),
+      protocol: PROTOCOL_VERSION,
+      sessionId: "session-id",
+    })
+
+    await expect(client.retryAuthentication()).rejects.toThrow("Invalid UI session response")
+  })
+
   test("surfaces only validated safe Problems and discards arbitrary failure bodies", async () => {
     const secret = "username=person@example.com password=body-secret"
     let retryFailures = 0
@@ -182,10 +206,17 @@ describe("SessionClient", () => {
       fetch(request) {
         const path = new URL(request.url).pathname
         if (path.endsWith("/auth/retry")) {
-        retryFailures++
-        return retryFailures > 1
-        ? Response.json({ code: "configuration_invalid", error: "configuration is invalid" }, { status: 503 })
-            : Response.json({ code: "auth_unavailable", error: "upstream authentication is unavailable" }, { status: 503 })
+          retryFailures++
+          if (retryFailures === 1) {
+            return Response.json({ code: "auth_unavailable", error: "upstream authentication is unavailable" }, { status: 503 })
+          }
+          if (retryFailures === 2) {
+            return Response.json({ code: "configuration_invalid", error: "configuration is invalid" }, { status: 503 })
+          }
+          if (retryFailures === 3) {
+            return Response.json({ code: "auth_unavailable", error: secret }, { status: 503 })
+          }
+          return Response.json({ code: "auth_unavailable", error: "upstream authentication is unavailable", padding: "x".repeat(4096) }, { status: 503 })
         }
         return new Response(secret, { status: 502 })
       },
@@ -219,6 +250,16 @@ describe("SessionClient", () => {
       expect(error).toBeInstanceOf(SessionProblemError)
       expect((error as SessionProblemError).code).toBe("configuration_invalid")
       expect((error as Error).message).toBe("configuration is invalid")
+    }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await client.retryAuthentication()
+        expect.unreachable()
+      } catch (error) {
+        expect(error).not.toBeInstanceOf(SessionProblemError)
+        expect((error as Error).message).toBe("UI session request failed (503)")
+        expect(String(error)).not.toContain(secret)
+      }
     }
   })
 })

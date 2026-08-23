@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/rabesss/impartus-cli/internal/app"
 	"github.com/rabesss/impartus-cli/internal/client"
@@ -166,6 +167,53 @@ func TestTUIAuthenticationCoordinatorSnapshotsServicesRaceSafely(t *testing.T) {
 		}
 	}
 	wait.Wait()
+}
+
+func TestTUIAuthenticationCoordinatorCoalescesOverlappingRetriesAndLetsWaiterCancel(t *testing.T) {
+	var builds atomic.Int64
+	loginStarted := make(chan struct{})
+	releaseLogin := make(chan struct{})
+	coordinator := newTUIAuthenticationCoordinator(
+		&tuiArtifactStoreStub{},
+		func() (*config.Config, error) { return &config.Config{Username: "user", Password: "password"}, nil },
+		func(context.Context, *config.Config) (tuiRemoteService, error) {
+			builds.Add(1)
+			close(loginStarted)
+			<-releaseLogin
+			return &tuiRemoteStub{courseName: "Ready"}, nil
+		},
+	)
+
+	firstResult := make(chan error, 1)
+	go func() { firstResult <- coordinator.Retry(t.Context()) }()
+	<-loginStarted
+
+	queuedCtx, cancelQueued := context.WithCancel(t.Context())
+	queuedResult := make(chan error, 1)
+	go func() { queuedResult <- coordinator.Retry(queuedCtx) }()
+	cancelQueued()
+
+	var queuedErr error
+	timedOut := false
+	select {
+	case queuedErr = <-queuedResult:
+	case <-time.After(250 * time.Millisecond):
+		timedOut = true
+	}
+	close(releaseLogin)
+	if err := <-firstResult; err != nil {
+		t.Fatalf("active Retry() error = %v", err)
+	}
+	if timedOut {
+		queuedErr = <-queuedResult
+		t.Fatalf("queued retry ignored cancellation until the active login completed: %v", queuedErr)
+	}
+	if !errors.Is(queuedErr, context.Canceled) {
+		t.Fatalf("queued Retry() error = %v, want context.Canceled", queuedErr)
+	}
+	if builds.Load() != 1 {
+		t.Fatalf("overlapping Retry() calls built %d candidates, want 1", builds.Load())
+	}
 }
 
 func TestRecoverableTUIAuthenticationErrorClassification(t *testing.T) {

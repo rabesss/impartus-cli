@@ -17,6 +17,7 @@ import (
 	"github.com/rabesss/impartus-cli/internal/app"
 	artifactpkg "github.com/rabesss/impartus-cli/internal/artifact"
 	"github.com/rabesss/impartus-cli/internal/client"
+	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/library"
 	"github.com/rabesss/impartus-cli/internal/player"
 	"github.com/rabesss/impartus-cli/internal/tuiproto"
@@ -799,6 +800,29 @@ func TestSessionAuthenticationRetryDistinguishesInvalidConfigurationSafely(t *te
 	decodeJSON(t, response, &problem)
 	if response.StatusCode != http.StatusServiceUnavailable || problem.Code != "configuration_invalid" || problem.Error != "configuration is invalid" {
 		t.Fatalf("configuration retry = (%d, %+v)", response.StatusCode, problem)
+	}
+}
+
+func TestSessionAuthenticationRetryTreatsRemovedCredentialsAsUnavailable(t *testing.T) {
+	authentication := &authenticationStub{
+		status: tuiproto.AuthStatusUnavailable,
+		retry:  func(context.Context) error { return config.ErrCredentialsRequired },
+	}
+	session, err := tuisession.Start(t.Context(), tuisession.Options{
+		Authentication: authentication,
+		Catalog:        catalogStub{},
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	cleanupSession(t, session)
+
+	response := sessionRequest(t, session, http.MethodPost, "/auth/retry", nil)
+	defer closeResponseBody(t, response.Body)
+	var problem tuiproto.Problem
+	decodeJSON(t, response, &problem)
+	if response.StatusCode != http.StatusServiceUnavailable || problem.Code != "auth_unavailable" || problem.Error != "upstream authentication is unavailable" {
+		t.Fatalf("missing-credential retry = (%d, %+v)", response.StatusCode, problem)
 	}
 }
 

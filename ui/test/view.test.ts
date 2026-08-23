@@ -31,10 +31,40 @@ describe("FoundationView", () => {
     setup.mockInput.pressKey("g")
     await setup.renderOnce()
     expect(setup.captureCharFrame()).toContain("Courses — Authentication is unavailable")
+    expect(setup.captureCharFrame()).not.toContain("Enter open")
     setup.mockInput.pressEnter()
     await setup.renderOnce()
     expect(courses).toBe(0)
     expect(setup.captureCharFrame()).toContain("Navigation")
+    view.destroy()
+  })
+
+  test("opens an available local destination from the compact navigation overlay", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    let library = 0
+    let state: FoundationState = {
+      ...foundationState(),
+      authStatus: "unavailable",
+      courses: [],
+      status: "Authentication unavailable",
+    }
+    let view: FoundationView
+    const handlers = callbacks()
+    handlers.onLibrary = () => {
+      library++
+      state = { ...state, screen: "library" }
+      view.update(state)
+    }
+    view = new FoundationView(setup.renderer, state, handlers)
+
+    setup.mockInput.pressKey("g")
+    setup.mockInput.pressKey("j")
+    setup.mockInput.pressEnter()
+    await setup.renderOnce()
+
+    expect(library).toBe(1)
+    expect(setup.captureCharFrame()).not.toContain("Navigation")
     view.destroy()
   })
 

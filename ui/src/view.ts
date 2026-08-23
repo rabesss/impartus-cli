@@ -612,7 +612,11 @@ export class FoundationView {
       const reason = unavailable ? " — Authentication is unavailable" : ""
       overlay.add(row(this.#renderer, `${index === this.#navigationCursor ? ">" : " "} ${entry.label}${reason}`, index === this.#navigationCursor))
     })
-    overlay.add(text(this.#renderer, "↑↓ select   Enter open   Esc close", COLORS.dim))
+    const open = commandForKey(this.#commandContext(), "enter")
+    const hint = open?.availability.enabled === false && open.availability.reason !== ""
+      ? `↑↓ select   ${open.availability.reason}   Esc close`
+      : "↑↓ select   Enter open   Esc close"
+    overlay.add(text(this.#renderer, hint, COLORS.dim))
     return overlay
   }
 

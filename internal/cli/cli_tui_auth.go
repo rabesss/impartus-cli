@@ -44,6 +44,11 @@ type tuiArtifactStore interface {
 type tuiConfigLoader func() (*config.Config, error)
 type tuiCandidateBuilder func(context.Context, *config.Config) (tuiRemoteService, error)
 
+type tuiAuthenticationRetry struct {
+	done chan struct{}
+	err  error
+}
+
 // tuiAuthenticationCoordinator is a stable session dependency. Candidate
 // services are constructed without holding the state lock and published only
 // after complete success. Remote calls snapshot one complete candidate and
@@ -53,9 +58,10 @@ type tuiAuthenticationCoordinator struct {
 	load  tuiConfigLoader
 	build tuiCandidateBuilder
 
-	retryMu sync.Mutex
-	stateMu sync.RWMutex
-	service tuiRemoteService
+	retryMu     sync.Mutex
+	activeRetry *tuiAuthenticationRetry
+	stateMu     sync.RWMutex
+	service     tuiRemoteService
 }
 
 func newTUIAuthenticationCoordinator(
@@ -78,8 +84,29 @@ func (coordinator *tuiAuthenticationCoordinator) Status() tuiproto.AuthStatus {
 
 func (coordinator *tuiAuthenticationCoordinator) Retry(ctx context.Context) error {
 	coordinator.retryMu.Lock()
-	defer coordinator.retryMu.Unlock()
+	if active := coordinator.activeRetry; active != nil {
+		coordinator.retryMu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-active.done:
+			return active.err
+		}
+	}
+	active := &tuiAuthenticationRetry{done: make(chan struct{})}
+	coordinator.activeRetry = active
+	coordinator.retryMu.Unlock()
 
+	err := coordinator.retryOnce(ctx)
+	coordinator.retryMu.Lock()
+	active.err = err
+	close(active.done)
+	coordinator.activeRetry = nil
+	coordinator.retryMu.Unlock()
+	return err
+}
+
+func (coordinator *tuiAuthenticationCoordinator) retryOnce(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
