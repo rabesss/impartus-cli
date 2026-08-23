@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/rabesss/impartus-cli/internal/secrets"
 	"github.com/rabesss/impartus-cli/internal/tuiproto"
 )
 
@@ -80,7 +79,7 @@ func (events *hub) publish(event tuiproto.Event) {
 	events.nextSequence++
 	event.Sequence = events.nextSequence
 	if event.Message != nil {
-		message := secrets.Scrub(*event.Message)
+		message := safePresentationText(*event.Message)
 		event.Message = &message
 	}
 	for identifier, subscriber := range events.subscribers {

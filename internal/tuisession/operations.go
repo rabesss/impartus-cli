@@ -344,17 +344,23 @@ func (telemetry *playbackTelemetry) event(identifier string) *tuiproto.Event {
 	if telemetry.duration > 0 {
 		progress = min(100, telemetry.position/telemetry.duration*100)
 	}
+	position := telemetry.position
+	duration := telemetry.duration
+	volume := telemetry.volume
+	speed := telemetry.speed
+	paused := telemetry.paused
+	muted := telemetry.muted
 	return &tuiproto.Event{
-		DurationSeconds: &telemetry.duration,
-		Muted:           &telemetry.muted,
+		DurationSeconds: &duration,
+		Muted:           &muted,
 		OperationID:     &identifier,
-		Paused:          &telemetry.paused,
+		Paused:          &paused,
 		Percent:         &progress,
-		PositionSeconds: &telemetry.position,
-		Speed:           &telemetry.speed,
+		PositionSeconds: &position,
+		Speed:           &speed,
 		State:           &state,
 		Type:            tuiproto.EventTypeOperationProgress,
-		Volume:          &telemetry.volume,
+		Volume:          &volume,
 	}
 }
 

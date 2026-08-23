@@ -73,6 +73,76 @@ func TestScrubError_StripsEmbeddedURLs(t *testing.T) {
 	}
 }
 
+func TestScrubPreservesCredentialFreeURLsByteForByte(t *testing.T) {
+	t.Parallel()
+
+	const input = "retry https://example.com/path?tokenquerysecret after refresh"
+	if got := Scrub(input); got != input {
+		t.Fatalf("Scrub(%q) = %q, want byte-for-byte preservation", input, got)
+	}
+}
+
+func TestScrubURLHelpersStayEquivalent(t *testing.T) {
+	t.Parallel()
+
+	for _, input := range []string{
+		"",
+		"retry https://example.com/path?tokenquerysecret after refresh",
+		"https://example.com/path?token=url-secret&keep=1",
+		"https://alice:password@example.com/path",
+		"nested https://example.com/?next=https%3A%2F%2Finner.example%2F%3Ftoken%3Dnested-secret",
+	} {
+		if got, want := ScrubURLs(input), ScrubCredentialURLs(input); got != want {
+			t.Fatalf("URL scrub helpers disagree for %q: ScrubURLs = %q, ScrubCredentialURLs = %q", input, got, want)
+		}
+	}
+}
+
+func TestScrubWithEvidenceCountsCredentialWhoseValueContainsRedactionMarker(t *testing.T) {
+	got, evidence := ScrubWithEvidence("token=hunter2REDACTEDc")
+	if got != "token=REDACTED" {
+		t.Fatalf("ScrubWithEvidence() = %q, want token=REDACTED", got)
+	}
+	if evidence.Count() != 1 {
+		t.Fatalf("ScrubWithEvidence() evidence count = %d, want 1", evidence.Count())
+	}
+}
+
+func TestScrubCredentialURLsWithEvidenceCountsUserinfoWithoutMarkerText(t *testing.T) {
+	got, evidence := ScrubCredentialURLsWithEvidence("https://user:password@example.com/path")
+	if got != "https://example.com/path" {
+		t.Fatalf("ScrubCredentialURLsWithEvidence() = %q", got)
+	}
+	if evidence.Count() != 1 {
+		t.Fatalf("ScrubCredentialURLsWithEvidence() evidence count = %d, want 1", evidence.Count())
+	}
+}
+
+func TestRedactionEvidenceDetectsValuesThatRemainVisible(t *testing.T) {
+	normalize := func(value string) string { return strings.TrimPrefix(value, "ansi:") }
+	evidence := RedactionEvidence{values: []string{"ansi:secret"}}
+	if !evidence.HasVisibleValueIn("prefix secret suffix", normalize) {
+		t.Fatal("visible credential was not detected")
+	}
+	if evidence.HasVisibleValueIn("prefix REDACTED suffix", normalize) {
+		t.Fatal("redacted credential was treated as visible")
+	}
+}
+
+func TestRedactionEvidenceRequiresBoundariesForShortValues(t *testing.T) {
+	normalize := func(value string) string { return value }
+	evidence := RedactionEvidence{values: []string{"0", "ab"}}
+	if evidence.HasVisibleValueIn("failed 404 near cabinet", normalize) {
+		t.Fatal("short credential substrings inside unrelated words were treated as visible")
+	}
+	if !evidence.HasVisibleValueIn("token=0", normalize) {
+		t.Fatal("boundary-delimited one-character credential was not detected")
+	}
+	if !evidence.HasVisibleValueIn("sig=ab", normalize) {
+		t.Fatal("boundary-delimited two-character credential was not detected")
+	}
+}
+
 func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 	t.Parallel()
 
@@ -121,6 +191,30 @@ func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 				t.Fatalf("Scrub(%q) = %q", test.input, got)
 			}
 		})
+	}
+}
+
+func TestScrub_RedactsQuotedKeysWithNonJSONValues(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		input string
+		want  string
+	}{
+		{input: `"token": bare-secret`, want: `"token": REDACTED`},
+		{input: `"token"=equals-secret`, want: `"token"=REDACTED`},
+		{input: `'token': single-secret`, want: `'token': REDACTED`},
+		{input: `'token': 'quoted secret'`, want: `'token': 'REDACTED'`},
+		{input: `"token ": "secret"`, want: `"token ": "REDACTED"`},
+		{input: `'token ': 'secret'`, want: `'token ': 'REDACTED'`},
+		{input: `"token": 'secret'`, want: `"token": 'REDACTED'`},
+		{input: `'token': "secret"`, want: `'token': "REDACTED"`},
+		{input: `"token"="secret"`, want: `"token"="REDACTED"`},
+		{input: `"token": bearer s3cr3t`, want: `"token": REDACTED`},
+	} {
+		if got := Scrub(test.input); got != test.want {
+			t.Fatalf("Scrub(%q) = %q, want %q", test.input, got, test.want)
+		}
 	}
 }
 

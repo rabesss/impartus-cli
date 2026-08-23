@@ -315,7 +315,10 @@ terminals, two panes at medium widths, and a routed single pane on narrow
 terminals. It supports live course/lecture browsing, `/` filters, `enter`
 playback with recorded resume state, `d` download, `l` library, `!` dependency
 diagnostics, and mpv pause/seek/volume/mute/speed/camera controls. Press `?` for
-the command guide. It never falls back to blocking legacy mpv.
+the contextual command guide, `Ctrl-P` for the editable command palette, `g`
+for navigation, and `Tab`/`Shift-Tab` to move between visible panes. Each
+collection keeps its own selection and filter. It never falls back to blocking
+legacy mpv.
 
 The Go parent starts a private, authenticated loopback session for each TUI
 launch and passes one one-use owner-private bootstrap file to the child. The
