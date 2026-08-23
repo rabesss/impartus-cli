@@ -14,23 +14,26 @@ import (
 var spacedAssignmentCandidate = regexp.MustCompile(`(?i)([a-z0-9_-]+(?: +[a-z0-9_-]+)+)( *["']? *[:=])`)
 var spacedSchemeCandidate = regexp.MustCompile(`(?i)([a-z0-9_-]+)( *["']? *[:=] *)([a-z0-9_-]+(?: +[a-z0-9_-]+)+)`)
 var spacedURLAssignmentCandidate = regexp.MustCompile(`(?i)([?&]) *([a-z0-9_-]+(?: +[a-z0-9_-]+)*) *= *`)
+var presentationUserinfoCandidate = regexp.MustCompile(`(?i)https?://[^/\s:@]+:[^/\s@]+@`)
 
 // safePresentationText removes terminal syntax and invisible key-splitting
 // characters before credential redaction. The returned string is the only
 // human-readable text boundary exposed to the OpenTUI sidecar.
 func safePresentationText(value string) string {
 	stripped := ansi.Strip(value)
-	safe, redacted := sanitizePresentationText(stripped)
-	if stripped != value && !redacted {
+	safe, redactions := sanitizePresentationText(stripped)
+	if stripped != value {
 		// ANSI parsers legitimately consume the final byte of a short escape
 		// sequence, while OSC and related strings can hide printable payload.
 		// Those bytes can be credential syntax (for example a character inside
 		// "token"). Re-run detection with both raw printable bytes and terminal
 		// payload preserved. If either view exposes a credential that the normal
-		// stripped view missed, discard the adversarial message. When the normal
-		// view already redacted the credential, retain its useful safe context.
+		// stripped view missed, discard the adversarial message. Compare the
+		// number of redactions rather than a global boolean so one ordinary
+		// credential cannot mask a second, escape-obfuscated credential. When all
+		// views detect the same credentials, retain the useful safe context.
 		for _, candidate := range []string{value, terminalSequencePayloadView(value)} {
-			if _, candidateRedacted := sanitizePresentationText(candidate); candidateRedacted {
+			if _, candidateRedactions := sanitizePresentationText(candidate); candidateRedactions > redactions {
 				return "REDACTED"
 			}
 		}
@@ -118,7 +121,7 @@ func terminalStringPayload(sequence string) string {
 	return body
 }
 
-func sanitizePresentationText(value string) (string, bool) {
+func sanitizePresentationText(value string) (string, int) {
 	marker := presentationSpaceMarker(value)
 	var marked strings.Builder
 	for _, character := range value {
@@ -142,12 +145,25 @@ func sanitizePresentationText(value string) (string, bool) {
 	markedURLs = strings.ReplaceAll(markedURLs, " ", marker)
 	markedURLs = compactMarkedHTTPSchemes(markedURLs, marker)
 	safeURLs := secrets.ScrubCredentialURLs(markedURLs)
-	redacted := safeURLs != markedURLs
+	redactions := addedRedactionMarkers(markedURLs, safeURLs)
+	redactions += len(presentationUserinfoCandidate.FindAllStringIndex(markedURLs, -1))
+	if redactions == 0 && safeURLs != markedURLs {
+		// Keep a conservative evidence count for an unusual credential-bearing
+		// URL form that the shared URL scrubber recognizes but the presentation
+		// layer cannot classify more precisely.
+		redactions = 1
+	}
 	safeURLs = strings.ReplaceAll(safeURLs, url.QueryEscape(marker), marker)
 	spaced = strings.ReplaceAll(safeURLs, marker, " ")
 	compacted := compactSplitCredentialSchemes(compactSplitCredentialKeys(spaced))
 	splitSafe := secrets.Scrub(compacted)
-	return strings.Join(strings.Fields(splitSafe), " "), redacted || splitSafe != compacted
+	redactions += addedRedactionMarkers(compacted, splitSafe)
+	return strings.Join(strings.Fields(splitSafe), " "), redactions
+}
+
+func addedRedactionMarkers(before, after string) int {
+	added := strings.Count(after, "REDACTED") - strings.Count(before, "REDACTED")
+	return max(0, added)
 }
 
 func compactSensitiveURLAssignments(value string) string {

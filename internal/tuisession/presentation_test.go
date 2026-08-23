@@ -135,6 +135,19 @@ func TestSafePresentationTextRejectsCompleteEscapeSequenceCredentialSplits(t *te
 	}
 }
 
+func TestSafePresentationTextRejectsObfuscatedCredentialAlongsideCleanCredential(t *testing.T) {
+	for name, value := range map[string]string{
+		"assignment": "token=abc to\x1b[ken=hunter2",
+		"userinfo":   "token=abc https://user:pass\x1b[@example.com/",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := safePresentationText(value); got != "REDACTED" {
+				t.Fatalf("safePresentationText() = %q, want REDACTED", got)
+			}
+		})
+	}
+}
+
 func TestSafePresentationTextPreservesContextWhenANSISurroundsCredentialValue(t *testing.T) {
 	const value = "retry token=\x1b[31msecret\x1b[0m after refresh"
 	const want = "retry token=REDACTED after refresh"
