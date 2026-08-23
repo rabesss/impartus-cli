@@ -267,6 +267,10 @@ func TestTUIAuthenticationCoordinatorStopsBeforeLoadWhenCanceled(t *testing.T) {
 
 func TestRunTUIStartsUnavailableSessionForMissingCredentials(t *testing.T) {
 	restoreCLIState(t)
+	sandbox := t.TempDir()
+	t.Chdir(sandbox)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(sandbox, "state-home"))
+	t.Setenv("IMPARTUS_TOKEN_CACHE", filepath.Join(sandbox, "missing-token"))
 	var opened *library.Store
 	openTUILibraryFn = func(ctx context.Context, _ library.Options) (*library.Store, error) {
 		stateDir := filepath.Join(t.TempDir(), "state")
@@ -277,7 +281,6 @@ func TestRunTUIStartsUnavailableSessionForMissingCredentials(t *testing.T) {
 		opened, err = library.Open(ctx, library.Options{Path: filepath.Join(stateDir, "library.db")})
 		return opened, err
 	}
-	getTUIDoctorReportFn = func([]string) (doctorReport, error) { return doctorReport{OK: true}, nil }
 	resolveTUIExecutableFn = func(string) (string, error) { return "unused-sidecar", nil }
 	loadTUIResolvedFn = func(string) (*config.Config, error) {
 		return &config.Config{BaseURL: "https://example.com", Quality: "450", Views: "both"}, nil

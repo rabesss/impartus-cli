@@ -825,6 +825,100 @@ func TestSessionAuthenticationRetryShortCircuitsWhenAlreadyReady(t *testing.T) {
 	}
 }
 
+func TestSessionAuthenticationRetryReturnsReadyAfterOverlappingSuccess(t *testing.T) {
+	firstStarted := make(chan struct{})
+	secondStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	releaseSecond := make(chan struct{})
+	var attemptsMu sync.Mutex
+	attempts := 0
+	var authentication *authenticationStub
+	authentication = &authenticationStub{
+		status: tuiproto.AuthStatusUnavailable,
+		retry: func(context.Context) error {
+			attemptsMu.Lock()
+			attempts++
+			attempt := attempts
+			attemptsMu.Unlock()
+			switch attempt {
+			case 1:
+				close(firstStarted)
+				<-releaseFirst
+				authentication.mu.Lock()
+				authentication.status = tuiproto.AuthStatusReady
+				authentication.mu.Unlock()
+				return nil
+			case 2:
+				close(secondStarted)
+				<-releaseSecond
+				return errors.New("overlapping retry failed")
+			default:
+				return errors.New("unexpected retry")
+			}
+		},
+	}
+	session, err := tuisession.Start(t.Context(), tuisession.Options{
+		Authentication: authentication,
+		Catalog:        catalogStub{},
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	cleanupSession(t, session)
+
+	newRetryRequest := func() *http.Request {
+		request, requestErr := http.NewRequestWithContext(t.Context(), http.MethodPost, session.BaseURL()+"/auth/retry", nil)
+		if requestErr != nil {
+			t.Fatalf("NewRequestWithContext() error = %v", requestErr)
+		}
+		request.Header.Set(tuiproto.ProtocolHeader, tuiproto.ProtocolVersion)
+		request.Header.Set(tuiproto.CapabilityHeader, session.Capability())
+		return request
+	}
+	type retryResult struct {
+		status int
+		health tuiproto.Health
+		err    error
+	}
+	firstResult := make(chan retryResult, 1)
+	secondResult := make(chan retryResult, 1)
+	firstRequest := newRetryRequest()
+	secondRequest := newRetryRequest()
+	doRetry := func(request *http.Request, result chan<- retryResult) {
+		response, requestErr := http.DefaultClient.Do(request)
+		if requestErr != nil {
+			result <- retryResult{err: requestErr}
+			return
+		}
+		var health tuiproto.Health
+		decodeErr := json.NewDecoder(response.Body).Decode(&health)
+		closeErr := response.Body.Close()
+		result <- retryResult{status: response.StatusCode, health: health, err: errors.Join(decodeErr, closeErr)}
+	}
+	go doRetry(firstRequest, firstResult)
+	<-firstStarted
+	go doRetry(secondRequest, secondResult)
+	<-secondStarted
+
+	close(releaseFirst)
+	first := <-firstResult
+	if first.err != nil {
+		t.Fatalf("first retry request error = %v", first.err)
+	}
+
+	close(releaseSecond)
+	second := <-secondResult
+	if second.err != nil {
+		t.Fatalf("second retry request error = %v", second.err)
+	}
+	if first.status != http.StatusOK {
+		t.Fatalf("first retry status = %d, want %d", first.status, http.StatusOK)
+	}
+	if second.status != http.StatusOK || second.health.AuthStatus != tuiproto.AuthStatusReady {
+		t.Fatalf("overlapping retry = (%d, %+v), want ready health", second.status, second.health)
+	}
+}
+
 func TestSessionProjectsLecturesLibraryAndDiagnosticsWithoutTerminalOrSecretData(t *testing.T) {
 	producedAt := time.Date(2026, time.August, 13, 12, 30, 0, 0, time.UTC)
 	backend := &productProjectionStub{

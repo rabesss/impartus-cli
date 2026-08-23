@@ -245,6 +245,20 @@ describe("WorkspaceController", () => {
     expect(controller.snapshot().loading).toBe(false)
   })
 
+  test("aborting an authentication retry prevents a late ready publication", async () => {
+    const client = new DeferredClient()
+    const controller = new WorkspaceController(client, createFoundationState({ authStatus: "unavailable" }))
+    const pending = controller.retry()
+
+    controller.abort()
+    client.authenticationRequests[0]!.resolve(testHealth("ready"))
+    await pending
+
+    expect(controller.snapshot().authStatus).toBe("unavailable")
+    expect(controller.snapshot().loading).toBe(false)
+    expect(client.courseRequests).toHaveLength(0)
+  })
+
   test("operation events preserve controller-owned collection state", () => {
     const initial = createFoundationState({
       operation: {

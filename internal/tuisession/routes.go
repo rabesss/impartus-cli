@@ -259,6 +259,10 @@ func (session *Session) retryAuthentication(writer http.ResponseWriter, request 
 	}
 	if session.auth != nil {
 		if err := session.auth.Retry(request.Context()); err != nil {
+			if session.authenticationStatus() == tuiproto.AuthStatusReady {
+				writeJSON(writer, http.StatusOK, session.healthProjection())
+				return
+			}
 			if errors.Is(err, ErrAuthenticationConfiguration) {
 				writeProblem(writer, http.StatusServiceUnavailable, "configuration_invalid", "configuration is invalid")
 				return

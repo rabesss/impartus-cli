@@ -364,6 +364,23 @@ describe("FoundationView", () => {
     view.destroy()
   })
 
+  test("compacts unavailable authentication status in the medium-width header", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const view = new FoundationView(setup.renderer, {
+      ...foundationState(),
+      authStatus: "unavailable",
+      courses: [],
+      status: "Authentication unavailable — press r to retry",
+    }, callbacks())
+
+    await setup.renderOnce()
+    const header = setup.captureCharFrame().split("\n").slice(0, 3).join("\n")
+    expect(header).toContain("Auth unavailable")
+    expect(header).not.toContain("press r to retry")
+    view.destroy()
+  })
+
   test("routes shifted letter input through lowercase command bindings", async () => {
     const setup = await createTestRenderer({ height: 12, kittyKeyboard: true, width: 40 })
     renderers.push(setup)
