@@ -14,31 +14,59 @@ import (
 var spacedAssignmentCandidate = regexp.MustCompile(`(?i)([a-z0-9_-]+(?: +[a-z0-9_-]+)+)( *["']? *[:=])`)
 var spacedSchemeCandidate = regexp.MustCompile(`(?i)([a-z0-9_-]+)( *["']? *[:=] *)([a-z0-9_-]+(?: +[a-z0-9_-]+)+)`)
 var spacedURLAssignmentCandidate = regexp.MustCompile(`(?i)([?&]) *([a-z0-9_-]+(?: +[a-z0-9_-]+)*) *= *`)
-var presentationUserinfoCandidate = regexp.MustCompile(`(?i)https?://[^/\s:@]+:[^/\s@]+@`)
 
 // safePresentationText removes terminal syntax and invisible key-splitting
 // characters before credential redaction. The returned string is the only
 // human-readable text boundary exposed to the OpenTUI sidecar.
 func safePresentationText(value string) string {
 	stripped := ansi.Strip(value)
-	safe, redactions := sanitizePresentationText(stripped)
+	safe, baselineEvidence := sanitizePresentationText(stripped)
 	if stripped != value {
 		// ANSI parsers legitimately consume the final byte of a short escape
 		// sequence, while OSC and related strings can hide printable payload.
 		// Those bytes can be credential syntax (for example a character inside
 		// "token"). Re-run detection with both raw printable bytes and terminal
-		// payload preserved. If either view exposes a credential that the normal
-		// stripped view missed, discard the adversarial message. Compare the
-		// number of redactions rather than a global boolean so one ordinary
-		// credential cannot mask a second, escape-obfuscated credential. When all
-		// views detect the same credentials, retain the useful safe context.
-		for _, candidate := range []string{value, terminalSequencePayloadView(value)} {
-			if _, candidateRedactions := sanitizePresentationText(candidate); candidateRedactions > redactions {
-				return "REDACTED"
-			}
+		// payload preserved. If any view exposes a credential that cannot be
+		// paired with the same credential in the normal stripped view, discard the
+		// adversarial message. Structural evidence prevents equal-sized, disjoint
+		// redaction sets and literal marker text from balancing the gate.
+		_, directEvidence := secrets.ScrubWithEvidence(value)
+		if directEvidence.HasUnexplainedValues(
+			baselineEvidence,
+			secrets.RedactionEvidence{},
+			normalizePresentationEvidence,
+			nil,
+		) {
+			return "REDACTED"
+		}
+		_, rawEvidence := sanitizePresentationText(value)
+		if rawEvidence.HasUnexplainedValues(
+			baselineEvidence,
+			directEvidence,
+			normalizePresentationEvidence,
+			rawPresentationEvidenceView,
+		) {
+			return "REDACTED"
+		}
+		_, payloadEvidence := sanitizePresentationText(terminalSequencePayloadView(value))
+		if payloadEvidence.HasUnexplainedValues(
+			baselineEvidence,
+			directEvidence,
+			normalizePresentationEvidence,
+			terminalSequencePayloadView,
+		) {
+			return "REDACTED"
 		}
 	}
 	return safe
+}
+
+func normalizePresentationEvidence(value string) string {
+	return strings.Join(strings.Fields(ansi.Strip(value)), " ")
+}
+
+func rawPresentationEvidenceView(value string) string {
+	return normalizePresentationRunes(value, false)
 }
 
 func terminalSequencePayloadView(value string) string {
@@ -121,49 +149,44 @@ func terminalStringPayload(sequence string) string {
 	return body
 }
 
-func sanitizePresentationText(value string) (string, int) {
+func sanitizePresentationText(value string) (string, secrets.RedactionEvidence) {
 	marker := presentationSpaceMarker(value)
-	var marked strings.Builder
+	markedValue := normalizePresentationRunes(value, true)
+	// Preserve URL tokenization through the URL-only scrub. Compact a sensitive
+	// query key and an obfuscated HTTP scheme before re-marking ordinary spaces,
+	// then restore those word boundaries for free-form assignment handling.
+	spaced := strings.ReplaceAll(markedValue, marker, " ")
+	markedURLs := compactSensitiveURLAssignments(compactSplitCredentialKeys(spaced))
+	markedURLs = strings.ReplaceAll(markedURLs, " ", marker)
+	markedURLs = compactMarkedHTTPSchemes(markedURLs, marker)
+	safeURLs, urlEvidence := secrets.ScrubCredentialURLsWithEvidence(markedURLs)
+	safeURLs = strings.ReplaceAll(safeURLs, url.QueryEscape(marker), marker)
+	spaced = strings.ReplaceAll(safeURLs, marker, " ")
+	compacted := compactSplitCredentialSchemes(compactSplitCredentialKeys(spaced))
+	splitSafe, assignmentEvidence := secrets.ScrubWithEvidence(compacted)
+	return strings.Join(strings.Fields(splitSafe), " "), urlEvidence.Combined(assignmentEvidence)
+}
+
+func normalizePresentationRunes(value string, markSpaces bool) string {
+	marker := " "
+	if markSpaces {
+		marker = presentationSpaceMarker(value)
+	}
+	var normalized strings.Builder
 	for _, character := range value {
 		if unicode.In(character, unicode.Cf) {
 			continue
 		}
 		if unicode.IsSpace(character) {
-			marked.WriteString(marker)
+			normalized.WriteString(marker)
 			continue
 		}
 		if unicode.IsControl(character) {
 			continue
 		}
-		marked.WriteRune(character)
+		normalized.WriteRune(character)
 	}
-	// Preserve URL tokenization through the URL-only scrub. Compact a sensitive
-	// query key and an obfuscated HTTP scheme before re-marking ordinary spaces,
-	// then restore those word boundaries for free-form assignment handling.
-	spaced := strings.ReplaceAll(marked.String(), marker, " ")
-	markedURLs := compactSensitiveURLAssignments(compactSplitCredentialKeys(spaced))
-	markedURLs = strings.ReplaceAll(markedURLs, " ", marker)
-	markedURLs = compactMarkedHTTPSchemes(markedURLs, marker)
-	safeURLs := secrets.ScrubCredentialURLs(markedURLs)
-	redactions := addedRedactionMarkers(markedURLs, safeURLs)
-	redactions += len(presentationUserinfoCandidate.FindAllStringIndex(markedURLs, -1))
-	if redactions == 0 && safeURLs != markedURLs {
-		// Keep a conservative evidence count for an unusual credential-bearing
-		// URL form that the shared URL scrubber recognizes but the presentation
-		// layer cannot classify more precisely.
-		redactions = 1
-	}
-	safeURLs = strings.ReplaceAll(safeURLs, url.QueryEscape(marker), marker)
-	spaced = strings.ReplaceAll(safeURLs, marker, " ")
-	compacted := compactSplitCredentialSchemes(compactSplitCredentialKeys(spaced))
-	splitSafe := secrets.Scrub(compacted)
-	redactions += addedRedactionMarkers(compacted, splitSafe)
-	return strings.Join(strings.Fields(splitSafe), " "), redactions
-}
-
-func addedRedactionMarkers(before, after string) int {
-	added := strings.Count(after, "REDACTED") - strings.Count(before, "REDACTED")
-	return max(0, added)
+	return normalized.String()
 }
 
 func compactSensitiveURLAssignments(value string) string {

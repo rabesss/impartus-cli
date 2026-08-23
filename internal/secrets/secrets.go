@@ -72,6 +72,105 @@ var bareSecretColon = regexp.MustCompile(
 	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*:\s*)[^\s,;}]+`,
 )
 
+// RedactionEvidence records credential values recognized during a scrub. The
+// values remain private so callers can compare detection views without making
+// sensitive text available for logging or presentation.
+type RedactionEvidence struct {
+	values []string
+}
+
+// Count returns the number of credential values recognized during a scrub.
+func (evidence RedactionEvidence) Count() int {
+	return len(evidence.values)
+}
+
+// Combined returns the evidence from both scrub passes without exposing the
+// credential values they contain.
+func (evidence RedactionEvidence) Combined(other RedactionEvidence) RedactionEvidence {
+	combined := RedactionEvidence{values: make([]string, 0, len(evidence.values)+len(other.values))}
+	combined.values = append(combined.values, evidence.values...)
+	combined.values = append(combined.values, other.values...)
+	return combined
+}
+
+// HasUnexplainedValues reports whether candidate contains credential evidence
+// that cannot be paired with baseline. A support view may explain an alternate
+// projection of the same baseline credential; each baseline occurrence can be
+// consumed at most once, so an unrelated credential cannot balance the totals.
+func (evidence RedactionEvidence) HasUnexplainedValues(
+	baseline, support RedactionEvidence,
+	normalize func(string) string,
+	projectSupport func(string) string,
+) bool {
+	slots := newRedactionEvidenceSlots(baseline, normalize)
+	attachRedactionEvidenceSupport(slots, support, normalize, projectSupport)
+	for _, value := range evidence.values {
+		if !consumeRedactionEvidenceSlot(slots, normalize(value)) {
+			return true
+		}
+	}
+	return false
+}
+
+type redactionEvidenceSlot struct {
+	exact      string
+	projected  string
+	hasSupport bool
+	used       bool
+}
+
+func newRedactionEvidenceSlots(
+	baseline RedactionEvidence,
+	normalize func(string) string,
+) []redactionEvidenceSlot {
+	slots := make([]redactionEvidenceSlot, 0, len(baseline.values))
+	for _, value := range baseline.values {
+		slots = append(slots, redactionEvidenceSlot{exact: normalize(value)})
+	}
+	return slots
+}
+
+func attachRedactionEvidenceSupport(
+	slots []redactionEvidenceSlot,
+	support RedactionEvidence,
+	normalize func(string) string,
+	project func(string) string,
+) {
+	for _, value := range support.values {
+		normalized := normalize(value)
+		for index := range slots {
+			if slots[index].hasSupport || slots[index].exact != normalized {
+				continue
+			}
+			projected := value
+			if project != nil {
+				projected = project(value)
+			}
+			slots[index].projected = normalize(projected)
+			slots[index].hasSupport = true
+			break
+		}
+	}
+}
+
+func consumeRedactionEvidenceSlot(slots []redactionEvidenceSlot, value string) bool {
+	for index := range slots {
+		if slots[index].used || slots[index].exact != value {
+			continue
+		}
+		slots[index].used = true
+		return true
+	}
+	for index := range slots {
+		if slots[index].used || !slots[index].hasSupport || slots[index].projected != value {
+			continue
+		}
+		slots[index].used = true
+		return true
+	}
+	return false
+}
+
 func buildSensitiveQueryRe() *regexp.Regexp {
 	keys := make([]string, 0, len(sensitiveParams))
 	for k := range sensitiveParams {
@@ -106,18 +205,48 @@ func IsCredentialScheme(value string) bool {
 	return false
 }
 
-// scrubRawQuery redacts sensitive query-parameter values in a raw string. It
-// operates on literal "?"/"&" boundaries so it works on decoded parameter
-// values and on malformed URLs that url.Parse refuses.
-func scrubRawQuery(s string) string {
-	return sensitiveQueryRe.ReplaceAllString(s, "${1}${2}=REDACTED")
+func scrubRawQueryWithEvidence(s string) (string, RedactionEvidence) {
+	var evidence RedactionEvidence
+	indices := sensitiveQueryRe.FindAllStringSubmatchIndex(s, -1)
+	if len(indices) == 0 {
+		return s, evidence
+	}
+	var scrubbed strings.Builder
+	last := 0
+	for _, index := range indices {
+		scrubbed.WriteString(s[last:index[0]])
+		scrubbed.Write(sensitiveQueryRe.ExpandString(nil, "${1}${2}=REDACTED", s, index))
+		match := s[index[0]:index[1]]
+		if separator := strings.IndexByte(match, '='); separator >= 0 {
+			value := match[separator+1:]
+			if value != "REDACTED" {
+				evidence.values = append(evidence.values, value)
+			}
+		}
+		last = index[1]
+	}
+	scrubbed.WriteString(s[last:])
+	return scrubbed.String(), evidence
 }
 
-// scrubRaw strips embedded HTTP basic-auth userinfo and sensitive query
-// parameters from a raw string. It is the fallback for URLs url.Parse rejects,
-// and is also used to scrub decoded parameter values.
-func scrubRaw(rawURL string) string {
-	return scrubRawQuery(userinfoRe.ReplaceAllString(rawURL, "$1"))
+func scrubRawWithEvidence(rawURL string) (string, RedactionEvidence) {
+	var evidence RedactionEvidence
+	indices := userinfoRe.FindAllStringSubmatchIndex(rawURL, -1)
+	var withoutUserinfo strings.Builder
+	last := 0
+	for _, index := range indices {
+		withoutUserinfo.WriteString(rawURL[last:index[0]])
+		withoutUserinfo.Write(userinfoRe.ExpandString(nil, "$1", rawURL, index))
+		credential := strings.TrimSuffix(rawURL[index[3]:index[1]], "@")
+		if credential != "REDACTED" {
+			evidence.values = append(evidence.values, credential)
+		}
+		last = index[1]
+	}
+	withoutUserinfo.WriteString(rawURL[last:])
+	scrubbed, queryEvidence := scrubRawQueryWithEvidence(withoutUserinfo.String())
+	evidence.values = append(evidence.values, queryEvidence.values...)
+	return scrubbed, evidence
 }
 
 // ScrubURLs redacts credentials from absolute HTTP URLs embedded in text
@@ -130,16 +259,38 @@ func ScrubURLs(s string) string {
 // credentials. Candidates without credentials are returned byte-for-byte so a
 // caller can use an internal separator marker without re-encoding prose.
 func ScrubCredentialURLs(s string) string {
+	scrubbed, _ := ScrubCredentialURLsWithEvidence(s)
+	return scrubbed
+}
+
+// ScrubCredentialURLsWithEvidence applies ScrubCredentialURLs and returns
+// opaque evidence for every credential value it recognized. The evidence is
+// intended only for in-process comparison between differently decoded views.
+func ScrubCredentialURLsWithEvidence(s string) (string, RedactionEvidence) {
 	if s == "" {
-		return s
+		return s, RedactionEvidence{}
 	}
-	return urlTokenRe.ReplaceAllStringFunc(s, func(rawURL string) string {
-		redacted, changed := redactURL(rawURL)
-		if !changed {
-			return rawURL
+	var evidence RedactionEvidence
+	indices := urlTokenRe.FindAllStringIndex(s, -1)
+	if len(indices) == 0 {
+		return s, evidence
+	}
+	var scrubbed strings.Builder
+	last := 0
+	for _, index := range indices {
+		scrubbed.WriteString(s[last:index[0]])
+		rawURL := s[index[0]:index[1]]
+		redacted, changed, urlEvidence := redactURLWithEvidence(rawURL)
+		if changed {
+			scrubbed.WriteString(redacted)
+		} else {
+			scrubbed.WriteString(rawURL)
 		}
-		return redacted
-	})
+		evidence.values = append(evidence.values, urlEvidence.values...)
+		last = index[1]
+	}
+	scrubbed.WriteString(s[last:])
+	return scrubbed.String(), evidence
 }
 
 // RedactURL returns rawURL with sensitive data scrubbed: embedded HTTP
@@ -149,20 +300,24 @@ func ScrubCredentialURLs(s string) string {
 // too, since values are decoded before inspection. If rawURL cannot be parsed,
 // the raw string is scrubbed directly.
 func RedactURL(rawURL string) string {
-	redacted, _ := redactURL(rawURL)
+	redacted, _, _ := redactURLWithEvidence(rawURL)
 	return redacted
 }
 
-func redactURL(rawURL string) (string, bool) {
+func redactURLWithEvidence(rawURL string) (string, bool, RedactionEvidence) {
+	var evidence RedactionEvidence
 	if rawURL == "" {
-		return rawURL, false
+		return rawURL, false, evidence
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		redacted := scrubRaw(rawURL)
-		return redacted, redacted != rawURL
+		redacted, rawEvidence := scrubRawWithEvidence(rawURL)
+		return redacted, redacted != rawURL, rawEvidence
 	}
 	changed := u.User != nil
+	if u.User != nil {
+		evidence.values = append(evidence.values, u.User.String())
+	}
 	u.User = nil // strip embedded HTTP basic-auth credentials
 	// Scrub sensitive keys, and scrub any sensitive URL embedded in the decoded
 	// value of a non-sensitive parameter (covers percent-encoded nested tokens).
@@ -172,21 +327,22 @@ func redactURL(rawURL string) (string, bool) {
 			for _, value := range vals {
 				if value != "REDACTED" {
 					changed = true
-					break
+					evidence.values = append(evidence.values, value)
 				}
 			}
 			params[key] = []string{"REDACTED"}
 			continue
 		}
 		for i, v := range vals {
-			if scrubbed := scrubRaw(v); scrubbed != v {
+			if scrubbed, nestedEvidence := scrubRawWithEvidence(v); scrubbed != v {
 				vals[i] = scrubbed
 				changed = true
+				evidence.values = append(evidence.values, nestedEvidence.values...)
 			}
 		}
 	}
 	u.RawQuery = params.Encode()
-	return u.String(), changed
+	return u.String(), changed, evidence
 }
 
 // SanitizeError scrubs sensitive URL data from HTTP errors. http.Client.Do and
@@ -220,18 +376,69 @@ func SanitizeError(err error) error {
 // It is the shared defense-in-depth boundary for logs, terminal output, and
 // durable error summaries.
 func Scrub(s string) string {
+	scrubbed, _ := ScrubWithEvidence(s)
+	return scrubbed
+}
+
+// ScrubWithEvidence applies Scrub and returns opaque evidence for every
+// credential value it recognized. Callers must use the evidence only for
+// in-process comparison and must never persist or present it.
+func ScrubWithEvidence(s string) (string, RedactionEvidence) {
 	if s == "" {
-		return s
+		return s, RedactionEvidence{}
 	}
-	scrubbed := ScrubURLs(s)
-	scrubbed = quotedSecretValue.ReplaceAllString(scrubbed, "${1}REDACTED")
-	scrubbed = singleQuotedSecretValue.ReplaceAllString(scrubbed, "${1}REDACTED")
-	scrubbed = quotedKeySchemeSecretValue.ReplaceAllString(scrubbed, "${1}REDACTED")
-	scrubbed = quotedKeyBareSecretValue.ReplaceAllString(scrubbed, "${1}REDACTED")
-	scrubbed = strongCredentialAssignment.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
-	scrubbed = schemeSecretAssignment.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
-	scrubbed = bareSecretEquals.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
-	return bareSecretColon.ReplaceAllString(scrubbed, "${1}${2}REDACTED")
+	scrubbed, evidence := ScrubCredentialURLsWithEvidence(s)
+	for _, step := range []struct {
+		expression  *regexp.Regexp
+		prefixGroup int
+		replacement string
+	}{
+		{quotedSecretValue, 1, "${1}REDACTED"},
+		{singleQuotedSecretValue, 1, "${1}REDACTED"},
+		{quotedKeySchemeSecretValue, 1, "${1}REDACTED"},
+		{quotedKeyBareSecretValue, 1, "${1}REDACTED"},
+		{strongCredentialAssignment, 2, "${1}${2}REDACTED"},
+		{schemeSecretAssignment, 2, "${1}${2}REDACTED"},
+		{bareSecretEquals, 2, "${1}${2}REDACTED"},
+		{bareSecretColon, 2, "${1}${2}REDACTED"},
+	} {
+		var stepEvidence RedactionEvidence
+		scrubbed, stepEvidence = replaceCredentialValues(
+			scrubbed,
+			step.expression,
+			step.prefixGroup,
+			step.replacement,
+		)
+		evidence.values = append(evidence.values, stepEvidence.values...)
+	}
+	return scrubbed, evidence
+}
+
+func replaceCredentialValues(
+	value string,
+	expression *regexp.Regexp,
+	prefixGroup int,
+	replacement string,
+) (string, RedactionEvidence) {
+	var evidence RedactionEvidence
+	indices := expression.FindAllStringSubmatchIndex(value, -1)
+	if len(indices) == 0 {
+		return value, evidence
+	}
+	var scrubbed strings.Builder
+	last := 0
+	for _, index := range indices {
+		scrubbed.WriteString(value[last:index[0]])
+		scrubbed.Write(expression.ExpandString(nil, replacement, value, index))
+		prefixEnd := index[prefixGroup*2+1]
+		credential := value[prefixEnd:index[1]]
+		if credential != "REDACTED" {
+			evidence.values = append(evidence.values, credential)
+		}
+		last = index[1]
+	}
+	scrubbed.WriteString(value[last:])
+	return scrubbed.String(), evidence
 }
 
 // ScrubError returns the error's message with embedded credentials scrubbed.

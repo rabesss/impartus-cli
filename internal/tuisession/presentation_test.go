@@ -137,8 +137,10 @@ func TestSafePresentationTextRejectsCompleteEscapeSequenceCredentialSplits(t *te
 
 func TestSafePresentationTextRejectsObfuscatedCredentialAlongsideCleanCredential(t *testing.T) {
 	for name, value := range map[string]string{
-		"assignment": "token=abc to\x1b[ken=hunter2",
-		"userinfo":   "token=abc https://user:pass\x1b[@example.com/",
+		"assignment":               "token=abc to\x1b[ken=hunter2",
+		"userinfo":                 "token=abc https://user:pass\x1b[@example.com/",
+		"stripped-only decoy":      "to\x1b[0mken=hunter2 to\x1b[ken=ev1l",
+		"payload-prefix collision": "\x1b[0mtoken=abc to\x1b[ken=hunter2",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := safePresentationText(value); got != "REDACTED" {
@@ -148,11 +150,24 @@ func TestSafePresentationTextRejectsObfuscatedCredentialAlongsideCleanCredential
 	}
 }
 
+func TestSafePresentationTextRejectsObfuscatedCredentialContainingRedactionMarker(t *testing.T) {
+	const value = "to\x1b[ken=hunter2REDACTEDc"
+	if got := safePresentationText(value); got != "REDACTED" {
+		t.Fatalf("safePresentationText() = %q, want REDACTED", got)
+	}
+}
+
 func TestSafePresentationTextPreservesContextWhenANSISurroundsCredentialValue(t *testing.T) {
-	const value = "retry token=\x1b[31msecret\x1b[0m after refresh"
 	const want = "retry token=REDACTED after refresh"
-	if got := safePresentationText(value); got != want {
-		t.Fatalf("safePresentationText() = %q, want %q", got, want)
+	for name, value := range map[string]string{
+		"styled credential": "retry token=\x1b[31msecret\x1b[0m after refresh",
+		"styled context":    "retry token=secret after \x1b[31mrefresh\x1b[0m",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := safePresentationText(value); got != want {
+				t.Fatalf("safePresentationText() = %q, want %q", got, want)
+			}
+		})
 	}
 }
 

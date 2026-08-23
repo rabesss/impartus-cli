@@ -98,6 +98,61 @@ func TestScrubURLHelpersStayEquivalent(t *testing.T) {
 	}
 }
 
+func TestScrubWithEvidenceCountsCredentialWhoseValueContainsRedactionMarker(t *testing.T) {
+	got, evidence := ScrubWithEvidence("token=hunter2REDACTEDc")
+	if got != "token=REDACTED" {
+		t.Fatalf("ScrubWithEvidence() = %q, want token=REDACTED", got)
+	}
+	if evidence.Count() != 1 {
+		t.Fatalf("ScrubWithEvidence() evidence count = %d, want 1", evidence.Count())
+	}
+}
+
+func TestScrubCredentialURLsWithEvidenceCountsUserinfoWithoutMarkerText(t *testing.T) {
+	got, evidence := ScrubCredentialURLsWithEvidence("https://user:password@example.com/path")
+	if got != "https://example.com/path" {
+		t.Fatalf("ScrubCredentialURLsWithEvidence() = %q", got)
+	}
+	if evidence.Count() != 1 {
+		t.Fatalf("ScrubCredentialURLsWithEvidence() evidence count = %d, want 1", evidence.Count())
+	}
+}
+
+func TestRedactionEvidenceMatchesAlternateProjectionsOneToOne(t *testing.T) {
+	normalize := func(value string) string {
+		return strings.TrimPrefix(value, "ansi:")
+	}
+	project := func(value string) string {
+		return "m" + normalize(value) + "m"
+	}
+	baseline := RedactionEvidence{values: []string{"secret"}}
+	support := RedactionEvidence{values: []string{"ansi:secret"}}
+	if candidate := (RedactionEvidence{values: []string{"msecretm"}}); candidate.HasUnexplainedValues(
+		baseline,
+		support,
+		normalize,
+		project,
+	) {
+		t.Fatal("supported alternate projection was treated as a new credential")
+	}
+	if candidate := (RedactionEvidence{values: []string{"secret", "msecretm"}}); !candidate.HasUnexplainedValues(
+		baseline,
+		support,
+		normalize,
+		project,
+	) {
+		t.Fatal("one baseline credential explained two candidate credentials")
+	}
+	if candidate := (RedactionEvidence{values: []string{"different"}}); !candidate.HasUnexplainedValues(
+		baseline,
+		support,
+		normalize,
+		project,
+	) {
+		t.Fatal("disjoint credential evidence was treated as explained")
+	}
+}
+
 func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 	t.Parallel()
 
