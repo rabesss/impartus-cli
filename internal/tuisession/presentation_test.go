@@ -73,6 +73,7 @@ func TestSafePresentationTextPreservesSafeWhitespaceBoundaries(t *testing.T) {
 		"split credential scheme":               {value: "to ken: be arer s3cr3t", want: "token: REDACTED"},
 		"bare value word boundary":              {value: "token=first second; keep", want: "token=REDACTED second; keep"},
 		"marker collision":                      {value: "keep\uE000this\nspacing", want: "keep\uE000this spacing"},
+		"encoded marker collision":              {value: "x%EE%80%80y", want: "x%EE%80%80y"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := safePresentationText(test.value); got != test.want {
@@ -131,7 +132,11 @@ func TestSafePresentationTextRejectsCompleteEscapeSequenceCredentialSplits(t *te
 	for name, value := range map[string]string{
 		"CSI final byte":        "to\x1b[ken=csi-secret",
 		"CSI crosses delimiter": "token\x1b[0=assignmentsecret",
+		"CSI final userinfo at": "https://alice:hunter2\x1b[/@example.com/",
 		"8-bit CSI delimiter":   "token\x9b0=assignmentsecret",
+		"8-bit CSI userinfo at": "https://alice:hunter2\x9b/@example.com/",
+		"Unicode CSI delimiter": "token\u009b0=assignmentsecret",
+		"Unicode CSI userinfo":  "https://alice:hunter2\u009b/@example.com/",
 		"OSC body":              "to\x1b]k\x07en=osc-secret",
 		"OSC selector split":    "to\x1b]k;0\x07en=hunter2",
 		"OSC selector and body": "t\x1b]o;ke\x07n=hunter2",
@@ -144,6 +149,11 @@ func TestSafePresentationTextRejectsCompleteEscapeSequenceCredentialSplits(t *te
 		"8-bit APC split body":  "t\x9fo;ke\x9cn=hunter2",
 		"8-bit SOS split body":  "t\x98o;ke\x9cn=hunter2",
 		"8-bit PM split body":   "t\x9eo;ke\x9cn=hunter2",
+		"Unicode OSC split":     "t\u009do;ke\u009cn=hunter2",
+		"Unicode DCS split":     "t\u0090o;ke\u009cn=hunter2",
+		"Unicode APC split":     "t\u009fo;ke\u009cn=hunter2",
+		"Unicode SOS split":     "t\u0098o;ke\u009cn=hunter2",
+		"Unicode PM split":      "t\u009eo;ke\u009cn=hunter2",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := safePresentationText(value); got != "REDACTED" {

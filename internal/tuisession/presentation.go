@@ -22,7 +22,7 @@ var spacedURLAssignmentCandidate = regexp.MustCompile(`(?i)([?&]) *([a-z0-9_-]+(
 func safePresentationText(value string) string {
 	stripped := ansi.Strip(value)
 	safe, baselineEvidence := sanitizePresentationText(stripped)
-	detectionValue := combiningMarkDetectionView(value)
+	detectionValue := presentationDetectionView(value)
 	if stripped != value || detectionValue != value {
 		// ANSI parsers legitimately consume the final byte of a short escape
 		// sequence, while OSC and related strings can hide printable payload.
@@ -58,12 +58,17 @@ func safePresentationText(value string) string {
 	return safe
 }
 
-func combiningMarkDetectionView(value string) string {
+func presentationDetectionView(value string) string {
 	var compact strings.Builder
 	for len(value) > 0 {
 		character, size := utf8.DecodeRuneInString(value)
 		if character == utf8.RuneError && size == 1 {
 			compact.WriteByte(value[0])
+		} else if character >= 0x80 && character <= 0x9f {
+			// JSON and other Unicode transports encode C1 terminal controls as
+			// UTF-8. Canonicalize them to the byte form expected by the terminal
+			// decoder so detection matches the equivalent raw input.
+			compact.WriteByte(byte(character))
 		} else if !unicode.In(character, unicode.Mn, unicode.Mc, unicode.Me) {
 			compact.WriteString(value[:size])
 		}
@@ -136,14 +141,23 @@ func isTerminalStringSequence(sequence string) bool {
 
 func csiCredentialPayload(sequence string) string {
 	// CSI parameter syntax can consume credential characters beyond the final
-	// command byte. Preserve key/delimiter-shaped bytes while dropping the
-	// introducer and numeric/style parameters so both `ESC[k` inside a key and
-	// `ESC[0=a` across a delimiter reconstruct a detection view.
+	// command byte. Preserve key/delimiter-shaped parameter bytes and always
+	// preserve the final byte while dropping the introducer and numeric/style
+	// parameters. That reconstructs both `ESC[k` inside a key, `ESC[0=a`
+	// across a delimiter, and `ESC[/@` across a URL userinfo delimiter.
 	start := 1
 	if ansi.HasEscPrefix(sequence) {
 		start = 2
 	}
-	return compactCredentialSyntax(sequence[start:])
+	body := sequence[start:]
+	if body == "" {
+		return ""
+	}
+	final := body[len(body)-1]
+	if final < 0x40 || final > 0x7e {
+		return compactCredentialSyntax(body)
+	}
+	return compactCredentialSyntax(body[:len(body)-1]) + string(final)
 }
 
 func compactCredentialSyntax(value string) string {
@@ -274,7 +288,7 @@ func markedHTTPSchemeEnd(value string, start int, marker, scheme string) (int, b
 
 func presentationSpaceMarker(value string) string {
 	marker := "\uE000"
-	for strings.Contains(value, marker) {
+	for strings.Contains(value, marker) || strings.Contains(value, url.QueryEscape(marker)) {
 		marker += "\uE001"
 	}
 	return marker
