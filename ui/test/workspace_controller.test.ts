@@ -57,6 +57,18 @@ describe("WorkspaceController", () => {
     expect(client.courseRequests).toHaveLength(0)
   })
 
+  test("reports invalid configuration with a fixed safe recovery message", async () => {
+    const client = new DeferredClient()
+    const controller = new WorkspaceController(client, createFoundationState({ authStatus: "unavailable" }))
+
+    const retry = controller.retry()
+    client.authenticationRequests[0]!.reject({ code: "configuration_invalid" })
+    await retry
+
+    expect(controller.snapshot().error).toBe("Configuration is invalid")
+    expect(controller.snapshot().authStatus).toBe("unavailable")
+  })
+
   test("keeps successful authentication when the catalog refresh fails", async () => {
     const client = new DeferredClient()
     const controller = new WorkspaceController(client, createFoundationState({ authStatus: "unavailable" }))

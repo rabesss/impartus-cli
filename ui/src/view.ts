@@ -299,7 +299,13 @@ export class FoundationView {
   #topOverlay(): OverlayState | undefined { return this.#overlays.at(-1) }
 
   #commandContext(): CommandContext {
-    return { focus: effectiveFocus(this.#focus, this.#layout()), layout: this.#layout(), overlay: this.#topOverlay()?.kind, state: this.#state }
+    return {
+      focus: effectiveFocus(this.#focus, this.#layout()),
+      layout: this.#layout(),
+      navigationTarget: NAVIGATION[this.#navigationCursor]?.screen,
+      overlay: this.#topOverlay()?.kind,
+      state: this.#state,
+    }
   }
 
   #layout(): WorkspaceLayout {

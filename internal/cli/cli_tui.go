@@ -24,6 +24,14 @@ type exitCodeError struct {
 	err  error
 }
 
+var (
+	openTUILibraryFn       = library.Open
+	getTUIDoctorReportFn   = getDoctorReport
+	resolveTUIExecutableFn = tuihost.ResolveExecutable
+	startTUISessionFn      = tuisession.Start
+	runTUIHostFn           = tuihost.Run
+)
+
 func (err *exitCodeError) Error() string { return err.err.Error() }
 func (err *exitCodeError) Unwrap() error { return err.err }
 func (err *exitCodeError) ExitCode() int { return err.code }
@@ -48,11 +56,11 @@ func isInteractiveTerminal() bool {
 func runTUI() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	store, err := library.Open(ctx, library.Options{})
+	store, err := openTUILibraryFn(ctx, library.Options{})
 	if err != nil {
 		return fmt.Errorf("open local lecture library: %w", err)
 	}
-	report, reportErr := getDoctorReport(nil)
+	report, reportErr := getTUIDoctorReportFn(nil)
 	if reportErr != nil {
 		return errors.Join(reportErr, store.Close())
 	}
@@ -60,7 +68,7 @@ func runTUI() error {
 	for _, check := range report.Checks {
 		diagnostics = append(diagnostics, tuisession.Diagnostic{Name: check.Name, Status: check.Status, Detail: check.Detail})
 	}
-	frontend, err := tuihost.ResolveExecutable(os.Getenv("IMPARTUS_UI_BINARY"))
+	frontend, err := resolveTUIExecutableFn(os.Getenv("IMPARTUS_UI_BINARY"))
 	if err != nil {
 		return errors.Join(err, store.Close())
 	}
@@ -74,7 +82,7 @@ func runTUI() error {
 	if authErr := authentication.Retry(ctx); authErr != nil && !isRecoverableTUIAuthenticationError(authErr) {
 		return errors.Join(authErr, store.Close())
 	}
-	session, err := tuisession.Start(ctx, tuisession.Options{
+	session, err := startTUISessionFn(ctx, tuisession.Options{
 		Actions:        authentication,
 		Artifacts:      authentication,
 		Authentication: authentication,
@@ -86,6 +94,6 @@ func runTUI() error {
 	if err != nil {
 		return errors.Join(err, store.Close())
 	}
-	runErr := tuihost.Run(ctx, tuihost.Options{Session: session, Executable: frontend})
+	runErr := runTUIHostFn(ctx, tuihost.Options{Session: session, Executable: frontend})
 	return errors.Join(runErr, session.Close(), store.Close())
 }

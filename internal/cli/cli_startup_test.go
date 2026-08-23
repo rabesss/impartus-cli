@@ -57,6 +57,17 @@ func TestLoadTUIConfigRequiresCredentialsAfterRelaxedValidation(t *testing.T) {
 	}
 }
 
+func TestLoadTUIConfigTreatsWhitespaceOnlyCredentialsAsMissing(t *testing.T) {
+	restoreCLIState(t)
+	loadTUIResolvedFn = func(string) (*config.Config, error) {
+		return &config.Config{BaseURL: "https://example.com", Username: "  ", Password: "\t", Views: "both"}, nil
+	}
+
+	if _, err := loadTUIConfig(); !errors.Is(err, config.ErrCredentialsRequired) {
+		t.Fatalf("loadTUIConfig() error = %T %q, want ErrCredentialsRequired", err, err)
+	}
+}
+
 func TestInitClient(t *testing.T) {
 	t.Run("does not construct client after config failure", func(t *testing.T) {
 		restoreCLIState(t)

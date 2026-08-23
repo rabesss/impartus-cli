@@ -332,10 +332,16 @@ async function readSafeProblem(response: Response): Promise<Problem | undefined>
   } catch {
     return undefined
   }
-  if (!isRecord(value) || value.code !== "auth_unavailable" || value.error !== "upstream authentication is unavailable") {
+  if (!isRecord(value)) {
     return undefined
   }
-  return { code: value.code, error: value.error }
+  if (value.code === "auth_unavailable" && value.error === "upstream authentication is unavailable") {
+    return { code: value.code, error: value.error }
+  }
+  if (value.code === "configuration_invalid" && value.error === "configuration is invalid") {
+    return { code: value.code, error: value.error }
+  }
+  return undefined
 }
 
 function isCourseList(value: unknown): value is CourseList {

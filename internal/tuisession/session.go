@@ -51,6 +51,10 @@ const (
 	shutdownTimeout = 2 * time.Second
 )
 
+// ErrAuthenticationConfiguration identifies a retry that cannot proceed until
+// the local non-secret configuration is corrected.
+var ErrAuthenticationConfiguration = errors.New("authentication configuration is invalid")
+
 // Catalog is the read-only application seam projected by the session. The
 // production implementation is *app.Service, so the frontend reaches live
 // state through the shared application boundary rather than owning networking.

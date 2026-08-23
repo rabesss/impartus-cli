@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/rabesss/impartus-cli/internal/app"
@@ -10,6 +11,7 @@ import (
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/library"
 	"github.com/rabesss/impartus-cli/internal/tuiproto"
+	"github.com/rabesss/impartus-cli/internal/tuisession"
 )
 
 var errTUIAuthenticationUnavailable = errors.New("tui upstream authentication is unavailable")
@@ -78,9 +80,15 @@ func (coordinator *tuiAuthenticationCoordinator) Retry(ctx context.Context) erro
 	coordinator.retryMu.Lock()
 	defer coordinator.retryMu.Unlock()
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	cfg, err := coordinator.load()
 	if err != nil {
-		return err
+		if errors.Is(err, config.ErrCredentialsRequired) {
+			return err
+		}
+		return fmt.Errorf("%w: %v", tuisession.ErrAuthenticationConfiguration, err)
 	}
 	candidate, err := coordinator.build(ctx, cfg)
 	if err != nil {
@@ -91,6 +99,9 @@ func (coordinator *tuiAuthenticationCoordinator) Retry(ctx context.Context) erro
 	}
 	if candidate == nil {
 		return errors.New("tui authentication produced no application service")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	coordinator.stateMu.Lock()
 	coordinator.service = candidate

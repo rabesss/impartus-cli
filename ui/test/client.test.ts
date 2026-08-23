@@ -176,12 +176,16 @@ describe("SessionClient", () => {
 
   test("surfaces only validated safe Problems and discards arbitrary failure bodies", async () => {
     const secret = "username=person@example.com password=body-secret"
+    let retryFailures = 0
     const server = Bun.serve({
       port: 0,
       fetch(request) {
         const path = new URL(request.url).pathname
         if (path.endsWith("/auth/retry")) {
-          return Response.json({ code: "auth_unavailable", error: "upstream authentication is unavailable" }, { status: 503 })
+        retryFailures++
+        return retryFailures > 1
+        ? Response.json({ code: "configuration_invalid", error: "configuration is invalid" }, { status: 503 })
+            : Response.json({ code: "auth_unavailable", error: "upstream authentication is unavailable" }, { status: 503 })
         }
         return new Response(secret, { status: 502 })
       },
@@ -207,6 +211,14 @@ describe("SessionClient", () => {
       expect(error).toBeInstanceOf(SessionProblemError)
       expect((error as SessionProblemError).code).toBe("auth_unavailable")
       expect((error as Error).message).toBe("upstream authentication is unavailable")
+    }
+    try {
+      await client.retryAuthentication()
+      expect.unreachable()
+    } catch (error) {
+      expect(error).toBeInstanceOf(SessionProblemError)
+      expect((error as SessionProblemError).code).toBe("configuration_invalid")
+      expect((error as Error).message).toBe("configuration is invalid")
     }
   })
 })

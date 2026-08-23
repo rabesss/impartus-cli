@@ -25,6 +25,14 @@ describe("workspace command registry", () => {
     })
     expect(commandForKey(lectureContext, "d")?.availability.enabled).toBe(false)
     expect(commandForKey(lectureContext, "d")?.availability.reason).toContain("Authentication")
+    const navigationContext = commandContext({
+      authStatus: "unavailable",
+      focus: "navigation",
+      navigationTarget: "courses",
+      screen: "courses",
+    })
+    expect(commandForKey(navigationContext, "enter")?.availability.enabled).toBe(false)
+    expect(commandForKey(navigationContext, "enter")?.availability.reason).toContain("Authentication")
     for (const key of ["l", "!", "r", "s", "?", "q"]) {
       expect(commandForKey(context, key)?.availability.enabled).toBe(true)
     }
@@ -275,12 +283,14 @@ describe("workspace command registry", () => {
 
 function commandContext(overrides: Partial<CommandContext["state"]> & {
   focus?: CommandContext["focus"]
+  navigationTarget?: CommandContext["navigationTarget"]
   overlay?: CommandContext["overlay"]
 }): CommandContext {
-  const { focus = "collection", overlay, ...stateOverrides } = overrides
+  const { focus = "collection", navigationTarget, overlay, ...stateOverrides } = overrides
   return {
     focus,
     layout: calculateLayout(140, 32, false),
+    navigationTarget,
     overlay,
     state: createFoundationState(stateOverrides),
   }

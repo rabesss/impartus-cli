@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/rabesss/impartus-cli/internal/buildinfo"
 	"github.com/rabesss/impartus-cli/internal/client"
@@ -312,7 +313,7 @@ func loadTUIConfig() (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Username == "" || cfg.Password == "" {
+	if strings.TrimSpace(cfg.Username) == "" || strings.TrimSpace(cfg.Password) == "" {
 		return nil, config.ErrCredentialsRequired
 	}
 	cfg.Views = config.NormalizeViews(cfg.Views)

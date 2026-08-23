@@ -238,8 +238,8 @@ export class WorkspaceController {
     let health: Health
     try {
       health = await this.#client.retryAuthentication(signal)
-    } catch {
-      this.#fail(request, "Authentication is unavailable")
+    } catch (error) {
+      this.#fail(request, retryFailureMessage(error))
       return
     }
     if (health.authStatus !== "ready") {
@@ -371,6 +371,13 @@ function courseKey(course: Course): string {
 
 function sameRequest(left: PendingRequest, right: PendingRequest | undefined): boolean {
   return right !== undefined && left.generation === right.generation && left.target === right.target && left.courseKey === right.courseKey
+}
+
+function retryFailureMessage(error: unknown): string {
+  if (typeof error === "object" && error !== null && "code" in error && error.code === "configuration_invalid") {
+    return "Configuration is invalid"
+  }
+  return "Authentication is unavailable"
 }
 
 function applyOperationEvent(state: FoundationState, event: Event): FoundationState {

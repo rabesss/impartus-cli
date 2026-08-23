@@ -255,6 +255,10 @@ func (session *Session) retryAuthentication(writer http.ResponseWriter, request 
 	}
 	if session.auth != nil {
 		if err := session.auth.Retry(request.Context()); err != nil {
+			if errors.Is(err, ErrAuthenticationConfiguration) {
+				writeProblem(writer, http.StatusServiceUnavailable, "configuration_invalid", "configuration is invalid")
+				return
+			}
 			writeProblem(writer, http.StatusServiceUnavailable, "auth_unavailable", "upstream authentication is unavailable")
 			return
 		}

@@ -1,4 +1,4 @@
-import type { FoundationState } from "./workspace_controller.ts"
+import type { CollectionScreen, FoundationState } from "./workspace_controller.ts"
 import type { PaneFocus, WorkspaceLayout } from "./workspace_layout.ts"
 import { visibleFocuses } from "./workspace_layout.ts"
 
@@ -41,6 +41,7 @@ export interface CommandAvailability {
 export interface CommandContext {
   focus: PaneFocus
   layout: WorkspaceLayout
+  navigationTarget: CollectionScreen | undefined
   overlay: OverlayKind | undefined
   state: FoundationState
 }
@@ -153,6 +154,9 @@ function openAvailability(context: CommandContext): CommandAvailability {
   if (context.overlay === "palette" || context.overlay === "navigation") return available(true)
   if (context.overlay === "help") return available(false)
   if (context.focus === "navigation") {
+    if (context.state.authStatus !== "ready" && context.navigationTarget === "courses") {
+      return available(true, false, "Authentication is unavailable")
+    }
     const enabled = !context.state.loading && context.state.screen !== "playback"
     return available(true, enabled, context.state.screen === "playback" ? "Return from playback first" : "A request is pending")
   }
