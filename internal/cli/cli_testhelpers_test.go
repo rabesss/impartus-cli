@@ -27,6 +27,7 @@ func restoreCLIState(t *testing.T) {
 	oldWatch := runWatchFn
 	oldWatchJSON := runWatchJSONFn
 	oldLoadResolved := loadResolvedFn
+	oldLoadTUIResolved := loadTUIResolvedFn
 	oldNewLoggedIn := newLoggedInFn
 	oldStartAPIServer := startAPIServerFn
 	t.Cleanup(func() {
@@ -44,6 +45,7 @@ func restoreCLIState(t *testing.T) {
 		runWatchFn = oldWatch
 		runWatchJSONFn = oldWatchJSON
 		loadResolvedFn = oldLoadResolved
+		loadTUIResolvedFn = oldLoadTUIResolved
 		newLoggedInFn = oldNewLoggedIn
 		startAPIServerFn = oldStartAPIServer
 	})

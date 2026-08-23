@@ -28,6 +28,7 @@ var (
 	runWatchFn              = runWatch
 	runWatchJSONFn          = runWatchJSON
 	loadResolvedFn          = config.LoadResolved
+	loadTUIResolvedFn       = config.LoadResolvedForTUI
 	newLoggedInFn           = client.NewLoggedIn
 )
 
@@ -301,6 +302,18 @@ func loadConfig() (*config.Config, error) {
 	cfg, err := loadResolvedFn("")
 	if err != nil {
 		return nil, err
+	}
+	cfg.Views = config.NormalizeViews(cfg.Views)
+	return cfg, nil
+}
+
+func loadTUIConfig() (*config.Config, error) {
+	cfg, err := loadTUIResolvedFn("")
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Username == "" || cfg.Password == "" {
+		return nil, config.ErrCredentialsRequired
 	}
 	cfg.Views = config.NormalizeViews(cfg.Views)
 	return cfg, nil

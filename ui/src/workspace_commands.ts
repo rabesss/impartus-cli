@@ -69,7 +69,7 @@ const COMMANDS: readonly CommandDefinition[] = [
   command("focus.next", "Next pane", "Move focus to the next visible pane", ["tab"], true, true, focusAvailability),
   command("focus.previous", "Previous pane", "Move focus to the previous visible pane", ["shift+tab"], true, false, focusAvailability),
   command("navigation.open", "Open navigation", "Focus or open workspace navigation", ["g"], true, true, navigationAvailability),
-  command("navigation.courses", "Open courses", "Show the live course catalog", ["c"], true, false, sectionAvailability),
+  command("navigation.courses", "Open courses", "Show the live course catalog", ["c"], true, false, remoteSectionAvailability),
   command("navigation.library", "Open library", "Show the local lecture library", ["l"], true, true, sectionAvailability),
   command("navigation.diagnostics", "Open diagnostics", "Show local diagnostics", ["!"], true, true, sectionAvailability),
   command("navigation.back", "Close or go back", "Close the top overlay or return", ["escape", "backspace"], false, true, backAvailability),
@@ -158,6 +158,7 @@ function openAvailability(context: CommandContext): CommandAvailability {
   }
   if (context.focus !== "collection" && context.focus !== "inspector") return available(false)
   const visible = context.state.screen === "courses" || context.state.screen === "lectures"
+  if (visible && context.state.authStatus !== "ready") return available(true, false, "Authentication is unavailable")
   const runningOperation = context.state.screen === "lectures" && context.state.operation?.state === "running"
   const enabled = visible && !context.state.loading && context.state.error === undefined && !runningOperation && collectionCount(context.state) > 0
   const reason = context.state.error !== undefined
@@ -179,6 +180,7 @@ function filterAvailability(context: CommandContext): CommandAvailability {
 
 function lectureAvailability(context: CommandContext): CommandAvailability {
   const visible = context.overlay === undefined && context.state.screen === "lectures"
+  if (visible && context.state.authStatus !== "ready") return available(true, false, "Authentication is unavailable")
   const running = context.state.operation?.state === "running"
   return available(visible, visible && !context.state.loading && context.state.error === undefined && !running && collectionCount(context.state) > 0, "Lecture action is unavailable")
 }
@@ -212,6 +214,12 @@ function navigationAvailability(context: CommandContext): CommandAvailability {
 
 function sectionAvailability(context: CommandContext): CommandAvailability {
   const visible = context.state.screen !== "playback"
+  return available(visible, visible && !context.state.loading, "A request is pending")
+}
+
+function remoteSectionAvailability(context: CommandContext): CommandAvailability {
+  const visible = context.state.screen !== "playback"
+  if (visible && context.state.authStatus !== "ready") return available(true, false, "Authentication is unavailable")
   return available(visible, visible && !context.state.loading, "A request is pending")
 }
 

@@ -76,6 +76,13 @@ type Actions interface {
 	StartLecture(context.Context, client.Lecture, float64) (app.PlaybackStart, error)
 }
 
+// Authentication owns upstream readiness and in-process re-authentication.
+// It never exposes credentials or upstream response bodies to the session.
+type Authentication interface {
+	Status() tuiproto.AuthStatus
+	Retry(context.Context) error
+}
+
 // Diagnostic is one presentation-only startup preflight result.
 type Diagnostic struct {
 	Name   string
@@ -96,6 +103,9 @@ type SelfTestOptions struct {
 
 // Options configure one session.
 type Options struct {
+	// Authentication supplies safe upstream readiness and retry. Nil means ready
+	// for backwards-compatible transport-only and authenticated callers.
+	Authentication Authentication
 	// Catalog supplies read-only catalog projections. Required.
 	Catalog Catalog
 	// Lectures supplies live lecture projections. Optional during transport-only tests.
@@ -126,6 +136,7 @@ type Session struct {
 	catalog     Catalog
 	lectures    LectureCatalog
 	artifacts   ArtifactCatalog
+	auth        Authentication
 	diagnostics []tuiproto.Diagnostic
 	events      *hub
 	operations  *operationRegistry
@@ -181,6 +192,7 @@ func newSession(ctx context.Context, listener net.Listener, options Options) (*S
 		catalog:     options.Catalog,
 		lectures:    options.Lectures,
 		artifacts:   options.Artifacts,
+		auth:        options.Authentication,
 		diagnostics: projectDiagnostics(options.Diagnostics),
 		events:      newHub(options.EventQueueDepth),
 		ctx:         sessionCtx,

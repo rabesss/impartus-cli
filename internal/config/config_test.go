@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -142,6 +143,43 @@ func TestValidateRejectsInvalidViewsQualityAndMissingCredentials(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateMissingCredentialsUsesTypedIdentity(t *testing.T) {
+	cfg := minimalValidConfig()
+	cfg.ApplyDefaults()
+	cfg.Password = ""
+
+	err := cfg.Validate()
+	if !errors.Is(err, ErrCredentialsRequired) {
+		t.Fatalf("Validate() error = %T %q, want ErrCredentialsRequired identity", err, err)
+	}
+}
+
+func TestLoadResolvedForTUIAllowsOnlyMissingCredentials(t *testing.T) {
+	t.Run("otherwise valid configuration", func(t *testing.T) {
+		path := writeTempConfig(t, `{
+			"baseUrl": "https://example.com", "quality": "450", "views": "both"
+		}`)
+
+		cfg, err := LoadResolvedForTUI(path)
+		if err != nil {
+			t.Fatalf("LoadResolvedForTUI() error = %v", err)
+		}
+		if cfg.Username != "" || cfg.Password != "" || cfg.BaseURL != "https://example.com" {
+			t.Fatalf("LoadResolvedForTUI() config = %+v", cfg)
+		}
+	})
+
+	t.Run("invalid non-credential setting", func(t *testing.T) {
+		path := writeTempConfig(t, `{
+			"baseUrl": "not-a-url", "quality": "450", "views": "both"
+		}`)
+
+		if _, err := LoadResolvedForTUI(path); err == nil || !strings.Contains(err.Error(), "baseUrl") {
+			t.Fatalf("LoadResolvedForTUI() error = %v, want baseUrl validation failure", err)
+		}
+	})
 }
 
 func TestValidateCanonicalizesSupportedViewInputs(t *testing.T) {

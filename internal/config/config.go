@@ -3,6 +3,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -12,6 +13,10 @@ import (
 
 	"github.com/rabesss/impartus-cli/internal/selection"
 )
+
+// ErrCredentialsRequired identifies configuration that is otherwise loadable
+// but cannot authenticate to the upstream service.
+var ErrCredentialsRequired = errors.New("username and password are required")
 
 // ConfigLocation is the default path to the configuration file.
 const ConfigLocation = "./config.json"
@@ -165,6 +170,13 @@ func (c *Config) HasBothViews() bool {
 
 // Validate checks the configuration for errors and returns the first one found.
 func (c *Config) Validate() error {
+	if c.Username == "" || c.Password == "" {
+		return ErrCredentialsRequired
+	}
+	return c.validateWithoutCredentials()
+}
+
+func (c *Config) validateWithoutCredentials() error {
 	if err := c.validateCore(); err != nil {
 		return err
 	}
@@ -181,9 +193,6 @@ func (c *Config) Validate() error {
 }
 
 func (c *Config) validateCore() error {
-	if c.Username == "" || c.Password == "" {
-		return fmt.Errorf("username and password are required")
-	}
 	if err := c.validateBaseURL(); err != nil {
 		return err
 	}
@@ -308,8 +317,18 @@ func Parse(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-// LoadResolved loads config from the given path (or default), applies env overrides, defaults, and validation.
+// LoadResolved loads config from the given path (or default), applies env overrides, defaults, and strict validation.
 func LoadResolved(path string) (*Config, error) {
+	return loadResolved(path, (*Config).Validate)
+}
+
+// LoadResolvedForTUI loads and validates every non-credential setting while
+// allowing the private TUI session to render its authentication recovery state.
+func LoadResolvedForTUI(path string) (*Config, error) {
+	return loadResolved(path, (*Config).validateWithoutCredentials)
+}
+
+func loadResolved(path string, validate func(*Config) error) (*Config, error) {
 	var cfg *Config
 	var fileLoaded bool
 	var err error
@@ -348,7 +367,7 @@ func LoadResolved(path string) (*Config, error) {
 		}
 	}
 	cfg.ApplyDefaults()
-	if err := cfg.Validate(); err != nil {
+	if err := validate(cfg); err != nil {
 		return nil, err
 	}
 

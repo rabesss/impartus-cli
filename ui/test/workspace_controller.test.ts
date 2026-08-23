@@ -5,6 +5,7 @@ import type {
   Course,
   CourseList,
   DiagnosticList,
+  Health,
   LectureList,
 } from "../src/protocol/types.gen.ts"
 import {
@@ -15,6 +16,75 @@ import {
 } from "../src/workspace_controller.ts"
 
 describe("WorkspaceController", () => {
+  test("retries unavailable authentication and reaches the catalog in the same controller", async () => {
+    const client = new DeferredClient()
+    const controller = new WorkspaceController(client, createFoundationState({
+      authStatus: "unavailable",
+      status: "Authentication unavailable",
+    }))
+
+    const retry = controller.retry()
+    expect(client.authenticationRequests).toHaveLength(1)
+    expect(client.courseRequests).toHaveLength(0)
+    client.authenticationRequests[0]!.resolve(testHealth("ready"))
+    await Promise.resolve()
+    expect(client.courseRequests).toHaveLength(1)
+    client.courseRequests[0]!.resolve({ courses: [testCourse(7)] })
+    await retry
+
+    expect(controller.snapshot().authStatus).toBe("ready")
+    expect(controller.snapshot().courses.map((course) => course.subjectId)).toEqual([7])
+    expect(controller.snapshot().status).toBe("Connected")
+    expect(controller.snapshot().loading).toBe(false)
+  })
+
+  test("keeps authentication unavailable after a safe retry failure", async () => {
+    const client = new DeferredClient()
+    const controller = new WorkspaceController(client, createFoundationState({
+      authStatus: "unavailable",
+      screen: "library",
+    }))
+
+    const retry = controller.retry()
+    expect(controller.snapshot().screen).toBe("library")
+    client.authenticationRequests[0]!.reject(new Error("raw upstream body secret"))
+    await retry
+
+    expect(controller.snapshot().authStatus).toBe("unavailable")
+    expect(controller.snapshot().error).toBe("Authentication is unavailable")
+    expect(controller.snapshot().screen).toBe("library")
+    expect(controller.snapshot().loading).toBe(false)
+    expect(client.courseRequests).toHaveLength(0)
+  })
+
+  test("keeps successful authentication when the catalog refresh fails", async () => {
+    const client = new DeferredClient()
+    const controller = new WorkspaceController(client, createFoundationState({ authStatus: "unavailable" }))
+
+    const retry = controller.retry()
+    client.authenticationRequests[0]!.resolve(testHealth("ready"))
+    await Promise.resolve()
+    client.courseRequests[0]!.reject(new Error("catalog unavailable"))
+    await retry
+
+    expect(controller.snapshot().authStatus).toBe("ready")
+    expect(controller.snapshot().error).toBe("Course catalog is unavailable")
+    expect(controller.snapshot().loading).toBe(false)
+  })
+
+  test("blocks remote navigation but keeps local collections reachable while unavailable", () => {
+    const client = new DeferredClient()
+    const controller = new WorkspaceController(client, createFoundationState({ authStatus: "unavailable" }))
+
+    expect(controller.navigate("courses")).toBe(false)
+    expect(controller.navigate("lectures", testCourse(3))).toBe(false)
+    expect(controller.navigate("library")).toBe(true)
+    expect(client.courseRequests).toHaveLength(0)
+    expect(client.lectureRequests).toHaveLength(0)
+    expect(client.artifactRequests).toHaveLength(1)
+    client.artifactRequests[0]!.resolve({ artifacts: [] })
+  })
+
   test("applies a matching lecture response and clears loading", async () => {
     const client = new DeferredClient()
     const controller = new WorkspaceController(client, createFoundationState())
@@ -258,6 +328,7 @@ describe("WorkspaceController", () => {
 })
 
 class DeferredClient implements WorkspaceClient {
+  readonly authenticationRequests: Array<Deferred<Health>> = []
   readonly artifactRequests: Array<Deferred<ArtifactList>> = []
   readonly courseRequests: Array<Deferred<CourseList>> = []
   readonly diagnosticRequests: Array<Deferred<DiagnosticList>> = []
@@ -266,6 +337,12 @@ class DeferredClient implements WorkspaceClient {
   public artifacts(): Promise<ArtifactList> {
     const request = deferred<ArtifactList>()
     this.artifactRequests.push(request)
+    return request.promise
+  }
+
+  public retryAuthentication(): Promise<Health> {
+    const request = deferred<Health>()
+    this.authenticationRequests.push(request)
     return request.promise
   }
 
@@ -285,6 +362,16 @@ class DeferredClient implements WorkspaceClient {
     const request = deferred<LectureList>()
     this.lectureRequests.push(request)
     return request.promise
+  }
+}
+
+function testHealth(authStatus: Health["authStatus"]): Health {
+  return {
+    authStatus,
+    protocol: "tui/v2",
+    sessionId: "session-id",
+    status: "ok",
+    version: "test",
   }
 }
 

@@ -28,6 +28,39 @@ type catalogStub struct {
 	err     error
 }
 
+type authenticationStub struct {
+	mu      sync.Mutex
+	status  tuiproto.AuthStatus
+	retries int
+	retry   func(context.Context) error
+}
+
+func (stub *authenticationStub) Status() tuiproto.AuthStatus {
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	return stub.status
+}
+
+func (stub *authenticationStub) Retry(ctx context.Context) error {
+	stub.mu.Lock()
+	stub.retries++
+	retry := stub.retry
+	stub.mu.Unlock()
+	if retry != nil {
+		return retry(ctx)
+	}
+	stub.mu.Lock()
+	stub.status = tuiproto.AuthStatusReady
+	stub.mu.Unlock()
+	return nil
+}
+
+func (stub *authenticationStub) Retries() int {
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	return stub.retries
+}
+
 type productProjectionStub struct {
 	catalogStub
 	lectures  client.Lectures
@@ -600,7 +633,7 @@ func TestSessionExposesAuthenticatedHealthAndCourses(t *testing.T) {
 	var health tuiproto.Health
 	decodeJSON(t, healthResponse, &health)
 	if health.Protocol != tuiproto.ProtocolVersion || health.SessionID != session.ID() ||
-		health.Status != tuiproto.HealthStatusOK || health.Version != "test-version" {
+		health.AuthStatus != tuiproto.AuthStatusReady || health.Status != tuiproto.HealthStatusOK || health.Version != "test-version" {
 		t.Fatalf("health = %+v", health)
 	}
 
@@ -619,6 +652,130 @@ func TestSessionExposesAuthenticatedHealthAndCourses(t *testing.T) {
 		got.SubjectName != "Distributed Systems" || got.SessionName != "Monsoon 2026" ||
 		got.ProfessorName != "Dr. Rao" || got.VideoCount != 21 {
 		t.Fatalf("course projection = %+v", got)
+	}
+}
+
+func TestSessionKeepsLocalSurfacesAvailableAndRetriesAuthenticationWithoutABody(t *testing.T) {
+	authentication := &authenticationStub{status: tuiproto.AuthStatusUnavailable}
+	backend := &productProjectionStub{
+		catalogStub: catalogStub{courses: client.Courses{{InstituteID: 1, SessionID: 2, SubjectID: 3, SubjectName: "Course"}}},
+		artifacts: []library.ArtifactRecord{{Manifest: artifactpkg.Manifest{
+			ArtifactID: "local-artifact",
+			ProducedAt: time.Date(2026, time.August, 23, 0, 0, 0, 0, time.UTC),
+		}}},
+	}
+	session, err := tuisession.Start(t.Context(), tuisession.Options{
+		Actions:        actionStub{},
+		Artifacts:      backend,
+		Authentication: authentication,
+		Catalog:        backend,
+		Lectures:       backend,
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	cleanupSession(t, session)
+
+	healthResponse := sessionRequest(t, session, http.MethodGet, "/health", nil)
+	defer closeResponseBody(t, healthResponse.Body)
+	var health tuiproto.Health
+	decodeJSON(t, healthResponse, &health)
+	if health.AuthStatus != tuiproto.AuthStatusUnavailable {
+		t.Fatalf("health auth status = %q, want unavailable", health.AuthStatus)
+	}
+
+	coursesResponse := sessionRequest(t, session, http.MethodGet, "/courses", nil)
+	defer closeResponseBody(t, coursesResponse.Body)
+	var unavailable tuiproto.Problem
+	decodeJSON(t, coursesResponse, &unavailable)
+	if coursesResponse.StatusCode != http.StatusServiceUnavailable || unavailable.Code != "auth_unavailable" ||
+		unavailable.Error != "upstream authentication is unavailable" {
+		t.Fatalf("unavailable courses = (%d, %+v)", coursesResponse.StatusCode, unavailable)
+	}
+
+	libraryResponse := sessionRequest(t, session, http.MethodGet, "/library", nil)
+	defer closeResponseBody(t, libraryResponse.Body)
+	var artifacts tuiproto.ArtifactList
+	decodeJSON(t, libraryResponse, &artifacts)
+	if libraryResponse.StatusCode != http.StatusOK || len(artifacts.Artifacts) != 1 {
+		t.Fatalf("local library = (%d, %+v)", libraryResponse.StatusCode, artifacts)
+	}
+
+	diagnosticsResponse := sessionRequest(t, session, http.MethodGet, "/diagnostics", nil)
+	defer closeResponseBody(t, diagnosticsResponse.Body)
+	if diagnosticsResponse.StatusCode != http.StatusOK {
+		t.Fatalf("local diagnostics status = %d, want %d", diagnosticsResponse.StatusCode, http.StatusOK)
+	}
+
+	for _, kind := range []tuiproto.OperationKind{tuiproto.OperationKindDownload, tuiproto.OperationKindPlayback} {
+		operationResponse := sessionRequest(t, session, http.MethodPost, "/operations", tuiproto.OperationRequest{
+			Kind: kind,
+			Lecture: &tuiproto.LectureIdentity{
+				InstituteID: 1,
+				SessionID:   2,
+				SubjectID:   3,
+				TTID:        4,
+			},
+		})
+		defer closeResponseBody(t, operationResponse.Body)
+		var operationProblem tuiproto.Problem
+		decodeJSON(t, operationResponse, &operationProblem)
+		if operationResponse.StatusCode != http.StatusServiceUnavailable || operationProblem.Code != "auth_unavailable" {
+			t.Fatalf("%s operation while unavailable = (%d, %+v)", kind, operationResponse.StatusCode, operationProblem)
+		}
+	}
+
+	selfTestResponse := sessionRequest(t, session, http.MethodPost, "/operations", tuiproto.OperationRequest{Kind: tuiproto.OperationKindSelftest})
+	defer closeResponseBody(t, selfTestResponse.Body)
+	if selfTestResponse.StatusCode != http.StatusAccepted {
+		t.Fatalf("self-test status = %d, want %d", selfTestResponse.StatusCode, http.StatusAccepted)
+	}
+
+	invalidRetry := sessionRequest(t, session, http.MethodPost, "/auth/retry", map[string]string{"password": "must-not-cross"})
+	defer closeResponseBody(t, invalidRetry.Body)
+	if invalidRetry.StatusCode != http.StatusBadRequest || authentication.Retries() != 0 {
+		t.Fatalf("retry with body = status %d, retries %d", invalidRetry.StatusCode, authentication.Retries())
+	}
+
+	retryResponse := sessionRequest(t, session, http.MethodPost, "/auth/retry", nil)
+	defer closeResponseBody(t, retryResponse.Body)
+	var retried tuiproto.Health
+	decodeJSON(t, retryResponse, &retried)
+	if retryResponse.StatusCode != http.StatusOK || retried.AuthStatus != tuiproto.AuthStatusReady || authentication.Retries() != 1 {
+		t.Fatalf("retry = (%d, %+v), retries %d", retryResponse.StatusCode, retried, authentication.Retries())
+	}
+
+	readyCourses := sessionRequest(t, session, http.MethodGet, "/courses", nil)
+	defer closeResponseBody(t, readyCourses.Body)
+	if readyCourses.StatusCode != http.StatusOK {
+		t.Fatalf("courses after retry status = %d, want %d", readyCourses.StatusCode, http.StatusOK)
+	}
+}
+
+func TestSessionAuthenticationRetryFailureReturnsFixedProblem(t *testing.T) {
+	secret := "raw-upstream-password=body-secret"
+	authentication := &authenticationStub{
+		status: tuiproto.AuthStatusUnavailable,
+		retry:  func(context.Context) error { return errors.New(secret) },
+	}
+	session, err := tuisession.Start(t.Context(), tuisession.Options{
+		Authentication: authentication,
+		Catalog:        catalogStub{},
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	cleanupSession(t, session)
+
+	response := sessionRequest(t, session, http.MethodPost, "/auth/retry", nil)
+	defer closeResponseBody(t, response.Body)
+	body, readErr := io.ReadAll(response.Body)
+	if readErr != nil {
+		t.Fatalf("read retry failure: %v", readErr)
+	}
+	if response.StatusCode != http.StatusServiceUnavailable || strings.Contains(string(body), secret) ||
+		!strings.Contains(string(body), `"code":"auth_unavailable"`) {
+		t.Fatalf("retry failure = (%d, %q)", response.StatusCode, body)
 	}
 }
 

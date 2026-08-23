@@ -4,10 +4,10 @@ package tuiproto
 
 const (
 	// ProtocolVersion is the protocol identity every session request must declare.
-	ProtocolVersion = "tui/v1"
+	ProtocolVersion = "tui/v2"
 
 	// ProtocolBasePath is the versioned public path prefix of the session contract.
-	ProtocolBasePath = "/tui/v1"
+	ProtocolBasePath = "/tui/v2"
 
 	// CapabilityHeader is a session protocol header name.
 	CapabilityHeader = "X-Impartus-Capability"
@@ -49,6 +49,17 @@ type ArtifactSummary struct {
 	// Total recorded bytes across materialized files.
 	TotalBytes int64 `json:"totalBytes"`
 }
+
+// AuthStatus is the closed upstream authentication readiness projected to
+// the child without exposing credential state.
+type AuthStatus string
+
+const (
+	// AuthStatusReady is the "ready" AuthStatus value.
+	AuthStatusReady AuthStatus = "ready"
+	// AuthStatusUnavailable is the "unavailable" AuthStatus value.
+	AuthStatusUnavailable AuthStatus = "unavailable"
+)
 
 // Bootstrap is the one-use private handoff from the Go parent to its
 // OpenTUI child.
@@ -187,9 +198,11 @@ const (
 	EventTypeStreamOverflow EventType = "stream.overflow"
 )
 
-// Health is the session readiness probe answered before the frontend
-// renders anything.
+// Health is the session transport and safe upstream authentication
+// readiness probe.
 type Health struct {
+	AuthStatus AuthStatus `json:"authStatus"`
+
 	// Protocol identity this session speaks.
 	Protocol string `json:"protocol"`
 

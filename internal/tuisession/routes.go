@@ -19,6 +19,7 @@ import (
 
 func (session *Session) routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc(tuiproto.ProtocolBasePath+"/auth/retry", session.retryAuthentication)
 	mux.HandleFunc(tuiproto.ProtocolBasePath+"/health", session.health)
 	mux.HandleFunc(tuiproto.ProtocolBasePath+"/courses", session.courses)
 	mux.HandleFunc(tuiproto.ProtocolBasePath+"/diagnostics", session.diagnosticsView)
@@ -55,6 +56,9 @@ func (session *Session) operationsRoot(writer http.ResponseWriter, request *http
 		}
 		operation, err = session.operations.startSelfTest()
 	case tuiproto.OperationKindDownload:
+		if !session.requireAuthentication(writer) {
+			return
+		}
 		lecture, resolveErr := session.resolveLecture(request.Context(), operationRequest.Lecture)
 		if resolveErr != nil {
 			writeProblem(writer, http.StatusNotFound, "lecture_not_found", "lecture is unavailable")
@@ -62,6 +66,9 @@ func (session *Session) operationsRoot(writer http.ResponseWriter, request *http
 		}
 		operation, err = session.operations.startDownload(lecture)
 	case tuiproto.OperationKindPlayback:
+		if !session.requireAuthentication(writer) {
+			return
+		}
 		lecture, resolveErr := session.resolveLecture(request.Context(), operationRequest.Lecture)
 		if resolveErr != nil {
 			writeProblem(writer, http.StatusNotFound, "lecture_not_found", "lecture is unavailable")
@@ -207,17 +214,64 @@ func (session *Session) health(writer http.ResponseWriter, request *http.Request
 		methodNotAllowed(writer, http.MethodGet)
 		return
 	}
-	writeJSON(writer, http.StatusOK, tuiproto.Health{
-		Protocol:  tuiproto.ProtocolVersion,
-		SessionID: session.id,
-		Status:    tuiproto.HealthStatusOK,
-		Version:   session.version,
-	})
+	writeJSON(writer, http.StatusOK, session.healthProjection())
+}
+
+func (session *Session) healthProjection() tuiproto.Health {
+	return tuiproto.Health{
+		AuthStatus: session.authenticationStatus(),
+		Protocol:   tuiproto.ProtocolVersion,
+		SessionID:  session.id,
+		Status:     tuiproto.HealthStatusOK,
+		Version:    session.version,
+	}
+}
+
+func (session *Session) authenticationStatus() tuiproto.AuthStatus {
+	if session.auth == nil || session.auth.Status() == tuiproto.AuthStatusReady {
+		return tuiproto.AuthStatusReady
+	}
+	return tuiproto.AuthStatusUnavailable
+}
+
+func (session *Session) requireAuthentication(writer http.ResponseWriter) bool {
+	if session.authenticationStatus() == tuiproto.AuthStatusReady {
+		return true
+	}
+	writeProblem(writer, http.StatusServiceUnavailable, "auth_unavailable", "upstream authentication is unavailable")
+	return false
+}
+
+func (session *Session) retryAuthentication(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		methodNotAllowed(writer, http.MethodPost)
+		return
+	}
+	request.Body = http.MaxBytesReader(writer, request.Body, 1)
+	body, err := io.ReadAll(request.Body)
+	if err != nil || len(body) != 0 {
+		writeProblem(writer, http.StatusBadRequest, "invalid_request", "authentication retry does not accept a request body")
+		return
+	}
+	if session.auth != nil {
+		if err := session.auth.Retry(request.Context()); err != nil {
+			writeProblem(writer, http.StatusServiceUnavailable, "auth_unavailable", "upstream authentication is unavailable")
+			return
+		}
+	}
+	if session.authenticationStatus() != tuiproto.AuthStatusReady {
+		writeProblem(writer, http.StatusServiceUnavailable, "auth_unavailable", "upstream authentication is unavailable")
+		return
+	}
+	writeJSON(writer, http.StatusOK, session.healthProjection())
 }
 
 func (session *Session) courses(writer http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodGet {
 		methodNotAllowed(writer, http.MethodGet)
+		return
+	}
+	if !session.requireAuthentication(writer) {
 		return
 	}
 	courses, err := session.catalog.Courses(request.Context())
@@ -253,6 +307,9 @@ func (session *Session) diagnosticsView(writer http.ResponseWriter, request *htt
 func (session *Session) lecturesView(writer http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodGet {
 		methodNotAllowed(writer, http.MethodGet)
+		return
+	}
+	if !session.requireAuthentication(writer) {
 		return
 	}
 	if session.lectures == nil {

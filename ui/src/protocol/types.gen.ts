@@ -2,10 +2,10 @@
 // Regenerate with: go run scripts/gen-tui-protocol.go
 
 /** Protocol identity every session request must declare. */
-export const PROTOCOL_VERSION = "tui/v1" as const
+export const PROTOCOL_VERSION = "tui/v2" as const
 
 /** Versioned public path prefix of the session contract. */
-export const PROTOCOL_BASE_PATH = "/tui/v1" as const
+export const PROTOCOL_BASE_PATH = "/tui/v2" as const
 
 /** Session protocol header name. */
 export const CAPABILITY_HEADER = "X-Impartus-Capability" as const
@@ -66,6 +66,12 @@ export interface ArtifactSummary {
    */
   totalBytes: number
 }
+
+/**
+ * AuthStatus is the closed upstream authentication readiness projected to
+ * the child without exposing credential state.
+ */
+export type AuthStatus = "ready" | "unavailable"
 
 /**
  * Bootstrap is the one-use private handoff from the Go parent to its
@@ -245,10 +251,12 @@ export interface Event {
 export type EventType = "session.ready" | "operation.started" | "operation.progress" | "operation.completed" | "operation.canceled" | "operation.failed" | "stream.overflow"
 
 /**
- * Health is the session readiness probe answered before the frontend
- * renders anything.
+ * Health is the session transport and safe upstream authentication
+ * readiness probe.
  */
 export interface Health {
+  authStatus: AuthStatus
+
   /**
    * Protocol identity this session speaks.
    */

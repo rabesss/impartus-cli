@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"sync/atomic"
 	"testing"
 
 	"github.com/rabesss/impartus-cli/internal/client"
@@ -26,6 +27,25 @@ func (integrationCatalog) Courses(context.Context) (client.Courses, error) {
 		SubjectName:   "Distributed Systems",
 		VideoCount:    4,
 	}}, nil
+}
+
+type unavailableIntegrationAuthentication struct{}
+
+func (unavailableIntegrationAuthentication) Status() tuiproto.AuthStatus {
+	return tuiproto.AuthStatusUnavailable
+}
+
+func (unavailableIntegrationAuthentication) Retry(context.Context) error {
+	return context.Canceled
+}
+
+type countingIntegrationCatalog struct {
+	calls atomic.Int64
+}
+
+func (catalog *countingIntegrationCatalog) Courses(context.Context) (client.Courses, error) {
+	catalog.calls.Add(1)
+	return integrationCatalog{}.Courses(context.Background())
 }
 
 func TestCompiledOpenTUICompletesPrivateSessionSelfTest(t *testing.T) {
@@ -63,6 +83,51 @@ func TestCompiledOpenTUICompletesPrivateSessionSelfTest(t *testing.T) {
 	}
 	if result.Courses != 1 || result.Status != "ok" {
 		t.Fatalf("self-test result = %+v", result)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("self-test stderr = %q", stderr.String())
+	}
+}
+
+func TestCompiledOpenTUICompletesLocalSelfTestWhenAuthenticationIsUnavailable(t *testing.T) {
+	executable := os.Getenv("IMPARTUS_UI_TEST_BINARY")
+	if executable == "" {
+		t.Skip("set IMPARTUS_UI_TEST_BINARY to the compiled OpenTUI sidecar")
+	}
+	catalog := &countingIntegrationCatalog{}
+	session, err := tuisession.Start(t.Context(), tuisession.Options{
+		Authentication: unavailableIntegrationAuthentication{},
+		Catalog:        catalog,
+		SelfTest:       tuisession.SelfTestOptions{Steps: 3},
+		Version:        "integration-test",
+	})
+	if err != nil {
+		t.Fatalf("start private TUI session: %v", err)
+	}
+	cleanupIntegrationSession(t, session)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if err := tuihost.Run(t.Context(), tuihost.Options{
+		Session:    session,
+		Executable: executable,
+		Arguments:  []string{"--noninteractive-self-test"},
+		Stdout:     &stdout,
+		Stderr:     &stderr,
+	}); err != nil {
+		t.Fatalf("run unavailable-auth OpenTUI self-test: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
+	}
+	var result struct {
+		Courses int    `json:"courses"`
+		Status  string `json:"status"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("decode self-test result %q: %v", stdout.String(), err)
+	}
+	if result.Courses != 0 || result.Status != "ok" {
+		t.Fatalf("self-test result = %+v", result)
+	}
+	if catalog.calls.Load() != 0 {
+		t.Fatalf("upstream catalog calls = %d, want zero", catalog.calls.Load())
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("self-test stderr = %q", stderr.String())

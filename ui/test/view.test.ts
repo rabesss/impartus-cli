@@ -14,6 +14,27 @@ afterEach(() => {
 })
 
 describe("FoundationView", () => {
+  test("renders authentication recovery while keeping local commands available", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 140 })
+    renderers.push(setup)
+    const state = foundationState()
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      authStatus: "unavailable",
+      courses: [],
+      status: "Authentication unavailable — press r to retry",
+    }, callbacks())
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("Authentication unavailable")
+    expect(frame).toContain("press r to retry")
+    expect(frame).toContain("Local library")
+    expect(frame).toContain("Diagnostics")
+    expect(frame).toContain("q quit")
+    view.destroy()
+  })
+
   test("uses distinguishing subject labels for courses with shared cohort prefixes", () => {
     const courses: Course[] = [
       course("BME V SEM 26 ODD_Biomaterials", 1530, 1),
@@ -769,6 +790,7 @@ function foundationState(): FoundationState {
   return {
     activeCourse: undefined,
     activeLecture: undefined,
+    authStatus: "ready",
     artifacts: [],
     collections: {
       courses: { filter: "", selected: 0 },

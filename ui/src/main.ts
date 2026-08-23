@@ -19,14 +19,15 @@ async function main(): Promise<void> {
   startupStage = "health check"
   const client = new SessionClient(bootstrap)
   const health = await client.health()
-  startupStage = "course catalog"
-  const courses = await client.courses()
   startupStage = "diagnostics"
   const diagnostics = await client.diagnostics()
+  startupStage = "course catalog"
+  const courses = health.authStatus === "ready" ? await client.courses() : { courses: [] }
   const state = createFoundationState({
+    authStatus: health.authStatus,
     courses: courses.courses,
     diagnostics: diagnostics.diagnostics,
-    status: health.status === "ok" ? "Connected" : "Unavailable",
+    status: health.authStatus === "ready" ? "Connected" : "Authentication unavailable — press r to retry",
   })
   if (process.argv.includes("--noninteractive-self-test")) {
     startupStage = "self-test"

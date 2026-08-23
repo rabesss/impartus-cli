@@ -1,11 +1,13 @@
 import type {
   ArtifactList,
   ArtifactSummary,
+  AuthStatus,
   Course,
   CourseList,
   Diagnostic,
   DiagnosticList,
   Event,
+  Health,
   Lecture,
   LectureList,
   OperationKind,
@@ -43,6 +45,7 @@ export interface PendingRequest {
 export interface FoundationState {
   activeCourse: Course | undefined
   activeLecture: Lecture | undefined
+  authStatus: AuthStatus
   artifacts: ArtifactSummary[]
   collections: Record<CollectionScreen, CollectionState>
   courses: Course[]
@@ -61,6 +64,7 @@ export interface WorkspaceClient {
   courses(signal?: AbortSignal): Promise<CourseList>
   diagnostics(signal?: AbortSignal): Promise<DiagnosticList>
   lectures(course: Course, signal?: AbortSignal): Promise<LectureList>
+  retryAuthentication(signal?: AbortSignal): Promise<Health>
 }
 
 export type WorkspaceListener = (state: FoundationState) => void
@@ -113,6 +117,7 @@ export class WorkspaceController {
 
   public navigate(target: CollectionScreen, course?: Course, signal?: AbortSignal): boolean {
     if (this.#state.loading) return false
+    if (this.#state.authStatus !== "ready" && (target === "courses" || target === "lectures")) return false
     if (target === "courses") void this.loadCourses(signal)
     else if (target === "lectures" && course !== undefined) void this.loadLectures(course, signal)
     else if (target === "library") void this.loadLibrary(signal)
@@ -123,6 +128,10 @@ export class WorkspaceController {
 
   public async retry(signal?: AbortSignal): Promise<void> {
     if (this.#state.loading) return
+    if (this.#state.authStatus !== "ready") {
+      await this.#retryAuthentication(signal)
+      return
+    }
     if (this.#state.screen === "lectures" && this.#state.activeCourse !== undefined) {
       await this.loadLectures(this.#state.activeCourse, signal)
     } else if (this.#state.screen === "library") {
@@ -135,6 +144,10 @@ export class WorkspaceController {
   }
 
   public async loadCourses(signal?: AbortSignal): Promise<void> {
+    if (this.#state.authStatus !== "ready") {
+      this.#set({ ...this.#state, error: "Authentication is unavailable", status: "Authentication unavailable" })
+      return
+    }
     const request = this.#begin("courses")
     try {
       const result = await this.#client.courses(signal)
@@ -149,6 +162,10 @@ export class WorkspaceController {
   }
 
   public async loadLectures(course: Course, signal?: AbortSignal): Promise<void> {
+    if (this.#state.authStatus !== "ready") {
+      this.#set({ ...this.#state, error: "Authentication is unavailable", status: "Authentication unavailable" })
+      return
+    }
     const switchingCourse = this.#state.activeCourse === undefined || courseKey(this.#state.activeCourse) !== courseKey(course)
     const request = this.#begin("lectures", course)
     const collections = switchingCourse
@@ -215,6 +232,34 @@ export class WorkspaceController {
     this.#set(applyOperationEvent(this.#state, event))
   }
 
+  async #retryAuthentication(signal?: AbortSignal): Promise<void> {
+    const target = this.#state.screen === "playback" ? "courses" : this.#state.screen
+    const request = this.#begin(target)
+    let health: Health
+    try {
+      health = await this.#client.retryAuthentication(signal)
+    } catch {
+      this.#fail(request, "Authentication is unavailable")
+      return
+    }
+    if (health.authStatus !== "ready") {
+      this.#fail(request, "Authentication is unavailable")
+      return
+    }
+    if (!sameRequest(request, this.#state.pending)) return
+    this.#set({ ...this.#state, authStatus: "ready", screen: "courses", status: "Connected" })
+    try {
+      const courses = await this.#client.courses(signal)
+      this.#finish(request, (state) => ({
+        ...state,
+        courses: [...courses.courses],
+        error: undefined,
+      }))
+    } catch {
+      this.#fail(request, "Course catalog is unavailable")
+    }
+  }
+
   #begin(target: CollectionScreen, course?: Course): PendingRequest {
     const request: PendingRequest = {
       courseKey: course === undefined ? undefined : courseKey(course),
@@ -262,6 +307,7 @@ export function createFoundationState(overrides: FoundationStateOverrides = {}):
   return cloneState({
     activeCourse: undefined,
     activeLecture: undefined,
+    authStatus: "ready",
     artifacts: [],
     collections: { ...collections, ...collectionOverrides },
     courses: [],
