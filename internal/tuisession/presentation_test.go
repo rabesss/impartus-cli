@@ -45,6 +45,13 @@ func TestSafePresentationTextRedactsControlSplitCredentialKeys(t *testing.T) {
 	}
 }
 
+func TestSafePresentationTextRejectsCombiningMarkSplitCredentialKeys(t *testing.T) {
+	const value = "to\u0301ken=hunter2"
+	if got := safePresentationText(value); got != "REDACTED" {
+		t.Fatalf("safePresentationText() = %q, want REDACTED", got)
+	}
+}
+
 func TestSafePresentationTextPreservesSafeWhitespaceBoundaries(t *testing.T) {
 	for name, test := range map[string]struct {
 		value string
@@ -124,8 +131,19 @@ func TestSafePresentationTextRejectsCompleteEscapeSequenceCredentialSplits(t *te
 	for name, value := range map[string]string{
 		"CSI final byte":        "to\x1b[ken=csi-secret",
 		"CSI crosses delimiter": "token\x1b[0=assignmentsecret",
+		"8-bit CSI delimiter":   "token\x9b0=assignmentsecret",
 		"OSC body":              "to\x1b]k\x07en=osc-secret",
 		"OSC selector split":    "to\x1b]k;0\x07en=hunter2",
+		"OSC selector and body": "t\x1b]o;ke\x07n=hunter2",
+		"DCS split body":        "t\x1bPo;ke\x1b\\n=hunter2",
+		"APC split body":        "t\x1b_o;ke\x1b\\n=hunter2",
+		"SOS split body":        "t\x1bXo;ke\x1b\\n=hunter2",
+		"PM split body":         "t\x1b^o;ke\x1b\\n=hunter2",
+		"8-bit OSC split body":  "t\x9do;ke\x9cn=hunter2",
+		"8-bit DCS split body":  "t\x90o;ke\x9cn=hunter2",
+		"8-bit APC split body":  "t\x9fo;ke\x9cn=hunter2",
+		"8-bit SOS split body":  "t\x98o;ke\x9cn=hunter2",
+		"8-bit PM split body":   "t\x9eo;ke\x9cn=hunter2",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := safePresentationText(value); got != "REDACTED" {
@@ -141,6 +159,7 @@ func TestSafePresentationTextRejectsObfuscatedCredentialAlongsideCleanCredential
 		"userinfo":                 "token=abc https://user:pass\x1b[@example.com/",
 		"stripped-only decoy":      "to\x1b[0mken=hunter2 to\x1b[ken=ev1l",
 		"payload-prefix collision": "\x1b[0mtoken=abc to\x1b[ken=hunter2",
+		"same-value decoy":         "to\x1b[0mken=S3CRET x/\x1b[0mtoken=S3CRET",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := safePresentationText(value); got != "REDACTED" {
@@ -166,6 +185,54 @@ func TestSafePresentationTextPreservesContextWhenANSISurroundsCredentialValue(t 
 		t.Run(name, func(t *testing.T) {
 			if got := safePresentationText(value); got != want {
 				t.Fatalf("safePresentationText() = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestSafePresentationTextPreservesContextForANSIStyledCredentialURLs(t *testing.T) {
+	for name, test := range map[string]struct {
+		value string
+		want  string
+	}{
+		"query followed by prose": {
+			value: "GET \x1b[1mhttps://e.com/?token=abc\x1b[0m failed",
+			want:  "GET https://e.com/?token=REDACTED",
+		},
+		"percent-encoded query": {
+			value: "fetch \x1b[1mhttps://e.com/?token=a%2Fb\x1b[0m",
+			want:  "fetch https://e.com/?token=REDACTED",
+		},
+		"plus-encoded query": {
+			value: "fetch \x1b[1mhttps://e.com/?token=a+b\x1b[0m",
+			want:  "fetch https://e.com/?token=REDACTED",
+		},
+		"userinfo with colon": {
+			value: "ok \x1b[1mhttps://alice:pass:word@e.com/\x1b[0m",
+			want:  "ok https://e.com/",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := safePresentationText(test.value); got != test.want {
+				t.Fatalf("safePresentationText() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestSafePresentationTextPreservesContextWithAdjacentCredentialShapes(t *testing.T) {
+	for name, value := range map[string]string{
+		"strong assignment":   "auth: yes token: abc after \x1b[31mrefresh\x1b[0m",
+		"nested quoted key":   `x secret: "token": "abc" after ` + "\x1b[31mrefresh\x1b[0m",
+		"quoted marker value": `retry token: "` + "\x1b[31mREDACTED\x1b[0m" + `" after refresh`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := safePresentationText(value)
+			if got == "REDACTED" {
+				t.Fatal("safePresentationText() discarded safely redacted context")
+			}
+			if strings.Contains(got, "abc") || strings.Contains(got, "yes") {
+				t.Fatalf("safePresentationText() exposed credential material: %q", got)
 			}
 		})
 	}

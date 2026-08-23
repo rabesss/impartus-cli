@@ -172,6 +172,27 @@ describe("workspace command registry", () => {
     expect(help).not.toContain("selection.move")
   })
 
+  test("does not offer a direct-key-only playback command in the palette", () => {
+    const context = commandContext({
+      operation: {
+        durationSeconds: 60,
+        id: "playback-id",
+        kind: "playback",
+        muted: false,
+        paused: false,
+        percent: 25,
+        positionSeconds: 15,
+        speed: 1,
+        state: "running",
+        volume: 100,
+      },
+      screen: "playback",
+    })
+
+    expect(commandsForPalette(context, "control").map((entry) => entry.command.id)).toEqual([])
+    expect(commandForKey(context, "space")?.command.id).toBe("playback.control")
+  })
+
   test("does not let wide-pane focus navigate away from playback", () => {
     const context = commandContext({
       operation: {

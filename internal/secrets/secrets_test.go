@@ -118,38 +118,14 @@ func TestScrubCredentialURLsWithEvidenceCountsUserinfoWithoutMarkerText(t *testi
 	}
 }
 
-func TestRedactionEvidenceMatchesAlternateProjectionsOneToOne(t *testing.T) {
-	normalize := func(value string) string {
-		return strings.TrimPrefix(value, "ansi:")
+func TestRedactionEvidenceDetectsValuesThatRemainVisible(t *testing.T) {
+	normalize := func(value string) string { return strings.TrimPrefix(value, "ansi:") }
+	evidence := RedactionEvidence{values: []string{"ansi:secret"}}
+	if !evidence.HasVisibleValueIn("prefix secret suffix", normalize) {
+		t.Fatal("visible credential was not detected")
 	}
-	project := func(value string) string {
-		return "m" + normalize(value) + "m"
-	}
-	baseline := RedactionEvidence{values: []string{"secret"}}
-	support := RedactionEvidence{values: []string{"ansi:secret"}}
-	if candidate := (RedactionEvidence{values: []string{"msecretm"}}); candidate.HasUnexplainedValues(
-		baseline,
-		support,
-		normalize,
-		project,
-	) {
-		t.Fatal("supported alternate projection was treated as a new credential")
-	}
-	if candidate := (RedactionEvidence{values: []string{"secret", "msecretm"}}); !candidate.HasUnexplainedValues(
-		baseline,
-		support,
-		normalize,
-		project,
-	) {
-		t.Fatal("one baseline credential explained two candidate credentials")
-	}
-	if candidate := (RedactionEvidence{values: []string{"different"}}); !candidate.HasUnexplainedValues(
-		baseline,
-		support,
-		normalize,
-		project,
-	) {
-		t.Fatal("disjoint credential evidence was treated as explained")
+	if evidence.HasVisibleValueIn("prefix REDACTED suffix", normalize) {
+		t.Fatal("redacted credential was treated as visible")
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -21,91 +22,87 @@ var spacedURLAssignmentCandidate = regexp.MustCompile(`(?i)([?&]) *([a-z0-9_-]+(
 func safePresentationText(value string) string {
 	stripped := ansi.Strip(value)
 	safe, baselineEvidence := sanitizePresentationText(stripped)
-	if stripped != value {
+	detectionValue := combiningMarkDetectionView(value)
+	if stripped != value || detectionValue != value {
 		// ANSI parsers legitimately consume the final byte of a short escape
 		// sequence, while OSC and related strings can hide printable payload.
 		// Those bytes can be credential syntax (for example a character inside
-		// "token"). Re-run detection with both raw printable bytes and terminal
-		// payload preserved. If any view exposes a credential that cannot be
-		// paired with the same credential in the normal stripped view, discard the
-		// adversarial message. Structural evidence prevents equal-sized, disjoint
-		// redaction sets and literal marker text from balancing the gate.
-		_, directEvidence := secrets.ScrubWithEvidence(value)
-		if directEvidence.HasUnexplainedValues(
-			baselineEvidence,
-			secrets.RedactionEvidence{},
-			normalizePresentationEvidence,
-			nil,
-		) {
-			return "REDACTED"
-		}
-		_, rawEvidence := sanitizePresentationText(value)
-		if rawEvidence.HasUnexplainedValues(
-			baselineEvidence,
+		// "token"). Re-run detection with raw printable bytes and both literal and
+		// credential-shaped terminal payloads preserved. If a value recognized in
+		// any view remains visible in the ordinary stripped output, discard the
+		// adversarial message. Checking the actual output occurrence prevents a
+		// clean decoy with the same value from explaining a separate leak.
+		_, directEvidence := secrets.ScrubWithEvidence(detectionValue)
+		_, rawEvidence := sanitizePresentationText(detectionValue)
+		views := terminalSequenceDetectionViews(detectionValue)
+		_, payloadEvidence := sanitizePresentationText(views.payload)
+		_, compactEvidence := sanitizePresentationText(views.compact)
+		for _, candidate := range []secrets.RedactionEvidence{
 			directEvidence,
-			normalizePresentationEvidence,
-			rawPresentationEvidenceView,
-		) {
-			return "REDACTED"
+			rawEvidence,
+			payloadEvidence,
+			compactEvidence,
+		} {
+			if candidate.Count() > baselineEvidence.Count() {
+				return "REDACTED"
+			}
 		}
-		_, payloadEvidence := sanitizePresentationText(terminalSequencePayloadView(value))
-		if payloadEvidence.HasUnexplainedValues(
-			baselineEvidence,
-			directEvidence,
-			normalizePresentationEvidence,
-			terminalSequencePayloadView,
-		) {
-			return "REDACTED"
-		}
-		_, selectorEvidence := sanitizePresentationText(terminalSequenceOSCSelectorView(value))
-		if selectorEvidence.HasUnexplainedValues(
-			baselineEvidence,
-			directEvidence,
-			normalizePresentationEvidence,
-			terminalSequenceOSCSelectorView,
-		) {
+		candidateEvidence := directEvidence.
+			Combined(rawEvidence).
+			Combined(payloadEvidence).
+			Combined(compactEvidence)
+		if candidateEvidence.HasVisibleValueIn(safe, normalizePresentationEvidence) {
 			return "REDACTED"
 		}
 	}
 	return safe
 }
 
+func combiningMarkDetectionView(value string) string {
+	var compact strings.Builder
+	for len(value) > 0 {
+		character, size := utf8.DecodeRuneInString(value)
+		if character == utf8.RuneError && size == 1 {
+			compact.WriteByte(value[0])
+		} else if !unicode.In(character, unicode.Mn, unicode.Mc, unicode.Me) {
+			compact.WriteString(value[:size])
+		}
+		value = value[size:]
+	}
+	return compact.String()
+}
+
 func normalizePresentationEvidence(value string) string {
 	return strings.Join(strings.Fields(ansi.Strip(value)), " ")
 }
 
-func rawPresentationEvidenceView(value string) string {
-	return normalizePresentationRunes(value, false)
+type terminalDetectionViews struct {
+	payload string
+	compact string
 }
 
-func terminalSequencePayloadView(value string) string {
-	return terminalSequenceDetectionView(value, false)
-}
-
-func terminalSequenceOSCSelectorView(value string) string {
-	return terminalSequenceDetectionView(value, true)
-}
-
-func terminalSequenceDetectionView(value string, oscSelector bool) string {
+func terminalSequenceDetectionViews(value string) terminalDetectionViews {
 	var payload strings.Builder
+	var compact strings.Builder
 	state := byte(ansi.NormalState)
 	for len(value) > 0 {
 		sequence, width, consumed, nextState := ansi.DecodeSequence(value, state, nil)
 		if consumed <= 0 {
 			payload.WriteString(value)
+			compact.WriteString(value)
 			break
 		}
 		state = nextState
 		if width > 0 || !isTerminalSequence(sequence) {
 			payload.WriteString(sequence)
-		} else if oscSelector && ansi.HasOscPrefix(sequence) {
-			payload.WriteString(terminalStringSelector(sequence))
+			compact.WriteString(sequence)
 		} else {
 			payload.WriteString(terminalSequencePayload(sequence))
+			compact.WriteString(terminalSequenceCredentialPayload(sequence))
 		}
 		value = value[consumed:]
 	}
-	return payload.String()
+	return terminalDetectionViews{payload: payload.String(), compact: compact.String()}
 }
 
 func isTerminalSequence(sequence string) bool {
@@ -125,6 +122,13 @@ func terminalSequencePayload(sequence string) string {
 	return ""
 }
 
+func terminalSequenceCredentialPayload(sequence string) string {
+	if isTerminalStringSequence(sequence) {
+		return compactCredentialSyntax(terminalStringBody(sequence))
+	}
+	return terminalSequencePayload(sequence)
+}
+
 func isTerminalStringSequence(sequence string) bool {
 	return ansi.HasOscPrefix(sequence) || ansi.HasDcsPrefix(sequence) || ansi.HasApcPrefix(sequence) ||
 		ansi.HasSosPrefix(sequence) || ansi.HasPmPrefix(sequence)
@@ -139,8 +143,12 @@ func csiCredentialPayload(sequence string) string {
 	if ansi.HasEscPrefix(sequence) {
 		start = 2
 	}
+	return compactCredentialSyntax(sequence[start:])
+}
+
+func compactCredentialSyntax(value string) string {
 	var payload strings.Builder
-	for _, character := range sequence[start:] {
+	for _, character := range value {
 		if unicode.IsLetter(character) || strings.ContainsRune("_-:=\"'", character) {
 			payload.WriteRune(character)
 		}
@@ -154,14 +162,6 @@ func terminalStringPayload(sequence string) string {
 		if separator := strings.IndexByte(body, ';'); separator >= 0 {
 			body = body[separator+1:]
 		}
-	}
-	return body
-}
-
-func terminalStringSelector(sequence string) string {
-	body := terminalStringBody(sequence)
-	if separator := strings.IndexByte(body, ';'); separator >= 0 {
-		return body[:separator]
 	}
 	return body
 }

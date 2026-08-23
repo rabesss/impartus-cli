@@ -93,80 +93,17 @@ func (evidence RedactionEvidence) Combined(other RedactionEvidence) RedactionEvi
 	return combined
 }
 
-// HasUnexplainedValues reports whether candidate contains credential evidence
-// that cannot be paired with baseline. A support view may explain an alternate
-// projection of the same baseline credential; each baseline occurrence can be
-// consumed at most once, so an unrelated credential cannot balance the totals.
-func (evidence RedactionEvidence) HasUnexplainedValues(
-	baseline, support RedactionEvidence,
-	normalize func(string) string,
-	projectSupport func(string) string,
-) bool {
-	slots := newRedactionEvidenceSlots(baseline, normalize)
-	attachRedactionEvidenceSupport(slots, support, normalize, projectSupport)
+// HasVisibleValueIn reports whether any recognized credential value remains in
+// candidate after both are transformed into the caller's presentation view.
+// The values stay private: callers can ask the security question without
+// receiving credential material that could accidentally be logged.
+func (evidence RedactionEvidence) HasVisibleValueIn(candidate string, normalize func(string) string) bool {
+	visible := normalize(candidate)
 	for _, value := range evidence.values {
-		if !consumeRedactionEvidenceSlot(slots, normalize(value)) {
+		credential := normalize(value)
+		if credential != "" && strings.Contains(visible, credential) {
 			return true
 		}
-	}
-	return false
-}
-
-type redactionEvidenceSlot struct {
-	exact      string
-	projected  string
-	hasSupport bool
-	used       bool
-}
-
-func newRedactionEvidenceSlots(
-	baseline RedactionEvidence,
-	normalize func(string) string,
-) []redactionEvidenceSlot {
-	slots := make([]redactionEvidenceSlot, 0, len(baseline.values))
-	for _, value := range baseline.values {
-		slots = append(slots, redactionEvidenceSlot{exact: normalize(value)})
-	}
-	return slots
-}
-
-func attachRedactionEvidenceSupport(
-	slots []redactionEvidenceSlot,
-	support RedactionEvidence,
-	normalize func(string) string,
-	project func(string) string,
-) {
-	for _, value := range support.values {
-		normalized := normalize(value)
-		for index := range slots {
-			if slots[index].hasSupport || slots[index].exact != normalized {
-				continue
-			}
-			projected := value
-			if project != nil {
-				projected = project(value)
-			}
-			slots[index].projected = normalize(projected)
-			slots[index].hasSupport = true
-			break
-		}
-	}
-}
-
-func consumeRedactionEvidenceSlot(slots []redactionEvidenceSlot, value string) bool {
-	for index := range slots {
-		if slots[index].used || slots[index].exact != value {
-			continue
-		}
-		slots[index].used = true
-		return true
-	}
-	for index := range slots {
-		if slots[index].used || !slots[index].hasSupport || slots[index].projected != value {
-			continue
-		}
-		slots[index].used = true
-		return true
 	}
 	return false
 }
