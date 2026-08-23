@@ -178,8 +178,13 @@ export class FoundationView {
       this.#navigationCursor = (this.#navigationCursor + delta + NAVIGATION.length) % NAVIGATION.length
       this.#rebuild()
     } else if (normalized === "enter") {
+      const open = commandForKey(this.#commandContext(), "enter")
+      if (open?.availability.enabled === true) {
       this.#closeOverlay(false)
       this.#dispatchNavigationSelection()
+      } else {
+      this.#rebuild()
+      }
     }
   }
 
@@ -588,7 +593,11 @@ export class FoundationView {
 
   #navigationOverlay(width: number, height: number): BoxRenderable {
     const overlay = overlayBox(this.#renderer, "Navigation", width, height, 10)
-    NAVIGATION.forEach((entry, index) => overlay.add(row(this.#renderer, `${index === this.#navigationCursor ? ">" : " "} ${entry.label}`, index === this.#navigationCursor)))
+    NAVIGATION.forEach((entry, index) => {
+      const unavailable = entry.screen === "courses" && this.#state.authStatus !== "ready"
+      const reason = unavailable ? " — Authentication is unavailable" : ""
+      overlay.add(row(this.#renderer, `${index === this.#navigationCursor ? ">" : " "} ${entry.label}${reason}`, index === this.#navigationCursor))
+    })
     overlay.add(text(this.#renderer, "↑↓ select   Enter open   Esc close", COLORS.dim))
     return overlay
   }

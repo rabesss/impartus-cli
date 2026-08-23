@@ -84,6 +84,24 @@ describe("WorkspaceController", () => {
     expect(controller.snapshot().loading).toBe(false)
   })
 
+  test("lands on the catalog after successful recovery from a local screen", async () => {
+    const client = new DeferredClient()
+    const controller = new WorkspaceController(client, createFoundationState({
+      authStatus: "unavailable",
+      screen: "library",
+    }))
+
+    const retry = controller.retry()
+    expect(controller.snapshot().screen).toBe("library")
+    client.authenticationRequests[0]!.resolve(testHealth("ready"))
+    await Promise.resolve()
+    client.courseRequests[0]!.resolve({ courses: [testCourse(9)] })
+    await retry
+
+    expect(controller.snapshot().screen).toBe("courses")
+    expect(controller.snapshot().courses.map((course) => course.subjectId)).toEqual([9])
+  })
+
   test("blocks remote navigation but keeps local collections reachable while unavailable", () => {
     const client = new DeferredClient()
     const controller = new WorkspaceController(client, createFoundationState({ authStatus: "unavailable" }))

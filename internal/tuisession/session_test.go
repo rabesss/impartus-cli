@@ -802,6 +802,29 @@ func TestSessionAuthenticationRetryDistinguishesInvalidConfigurationSafely(t *te
 	}
 }
 
+func TestSessionAuthenticationRetryShortCircuitsWhenAlreadyReady(t *testing.T) {
+	authentication := &authenticationStub{
+		status: tuiproto.AuthStatusReady,
+		retry:  func(context.Context) error { return errors.New("must not retry") },
+	}
+	session, err := tuisession.Start(t.Context(), tuisession.Options{
+		Authentication: authentication,
+		Catalog:        catalogStub{},
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	cleanupSession(t, session)
+
+	response := sessionRequest(t, session, http.MethodPost, "/auth/retry", nil)
+	defer closeResponseBody(t, response.Body)
+	var health tuiproto.Health
+	decodeJSON(t, response, &health)
+	if response.StatusCode != http.StatusOK || health.AuthStatus != tuiproto.AuthStatusReady || authentication.Retries() != 0 {
+		t.Fatalf("ready retry = (%d, %+v), retries %d", response.StatusCode, health, authentication.Retries())
+	}
+}
+
 func TestSessionProjectsLecturesLibraryAndDiagnosticsWithoutTerminalOrSecretData(t *testing.T) {
 	producedAt := time.Date(2026, time.August, 13, 12, 30, 0, 0, time.UTC)
 	backend := &productProjectionStub{

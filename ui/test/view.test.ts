@@ -14,6 +14,30 @@ afterEach(() => {
 })
 
 describe("FoundationView", () => {
+  test("keeps unavailable Courses disabled in the compact navigation overlay", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    let courses = 0
+    const handlers = callbacks()
+    handlers.onCourses = () => { courses++ }
+    const state = foundationState()
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      authStatus: "unavailable",
+      courses: [],
+      status: "Authentication unavailable",
+    }, handlers)
+
+    setup.mockInput.pressKey("g")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("Courses — Authentication is unavailable")
+    setup.mockInput.pressEnter()
+    await setup.renderOnce()
+    expect(courses).toBe(0)
+    expect(setup.captureCharFrame()).toContain("Navigation")
+    view.destroy()
+  })
+
   test("renders authentication recovery while keeping local commands available", async () => {
     const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 140 })
     renderers.push(setup)

@@ -344,3 +344,67 @@ func TestRunTUIKeepsInvalidNonCredentialConfigurationFatal(t *testing.T) {
 		t.Fatal("runTUI() left the local library open after fatal configuration")
 	}
 }
+
+func TestRunTUIStartsUnavailableSessionForInvalidCredentials(t *testing.T) {
+	restoreCLIState(t)
+	var opened *library.Store
+	openTUILibraryFn = func(ctx context.Context, _ library.Options) (*library.Store, error) {
+		stateDir := filepath.Join(t.TempDir(), "state")
+		if err := os.Mkdir(stateDir, 0o700); err != nil {
+			return nil, err
+		}
+		var err error
+		opened, err = library.Open(ctx, library.Options{Path: filepath.Join(stateDir, "library.db")})
+		return opened, err
+	}
+	getTUIDoctorReportFn = func([]string) (doctorReport, error) { return doctorReport{OK: true}, nil }
+	resolveTUIExecutableFn = func(string) (string, error) { return "unused-sidecar", nil }
+	loadTUIResolvedFn = func(string) (*config.Config, error) {
+		return &config.Config{BaseURL: "https://example.com", Username: "user", Password: "invalid", Views: "both"}, nil
+	}
+	loginCalls := 0
+	newLoggedInFn = func(context.Context, *config.Config) (*client.Client, error) {
+		loginCalls++
+		return nil, &client.AuthenticationError{Operation: "login", StatusCode: http.StatusUnauthorized}
+	}
+	hosted := false
+	runTUIHostFn = func(ctx context.Context, options tuihost.Options) error {
+		hosted = true
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, options.Session.BaseURL()+"/health", nil)
+		if err != nil {
+			return err
+		}
+		request.Header.Set(tuiproto.CapabilityHeader, options.Session.Capability())
+		request.Header.Set(tuiproto.ProtocolHeader, tuiproto.ProtocolVersion)
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if closeErr := response.Body.Close(); closeErr != nil {
+				t.Errorf("close health response: %v", closeErr)
+			}
+		}()
+		var health tuiproto.Health
+		if err := json.NewDecoder(response.Body).Decode(&health); err != nil {
+			return err
+		}
+		if health.AuthStatus != tuiproto.AuthStatusUnavailable {
+			t.Fatalf("health auth status = %q, want unavailable", health.AuthStatus)
+		}
+		return nil
+	}
+
+	if err := runTUI(); err != nil {
+		t.Fatalf("runTUI() error = %v", err)
+	}
+	if loginCalls != 1 || !hosted {
+		t.Fatalf("login calls = %d, hosted = %t", loginCalls, hosted)
+	}
+	if opened == nil {
+		t.Fatal("runTUI() did not open the local library")
+	}
+	if _, err := opened.ListArtifacts(t.Context()); err == nil {
+		t.Fatal("runTUI() left the local library open")
+	}
+}

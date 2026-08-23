@@ -151,7 +151,13 @@ function moveAvailability(context: CommandContext): CommandAvailability {
 }
 
 function openAvailability(context: CommandContext): CommandAvailability {
-  if (context.overlay === "palette" || context.overlay === "navigation") return available(true)
+  if (context.overlay === "palette") return available(true)
+  if (context.overlay === "navigation") {
+    if (context.state.authStatus !== "ready" && context.navigationTarget === "courses") {
+      return available(true, false, "Authentication is unavailable")
+    }
+    return available(true)
+  }
   if (context.overlay === "help") return available(false)
   if (context.focus === "navigation") {
     if (context.state.authStatus !== "ready" && context.navigationTarget === "courses") {

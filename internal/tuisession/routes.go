@@ -253,6 +253,10 @@ func (session *Session) retryAuthentication(writer http.ResponseWriter, request 
 		writeProblem(writer, http.StatusBadRequest, "invalid_request", "authentication retry does not accept a request body")
 		return
 	}
+	if session.authenticationStatus() == tuiproto.AuthStatusReady {
+		writeJSON(writer, http.StatusOK, session.healthProjection())
+		return
+	}
 	if session.auth != nil {
 		if err := session.auth.Retry(request.Context()); err != nil {
 			if errors.Is(err, ErrAuthenticationConfiguration) {
