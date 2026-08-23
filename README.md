@@ -325,7 +325,7 @@ launch and passes one one-use owner-private bootstrap file to the child. The
 capability never appears in argv or the child environment, and the child does
 not inherit Impartus credentials.
 
-If credentials are missing or invalid, or login is temporarily unavailable,
+If credentials are missing or invalid, or a login attempt fails,
 the workspace still opens in recovery mode. Local library, diagnostics, help,
 self-test, and quit remain available while remote catalog and lecture actions
 stay disabled. Correct the local configuration, then press `r` to authenticate
