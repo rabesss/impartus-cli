@@ -129,6 +129,20 @@ func TestRedactionEvidenceDetectsValuesThatRemainVisible(t *testing.T) {
 	}
 }
 
+func TestRedactionEvidenceRequiresBoundariesForShortValues(t *testing.T) {
+	normalize := func(value string) string { return value }
+	evidence := RedactionEvidence{values: []string{"0", "ab"}}
+	if evidence.HasVisibleValueIn("failed 404 near cabinet", normalize) {
+		t.Fatal("short credential substrings inside unrelated words were treated as visible")
+	}
+	if !evidence.HasVisibleValueIn("token=0", normalize) {
+		t.Fatal("boundary-delimited one-character credential was not detected")
+	}
+	if !evidence.HasVisibleValueIn("sig=ab", normalize) {
+		t.Fatal("boundary-delimited two-character credential was not detected")
+	}
+}
+
 func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 	t.Parallel()
 

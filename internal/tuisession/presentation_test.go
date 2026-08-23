@@ -46,9 +46,19 @@ func TestSafePresentationTextRedactsControlSplitCredentialKeys(t *testing.T) {
 }
 
 func TestSafePresentationTextRejectsCombiningMarkSplitCredentialKeys(t *testing.T) {
-	const value = "to\u0301ken=hunter2"
-	if got := safePresentationText(value); got != "REDACTED" {
-		t.Fatalf("safePresentationText() = %q, want REDACTED", got)
+	for name, value := range map[string]string{
+		"combining mark":     "to\u0301ken=hunter2",
+		"Hangul choseong":    "to\u115fken=hunter2",
+		"Hangul jungseong":   "to\u1160ken=hunter2",
+		"Hangul filler":      "to\u3164ken=hunter2",
+		"halfwidth filler":   "to\uffa0ken=hunter2",
+		"private-use spacer": "to\ue123ken=hunter2",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := safePresentationText(value); got != "REDACTED" {
+				t.Fatalf("safePresentationText() = %q, want REDACTED", got)
+			}
+		})
 	}
 }
 
@@ -154,6 +164,10 @@ func TestSafePresentationTextRejectsCompleteEscapeSequenceCredentialSplits(t *te
 		"Unicode APC split":     "t\u009fo;ke\u009cn=hunter2",
 		"Unicode SOS split":     "t\u0098o;ke\u009cn=hunter2",
 		"Unicode PM split":      "t\u009eo;ke\u009cn=hunter2",
+		"OSC userinfo at":       "https://alice:hunter2\x1b]0;/@\x07example.com/",
+		"unterminated OSC at":   "https://alice:hunter2\x1b]0;/@example.com/",
+		"CSI hidden URL scheme": "https\x1b[://alice:hunter2@example.com/",
+		"8-bit hidden scheme":   "https\x9b://alice:hunter2@example.com/",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := safePresentationText(value); got != "REDACTED" {
@@ -187,14 +201,17 @@ func TestSafePresentationTextRejectsObfuscatedCredentialContainingRedactionMarke
 }
 
 func TestSafePresentationTextPreservesContextWhenANSISurroundsCredentialValue(t *testing.T) {
-	const want = "retry token=REDACTED after refresh"
-	for name, value := range map[string]string{
-		"styled credential": "retry token=\x1b[31msecret\x1b[0m after refresh",
-		"styled context":    "retry token=secret after \x1b[31mrefresh\x1b[0m",
+	for name, test := range map[string]struct {
+		value string
+		want  string
+	}{
+		"styled credential": {value: "retry token=\x1b[31msecret\x1b[0m after refresh", want: "retry token=REDACTED after refresh"},
+		"styled context":    {value: "retry token=secret after \x1b[31mrefresh\x1b[0m", want: "retry token=REDACTED after refresh"},
+		"short value decoy": {value: "\x1b[1mGET token=0 failed 404\x1b[0m", want: "GET token=REDACTED failed 404"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := safePresentationText(value); got != want {
-				t.Fatalf("safePresentationText() = %q, want %q", got, want)
+			if got := safePresentationText(test.value); got != test.want {
+				t.Fatalf("safePresentationText() = %q, want %q", got, test.want)
 			}
 		})
 	}

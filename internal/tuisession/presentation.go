@@ -69,12 +69,20 @@ func presentationDetectionView(value string) string {
 			// UTF-8. Canonicalize them to the byte form expected by the terminal
 			// decoder so detection matches the equivalent raw input.
 			compact.WriteByte(byte(character))
-		} else if !unicode.In(character, unicode.Mn, unicode.Mc, unicode.Me) {
+		} else if !invisibleCredentialSeparator(character) {
 			compact.WriteString(value[:size])
 		}
 		value = value[size:]
 	}
 	return compact.String()
+}
+
+func invisibleCredentialSeparator(character rune) bool {
+	// These runes can render with no advance width and split an otherwise
+	// visible credential key. Private-use characters stay intact in the real
+	// output; they are removed only from this conservative detection copy.
+	return unicode.In(character, unicode.Mn, unicode.Mc, unicode.Me, unicode.Co) ||
+		character == '\u115f' || character == '\u1160' || character == '\u3164' || character == '\uffa0'
 }
 
 func normalizePresentationEvidence(value string) string {
@@ -129,7 +137,7 @@ func terminalSequencePayload(sequence string) string {
 
 func terminalSequenceCredentialPayload(sequence string) string {
 	if isTerminalStringSequence(sequence) {
-		return compactCredentialSyntax(terminalStringBody(sequence))
+		return compactCredentialSyntax(terminalStringBody(sequence), "@")
 	}
 	return terminalSequencePayload(sequence)
 }
@@ -155,15 +163,19 @@ func csiCredentialPayload(sequence string) string {
 	}
 	final := body[len(body)-1]
 	if final < 0x40 || final > 0x7e {
-		return compactCredentialSyntax(body)
+		return compactCredentialSyntax(body, "/")
 	}
-	return compactCredentialSyntax(body[:len(body)-1]) + string(final)
+	additional := "/"
+	if final == '@' {
+		additional = ""
+	}
+	return compactCredentialSyntax(body[:len(body)-1], additional) + string(final)
 }
 
-func compactCredentialSyntax(value string) string {
+func compactCredentialSyntax(value, additional string) string {
 	var payload strings.Builder
 	for _, character := range value {
-		if unicode.IsLetter(character) || strings.ContainsRune("_-:=\"'", character) {
+		if unicode.IsLetter(character) || strings.ContainsRune("_-:=\"'"+additional, character) {
 			payload.WriteRune(character)
 		}
 	}

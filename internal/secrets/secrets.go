@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // sensitiveParams is the single source of truth for query-parameter keys whose
@@ -101,9 +103,41 @@ func (evidence RedactionEvidence) HasVisibleValueIn(candidate string, normalize 
 	visible := normalize(candidate)
 	for _, value := range evidence.values {
 		credential := normalize(value)
-		if credential != "" && strings.Contains(visible, credential) {
+		if credential != "" && containsVisibleCredential(visible, credential) {
 			return true
 		}
+	}
+	return false
+}
+
+func containsVisibleCredential(visible, credential string) bool {
+	// Short values commonly occur inside unrelated words or status numbers.
+	// Their real scrub sites are delimiter-bounded assignments or URL fields,
+	// so require the same token boundaries when checking the sanitized output.
+	if utf8.RuneCountInString(credential) > 2 {
+		return strings.Contains(visible, credential)
+	}
+	for searchFrom := 0; searchFrom <= len(visible)-len(credential); {
+		index := strings.Index(visible[searchFrom:], credential)
+		if index < 0 {
+			return false
+		}
+		index += searchFrom
+		end := index + len(credential)
+		beforeBoundary := index == 0
+		if !beforeBoundary {
+			character, _ := utf8.DecodeLastRuneInString(visible[:index])
+			beforeBoundary = !unicode.IsLetter(character) && !unicode.IsNumber(character)
+		}
+		afterBoundary := end == len(visible)
+		if !afterBoundary {
+			character, _ := utf8.DecodeRuneInString(visible[end:])
+			afterBoundary = !unicode.IsLetter(character) && !unicode.IsNumber(character)
+		}
+		if beforeBoundary && afterBoundary {
+			return true
+		}
+		searchFrom = end
 	}
 	return false
 }
