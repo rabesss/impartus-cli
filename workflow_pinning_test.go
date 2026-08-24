@@ -12,22 +12,28 @@ import (
 
 var (
 	pullfrogUses = []*regexp.Regexp{
-		regexp.MustCompile(`(?i)^\s*(?:-\s*)?["']?uses["']?\s*:\s*["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`),
-		regexp.MustCompile(`(?i)[{,]\s*(?:\?\s*)?["']?uses["']?\s*:\s*["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`),
+		regexp.MustCompile(`(?i)^\s*(?:-\s*)?["']?uses["']?\s*:\s*(?:&[A-Za-z_][A-Za-z0-9_-]*\s+)?["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`),
+		regexp.MustCompile(`(?i)[\[{,]\s*(?:\?\s*)?["']?uses["']?\s*:\s*(?:&[A-Za-z_][A-Za-z0-9_-]*\s+)?["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`),
 	}
 	escapedKeyPullfrogUses = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)^\s*(?:-\s*)?"((?:\\.|[^"\\])*)"\s*:\s*["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`),
-		regexp.MustCompile(`(?i)[{,]\s*(?:\?\s*)?"((?:\\.|[^"\\])*)"\s*:\s*["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`),
+		regexp.MustCompile(`(?i)[\[{,]\s*(?:\?\s*)?"((?:\\.|[^"\\])*)"\s*:\s*["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`),
 	}
-	pullfrogAnchors = regexp.MustCompile(`(?i)&([A-Za-z_][A-Za-z0-9_-]*)\s+["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`)
-	pullfrogAliases = []*regexp.Regexp{
+	escapedBlockScalarHeader = regexp.MustCompile(`^\s*(?:-\s*)?"((?:\\.|[^"\\])*)"\s*:\s*[>|][-+0-9]*\s*(?:#.*)?$`)
+	escapedUsesHeaders       = []*regexp.Regexp{
+		regexp.MustCompile(`^\s*(?:-\s*)?"((?:\\.|[^"\\])*)"\s*:\s*(?:#.*)?$`),
+		regexp.MustCompile(`[\[{,]\s*(?:\?\s*)?"((?:\\.|[^"\\])*)"\s*:\s*(?:#.*)?$`),
+	}
+	escapedExplicitUsesKey = regexp.MustCompile(`^\s*(?:-\s*)?\?\s*"((?:\\.|[^"\\])*)"\s*(?:#.*)?$`)
+	pullfrogAnchors        = regexp.MustCompile(`(?i)&([A-Za-z_][A-Za-z0-9_-]*)\s+["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`)
+	pullfrogAliases        = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)^\s*(?:-\s*)?["']?uses["']?\s*:\s*\*([A-Za-z_][A-Za-z0-9_-]*)`),
-		regexp.MustCompile(`(?i)[{,]\s*(?:\?\s*)?["']?uses["']?\s*:\s*\*([A-Za-z_][A-Za-z0-9_-]*)`),
+		regexp.MustCompile(`(?i)[\[{,]\s*(?:\?\s*)?["']?uses["']?\s*:\s*\*([A-Za-z_][A-Za-z0-9_-]*)`),
 	}
 	pullfrogValue     = regexp.MustCompile(`(?i)^\s*["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`)
 	blockScalarHeader = regexp.MustCompile(`^\s*(?:-\s*)?["']?([A-Za-z_][A-Za-z0-9_-]*)["']?\s*:\s*[>|][-+0-9]*\s*(?:#.*)?$`)
 	plainUsesHeader   = regexp.MustCompile(`^\s*(?:-\s*)?(?:[{,]\s*)?["']?uses["']?\s*:\s*(?:#.*)?$`)
-	flowUsesHeader    = regexp.MustCompile(`(?i)[{,]\s*(?:\?\s*)?["']?uses["']?\s*:\s*(?:#.*)?$`)
+	flowUsesHeader    = regexp.MustCompile(`(?i)[\[{,]\s*(?:\?\s*)?["']?uses["']?\s*:\s*(?:#.*)?$`)
 	explicitUsesKey   = regexp.MustCompile(`^\s*(?:-\s*)?\?\s*["']?uses["']?\s*(?:#.*)?$`)
 	explicitValueLine = regexp.MustCompile(`^\s*:\s*(.*)$`)
 	blockScalarValue  = regexp.MustCompile(`^[>|][-+0-9]*\s*(?:#.*)?$`)
@@ -157,8 +163,16 @@ func TestUnpinnedPullfrogWorkflowRefs(t *testing.T) {
 		{name: "explicit flow key multiline pinned ref", workflow: "steps:\n  - {? uses:\n      pullfrog/pullfrog@" + sha + "}\n"},
 		{name: "escaped quoted key floating ref", workflow: "steps:\n  - \"\\x75ses\": pullfrog/pullfrog@v0\n", unpinned: true},
 		{name: "escaped quoted key pinned ref", workflow: "steps:\n  - \"\\x75ses\": pullfrog/pullfrog@" + sha + "\n"},
+		{name: "escaped quoted key folded floating ref", workflow: "steps:\n  - \"\\x75ses\": >-\n      pullfrog/pullfrog@v0\n", unpinned: true},
+		{name: "escaped quoted key folded pinned ref", workflow: "steps:\n  - \"\\x75ses\": >-\n      pullfrog/pullfrog@" + sha + "\n"},
+		{name: "escaped quoted key plain multiline floating ref", workflow: "steps:\n  - \"\\x75ses\":\n      pullfrog/pullfrog@v0\n", unpinned: true},
+		{name: "escaped quoted key plain multiline pinned ref", workflow: "steps:\n  - \"\\x75ses\":\n      pullfrog/pullfrog@" + sha + "\n"},
 		{name: "anchored alias floating ref", workflow: "steps:\n  - uses: &pullfrog pullfrog/pullfrog@v0\n  - uses: *pullfrog\n", unpinned: true},
 		{name: "anchored alias pinned ref", workflow: "steps:\n  - uses: &pullfrog pullfrog/pullfrog@" + sha + "\n  - uses: *pullfrog\n"},
+		{name: "anchored direct floating ref", workflow: "steps:\n  - uses: &pullfrog pullfrog/pullfrog@v0\n  - name: *pullfrog\n    run: echo ok\n", unpinned: true},
+		{name: "anchored direct pinned ref", workflow: "steps:\n  - uses: &pullfrog pullfrog/pullfrog@" + sha + "\n  - name: *pullfrog\n    run: echo ok\n"},
+		{name: "compact flow mapping floating ref", workflow: "steps: [uses: pullfrog/pullfrog@v0]\n", unpinned: true},
+		{name: "compact flow mapping pinned ref", workflow: "steps: [uses: pullfrog/pullfrog@" + sha + "]\n"},
 		{name: "explicit block key floating ref", workflow: "steps:\n  - ? uses\n    : pullfrog/pullfrog@v0\n", unpinned: true},
 		{name: "explicit block key pinned ref", workflow: "steps:\n  - ? uses\n    : pullfrog/pullfrog@" + sha + "\n"},
 		{name: "explicit block key plain multiline floating ref", workflow: "steps:\n  - ? uses\n    :\n      pullfrog/pullfrog@v0\n", unpinned: true},
@@ -321,8 +335,14 @@ func unpinnedPullfrogWorkflowRefs(workflow string) []workflowPullfrogRef {
 			continue
 		}
 
-		if explicitUsesKey.MatchString(line) {
+		explicitEscapedKey := escapedExplicitUsesKey.FindStringSubmatchIndex(line)
+		if explicitUsesKey.MatchString(line) || decodedUsesKey(line, explicitEscapedKey) {
 			block = &blockScalar{headerIndent: indent, contentIndent: -1, line: lineIndex + 1, uses: true, plain: true, explicit: true}
+			lineIndex++
+			continue
+		}
+		if match := escapedBlockScalarHeader.FindStringSubmatchIndex(line); match != nil {
+			block = &blockScalar{headerIndent: indent, contentIndent: -1, line: lineIndex + 1, uses: decodedUsesKey(line, match)}
 			lineIndex++
 			continue
 		}
@@ -360,7 +380,22 @@ func usesValueHeaderWithState(line string, flowDepth int, state yamlQuoteState) 
 			return true
 		}
 	}
+	for _, pattern := range escapedUsesHeaders {
+		for _, match := range pattern.FindAllStringSubmatchIndex(line, -1) {
+			if decodedUsesKey(line, match) && yamlCodeAtWithState(line, match[0], state) && yamlFlowSeparatorAtWithState(line, match[0], flowDepth, state) {
+				return true
+			}
+		}
+	}
 	return false
+}
+
+func decodedUsesKey(line string, match []int) bool {
+	if len(match) < 4 || match[2] < 0 || match[3] < 0 {
+		return false
+	}
+	key, err := strconv.Unquote(`"` + line[match[2]:match[3]] + `"`)
+	return err == nil && key == "uses"
 }
 
 func yamlFlowDepthAfterWithState(line string, depth int, state yamlQuoteState) (int, yamlQuoteState) {
@@ -434,7 +469,7 @@ func yamlFlowSeparatorAtWithState(line string, position, flowDepth int, state ya
 		return false
 	}
 	switch line[position] {
-	case '{':
+	case '{', '[':
 		return yamlFlowOpenerAt(line, position)
 	case ',':
 		prefixDepth, _ := yamlFlowDepthAfterWithState(line[:position], 0, state)
