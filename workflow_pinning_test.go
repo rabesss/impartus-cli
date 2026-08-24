@@ -12,7 +12,7 @@ import (
 var (
 	pullfrogUses = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)^\s*(?:-\s*)?["']?uses["']?\s*:\s*["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`),
-		regexp.MustCompile(`(?i)[{,]\s*["']?uses["']?\s*:\s*["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`),
+		regexp.MustCompile(`(?i)[{,]\s*(?:\?\s*)?["']?uses["']?\s*:\s*["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`),
 	}
 	pullfrogValue     = regexp.MustCompile(`(?i)^\s*["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`)
 	blockScalarHeader = regexp.MustCompile(`^\s*(?:-\s*)?["']?([A-Za-z_][A-Za-z0-9_-]*)["']?\s*:\s*[>|][-+0-9]*\s*(?:#.*)?$`)
@@ -129,18 +129,23 @@ func TestUnpinnedPullfrogWorkflowRefs(t *testing.T) {
 		{name: "flow list midline header pinned ref", workflow: "steps: [{uses:\n  pullfrog/pullfrog@" + sha + "}]\n"},
 		{name: "flow sibling midline header floating ref", workflow: "steps:\n  - {name: agent, uses:\n      pullfrog/pullfrog@v0}\n", unpinned: true},
 		{name: "flow sibling midline header pinned ref", workflow: "steps:\n  - {name: agent, uses:\n      pullfrog/pullfrog@" + sha + "}\n"},
+		{name: "explicit flow key floating ref", workflow: "steps:\n  - {? uses: pullfrog/pullfrog@v0}\n", unpinned: true},
+		{name: "explicit flow key pinned ref", workflow: "steps:\n  - {? uses: pullfrog/pullfrog@" + sha + "}\n"},
 		{name: "plain multiline comment floating ref", workflow: "steps:\n  - uses:\n      # TODO: pin\n      pullfrog/pullfrog@v0\n", unpinned: true},
 		{name: "plain multiline comment pinned ref", workflow: "steps:\n  - uses:\n      # pinned below\n      pullfrog/pullfrog@" + sha + "\n"},
 		{name: "block scalar sibling floating ref", workflow: "steps:\n  - name: >-\n      Run agent\n    uses: pullfrog/pullfrog@v0\n", unpinned: true},
 		{name: "block scalar sibling pinned ref", workflow: "steps:\n  - name: >-\n      Run agent\n    uses: pullfrog/pullfrog@" + sha + "\n"},
 		{name: "hash in flow plain scalar floating ref", workflow: "steps:\n  - {name: a#b, uses: pullfrog/pullfrog@v0}\n", unpinned: true},
 		{name: "hash in flow plain scalar pinned ref", workflow: "steps:\n  - {name: a#b, uses: pullfrog/pullfrog@" + sha + "}\n"},
+		{name: "apostrophe in flow plain scalar floating ref", workflow: "steps:\n  - {name: it's agent, uses: pullfrog/pullfrog@v0}\n", unpinned: true},
+		{name: "apostrophe in flow plain scalar pinned ref", workflow: "steps:\n  - {name: it's agent, uses: pullfrog/pullfrog@" + sha + "}\n"},
 		{name: "even backslashes before flow quote floating ref", workflow: "steps:\n  - {name: \"C:\\\\dir\\\\\", uses: pullfrog/pullfrog@v0}\n", unpinned: true},
 		{name: "even backslashes before flow quote pinned ref", workflow: "steps:\n  - {name: \"C:\\\\dir\\\\\", uses: pullfrog/pullfrog@" + sha + "}\n"},
 		{name: "plain bracket does not create stale flow", workflow: "name: build [1\nsteps:\n  - uses:\n      pullfrog/pullfrog@" + sha + "\n    with:\n      args: x\n  - uses: pullfrog/pullfrog@v1\n", unpinned: true},
 		{name: "plain bracket with pinned uses", workflow: "name: build [1\nsteps:\n  - uses:\n      pullfrog/pullfrog@" + sha + "\n    with:\n      args: x\n  - uses: pullfrog/pullfrog@" + sha + "\n"},
 		{name: "run block text", workflow: "steps:\n  - run: |\n      uses: pullfrog/pullfrog@v0\n"},
 		{name: "quoted run flow text", workflow: "steps:\n  - run: \"echo {uses: pullfrog/pullfrog@v0}\"\n"},
+		{name: "plain run flow text without colon spacing", workflow: "steps:\n  - run: echo {uses:pullfrog/pullfrog@v0}\n"},
 	}
 
 	for _, test := range tests {
@@ -256,7 +261,7 @@ func usesValueHeader(line string) bool {
 		return true
 	}
 	for _, match := range flowUsesHeader.FindAllStringIndex(line, -1) {
-		if yamlCodeAt(line, match[0]) {
+		if yamlCodeAt(line, match[0]) && yamlFlowSeparatorAt(line, match[0]) {
 			return true
 		}
 	}
@@ -304,7 +309,7 @@ func unpinnedPullfrogRefs(line string) []string {
 	var unpinned []string
 	for _, pattern := range pullfrogUses {
 		for _, match := range pattern.FindAllStringSubmatchIndex(line, -1) {
-			if !yamlCodeAt(line, match[0]) {
+			if !yamlCodeAt(line, match[0]) || !yamlFlowSeparatorAt(line, match[0]) {
 				continue
 			}
 			ref := line[match[2]:match[3]]
@@ -314,6 +319,20 @@ func unpinnedPullfrogRefs(line string) []string {
 		}
 	}
 	return unpinned
+}
+
+func yamlFlowSeparatorAt(line string, position int) bool {
+	if position >= len(line) {
+		return false
+	}
+	switch line[position] {
+	case '{':
+		return yamlFlowOpenerAt(line, position)
+	case ',':
+		return strings.TrimSpace(line[:position]) == "" || yamlFlowDepthAfter(line[:position], 0) > 0
+	default:
+		return true
+	}
 }
 
 func yamlCodeAt(line string, index int) bool {
@@ -326,11 +345,15 @@ func yamlCodeAt(line string, index int) bool {
 			}
 		case '\'':
 			if !doubleQuoted {
-				if singleQuoted && position+1 < index && line[position+1] == '\'' {
-					position++
-					continue
+				if singleQuoted {
+					if position+1 < index && line[position+1] == '\'' {
+						position++
+						continue
+					}
+					singleQuoted = false
+				} else if yamlQuotedScalarOpenerAt(line, position) {
+					singleQuoted = true
 				}
-				singleQuoted = !singleQuoted
 			}
 		case '"':
 			if !singleQuoted && !yamlDoubleQuoteEscaped(line, position) {
@@ -339,6 +362,20 @@ func yamlCodeAt(line string, index int) bool {
 		}
 	}
 	return !singleQuoted && !doubleQuoted
+}
+
+func yamlQuotedScalarOpenerAt(line string, position int) bool {
+	for position--; position >= 0; position-- {
+		switch line[position] {
+		case ' ', '\t':
+			continue
+		case ':', '-', '?', ',', '[', '{':
+			return true
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func yamlCommentStart(line string, position int) bool {
