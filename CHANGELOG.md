@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.1.28](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.27...impartus-cli-v0.1.28) (2026-08-24)
+
+
+### Bug Fixes
+
+* **ci:** pin Pullfrog action to immutable commit ([c022ec5](https://github.com/rabesss/impartus-cli/commit/c022ec57363e53663f0fbb62ec1d9c3dae38f5f7))
+* **deps:** refresh production, CI, and builder dependency pins ([85caceb](https://github.com/rabesss/impartus-cli/commit/85caceb56c468653f898bcbdcfab7b5d037f1c02))
+
+
+### Testing
+
+* **ci:** catch multiline Pullfrog uses values ([734e8b0](https://github.com/rabesss/impartus-cli/commit/734e8b0e5744dbbd6b16641caad6d229864d11e9))
+* **ci:** close multiline workflow pinning gaps ([8f0a901](https://github.com/rabesss/impartus-cli/commit/8f0a901d84c55bbc80f6b79ec96c5634803f2eec))
+* **ci:** close Pullfrog pin guard edge cases ([6959a27](https://github.com/rabesss/impartus-cli/commit/6959a27778a2830508d12793aba400ae03840cfe))
+* **ci:** close remaining action pinning gaps ([1bfffe2](https://github.com/rabesss/impartus-cli/commit/1bfffe25d484b039f6d585cfc5943849afea5c0b))
+* **ci:** close remaining Pullfrog pin gaps ([a5ffd5d](https://github.com/rabesss/impartus-cli/commit/a5ffd5d89426e337eabde65656b4d87f756068d9))
+* **ci:** cover compact and anchored action refs ([883ee0c](https://github.com/rabesss/impartus-cli/commit/883ee0c45101b06a64397f4307d0a3dd7ed96093))
+* **ci:** cover multiline anchored action refs ([d045ba0](https://github.com/rabesss/impartus-cli/commit/d045ba079db4f040538a9ee8dff8b3bb56db16ca))
+* **ci:** cover quoted and aliased workflow refs ([d9b017f](https://github.com/rabesss/impartus-cli/commit/d9b017f2ae6d103bb76ac7005c572d19bec8b299))
+* **ci:** cover valid YAML Pullfrog forms ([b982b0b](https://github.com/rabesss/impartus-cli/commit/b982b0b792e73235f1823315e31bb9cf93f7d02e))
+* **ci:** cover wrapped flow action headers ([c1406f1](https://github.com/rabesss/impartus-cli/commit/c1406f18854ca40405a28f8d43eb840a83dd55a0))
+* **ci:** follow referenced local actions ([e71f671](https://github.com/rabesss/impartus-cli/commit/e71f6716abc37a4e6ac8c98d842cd0b191890caa))
+* **ci:** harden Pullfrog pin guard across workflows ([6a948dc](https://github.com/rabesss/impartus-cli/commit/6a948dcac097cbf5ac406fdb404f61647987340b))
+* **ci:** harden workflow pinning tokenizer ([5dfe6de](https://github.com/rabesss/impartus-cli/commit/5dfe6def141002e5fa8417c6a06b296abf5688dd))
+* **ci:** parse action pins from YAML syntax ([c7f5964](https://github.com/rabesss/impartus-cli/commit/c7f5964227a1ee976bf9d023818fddddfa2e5bc6))
+* **ci:** reconcile final workflow pinning findings ([97aeeae](https://github.com/rabesss/impartus-cli/commit/97aeeaeffafb401e3d0039c691467c6b2409954a))
+* **ci:** reconcile hosted pinning review ([569de57](https://github.com/rabesss/impartus-cli/commit/569de573cc98e1f61978357ccca35183f6584fd9))
+* **ci:** reject every floating Pullfrog action ref ([e98ca10](https://github.com/rabesss/impartus-cli/commit/e98ca104bc07c08478d53ee8a68089a406e7cd5a))
+* cover repository-root local actions ([c59bde2](https://github.com/rabesss/impartus-cli/commit/c59bde26a505a5b6d840953ad8e5d4caf9401022))
+
 ## [0.1.27](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.26...impartus-cli-v0.1.27) (2026-08-24)
 
 
