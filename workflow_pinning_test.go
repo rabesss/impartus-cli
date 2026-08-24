@@ -2,24 +2,78 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 )
 
+var (
+	pullfrogUse  = regexp.MustCompile(`pullfrog/pullfrog@([^\s"'#]+)`)
+	immutableRef = regexp.MustCompile(`(?i)^[0-9a-f]{40}$`)
+)
+
 func TestPullfrogActionUsesImmutablePin(t *testing.T) {
-	workflow, err := os.ReadFile(".github/workflows/pullfrog.yml")
+	workflowPaths, err := filepath.Glob(".github/workflows/*")
 	if err != nil {
-		t.Fatalf("read pullfrog workflow: %v", err)
+		t.Fatalf("list workflow files: %v", err)
 	}
 
-	pinnedPullfrog := regexp.MustCompile(`^\s*uses: pullfrog/pullfrog@[0-9a-f]{40}(?:\s+#.*)?$`)
-	for _, line := range strings.Split(string(workflow), "\n") {
-		if !strings.Contains(line, "uses: pullfrog/pullfrog@") {
+	for _, workflowPath := range workflowPaths {
+		extension := filepath.Ext(workflowPath)
+		if extension != ".yml" && extension != ".yaml" {
 			continue
 		}
-		if !pinnedPullfrog.MatchString(line) {
-			t.Errorf("pullfrog action is not pinned to an immutable commit SHA: %q", strings.TrimSpace(line))
+
+		workflow, readErr := os.ReadFile(workflowPath)
+		if readErr != nil {
+			t.Fatalf("read workflow %s: %v", workflowPath, readErr)
+		}
+		for lineIndex, line := range strings.Split(string(workflow), "\n") {
+			for _, ref := range unpinnedPullfrogRefs(line) {
+				t.Errorf("%s:%d: Pullfrog action ref %q is not an immutable commit SHA: %q", workflowPath, lineIndex+1, ref, strings.TrimSpace(line))
+			}
 		}
 	}
+}
+
+func TestUnpinnedPullfrogRefs(t *testing.T) {
+	sha := "c4d0ca6f15d12382ddd20d2010bc596b405f42f0"
+	tests := []struct {
+		name     string
+		line     string
+		unpinned bool
+	}{
+		{name: "canonical pin", line: "uses: pullfrog/pullfrog@" + sha},
+		{name: "quoted pin", line: `uses: "pullfrog/pullfrog@` + sha + `"`},
+		{name: "dash form pin", line: "- uses: pullfrog/pullfrog@" + sha + " # v0"},
+		{name: "uppercase pin", line: "uses: pullfrog/pullfrog@" + strings.ToUpper(sha)},
+		{name: "floating ref", line: "uses: pullfrog/pullfrog@v0", unpinned: true},
+		{name: "quoted floating ref", line: `uses: "pullfrog/pullfrog@v0"`, unpinned: true},
+		{name: "extra spacing floating ref", line: "uses:   pullfrog/pullfrog@v0", unpinned: true},
+		{name: "comment only", line: "# uses: pullfrog/pullfrog@v0"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := unpinnedPullfrogRefs(test.line)
+			if (len(got) != 0) != test.unpinned {
+				t.Fatalf("unpinned refs = %v, want unpinned=%t", got, test.unpinned)
+			}
+		})
+	}
+}
+
+func unpinnedPullfrogRefs(line string) []string {
+	if strings.HasPrefix(strings.TrimSpace(line), "#") {
+		return nil
+	}
+
+	var unpinned []string
+	for _, match := range pullfrogUse.FindAllStringSubmatch(line, -1) {
+		if !immutableRef.MatchString(match[1]) {
+			unpinned = append(unpinned, match[1])
+		}
+	}
+	return unpinned
 }
