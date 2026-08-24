@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -9,22 +10,17 @@ import (
 )
 
 var (
-	pullfrogUse  = regexp.MustCompile(`pullfrog/pullfrog@([^\s"'#]+)`)
+	pullfrogUse  = regexp.MustCompile(`(?i)^\s*(?:-\s*)?uses\s*:\s*["']?pullfrog/pullfrog@([^\s"'#]+)`)
 	immutableRef = regexp.MustCompile(`(?i)^[0-9a-f]{40}$`)
 )
 
 func TestPullfrogActionUsesImmutablePin(t *testing.T) {
-	workflowPaths, err := filepath.Glob(".github/workflows/*")
+	workflowPaths, err := workflowYAMLPaths(".github/workflows/*")
 	if err != nil {
 		t.Fatalf("list workflow files: %v", err)
 	}
 
 	for _, workflowPath := range workflowPaths {
-		extension := filepath.Ext(workflowPath)
-		if extension != ".yml" && extension != ".yaml" {
-			continue
-		}
-
 		workflow, readErr := os.ReadFile(workflowPath)
 		if readErr != nil {
 			t.Fatalf("read workflow %s: %v", workflowPath, readErr)
@@ -35,6 +31,25 @@ func TestPullfrogActionUsesImmutablePin(t *testing.T) {
 			}
 		}
 	}
+}
+
+func workflowYAMLPaths(pattern string) ([]string, error) {
+	paths, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil, err
+	}
+
+	workflowPaths := make([]string, 0, len(paths))
+	for _, path := range paths {
+		extension := filepath.Ext(path)
+		if extension == ".yml" || extension == ".yaml" {
+			workflowPaths = append(workflowPaths, path)
+		}
+	}
+	if len(workflowPaths) == 0 {
+		return nil, fmt.Errorf("no YAML workflows match %q", pattern)
+	}
+	return workflowPaths, nil
 }
 
 func TestUnpinnedPullfrogRefs(t *testing.T) {
@@ -51,7 +66,10 @@ func TestUnpinnedPullfrogRefs(t *testing.T) {
 		{name: "floating ref", line: "uses: pullfrog/pullfrog@v0", unpinned: true},
 		{name: "quoted floating ref", line: `uses: "pullfrog/pullfrog@v0"`, unpinned: true},
 		{name: "extra spacing floating ref", line: "uses:   pullfrog/pullfrog@v0", unpinned: true},
+		{name: "mixed case floating ref", line: "uses: Pullfrog/Pullfrog@v0", unpinned: true},
 		{name: "comment only", line: "# uses: pullfrog/pullfrog@v0"},
+		{name: "run command text", line: "run: echo pullfrog/pullfrog@v0"},
+		{name: "container image digest", line: "image: pullfrog/pullfrog@sha256:deadbeef"},
 	}
 
 	for _, test := range tests {
@@ -61,6 +79,13 @@ func TestUnpinnedPullfrogRefs(t *testing.T) {
 				t.Fatalf("unpinned refs = %v, want unpinned=%t", got, test.unpinned)
 			}
 		})
+	}
+}
+
+func TestWorkflowYAMLPathsRejectsEmptyWorkflowSet(t *testing.T) {
+	workflowPaths, err := workflowYAMLPaths(filepath.Join(t.TempDir(), "*"))
+	if err == nil {
+		t.Fatalf("workflowYAMLPaths() = %v, want an error for an empty workflow set", workflowPaths)
 	}
 }
 
