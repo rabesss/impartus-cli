@@ -66,7 +66,7 @@ func TestPackagesWorkflowSelectsValidatedReleaseTags(t *testing.T) {
 		"group: packages-${{ (inputs.release_tag || github.event.release.tag_name) && 'release' || github.ref }}",
 		"cancel-in-progress: false",
 		"ref: ${{ steps.vars.outputs.source_ref || github.sha }}",
-		"scripts/package-image-vars.sh",
+		"scripts/package-image-vars.sh \"$RELEASE_TAG\" \"$RELEASE_DATE\" \"$EVENT_NAME\"",
 		"type=raw,value=main,enable=${{ steps.vars.outputs.mode == 'snapshot' }}",
 		"type=sha,format=short,prefix=sha-,enable=${{ steps.vars.outputs.mode == 'snapshot' }}",
 		"type=raw,value=${{ steps.vars.outputs.version }},enable=${{ steps.vars.outputs.mode == 'release' }}",
@@ -245,6 +245,21 @@ func TestPackageImageVarsRejectsMalformedTags(t *testing.T) {
 				t.Fatalf("malformed tag %q was accepted", tag)
 			}
 		})
+	}
+}
+
+func TestPackageImageVarsRejectsEmptyManualReleaseTag(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("package image helper is executed by the Linux Packages workflow")
+	}
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is unavailable")
+	}
+
+	command := exec.CommandContext(t.Context(), bash, "scripts/package-image-vars.sh", "", "", "workflow_dispatch")
+	if err := command.Run(); err == nil {
+		t.Fatal("manual package replay accepted an empty release tag")
 	}
 }
 

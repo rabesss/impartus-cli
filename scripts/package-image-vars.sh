@@ -4,6 +4,12 @@ set -euo pipefail
 
 release_tag="${1:-}"
 build_date="${2:-}"
+event_name="${3:-}"
+
+if [[ "${event_name}" == "workflow_dispatch" && -z "${release_tag}" ]]; then
+  echo "workflow_dispatch requires a canonical release tag" >&2
+  exit 2
+fi
 
 mode="snapshot"
 version="main"

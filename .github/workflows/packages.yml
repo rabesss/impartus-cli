@@ -45,7 +45,7 @@ jobs:
           if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
             echo "::warning::Replaying an older stable release moves latest and rolling version aliases; replay the newest release afterward to restore them."
           fi
-          scripts/package-image-vars.sh "$RELEASE_TAG" "$RELEASE_DATE" >> "$GITHUB_OUTPUT"
+          scripts/package-image-vars.sh "$RELEASE_TAG" "$RELEASE_DATE" "$EVENT_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Verify exact release tag
         if: ${{ steps.vars.outputs.mode == 'release' }}
