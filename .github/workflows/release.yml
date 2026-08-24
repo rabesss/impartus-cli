@@ -33,6 +33,41 @@ jobs:
           manifest-file: .release-please-manifest.json
           token: ${{ secrets.GITHUB_TOKEN }}
 
+  dispatch-release-package:
+    name: Dispatch Release Package
+    runs-on: ubuntu-latest
+    needs: [release-please]
+    if: needs.release-please.outputs.release_created == 'true'
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Wait for release tag and dispatch Packages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^impartus-cli-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Unexpected release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          for attempt in 1 2 3 4 5; do
+            if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+              break
+            fi
+            if [[ "$attempt" -eq 5 ]]; then
+              echo "Release tag did not become visible: $RELEASE_TAG" >&2
+              exit 1
+            fi
+            sleep "$((attempt * 2))"
+          done
+
+          gh workflow run packages.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "${RELEASE_TAG}" \
+            --field "release_tag=${RELEASE_TAG}"
+
   build-release:
     name: Build Release Binaries
     runs-on: ubuntu-latest

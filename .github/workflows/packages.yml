@@ -6,6 +6,15 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Canonical release tag (for example impartus-cli-v0.1.27). Replaying an older stable tag moves rolling aliases.'
+        required: true
+        type: string
+
+concurrency:
+  group: packages-${{ inputs.release_tag || github.event.release.tag_name || github.ref }}
+  cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
@@ -24,7 +33,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
+          ref: ${{ inputs.release_tag || github.event.release.tag_name || github.sha }}
+
+      - name: Prepare image variables
+        id: vars
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.event.release.tag_name }}
+          RELEASE_DATE: ${{ github.event.release.published_at }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "::warning::Replaying an older stable release moves latest and rolling version aliases; replay the newest release afterward to restore them."
+          fi
+          scripts/package-image-vars.sh "$RELEASE_TAG" "$RELEASE_DATE" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
@@ -32,36 +53,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
-      - name: Prepare image variables
-        id: vars
-        env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-          RELEASE_DATE: ${{ github.event.release.published_at }}
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          if [ "$EVENT_NAME" = "release" ]; then
-            VERSION="$RELEASE_TAG"
-            VERSION="${VERSION#v}"
-            BUILD_DATE="$RELEASE_DATE"
-          else
-            VERSION="main"
-            BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "build_date=$BUILD_DATE" >> "$GITHUB_OUTPUT"
-
       - name: Generate Docker metadata
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=main,enable=${{ github.event_name == 'push' }}
-            type=sha,format=short,prefix=sha-,enable=${{ github.event_name == 'push' }}
-            type=semver,pattern={{version}},value=${{ github.event.release.tag_name }},enable=${{ github.event_name == 'release' }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ github.event.release.tag_name }},enable=${{ github.event_name == 'release' }}
-            type=semver,pattern={{major}},value=${{ github.event.release.tag_name }},enable=${{ github.event_name == 'release' }}
-            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            type=raw,value=main,enable=${{ steps.vars.outputs.mode == 'snapshot' }}
+            type=sha,format=short,prefix=sha-,enable=${{ steps.vars.outputs.mode == 'snapshot' }}
+            type=raw,value=${{ steps.vars.outputs.version }},enable=${{ steps.vars.outputs.mode == 'release' }}
+            type=raw,value=${{ steps.vars.outputs.major_minor }},enable=${{ steps.vars.outputs.mode == 'release' && steps.vars.outputs.stable == 'true' }}
+            type=raw,value=${{ steps.vars.outputs.major }},enable=${{ steps.vars.outputs.mode == 'release' && steps.vars.outputs.stable == 'true' }}
+            type=raw,value=latest,enable=${{ steps.vars.outputs.mode == 'release' && steps.vars.outputs.stable == 'true' }}
           labels: |
             org.opencontainers.image.title=impartus-cli
             org.opencontainers.image.description=CLI and HTTP API for downloading Impartus lecture recordings.

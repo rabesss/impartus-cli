@@ -2,7 +2,9 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -15,6 +17,177 @@ func readPackagesWorkflow(t *testing.T) string {
 		t.Fatalf("read packages workflow: %v", err)
 	}
 	return string(data)
+}
+
+func readReleaseWorkflow(t *testing.T) string {
+	t.Helper()
+
+	data, err := os.ReadFile(".github/workflows/release.yml")
+	if err != nil {
+		t.Fatalf("read release workflow: %v", err)
+	}
+	return string(data)
+}
+
+func TestReleaseWorkflowDispatchesVersionedPackages(t *testing.T) {
+	workflow := readReleaseWorkflow(t)
+
+	required := []string{
+		"dispatch-release-package:",
+		"needs: [release-please]",
+		"if: needs.release-please.outputs.release_created == 'true'",
+		"actions: write",
+		"contents: read",
+		"GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
+		"RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}",
+		"gh api \"repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}\"",
+		"gh workflow run packages.yml",
+		"--ref \"${RELEASE_TAG}\"",
+		"--field \"release_tag=${RELEASE_TAG}\"",
+	}
+	for _, snippet := range required {
+		if !strings.Contains(workflow, snippet) {
+			t.Errorf("release workflow is missing %q", snippet)
+		}
+	}
+
+	if strings.Contains(workflow, "PERSONAL_ACCESS_TOKEN") {
+		t.Error("release workflow must dispatch with the scoped GITHUB_TOKEN, not a PAT")
+	}
+}
+
+func TestPackagesWorkflowSelectsValidatedReleaseTags(t *testing.T) {
+	workflow := readPackagesWorkflow(t)
+
+	required := []string{
+		"release_tag:",
+		"description: 'Canonical release tag",
+		"required: true",
+		"group: packages-${{ inputs.release_tag || github.event.release.tag_name || github.ref }}",
+		"cancel-in-progress: false",
+		"ref: ${{ inputs.release_tag || github.event.release.tag_name || github.sha }}",
+		"scripts/package-image-vars.sh",
+		"type=raw,value=main,enable=${{ steps.vars.outputs.mode == 'snapshot' }}",
+		"type=sha,format=short,prefix=sha-,enable=${{ steps.vars.outputs.mode == 'snapshot' }}",
+		"type=raw,value=${{ steps.vars.outputs.version }},enable=${{ steps.vars.outputs.mode == 'release' }}",
+		"type=raw,value=${{ steps.vars.outputs.major_minor }},enable=${{ steps.vars.outputs.mode == 'release' && steps.vars.outputs.stable == 'true' }}",
+		"type=raw,value=${{ steps.vars.outputs.major }},enable=${{ steps.vars.outputs.mode == 'release' && steps.vars.outputs.stable == 'true' }}",
+		"type=raw,value=latest,enable=${{ steps.vars.outputs.mode == 'release' && steps.vars.outputs.stable == 'true' }}",
+	}
+	for _, snippet := range required {
+		if !strings.Contains(workflow, snippet) {
+			t.Errorf("packages workflow is missing %q", snippet)
+		}
+	}
+
+	if strings.Contains(workflow, "value=${{ github.event.release.tag_name }}") {
+		t.Error("packages workflow passes the prefixed release tag directly to image metadata")
+	}
+}
+
+func packageImageVars(t *testing.T, releaseTag, releaseDate string) map[string]string {
+	t.Helper()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("package image helper is executed by the Linux Packages workflow")
+	}
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is unavailable")
+	}
+	command := exec.CommandContext(t.Context(), bash, "scripts/package-image-vars.sh", releaseTag, releaseDate)
+	output, err := command.Output()
+	if err != nil {
+		t.Fatalf("package image helper failed: %v", err)
+	}
+
+	values := make(map[string]string)
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			t.Fatalf("malformed helper output %q", line)
+		}
+		values[key] = value
+	}
+	return values
+}
+
+func TestPackageImageVars(t *testing.T) {
+	info, err := os.Stat("scripts/package-image-vars.sh")
+	if err != nil {
+		t.Fatalf("stat package image helper: %v", err)
+	}
+	if info.Mode()&0o111 == 0 {
+		t.Error("package image helper is not executable")
+	}
+
+	tests := []struct {
+		name       string
+		releaseTag string
+		want       map[string]string
+	}{
+		{
+			name: "main snapshot",
+			want: map[string]string{
+				"mode": "snapshot", "version": "main", "stable": "false",
+			},
+		},
+		{
+			name:       "stable release",
+			releaseTag: "impartus-cli-v0.1.27",
+			want: map[string]string{
+				"mode": "release", "release_tag": "impartus-cli-v0.1.27",
+				"version": "0.1.27", "major_minor": "0.1", "major": "0", "stable": "true",
+			},
+		},
+		{
+			name:       "prerelease",
+			releaseTag: "impartus-cli-v1.2.0-rc.1",
+			want: map[string]string{
+				"mode": "release", "release_tag": "impartus-cli-v1.2.0-rc.1",
+				"version": "1.2.0-rc.1", "major_minor": "1.2", "major": "1", "stable": "false",
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := packageImageVars(t, test.releaseTag, "2026-08-24T00:00:00Z")
+			for key, want := range test.want {
+				if got[key] != want {
+					t.Errorf("%s = %q, want %q", key, got[key], want)
+				}
+			}
+			if got["build_date"] != "2026-08-24T00:00:00Z" {
+				t.Errorf("build_date = %q", got["build_date"])
+			}
+		})
+	}
+}
+
+func TestPackageImageVarsRejectsMalformedTags(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("package image helper is executed by the Linux Packages workflow")
+	}
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is unavailable")
+	}
+
+	for _, tag := range []string{
+		"v0.1.27",
+		"impartus-cli-v0.1",
+		"impartus-cli-v01.1.27",
+		"impartus-cli-v1.2.3-01",
+		"impartus-cli-v1.2.3+build.1",
+		"impartus-cli-v0.1.27\nmalicious=true",
+	} {
+		t.Run(strings.ReplaceAll(tag, "\n", "_newline_"), func(t *testing.T) {
+			command := exec.CommandContext(t.Context(), bash, "scripts/package-image-vars.sh", tag, "")
+			if err := command.Run(); err == nil {
+				t.Fatalf("malformed tag %q was accepted", tag)
+			}
+		})
+	}
 }
 
 func TestPackagesWorkflowPublishesScannedMultiPlatformArtifact(t *testing.T) {
