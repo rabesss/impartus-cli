@@ -62,6 +62,7 @@ func TestPackagesWorkflowSelectsValidatedReleaseTags(t *testing.T) {
 	required := []string{
 		"release_tag:",
 		"description: 'Canonical release tag",
+		"Dispatch this workflow from the default branch",
 		"required: true",
 		"group: packages-${{ (inputs.release_tag || github.event.release.tag_name) && 'release' || github.ref }}",
 		"cancel-in-progress: false",

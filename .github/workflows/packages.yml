@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Canonical release tag (for example impartus-cli-v0.1.27). Replaying an older stable tag moves rolling aliases.'
+        description: 'Canonical release tag (for example impartus-cli-v0.1.27). Dispatch this workflow from the default branch and pass any historical tag here. Replaying an older stable tag moves rolling aliases.'
         required: true
         type: string
 
