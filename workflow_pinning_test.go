@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -68,6 +69,33 @@ func TestPullfrogActionYAMLPathsIncludesCompositeActions(t *testing.T) {
 	}
 }
 
+func TestPullfrogActionYAMLPathsFollowsLocalCompositeActions(t *testing.T) {
+	repoRoot := t.TempDir()
+	githubDir := filepath.Join(repoRoot, ".github")
+	workflowPath := filepath.Join(githubDir, "workflows", "ci.yml")
+	compositePath := filepath.Join(repoRoot, "tools", "pullfrog", "action.yml")
+	fixtures := map[string]string{
+		workflowPath:  "steps:\n  - uses: ./tools/pullfrog\n",
+		compositePath: "runs:\n  using: composite\n  steps:\n    - uses: pullfrog/pullfrog@v0\n",
+	}
+	for path, content := range fixtures {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create fixture directory: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatalf("write fixture %s: %v", path, err)
+		}
+	}
+
+	paths, err := pullfrogActionYAMLPaths(githubDir)
+	if err != nil {
+		t.Fatalf("pullfrogActionYAMLPaths() error: %v", err)
+	}
+	if !slices.Contains(paths, compositePath) {
+		t.Fatalf("pullfrogActionYAMLPaths() = %v, want referenced local manifest %s", paths, compositePath)
+	}
+}
+
 func workflowYAMLPaths(pattern string) ([]string, error) {
 	paths, err := filepath.Glob(pattern)
 	if err != nil {
@@ -109,7 +137,78 @@ func pullfrogActionYAMLPaths(githubDir string) ([]string, error) {
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
+
+	repoRoot := filepath.Dir(githubDir)
+	seen := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		seen[path] = struct{}{}
+	}
+	for index := 0; index < len(paths); index++ {
+		content, readErr := os.ReadFile(paths[index])
+		if readErr != nil {
+			return nil, readErr
+		}
+		references, parseErr := localActionReferences(content)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		for _, reference := range references {
+			manifest, found, resolveErr := localActionManifestPath(repoRoot, reference)
+			if resolveErr != nil {
+				return nil, resolveErr
+			}
+			if !found {
+				continue
+			}
+			if _, duplicate := seen[manifest]; duplicate {
+				continue
+			}
+			seen[manifest] = struct{}{}
+			paths = append(paths, manifest)
+		}
+	}
 	return paths, nil
+}
+
+func localActionReferences(content []byte) ([]string, error) {
+	var document yaml.Node
+	if err := yaml.Unmarshal(content, &document); err != nil {
+		return nil, err
+	}
+
+	var references []string
+	visitYAMLNode(&document, func(key, value *yaml.Node) {
+		keyValue, keyOK := resolvedYAMLScalar(key)
+		valueValue, valueOK := resolvedYAMLScalar(value)
+		if keyOK && valueOK && keyValue == "uses" && (strings.HasPrefix(valueValue, "./") || strings.HasPrefix(valueValue, "$/")) {
+			references = append(references, valueValue)
+		}
+	})
+	return references, nil
+}
+
+func localActionManifestPath(repoRoot, reference string) (string, bool, error) {
+	relative := strings.TrimPrefix(reference, "./")
+	if strings.HasPrefix(reference, "$/") {
+		relative = strings.TrimPrefix(reference, "$/")
+	}
+	relative = filepath.Clean(filepath.FromSlash(relative))
+	if relative == "." || filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", false, nil
+	}
+
+	actionDir := filepath.Join(repoRoot, relative)
+	for _, name := range []string{"action.yml", "action.yaml"} {
+		manifest := filepath.Join(actionDir, name)
+		info, err := os.Stat(manifest)
+		if err == nil && info.Mode().IsRegular() {
+			return manifest, true, nil
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return "", false, err
+		}
+	}
+	return "", false, nil
 }
 
 func TestUnpinnedPullfrogRefs(t *testing.T) {
@@ -241,6 +340,7 @@ func TestUnpinnedPullfrogWorkflowRefs(t *testing.T) {
 		{name: "multiline quoted run line-start comma text", workflow: "steps:\n  - run: \"echo\n      , uses: pullfrog/pullfrog@v0\"\n"},
 		{name: "multiline quoted run direct uses text", workflow: "steps:\n  - run: \"echo\n      uses: pullfrog/pullfrog@v0\"\n"},
 		{name: "recursive alias without uses", workflow: "value: &self [*self]\n"},
+		{name: "floating ref containing at sign", workflow: "steps:\n  - uses: pullfrog/pullfrog@release@latest\n", unpinned: true},
 	}
 
 	for _, test := range tests {
@@ -340,15 +440,29 @@ func resolvedYAMLScalar(node *yaml.Node) (string, bool) {
 
 func pullfrogActionRef(value string) (string, bool) {
 	value = strings.TrimSpace(value)
-	separator := strings.LastIndexByte(value, '@')
-	if separator <= 0 || separator == len(value)-1 {
+	const repository = "pullfrog/pullfrog"
+	lowerValue := strings.ToLower(value)
+	if !strings.HasPrefix(lowerValue, repository) {
 		return "", false
 	}
 
-	action := strings.ToLower(value[:separator])
-	if action != "pullfrog/pullfrog" && !strings.HasPrefix(action, "pullfrog/pullfrog/") {
+	remainder := value[len(repository):]
+	separator := len(repository)
+	switch {
+	case strings.HasPrefix(remainder, "@"):
+	case strings.HasPrefix(remainder, "/"):
+		relativeSeparator := strings.IndexByte(remainder, '@')
+		if relativeSeparator < 0 {
+			return "", false
+		}
+		separator += relativeSeparator
+	default:
 		return "", false
 	}
+	if separator == len(value)-1 {
+		return "", false
+	}
+	action := value[:separator]
 	ref := value[separator+1:]
 	if strings.ContainsAny(action, " \t\r\n") || strings.ContainsAny(ref, " \t\r\n") {
 		return "", false
