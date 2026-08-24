@@ -12,14 +12,11 @@
 
 ### Bug Fixes
 
-* **api:** preserve typed authentication failures ([ccf37ee](https://github.com/rabesss/impartus-cli/commit/ccf37ee4e90fc1543841d27bcbcac007b7efd749))
-* **api:** preserve typed authentication failures ([10d8407](https://github.com/rabesss/impartus-cli/commit/10d84079c5a35d99c958a9e4706233be1abdca09))
+* **api:** preserve typed authentication failures ([#174](https://github.com/rabesss/impartus-cli/issues/174)) ([ccf37ee](https://github.com/rabesss/impartus-cli/commit/ccf37ee4e90fc1543841d27bcbcac007b7efd749))
 * **ci:** preserve historical release replays ([0154311](https://github.com/rabesss/impartus-cli/commit/0154311841858038ef9e6dbc8e1abf7fc599854d))
-* **ci:** publish versioned release images ([2b01c22](https://github.com/rabesss/impartus-cli/commit/2b01c226559ee218a271dcc7f55ced529f5d2fb6))
-* **ci:** publish versioned release images ([973ed51](https://github.com/rabesss/impartus-cli/commit/973ed519454b3dbbe742e0b5a95bb1fc412cd82a))
+* **ci:** publish versioned release images ([#180](https://github.com/rabesss/impartus-cli/issues/180)) ([2b01c22](https://github.com/rabesss/impartus-cli/commit/2b01c226559ee218a271dcc7f55ced529f5d2fb6))
 * **ci:** reject empty package replays ([8f8aec1](https://github.com/rabesss/impartus-cli/commit/8f8aec1c8e75585904d06a0701cf90e049e152ac))
-* **cli:** make command help explicit ([25b847d](https://github.com/rabesss/impartus-cli/commit/25b847de716f92175c15c7a0cd96b03b62df3ed5))
-* **cli:** make command help explicit ([f7827ff](https://github.com/rabesss/impartus-cli/commit/f7827ff3e6f658077b3115222bf1fa979da267a2))
+* **cli:** make command help explicit ([#175](https://github.com/rabesss/impartus-cli/issues/175)) ([25b847d](https://github.com/rabesss/impartus-cli/commit/25b847de716f92175c15c7a0cd96b03b62df3ed5))
 * **cli:** reject unknown nested help ([27841bf](https://github.com/rabesss/impartus-cli/commit/27841bf8be36001600f399820d637955a29e50dd))
 * **downloader:** preserve aggregated auth failures ([f221e9d](https://github.com/rabesss/impartus-cli/commit/f221e9dafeb5dbcb96bb9adc668939a50d04d25a))
 * **downloader:** type download-stage auth failures ([950b334](https://github.com/rabesss/impartus-cli/commit/950b334d21c09fcc065447caef86af4219cb292e))
