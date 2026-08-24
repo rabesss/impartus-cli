@@ -11,11 +11,12 @@ import (
 
 var (
 	pullfrogUses = []*regexp.Regexp{
-		regexp.MustCompile(`(?i)^\s*(?:-\s*)?uses\s*:\s*["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`),
-		regexp.MustCompile(`(?i)[{,]\s*uses\s*:\s*["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`),
+		regexp.MustCompile(`(?i)^\s*(?:-\s*)?["']?uses["']?\s*:\s*["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`),
+		regexp.MustCompile(`(?i)[{,]\s*["']?uses["']?\s*:\s*["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`),
 	}
 	pullfrogValue     = regexp.MustCompile(`(?i)^\s*["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`)
-	blockScalarHeader = regexp.MustCompile(`^\s*(?:-\s*)?([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*[>|][-+0-9]*\s*(?:#.*)?$`)
+	blockScalarHeader = regexp.MustCompile(`^\s*(?:-\s*)?["']?([A-Za-z_][A-Za-z0-9_-]*)["']?\s*:\s*[>|][-+0-9]*\s*(?:#.*)?$`)
+	plainUsesHeader   = regexp.MustCompile(`^\s*(?:-\s*)?(?:[{,]\s*)?["']?uses["']?\s*:\s*(?:#.*)?$`)
 	immutableRef      = regexp.MustCompile(`(?i)^[0-9a-f]{40}$`)
 )
 
@@ -72,6 +73,8 @@ func TestUnpinnedPullfrogRefs(t *testing.T) {
 		{name: "dash form pin", line: "- uses: pullfrog/pullfrog@" + sha + " # v0"},
 		{name: "uppercase pin", line: "uses: pullfrog/pullfrog@" + strings.ToUpper(sha)},
 		{name: "flow mapping pin", line: "- {uses: pullfrog/pullfrog@" + sha + "}"},
+		{name: "quoted key pin", line: `"uses": pullfrog/pullfrog@` + sha},
+		{name: "quoted flow key pin", line: `- {"uses": pullfrog/pullfrog@` + sha + `}`},
 		{name: "subpath pin", line: "uses: pullfrog/pullfrog/subdir@" + sha},
 		{name: "floating ref", line: "uses: pullfrog/pullfrog@v0", unpinned: true},
 		{name: "quoted floating ref", line: `uses: "pullfrog/pullfrog@v0"`, unpinned: true},
@@ -79,6 +82,8 @@ func TestUnpinnedPullfrogRefs(t *testing.T) {
 		{name: "mixed case floating ref", line: "uses: Pullfrog/Pullfrog@v0", unpinned: true},
 		{name: "flow mapping floating ref", line: "- {uses: pullfrog/pullfrog@v0}", unpinned: true},
 		{name: "flow list floating ref", line: "steps: [{uses: pullfrog/pullfrog@v0}]", unpinned: true},
+		{name: "quoted key floating ref", line: `"uses": pullfrog/pullfrog@v0`, unpinned: true},
+		{name: "quoted flow key floating ref", line: `- {"uses": pullfrog/pullfrog@v0}`, unpinned: true},
 		{name: "subpath floating ref", line: "uses: pullfrog/pullfrog/subdir@v0", unpinned: true},
 		{name: "comment only", line: "# uses: pullfrog/pullfrog@v0"},
 		{name: "run command text", line: "run: echo pullfrog/pullfrog@v0"},
@@ -111,6 +116,12 @@ func TestUnpinnedPullfrogWorkflowRefs(t *testing.T) {
 	}{
 		{name: "folded floating ref", workflow: "steps:\n  - uses: >-\n      pullfrog/pullfrog@v0\n", unpinned: true},
 		{name: "folded pinned ref", workflow: "steps:\n  - uses: >-\n      pullfrog/pullfrog@" + sha + "\n"},
+		{name: "plain multiline floating ref", workflow: "steps:\n  - uses:\n      pullfrog/pullfrog@v0\n", unpinned: true},
+		{name: "plain multiline pinned ref", workflow: "steps:\n  - uses:\n      pullfrog/pullfrog@" + sha + "\n"},
+		{name: "quoted plain multiline floating ref", workflow: "steps:\n  - \"uses\":\n      pullfrog/pullfrog@v0\n", unpinned: true},
+		{name: "quoted plain multiline pinned ref", workflow: "steps:\n  - \"uses\":\n      pullfrog/pullfrog@" + sha + "\n"},
+		{name: "flow multiline floating ref", workflow: "steps:\n  - {uses:\n      pullfrog/pullfrog@v0, with: {}}\n", unpinned: true},
+		{name: "flow multiline pinned ref", workflow: "steps:\n  - {uses:\n      pullfrog/pullfrog@" + sha + ", with: {}}\n"},
 		{name: "run block text", workflow: "steps:\n  - run: |\n      uses: pullfrog/pullfrog@v0\n"},
 		{name: "quoted run flow text", workflow: "steps:\n  - run: \"echo {uses: pullfrog/pullfrog@v0}\"\n"},
 	}
@@ -166,6 +177,11 @@ func unpinnedPullfrogWorkflowRefs(workflow string) []workflowPullfrogRef {
 
 		if match := blockScalarHeader.FindStringSubmatch(line); match != nil {
 			block = &blockScalar{indent: indent, line: lineIndex + 1, uses: match[1] == "uses"}
+			lineIndex++
+			continue
+		}
+		if plainUsesHeader.MatchString(line) {
+			block = &blockScalar{indent: indent, line: lineIndex + 1, uses: true}
 			lineIndex++
 			continue
 		}
