@@ -17,6 +17,7 @@ var (
 	pullfrogValue     = regexp.MustCompile(`(?i)^\s*["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`)
 	blockScalarHeader = regexp.MustCompile(`^\s*(?:-\s*)?["']?([A-Za-z_][A-Za-z0-9_-]*)["']?\s*:\s*[>|][-+0-9]*\s*(?:#.*)?$`)
 	plainUsesHeader   = regexp.MustCompile(`^\s*(?:-\s*)?(?:[{,]\s*)?["']?uses["']?\s*:\s*(?:#.*)?$`)
+	flowUsesHeader    = regexp.MustCompile(`(?i)[{,]\s*["']?uses["']?\s*:\s*(?:#.*)?$`)
 	immutableRef      = regexp.MustCompile(`(?i)^[0-9a-f]{40}$`)
 )
 
@@ -124,6 +125,10 @@ func TestUnpinnedPullfrogWorkflowRefs(t *testing.T) {
 		{name: "flow multiline pinned ref", workflow: "steps:\n  - {uses:\n      pullfrog/pullfrog@" + sha + ", with: {}}\n"},
 		{name: "flow multiline equal indent floating ref", workflow: "steps: [{name: n,\n  uses:\n  pullfrog/pullfrog@v0}]\n", unpinned: true},
 		{name: "flow multiline equal indent pinned ref", workflow: "steps: [{name: n,\n  uses:\n  pullfrog/pullfrog@" + sha + "}]\n"},
+		{name: "flow list midline header floating ref", workflow: "steps: [{uses:\n  pullfrog/pullfrog@v0}]\n", unpinned: true},
+		{name: "flow list midline header pinned ref", workflow: "steps: [{uses:\n  pullfrog/pullfrog@" + sha + "}]\n"},
+		{name: "flow sibling midline header floating ref", workflow: "steps:\n  - {name: agent, uses:\n      pullfrog/pullfrog@v0}\n", unpinned: true},
+		{name: "flow sibling midline header pinned ref", workflow: "steps:\n  - {name: agent, uses:\n      pullfrog/pullfrog@" + sha + "}\n"},
 		{name: "plain multiline comment floating ref", workflow: "steps:\n  - uses:\n      # TODO: pin\n      pullfrog/pullfrog@v0\n", unpinned: true},
 		{name: "plain multiline comment pinned ref", workflow: "steps:\n  - uses:\n      # pinned below\n      pullfrog/pullfrog@" + sha + "\n"},
 		{name: "block scalar sibling floating ref", workflow: "steps:\n  - name: >-\n      Run agent\n    uses: pullfrog/pullfrog@v0\n", unpinned: true},
@@ -228,7 +233,7 @@ func unpinnedPullfrogWorkflowRefs(workflow string) []workflowPullfrogRef {
 			lineIndex++
 			continue
 		}
-		if plainUsesHeader.MatchString(line) {
+		if usesValueHeader(line) {
 			nextFlowDepth := yamlFlowDepthAfter(line, flowDepth)
 			block = &blockScalar{headerIndent: indent, contentIndent: -1, line: lineIndex + 1, uses: true, flow: nextFlowDepth > 0, plain: true}
 			flowDepth = nextFlowDepth
@@ -244,6 +249,18 @@ func unpinnedPullfrogWorkflowRefs(workflow string) []workflowPullfrogRef {
 	}
 	flushBlock()
 	return findings
+}
+
+func usesValueHeader(line string) bool {
+	if plainUsesHeader.MatchString(line) {
+		return true
+	}
+	for _, match := range flowUsesHeader.FindAllStringIndex(line, -1) {
+		if yamlCodeAt(line, match[0]) {
+			return true
+		}
+	}
+	return false
 }
 
 func yamlFlowDepthAfter(line string, depth int) int {
