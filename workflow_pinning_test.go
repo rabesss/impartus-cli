@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -13,6 +14,15 @@ var (
 	pullfrogUses = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)^\s*(?:-\s*)?["']?uses["']?\s*:\s*["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`),
 		regexp.MustCompile(`(?i)[{,]\s*(?:\?\s*)?["']?uses["']?\s*:\s*["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`),
+	}
+	escapedKeyPullfrogUses = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)^\s*(?:-\s*)?"((?:\\.|[^"\\])*)"\s*:\s*["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`),
+		regexp.MustCompile(`(?i)[{,]\s*(?:\?\s*)?"((?:\\.|[^"\\])*)"\s*:\s*["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`),
+	}
+	pullfrogAnchors = regexp.MustCompile(`(?i)&([A-Za-z_][A-Za-z0-9_-]*)\s+["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`)
+	pullfrogAliases = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)^\s*(?:-\s*)?["']?uses["']?\s*:\s*\*([A-Za-z_][A-Za-z0-9_-]*)`),
+		regexp.MustCompile(`(?i)[{,]\s*(?:\?\s*)?["']?uses["']?\s*:\s*\*([A-Za-z_][A-Za-z0-9_-]*)`),
 	}
 	pullfrogValue     = regexp.MustCompile(`(?i)^\s*["']?pullfrog/pullfrog(?:/[^\s@"'#,}\]]+)?@([^\s"'#,}\]]+)`)
 	blockScalarHeader = regexp.MustCompile(`^\s*(?:-\s*)?["']?([A-Za-z_][A-Za-z0-9_-]*)["']?\s*:\s*[>|][-+0-9]*\s*(?:#.*)?$`)
@@ -27,6 +37,11 @@ var (
 type workflowPullfrogRef struct {
 	line int
 	ref  string
+}
+
+type yamlQuoteState struct {
+	singleQuoted bool
+	doubleQuoted bool
 }
 
 func TestPullfrogActionUsesImmutablePin(t *testing.T) {
@@ -140,6 +155,10 @@ func TestUnpinnedPullfrogWorkflowRefs(t *testing.T) {
 		{name: "explicit flow key pinned ref", workflow: "steps:\n  - {? uses: pullfrog/pullfrog@" + sha + "}\n"},
 		{name: "explicit flow key multiline floating ref", workflow: "steps:\n  - {? uses:\n      pullfrog/pullfrog@v0}\n", unpinned: true},
 		{name: "explicit flow key multiline pinned ref", workflow: "steps:\n  - {? uses:\n      pullfrog/pullfrog@" + sha + "}\n"},
+		{name: "escaped quoted key floating ref", workflow: "steps:\n  - \"\\x75ses\": pullfrog/pullfrog@v0\n", unpinned: true},
+		{name: "escaped quoted key pinned ref", workflow: "steps:\n  - \"\\x75ses\": pullfrog/pullfrog@" + sha + "\n"},
+		{name: "anchored alias floating ref", workflow: "steps:\n  - uses: &pullfrog pullfrog/pullfrog@v0\n  - uses: *pullfrog\n", unpinned: true},
+		{name: "anchored alias pinned ref", workflow: "steps:\n  - uses: &pullfrog pullfrog/pullfrog@" + sha + "\n  - uses: *pullfrog\n"},
 		{name: "explicit block key floating ref", workflow: "steps:\n  - ? uses\n    : pullfrog/pullfrog@v0\n", unpinned: true},
 		{name: "explicit block key pinned ref", workflow: "steps:\n  - ? uses\n    : pullfrog/pullfrog@" + sha + "\n"},
 		{name: "explicit block key plain multiline floating ref", workflow: "steps:\n  - ? uses\n    :\n      pullfrog/pullfrog@v0\n", unpinned: true},
@@ -164,6 +183,7 @@ func TestUnpinnedPullfrogWorkflowRefs(t *testing.T) {
 		{name: "quoted run flow text", workflow: "steps:\n  - run: \"echo {uses: pullfrog/pullfrog@v0}\"\n"},
 		{name: "plain run flow text without colon spacing", workflow: "steps:\n  - run: echo {uses:pullfrog/pullfrog@v0}\n"},
 		{name: "multiline quoted run line-start comma text", workflow: "steps:\n  - run: \"echo\n      , uses: pullfrog/pullfrog@v0\"\n"},
+		{name: "multiline quoted run direct uses text", workflow: "steps:\n  - run: \"echo\n      uses: pullfrog/pullfrog@v0\"\n"},
 	}
 
 	for _, test := range tests {
@@ -192,6 +212,24 @@ func unpinnedPullfrogWorkflowRefs(workflow string) []workflowPullfrogRef {
 	var findings []workflowPullfrogRef
 	var block *blockScalar
 	flowDepth := 0
+	quoteState := yamlQuoteState{}
+	anchors := make(map[string]string)
+	scanAliases := func(line string, lineNumber int, state yamlQuoteState, depth int) {
+		for _, match := range pullfrogAnchors.FindAllStringSubmatchIndex(line, -1) {
+			if yamlCodeAtWithState(line, match[0], state) {
+				anchors[line[match[2]:match[3]]] = line[match[4]:match[5]]
+			}
+		}
+		for _, pattern := range pullfrogAliases {
+			for _, match := range pattern.FindAllStringSubmatchIndex(line, -1) {
+				if yamlCodeAtWithState(line, match[0], state) && yamlFlowSeparatorAtWithState(line, match[0], depth, state) {
+					if ref, ok := anchors[line[match[2]:match[3]]]; ok && !immutableRef.MatchString(ref) {
+						findings = append(findings, workflowPullfrogRef{line: lineNumber, ref: ref})
+					}
+				}
+			}
+		}
+	}
 	flushBlock := func() {
 		if block == nil || !block.uses {
 			block = nil
@@ -252,13 +290,14 @@ func unpinnedPullfrogWorkflowRefs(workflow string) []workflowPullfrogRef {
 					flushBlock()
 					continue
 				}
-				for _, ref := range unpinnedPullfrogRefsAtDepth(line, flowDepth) {
+				scanAliases(line, lineIndex+1, quoteState, flowDepth)
+				for _, ref := range unpinnedPullfrogRefsAtDepthWithState(line, flowDepth, quoteState) {
 					findings = append(findings, workflowPullfrogRef{line: lineIndex + 1, ref: ref})
 				}
 				if block.uses {
 					block.content = append(block.content, trimmed)
 				}
-				flowDepth = yamlFlowDepthAfter(line, flowDepth)
+				flowDepth, quoteState = yamlFlowDepthAfterWithState(line, flowDepth, quoteState)
 				lineIndex++
 				if flowDepth == 0 {
 					flushBlock()
@@ -292,39 +331,41 @@ func unpinnedPullfrogWorkflowRefs(workflow string) []workflowPullfrogRef {
 			lineIndex++
 			continue
 		}
-		if usesValueHeader(line, flowDepth) {
-			nextFlowDepth := yamlFlowDepthAfter(line, flowDepth)
+		if usesValueHeaderWithState(line, flowDepth, quoteState) {
+			nextFlowDepth, nextQuoteState := yamlFlowDepthAfterWithState(line, flowDepth, quoteState)
 			block = &blockScalar{headerIndent: indent, contentIndent: -1, line: lineIndex + 1, uses: true, flow: nextFlowDepth > 0, plain: true}
 			flowDepth = nextFlowDepth
+			quoteState = nextQuoteState
 			lineIndex++
 			continue
 		}
 
-		for _, ref := range unpinnedPullfrogRefsAtDepth(line, flowDepth) {
+		scanAliases(line, lineIndex+1, quoteState, flowDepth)
+		for _, ref := range unpinnedPullfrogRefsAtDepthWithState(line, flowDepth, quoteState) {
 			findings = append(findings, workflowPullfrogRef{line: lineIndex + 1, ref: ref})
 		}
-		flowDepth = yamlFlowDepthAfter(line, flowDepth)
+		flowDepth, quoteState = yamlFlowDepthAfterWithState(line, flowDepth, quoteState)
 		lineIndex++
 	}
 	flushBlock()
 	return findings
 }
 
-func usesValueHeader(line string, flowDepth int) bool {
-	if plainUsesHeader.MatchString(line) {
+func usesValueHeaderWithState(line string, flowDepth int, state yamlQuoteState) bool {
+	if plainUsesHeader.MatchString(line) && yamlCodeAtWithState(line, 0, state) {
 		return true
 	}
 	for _, match := range flowUsesHeader.FindAllStringIndex(line, -1) {
-		if yamlCodeAt(line, match[0]) && yamlFlowSeparatorAt(line, match[0], flowDepth) {
+		if yamlCodeAtWithState(line, match[0], state) && yamlFlowSeparatorAtWithState(line, match[0], flowDepth, state) {
 			return true
 		}
 	}
 	return false
 }
 
-func yamlFlowDepthAfter(line string, depth int) int {
+func yamlFlowDepthAfterWithState(line string, depth int, state yamlQuoteState) (int, yamlQuoteState) {
 	for index, character := range line {
-		if !yamlCodeAt(line, index) {
+		if !yamlCodeAtWithState(line, index, state) {
 			continue
 		}
 		switch character {
@@ -338,7 +379,7 @@ func yamlFlowDepthAfter(line string, depth int) int {
 			}
 		}
 	}
-	return depth
+	return depth, yamlQuoteStateAfter(line, state)
 }
 
 func yamlFlowOpenerAt(line string, index int) bool {
@@ -350,6 +391,10 @@ func unpinnedPullfrogRefs(line string) []string {
 }
 
 func unpinnedPullfrogRefsAtDepth(line string, flowDepth int) []string {
+	return unpinnedPullfrogRefsAtDepthWithState(line, flowDepth, yamlQuoteState{})
+}
+
+func unpinnedPullfrogRefsAtDepthWithState(line string, flowDepth int, state yamlQuoteState) []string {
 	if strings.HasPrefix(strings.TrimSpace(line), "#") {
 		return nil
 	}
@@ -357,7 +402,7 @@ func unpinnedPullfrogRefsAtDepth(line string, flowDepth int) []string {
 	var unpinned []string
 	for _, pattern := range pullfrogUses {
 		for _, match := range pattern.FindAllStringSubmatchIndex(line, -1) {
-			if !yamlCodeAt(line, match[0]) || !yamlFlowSeparatorAt(line, match[0], flowDepth) {
+			if !yamlCodeAtWithState(line, match[0], state) || !yamlFlowSeparatorAtWithState(line, match[0], flowDepth, state) {
 				continue
 			}
 			ref := line[match[2]:match[3]]
@@ -366,10 +411,25 @@ func unpinnedPullfrogRefsAtDepth(line string, flowDepth int) []string {
 			}
 		}
 	}
+	for _, pattern := range escapedKeyPullfrogUses {
+		for _, match := range pattern.FindAllStringSubmatchIndex(line, -1) {
+			if !yamlCodeAtWithState(line, match[0], state) || !yamlFlowSeparatorAtWithState(line, match[0], flowDepth, state) {
+				continue
+			}
+			key, err := strconv.Unquote(`"` + line[match[2]:match[3]] + `"`)
+			if err != nil || key != "uses" {
+				continue
+			}
+			ref := line[match[4]:match[5]]
+			if !immutableRef.MatchString(ref) {
+				unpinned = append(unpinned, ref)
+			}
+		}
+	}
 	return unpinned
 }
 
-func yamlFlowSeparatorAt(line string, position, flowDepth int) bool {
+func yamlFlowSeparatorAtWithState(line string, position, flowDepth int, state yamlQuoteState) bool {
 	if position >= len(line) {
 		return false
 	}
@@ -377,39 +437,67 @@ func yamlFlowSeparatorAt(line string, position, flowDepth int) bool {
 	case '{':
 		return yamlFlowOpenerAt(line, position)
 	case ',':
-		return flowDepth > 0 || yamlFlowDepthAfter(line[:position], 0) > 0
+		prefixDepth, _ := yamlFlowDepthAfterWithState(line[:position], 0, state)
+		return flowDepth > 0 || prefixDepth > 0
 	default:
 		return true
 	}
 }
 
-func yamlCodeAt(line string, index int) bool {
-	var singleQuoted, doubleQuoted bool
+func yamlCodeAtWithState(line string, index int, state yamlQuoteState) bool {
 	for position := 0; position < index; position++ {
 		switch line[position] {
 		case '#':
-			if !singleQuoted && !doubleQuoted && yamlCommentStart(line, position) {
+			if !state.singleQuoted && !state.doubleQuoted && yamlCommentStart(line, position) {
 				return false
 			}
 		case '\'':
-			if !doubleQuoted {
-				if singleQuoted {
+			if !state.doubleQuoted {
+				if state.singleQuoted {
 					if position+1 < index && line[position+1] == '\'' {
 						position++
 						continue
 					}
-					singleQuoted = false
+					state.singleQuoted = false
 				} else if yamlQuotedScalarOpenerAt(line, position) {
-					singleQuoted = true
+					state.singleQuoted = true
 				}
 			}
 		case '"':
-			if !singleQuoted && !yamlDoubleQuoteEscaped(line, position) {
-				doubleQuoted = !doubleQuoted
+			if !state.singleQuoted && !yamlDoubleQuoteEscaped(line, position) {
+				state.doubleQuoted = !state.doubleQuoted
 			}
 		}
 	}
-	return !singleQuoted && !doubleQuoted
+	return !state.singleQuoted && !state.doubleQuoted
+}
+
+func yamlQuoteStateAfter(line string, state yamlQuoteState) yamlQuoteState {
+	for position := 0; position < len(line); position++ {
+		switch line[position] {
+		case '#':
+			if !state.singleQuoted && !state.doubleQuoted && yamlCommentStart(line, position) {
+				return state
+			}
+		case '\'':
+			if !state.doubleQuoted {
+				if state.singleQuoted {
+					if position+1 < len(line) && line[position+1] == '\'' {
+						position++
+						continue
+					}
+					state.singleQuoted = false
+				} else if yamlQuotedScalarOpenerAt(line, position) {
+					state.singleQuoted = true
+				}
+			}
+		case '"':
+			if !state.singleQuoted && !yamlDoubleQuoteEscaped(line, position) {
+				state.doubleQuoted = !state.doubleQuoted
+			}
+		}
+	}
+	return state
 }
 
 func yamlQuotedScalarOpenerAt(line string, position int) bool {
