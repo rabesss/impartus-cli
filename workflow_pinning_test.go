@@ -122,6 +122,10 @@ func TestUnpinnedPullfrogWorkflowRefs(t *testing.T) {
 		{name: "quoted plain multiline pinned ref", workflow: "steps:\n  - \"uses\":\n      pullfrog/pullfrog@" + sha + "\n"},
 		{name: "flow multiline floating ref", workflow: "steps:\n  - {uses:\n      pullfrog/pullfrog@v0, with: {}}\n", unpinned: true},
 		{name: "flow multiline pinned ref", workflow: "steps:\n  - {uses:\n      pullfrog/pullfrog@" + sha + ", with: {}}\n"},
+		{name: "flow multiline equal indent floating ref", workflow: "steps: [{name: n,\n  uses:\n  pullfrog/pullfrog@v0}]\n", unpinned: true},
+		{name: "flow multiline equal indent pinned ref", workflow: "steps: [{name: n,\n  uses:\n  pullfrog/pullfrog@" + sha + "}]\n"},
+		{name: "block scalar sibling floating ref", workflow: "steps:\n  - name: >-\n      Run agent\n    uses: pullfrog/pullfrog@v0\n", unpinned: true},
+		{name: "block scalar sibling pinned ref", workflow: "steps:\n  - name: >-\n      Run agent\n    uses: pullfrog/pullfrog@" + sha + "\n"},
 		{name: "run block text", workflow: "steps:\n  - run: |\n      uses: pullfrog/pullfrog@v0\n"},
 		{name: "quoted run flow text", workflow: "steps:\n  - run: \"echo {uses: pullfrog/pullfrog@v0}\"\n"},
 	}
@@ -138,15 +142,18 @@ func TestUnpinnedPullfrogWorkflowRefs(t *testing.T) {
 
 func unpinnedPullfrogWorkflowRefs(workflow string) []workflowPullfrogRef {
 	type blockScalar struct {
-		indent  int
-		line    int
-		uses    bool
-		content []string
+		headerIndent  int
+		contentIndent int
+		line          int
+		uses          bool
+		flow          bool
+		content       []string
 	}
 
 	lines := strings.Split(workflow, "\n")
 	var findings []workflowPullfrogRef
 	var block *blockScalar
+	flowDepth := 0
 	flushBlock := func() {
 		if block == nil || !block.uses {
 			block = nil
@@ -164,24 +171,51 @@ func unpinnedPullfrogWorkflowRefs(workflow string) []workflowPullfrogRef {
 		indent := len(line) - len(strings.TrimLeft(line, " "))
 
 		if block != nil {
-			if trimmed == "" || indent > block.indent {
-				if block.uses {
-					block.content = append(block.content, trimmed)
-				}
+			if trimmed == "" {
 				lineIndex++
 				continue
 			}
-			flushBlock()
+			if block.flow {
+				if flowDepth == 0 {
+					flushBlock()
+					continue
+				}
+				if block.uses {
+					block.content = append(block.content, trimmed)
+				}
+				flowDepth = yamlFlowDepthAfter(line, flowDepth)
+				lineIndex++
+				if flowDepth == 0 {
+					flushBlock()
+				}
+				continue
+			}
+			if block.contentIndent < 0 {
+				if indent <= block.headerIndent {
+					flushBlock()
+					continue
+				}
+				block.contentIndent = indent
+			} else if indent < block.contentIndent {
+				flushBlock()
+				continue
+			}
+			if block.uses {
+				block.content = append(block.content, trimmed)
+			}
+			lineIndex++
 			continue
 		}
 
 		if match := blockScalarHeader.FindStringSubmatch(line); match != nil {
-			block = &blockScalar{indent: indent, line: lineIndex + 1, uses: match[1] == "uses"}
+			block = &blockScalar{headerIndent: indent, contentIndent: -1, line: lineIndex + 1, uses: match[1] == "uses"}
 			lineIndex++
 			continue
 		}
 		if plainUsesHeader.MatchString(line) {
-			block = &blockScalar{indent: indent, line: lineIndex + 1, uses: true}
+			nextFlowDepth := yamlFlowDepthAfter(line, flowDepth)
+			block = &blockScalar{headerIndent: indent, contentIndent: -1, line: lineIndex + 1, uses: true, flow: nextFlowDepth > 0}
+			flowDepth = nextFlowDepth
 			lineIndex++
 			continue
 		}
@@ -189,10 +223,28 @@ func unpinnedPullfrogWorkflowRefs(workflow string) []workflowPullfrogRef {
 		for _, ref := range unpinnedPullfrogRefs(line) {
 			findings = append(findings, workflowPullfrogRef{line: lineIndex + 1, ref: ref})
 		}
+		flowDepth = yamlFlowDepthAfter(line, flowDepth)
 		lineIndex++
 	}
 	flushBlock()
 	return findings
+}
+
+func yamlFlowDepthAfter(line string, depth int) int {
+	for index, character := range line {
+		if !yamlCodeAt(line, index) {
+			continue
+		}
+		switch character {
+		case '[', '{':
+			depth++
+		case ']', '}':
+			if depth > 0 {
+				depth--
+			}
+		}
+	}
+	return depth
 }
 
 func unpinnedPullfrogRefs(line string) []string {
