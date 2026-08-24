@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -12,8 +13,13 @@ func TestPullfrogActionUsesImmutablePin(t *testing.T) {
 		t.Fatalf("read pullfrog workflow: %v", err)
 	}
 
-	pinnedPullfrog := regexp.MustCompile(`(?m)^\s*uses: pullfrog/pullfrog@[0-9a-f]{40}(?:\s+#.*)?$`)
-	if !pinnedPullfrog.Match(workflow) {
-		t.Fatal("pullfrog action must be pinned to an immutable commit SHA")
+	pinnedPullfrog := regexp.MustCompile(`^\s*uses: pullfrog/pullfrog@[0-9a-f]{40}(?:\s+#.*)?$`)
+	for _, line := range strings.Split(string(workflow), "\n") {
+		if !strings.Contains(line, "uses: pullfrog/pullfrog@") {
+			continue
+		}
+		if !pinnedPullfrog.MatchString(line) {
+			t.Errorf("pullfrog action is not pinned to an immutable commit SHA: %q", strings.TrimSpace(line))
+		}
 	}
 }
