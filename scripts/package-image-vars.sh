@@ -10,6 +10,7 @@ version="main"
 major=""
 major_minor=""
 stable="false"
+source_ref=""
 
 if [[ -n "${release_tag}" ]]; then
   if [[ ! "${release_tag}" =~ ^impartus-cli-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*))?$ ]]; then
@@ -38,6 +39,7 @@ if [[ -n "${release_tag}" ]]; then
   mode="release"
   version="${major}.${minor}.${patch}${prerelease_suffix}"
   major_minor="${major}.${minor}"
+  source_ref="refs/tags/${release_tag}"
 fi
 
 if [[ -z "${build_date}" ]]; then
@@ -50,6 +52,7 @@ fi
 
 printf 'mode=%s\n' "${mode}"
 printf 'release_tag=%s\n' "${release_tag}"
+printf 'source_ref=%s\n' "${source_ref}"
 printf 'version=%s\n' "${version}"
 printf 'major_minor=%s\n' "${major_minor}"
 printf 'major=%s\n' "${major}"

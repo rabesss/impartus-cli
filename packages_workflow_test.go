@@ -63,9 +63,9 @@ func TestPackagesWorkflowSelectsValidatedReleaseTags(t *testing.T) {
 		"release_tag:",
 		"description: 'Canonical release tag",
 		"required: true",
-		"group: packages-${{ inputs.release_tag || github.event.release.tag_name || github.ref }}",
+		"group: packages-${{ (inputs.release_tag || github.event.release.tag_name) && 'release' || github.ref }}",
 		"cancel-in-progress: false",
-		"ref: ${{ inputs.release_tag || github.event.release.tag_name || github.sha }}",
+		"ref: ${{ steps.vars.outputs.source_ref || github.sha }}",
 		"scripts/package-image-vars.sh",
 		"type=raw,value=main,enable=${{ steps.vars.outputs.mode == 'snapshot' }}",
 		"type=sha,format=short,prefix=sha-,enable=${{ steps.vars.outputs.mode == 'snapshot' }}",
@@ -82,6 +82,58 @@ func TestPackagesWorkflowSelectsValidatedReleaseTags(t *testing.T) {
 
 	if strings.Contains(workflow, "value=${{ github.event.release.tag_name }}") {
 		t.Error("packages workflow passes the prefixed release tag directly to image metadata")
+	}
+}
+
+func TestPackagesWorkflowReplaysExactHistoricalTag(t *testing.T) {
+	workflow := readPackagesWorkflow(t)
+
+	required := []string{
+		"- name: Checkout workflow tooling",
+		"ref: ${{ github.workflow_sha }}",
+		"- name: Verify exact release tag",
+		"MODE: ${{ steps.vars.outputs.mode }}",
+		"SOURCE_REF: ${{ steps.vars.outputs.source_ref }}",
+		"git ls-remote --exit-code --refs origin \"$SOURCE_REF\"",
+		"- name: Checkout selected source",
+		"ref: ${{ steps.vars.outputs.source_ref || github.sha }}",
+		"- name: Resolve source revision",
+		"id: revision",
+		"git rev-parse HEAD",
+		"COMMIT=${{ steps.revision.outputs.commit }}",
+		"org.opencontainers.image.revision=${{ steps.revision.outputs.commit }}",
+	}
+	for _, snippet := range required {
+		if !strings.Contains(workflow, snippet) {
+			t.Errorf("packages workflow is missing historical replay contract %q", snippet)
+		}
+	}
+
+	ordered := []string{
+		"- name: Checkout workflow tooling",
+		"- name: Prepare image variables",
+		"- name: Verify exact release tag",
+		"- name: Checkout selected source",
+		"- name: Resolve source revision",
+		"- name: Generate Docker metadata",
+	}
+	previous := -1
+	for _, step := range ordered {
+		position := strings.Index(workflow, step)
+		if position == -1 {
+			t.Fatalf("packages workflow is missing ordered replay step %q", step)
+		}
+		if position <= previous {
+			t.Fatalf("replay step %q is out of order", step)
+		}
+		previous = position
+	}
+
+	if got := strings.Count(workflow, "uses: actions/checkout@"); got != 2 {
+		t.Errorf("checkout invocation count = %d, want workflow tooling plus selected source", got)
+	}
+	if strings.Contains(workflow, "COMMIT=${{ github.sha }}") {
+		t.Error("packages workflow labels a replay with the dispatch ref revision")
 	}
 }
 
@@ -113,6 +165,10 @@ func packageImageVars(t *testing.T, releaseTag, releaseDate string) map[string]s
 }
 
 func TestPackageImageVars(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("package image helper is executed by the Linux Packages workflow")
+	}
+
 	info, err := os.Stat("scripts/package-image-vars.sh")
 	if err != nil {
 		t.Fatalf("stat package image helper: %v", err)
@@ -129,7 +185,7 @@ func TestPackageImageVars(t *testing.T) {
 		{
 			name: "main snapshot",
 			want: map[string]string{
-				"mode": "snapshot", "version": "main", "stable": "false",
+				"mode": "snapshot", "version": "main", "source_ref": "", "stable": "false",
 			},
 		},
 		{
@@ -137,7 +193,8 @@ func TestPackageImageVars(t *testing.T) {
 			releaseTag: "impartus-cli-v0.1.27",
 			want: map[string]string{
 				"mode": "release", "release_tag": "impartus-cli-v0.1.27",
-				"version": "0.1.27", "major_minor": "0.1", "major": "0", "stable": "true",
+				"version": "0.1.27", "source_ref": "refs/tags/impartus-cli-v0.1.27",
+				"major_minor": "0.1", "major": "0", "stable": "true",
 			},
 		},
 		{
@@ -145,7 +202,8 @@ func TestPackageImageVars(t *testing.T) {
 			releaseTag: "impartus-cli-v1.2.0-rc.1",
 			want: map[string]string{
 				"mode": "release", "release_tag": "impartus-cli-v1.2.0-rc.1",
-				"version": "1.2.0-rc.1", "major_minor": "1.2", "major": "1", "stable": "false",
+				"version": "1.2.0-rc.1", "source_ref": "refs/tags/impartus-cli-v1.2.0-rc.1",
+				"major_minor": "1.2", "major": "1", "stable": "false",
 			},
 		},
 	}
