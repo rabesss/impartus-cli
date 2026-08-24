@@ -74,9 +74,11 @@ func TestPullfrogActionYAMLPathsFollowsLocalCompositeActions(t *testing.T) {
 	githubDir := filepath.Join(repoRoot, ".github")
 	workflowPath := filepath.Join(githubDir, "workflows", "ci.yml")
 	compositePath := filepath.Join(repoRoot, "tools", "pullfrog", "action.yml")
+	rootCompositePath := filepath.Join(repoRoot, "action.yaml")
 	fixtures := map[string]string{
-		workflowPath:  "steps:\n  - uses: ./tools/pullfrog\n",
-		compositePath: "runs:\n  using: composite\n  steps:\n    - uses: pullfrog/pullfrog@v0\n",
+		workflowPath:      "steps:\n  - uses: ./tools/pullfrog\n  - uses: ./\n",
+		compositePath:     "runs:\n  using: composite\n  steps:\n    - uses: pullfrog/pullfrog@v0\n",
+		rootCompositePath: "runs:\n  using: composite\n  steps:\n    - uses: pullfrog/pullfrog@v0\n",
 	}
 	for path, content := range fixtures {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -93,6 +95,9 @@ func TestPullfrogActionYAMLPathsFollowsLocalCompositeActions(t *testing.T) {
 	}
 	if !slices.Contains(paths, compositePath) {
 		t.Fatalf("pullfrogActionYAMLPaths() = %v, want referenced local manifest %s", paths, compositePath)
+	}
+	if !slices.Contains(paths, rootCompositePath) {
+		t.Fatalf("pullfrogActionYAMLPaths() = %v, want referenced root manifest %s", paths, rootCompositePath)
 	}
 }
 
@@ -193,7 +198,7 @@ func localActionManifestPath(repoRoot, reference string) (string, bool, error) {
 		relative = strings.TrimPrefix(reference, "$/")
 	}
 	relative = filepath.Clean(filepath.FromSlash(relative))
-	if relative == "." || filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+	if filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		return "", false, nil
 	}
 
