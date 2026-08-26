@@ -1,0 +1,126 @@
+{
+  "binary": "/workspace/impartus",
+  "version": "0.1.28",
+  "predicate": "Exercise advertised CLI interactions against the compiled binary and record VERIFIED bugs with reproductions.",
+  "environment": {
+    "ffmpeg": true,
+    "mpv": false,
+    "bun": false,
+    "impartus_ui": false,
+    "credentials": "env-only IMPARTUS_*",
+    "artifacts_fs_ignores_chmod": true
+  },
+  "working_paths": {
+    "posix_state": "/tmp/impartus-dogfood",
+    "artifacts_harness": "/opt/cursor/artifacts/cli-dogfood"
+  },
+  "verified_bugs": [
+    {
+      "id": "B1",
+      "title": "download --start 0 / negative start silently selects the whole course",
+      "severity": "high",
+      "repro": "./impartus download -s <subject> -S <session> --start 0 --json",
+      "expected": "reject non-positive 1-based index before any media work",
+      "actual": "SelectRange coerces start<=0 to 1 and begins downloading the full audio-bearing set; fetchvideo started; killed with SIGTERM, exit 130. Completion of every lecture was not observed."
+      "evidence": "internal/client/types.go SelectRange; /tmp/impartus-dogfood/wave2/download_start0.stderr; play already rejects non-positive values"
+    },
+    {
+      "id": "B2",
+      "title": "impartus help <command> ignores the command and prints root help",
+      "severity": "medium",
+      "repro": "./impartus help download ; ./impartus help download --json",
+      "expected": "download help, matching download --help",
+      "actual": "root usage / root capability envelope, exit 0",
+      "evidence": "wave2 help_download_json; first-wave help_download_subcommand_style"
+    },
+    {
+      "id": "B3",
+      "title": "command --help omits flags; root help omits global --json",
+      "severity": "medium",
+      "repro": "./impartus download --help ; ./impartus --help",
+      "expected": "download help lists --subject/--session/--ttid/--quality/--json etc.",
+      "actual": "one usage line with [flags]; root flags mention --json only inside the --events line",
+      "evidence": "internal/cli/cli_help.go showCommandHelp; cli_helpers.go showHelpTo"
+    },
+    {
+      "id": "B4",
+      "title": "--json after -- still enables JSON mode",
+      "severity": "medium",
+      "repro": "./impartus download --subject 1 --session 2 -- --json",
+      "expected": "positional --json after sentinel, like --help after --",
+      "actual": "stripGlobalJSONFlag removes every --json first; command runs in JSON mode; fake ids returned no lectures found",
+      "evidence": "internal/cli/cli_json.go stripGlobalJSONFlag"
+    },
+    {
+      "id": "B5",
+      "title": "invalid --quality is checked after initClient",
+      "severity": "medium",
+      "repro": "./impartus download -s 1 -S 2 --quality 1080 --json",
+      "expected": "flag validation before initClient, matching applyAndValidateFlags comment",
+      "actual": "on a chmod-ignoring FS the first attempt logged in then failed token persist; with a 0600 cache the same flags later failed with invalid quality 1080",
+      "evidence": "cli_download.go executeDownloadWithDependenciesContext order"
+    },
+    {
+      "id": "B6",
+      "title": "token cache publish leaves a world-readable file when chmod does not stick",
+      "severity": "high",
+      "repro": "IMPARTUS_TOKEN_CACHE on a 0666-forcing FS, then ./impartus courses --json",
+      "expected": "never publish a token file whose mode is not 0600; delete on validation failure",
+      "actual": "write+rename then validatePublishedTokenCache fails; 200-byte cache remains mode 0666",
+      "evidence": "internal/client/token_cache.go writeTokenCacheFile; stat 666 /opt/cursor/artifacts/cli-dogfood/token-cache"
+    },
+    {
+      "id": "B7",
+      "title": "watch dry-run JSON double-counts over-budget lectures as both new and skipped",
+      "severity": "medium",
+      "repro": "./impartus watch --once --dry-run --json -s <subject> -S <session>",
+      "expected": "listed >= new+skipped or skipped/new are mutually exclusive",
+      "actual": "listed=6 new=6 skipped=3 downloaded=0 for 6 audio lectures and maxLecturesPerCycle=3",
+      "evidence": "watch.go inspectAndProcess sets New=1 then Skipped=1 when !withinBudget"
+    },
+    {
+      "id": "B8",
+      "title": "library opens the store before validating the subcommand",
+      "severity": "low",
+      "repro": "./impartus library vrfy",
+      "expected": "unknown library command without creating state",
+      "actual": "on a 0777 state dir, error is permission failure; on a good dir, unknown command after opening library.db",
+      "evidence": "cli_library.go executeLibrary"
+    }
+  ],
+  "not_bugs": [
+    {
+      "title": "no-args / tui without a TTY exits 2",
+      "why": "matches README"
+    },
+    {
+      "title": "play/tui rejected in JSON mode",
+      "why": "advertised"
+    },
+    {
+      "title": "doctor fails without mpv",
+      "why": "blocking dependency check; ffmpeg passed"
+    },
+    {
+      "title": "serve --json does not start the server",
+      "why": "documented non-blocking metadata"
+    },
+    {
+      "title": "TUI errors when impartus-ui is missing",
+      "why": "make build-go does not build the sidecar; message is accurate"
+    },
+    {
+      "title": "watch listed=6 vs 15 lectures",
+      "why": "9 of 15 lectures are noaudio; watch is audio-only"
+    }
+  ],
+  "worked": [
+    "version / -v / --version",
+    "JSON envelopes for success and failure (stdout vs stderr)",
+    "download --help before invalid --start bad",
+    "courses --json and lectures --json against live Impartus (34 courses, 15 lectures)",
+    "watch --once --dry-run --json and --events",
+    "library list/verify empty success; show missing artifact",
+    "serve --port 18080 health/live, health/ready, login, courses"
+  ]
+}

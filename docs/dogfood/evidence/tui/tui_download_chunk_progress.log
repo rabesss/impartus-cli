@@ -1,0 +1,7 @@
+TUI download of lecture seq 15
+t=0s  temp dir created, .ts segments appearing
+t=15s 12M temp, ~20 .ts files, downloads dir empty
+t=35s 20M temp
+t=55s 32 .ts files, 32M temp
+library.db jobs: previous download canceled on TUI exit; current job status running while TUI showed "download running 0%"
+TUI later exited 1 with DOMException TimeoutError; job finished_at set canceled; temp cleaned to 4K; downloads still empty

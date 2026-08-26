@@ -1,0 +1,1 @@
+{"success":true,"data":{"status":"completed","cycle":{"listed":6,"new":6,"skipped":3,"downloaded":0,"failed":0,"dryRun":true}},"error":null,"meta":{"command":"watch","mode":"json"}}

@@ -1,0 +1,7 @@
+ts	phase	decision	why	evidence	result
+2026-08-26T05:41:19Z	frame	dogfood the real impartus binary against advertised CLI interactions	prove-it-works needs the compiled CLI not unit tests	/workspace/impartus	binary built via make build-go
+2026-08-26T05:51:34Z	harness	wrote a rerunnable python CLI matrix against the compiled binary	build the lever so findings are re-runnable	/opt/cursor/artifacts/cli-dogfood/dogfood_cli.py	69 cases
+2026-08-26T05:51:34Z	run	moved live auth tests to /tmp because artifacts chmod is a no-op	token persist failed at 0666 on the artifacts FS	/opt/cursor/artifacts/cli-dogfood/token-modes.txt	posix token 0600 works, artifacts token 0666 leftover
+2026-08-26T05:51:34Z	run	killed download pid 6021 after --start 0 began fetchvideo	1-based start 0 coerced to select-all	/tmp/impartus-dogfood/wave2/download_start0.stderr	exit 130 VERIFIED B1
+2026-08-26T05:51:34Z	run	did not build OpenTUI sidecar or install mpv	TUI needs impartus-ui; play needs mpv; report the real missing-sidecar path	/tmp/impartus-dogfood/wave2/tui_pty.preview	TUI blocked on sidecar, error is accurate
+2026-08-26T05:51:34Z	verify	classified eight verified bugs and six non-bugs from live CLI/API runs	prove it against the binary not unit tests	/opt/cursor/artifacts/cli-dogfood/findings.json	VERIFIED

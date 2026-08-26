@@ -1,0 +1,8 @@
+Impartus Video Downloader
+Version: 0.1.28
+Build Date: 2026-08-26T05:40:52Z
+
+Download lectures and record completed media in the local library.
+
+Usage:
+  impartus download --subject <id> --session <id> [--ttid <id> | --start <n> --end <n>] [flags]

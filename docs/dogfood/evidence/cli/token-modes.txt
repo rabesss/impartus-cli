@@ -1,0 +1,2 @@
+600 /tmp/impartus-dogfood/token
+666 /opt/cursor/artifacts/cli-dogfood/token-cache
