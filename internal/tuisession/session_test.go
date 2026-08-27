@@ -70,11 +70,12 @@ type productProjectionStub struct {
 }
 
 type actionStub struct {
-	download         func(context.Context, client.Lecture) (app.DownloadResult, error)
-	downloadProgress []float64
-	record           func(context.Context, library.PlaybackState) error
-	resume           func(context.Context, client.Lecture) (library.PlaybackState, bool, error)
-	start            func(context.Context, client.Lecture, float64) (app.PlaybackStart, error)
+	download             func(context.Context, client.Lecture) (app.DownloadResult, error)
+	downloadWithProgress func(context.Context, client.Lecture, func(float64)) (app.DownloadResult, error)
+	downloadProgress     []float64
+	record               func(context.Context, library.PlaybackState) error
+	resume               func(context.Context, client.Lecture) (library.PlaybackState, bool, error)
+	start                func(context.Context, client.Lecture, float64) (app.PlaybackStart, error)
 }
 
 type playbackStub struct {
@@ -140,6 +141,9 @@ func (stub actionStub) DownloadLectureWithProgress(
 	lecture client.Lecture,
 	report func(float64),
 ) (app.DownloadResult, error) {
+	if stub.downloadWithProgress != nil {
+		return stub.downloadWithProgress(ctx, lecture, report)
+	}
 	for _, percent := range stub.downloadProgress {
 		report(percent)
 	}
@@ -342,6 +346,103 @@ func TestDownloadOperationReResolvesLectureAndProducesOneTerminal(t *testing.T) 
 		events[2].Type != tuiproto.EventTypeOperationProgress || events[2].Percent == nil || *events[2].Percent != 75 ||
 		events[3].Type != tuiproto.EventTypeOperationCompleted {
 		t.Fatalf("download events = %+v", events)
+	}
+}
+
+func TestDownloadProgressCallbackDoesNotPublishAfterTerminal(t *testing.T) {
+	tests := []struct {
+		name     string
+		terminal tuiproto.EventType
+		cancel   bool
+		err      error
+	}{
+		{name: "completed", terminal: tuiproto.EventTypeOperationCompleted},
+		{name: "failed", terminal: tuiproto.EventTypeOperationFailed, err: errors.New("injected failure")},
+		{name: "canceled", terminal: tuiproto.EventTypeOperationCanceled, cancel: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			backend := &productProjectionStub{lectures: client.Lectures{{InstituteID: 1, SessionID: 2, SubjectID: 3, TTID: 4}}}
+			reporters := make(chan func(float64), 1)
+			entered := make(chan struct{})
+			session, err := tuisession.Start(t.Context(), tuisession.Options{
+				Catalog:  backend,
+				Lectures: backend,
+				Actions: actionStub{downloadWithProgress: func(ctx context.Context, _ client.Lecture, report func(float64)) (app.DownloadResult, error) {
+					reporters <- report
+					close(entered)
+					if test.cancel {
+						<-ctx.Done()
+						return app.DownloadResult{}, ctx.Err()
+					}
+					return app.DownloadResult{LibraryRecorded: true}, test.err
+				}},
+			})
+			if err != nil {
+				t.Fatalf("Start() error = %v", err)
+			}
+			cleanupSession(t, session)
+
+			eventContext, cancelEvents := context.WithCancel(t.Context())
+			defer cancelEvents()
+			eventResponse := eventStreamRequest(eventContext, t, session)
+			defer func() {
+				if closeErr := eventResponse.Body.Close(); closeErr != nil {
+					t.Errorf("close event response body: %v", closeErr)
+				}
+			}()
+			startResponse := sessionRequest(t, session, http.MethodPost, "/operations", tuiproto.OperationRequest{
+				Kind:    tuiproto.OperationKindDownload,
+				Lecture: &tuiproto.LectureIdentity{InstituteID: 1, SessionID: 2, SubjectID: 3, TTID: 4},
+			})
+			defer closeResponseBody(t, startResponse.Body)
+			var operation tuiproto.Operation
+			decodeJSON(t, startResponse, &operation)
+			<-entered
+			if test.cancel {
+				cancelResponse := sessionRequest(t, session, http.MethodDelete, "/operations/"+operation.ID, nil)
+				defer closeResponseBody(t, cancelResponse.Body)
+				if cancelResponse.StatusCode != http.StatusOK {
+					t.Fatalf("DELETE operation status = %d, want %d", cancelResponse.StatusCode, http.StatusOK)
+				}
+			}
+
+			events := readOperationEvents(t, eventResponse, operation.ID)
+			if len(events) != 2 || events[1].Type != test.terminal {
+				t.Fatalf("download events = %+v, want started then %s", events, test.terminal)
+			}
+			report := <-reporters
+			report(90)
+
+			lateEvent := make(chan tuiproto.Event, 1)
+			streamDone := make(chan struct{})
+			go func() {
+				defer close(streamDone)
+				scanner := bufio.NewScanner(eventResponse.Body)
+				for scanner.Scan() {
+					line := scanner.Text()
+					if !strings.HasPrefix(line, "data: ") {
+						continue
+					}
+					var event tuiproto.Event
+					if json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event) == nil && event.OperationID != nil && *event.OperationID == operation.ID {
+						lateEvent <- event
+						return
+					}
+				}
+			}()
+			select {
+			case event := <-lateEvent:
+				t.Fatalf("late progress callback published after %s: %+v", test.name, event)
+			case <-time.After(100 * time.Millisecond):
+			}
+			cancelEvents()
+			select {
+			case <-streamDone:
+			case <-time.After(time.Second):
+				t.Fatal("event stream did not stop after cancellation")
+			}
+		})
 	}
 }
 
