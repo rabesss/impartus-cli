@@ -497,6 +497,68 @@ func TestExecuteNonHelpCompatibilityMatrix(t *testing.T) {
 	}
 }
 
+func TestExecuteHelpDetectionDistinguishesFlagValueFromSentinel(t *testing.T) {
+	tests := []struct {
+		name  string
+		args  []string
+		usage string
+	}{
+		{
+			name:  "download output consumes double dash",
+			args:  []string{"download", "--output", "--", "--help"},
+			usage: "impartus download --subject <id> --session <id>",
+		},
+		{
+			name:  "serve port consumes double dash",
+			args:  []string{"serve", "--port", "--", "--help"},
+			usage: "impartus serve [--port <port>]",
+		},
+		{
+			name:  "watch output consumes double dash before short help",
+			args:  []string{"watch", "--output", "--", "-h"},
+			usage: "impartus watch [--subject <id> --session <id>]",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			restoreCLIState(t)
+			installHelpDispatchSentinels(t)
+			os.Args = append([]string{"impartus"}, test.args...)
+
+			stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+			if err != nil || stderr != "" {
+				t.Fatalf("Execute(%v) stdout/stderr/error = %q/%q/%v", test.args, stdout, stderr, err)
+			}
+			if !strings.Contains(stdout, test.usage) {
+				t.Fatalf("Execute(%v) stdout = %q, want usage %q", test.args, stdout, test.usage)
+			}
+		})
+	}
+}
+
+func TestExecuteHelpFlagConsumedAsOptionValueDoesNotShowHelp(t *testing.T) {
+	restoreCLIState(t)
+	called := false
+	runDownloadFn = func(args []string) error {
+		called = true
+		want := []string{"--output", "--help"}
+		if !slices.Equal(args, want) {
+			t.Fatalf("download args = %v, want %v", args, want)
+		}
+		return errors.New("download dispatched")
+	}
+	os.Args = []string{"impartus", "download", "--output", "--help"}
+
+	stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+	if !called || err == nil || err.Error() != "download dispatched" {
+		t.Fatalf("Execute dispatched=%t error=%v, want download runner error", called, err)
+	}
+	if stdout != "" || stderr != "" {
+		t.Fatalf("Execute stdout/stderr = %q/%q, want empty", stdout, stderr)
+	}
+}
+
 func TestCommandHelpDefinitionsMatchAdvertisedSurface(t *testing.T) {
 	advertised := make(map[string]struct{})
 	for _, command := range helpPayload().Commands {
