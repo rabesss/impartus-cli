@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -716,6 +717,7 @@ type fakeLectureDownloader struct {
 	fetchErr    error
 	downloadErr error
 	afterJoin   func()
+	progress    []float64
 }
 
 func (fake *fakeLectureDownloader) FetchLecturePlaylists(context.Context, []client.Lecture) ([]client.ParsedPlaylist, error) {
@@ -727,6 +729,17 @@ func (fake *fakeLectureDownloader) DownloadAndJoin(context.Context, client.Parse
 		fake.afterJoin()
 	}
 	return fake.joined, fake.downloadErr
+}
+
+func (fake *fakeLectureDownloader) DownloadAndJoinWithProgress(
+	ctx context.Context,
+	playlist client.ParsedPlaylist,
+	report func(float64),
+) (downloader.JoinResult, error) {
+	for _, percent := range fake.progress {
+		report(percent)
+	}
+	return fake.DownloadAndJoin(ctx, playlist)
 }
 
 type fakeArtifactStore struct {
@@ -822,7 +835,8 @@ func TestDownloadLectureBuildsAndCompletesOneArtifact(t *testing.T) {
 			ID: 12345, InstituteID: 4, SubjectID: 67, SessionID: 8, SeqNo: 7, Title: "Consensus",
 			FirstViewURLs: []string{"left"},
 		}},
-		joined: downloader.JoinResult{LeftOutput: output, LeftContainer: "mp4"},
+		joined:   downloader.JoinResult{LeftOutput: output, LeftContainer: "mp4"},
+		progress: []float64{20, 80},
 	}
 	store := &fakeArtifactStore{}
 	service := &Service{
@@ -844,12 +858,18 @@ func TestDownloadLectureBuildsAndCompletesOneArtifact(t *testing.T) {
 		SeqNo:       7,
 	}
 
-	result, err := service.DownloadLecture(context.Background(), lecture)
+	progress := make([]float64, 0, len(downloads.progress))
+	result, err := service.DownloadLectureWithProgress(context.Background(), lecture, func(percent float64) {
+		progress = append(progress, percent)
+	})
 	if err != nil {
 		t.Fatalf("DownloadLecture() error = %v", err)
 	}
 	if !result.LibraryRecorded || result.Warning != "" || len(store.recorded) != 1 {
 		t.Fatalf("download result = %+v, recorded=%d", result, len(store.recorded))
+	}
+	if !slices.Equal(progress, downloads.progress) {
+		t.Fatalf("download progress = %v, want %v", progress, downloads.progress)
 	}
 	if len(store.created) != 1 || len(store.started) != 1 || len(store.completed) != 1 ||
 		store.created[0].ID != store.started[0] || store.started[0] != store.completed[0] {

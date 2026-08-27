@@ -178,6 +178,22 @@ func TestProgressTrackerOptionsControlStatusFields(t *testing.T) {
 	}
 }
 
+func TestProgressTrackerReportsChunkProgress(t *testing.T) {
+	reported := make([]float64, 0, 2)
+	tracker := NewProgressTrackerWithOptions(1, 2, nil, ProgressTrackerOptions{
+		OnProgress: func(percent float64) {
+			reported = append(reported, percent)
+		},
+	})
+	defer tracker.Stop()
+
+	ChunkCompleted(tracker, 10)
+	ChunkCompleted(tracker, 10)
+	if len(reported) != 2 || reported[0] != 50 || reported[1] != 100 {
+		t.Fatalf("reported progress = %v, want [50 100]", reported)
+	}
+}
+
 func TestProgressTrackerOptionsControlIntervalAndWindow(t *testing.T) {
 	const interval = 750 * time.Millisecond
 	pt := NewProgressTrackerWithOptions(1, 8, nil, ProgressTrackerOptions{

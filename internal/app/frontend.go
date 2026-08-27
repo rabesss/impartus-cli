@@ -323,6 +323,20 @@ func (service *Service) ResumeLecture(ctx context.Context, lecture client.Lectur
 // DownloadLecture downloads, decrypts, and joins exactly one selected lecture
 // through a durable local-library job when persistence is available.
 func (service *Service) DownloadLecture(ctx context.Context, lecture client.Lecture) (DownloadResult, error) {
+	return service.downloadLecture(ctx, lecture, nil)
+}
+
+// DownloadLectureWithProgress reports bounded 0-100 progress while preserving
+// the same durable completion and cancellation contract as DownloadLecture.
+func (service *Service) DownloadLectureWithProgress(
+	ctx context.Context,
+	lecture client.Lecture,
+	report func(float64),
+) (DownloadResult, error) {
+	return service.downloadLecture(ctx, lecture, report)
+}
+
+func (service *Service) downloadLecture(ctx context.Context, lecture client.Lecture, report func(float64)) (DownloadResult, error) {
 	if service == nil || service.config == nil || service.downloads == nil {
 		return DownloadResult{}, errors.New("application download service is not configured")
 	}
@@ -354,7 +368,7 @@ func (service *Service) DownloadLecture(ctx context.Context, lecture client.Lect
 			return DownloadResult{}, errors.Join(fmt.Errorf("start durable download job: %w", startErr), failErr)
 		}
 	}
-	joined, err := service.downloads.DownloadAndJoin(ctx, playlists[0])
+	joined, err := service.downloadAndJoin(ctx, playlists[0], report)
 	if err != nil {
 		return DownloadResult{}, errors.Join(err, service.finishDownloadJob(ctx, jobID, err))
 	}
@@ -378,6 +392,17 @@ func (service *Service) DownloadLecture(ctx context.Context, lecture client.Lect
 	}
 	result.LibraryRecorded = true
 	return result, nil
+}
+
+func (service *Service) downloadAndJoin(
+	ctx context.Context,
+	playlist client.ParsedPlaylist,
+	report func(float64),
+) (downloader.JoinResult, error) {
+	if progressive, ok := service.downloads.(progressiveLectureDownloads); ok && report != nil {
+		return progressive.DownloadAndJoinWithProgress(ctx, playlist, report)
+	}
+	return service.downloads.DownloadAndJoin(ctx, playlist)
 }
 
 func (service *Service) finishDownloadJob(ctx context.Context, jobID string, cause error) error {

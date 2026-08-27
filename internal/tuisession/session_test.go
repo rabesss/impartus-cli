@@ -70,10 +70,11 @@ type productProjectionStub struct {
 }
 
 type actionStub struct {
-	download func(context.Context, client.Lecture) (app.DownloadResult, error)
-	record   func(context.Context, library.PlaybackState) error
-	resume   func(context.Context, client.Lecture) (library.PlaybackState, bool, error)
-	start    func(context.Context, client.Lecture, float64) (app.PlaybackStart, error)
+	download         func(context.Context, client.Lecture) (app.DownloadResult, error)
+	downloadProgress []float64
+	record           func(context.Context, library.PlaybackState) error
+	resume           func(context.Context, client.Lecture) (library.PlaybackState, bool, error)
+	start            func(context.Context, client.Lecture, float64) (app.PlaybackStart, error)
 }
 
 type playbackStub struct {
@@ -132,6 +133,17 @@ func (stub *playbackStub) Close(context.Context) error {
 
 func (stub actionStub) DownloadLecture(ctx context.Context, lecture client.Lecture) (app.DownloadResult, error) {
 	return stub.download(ctx, lecture)
+}
+
+func (stub actionStub) DownloadLectureWithProgress(
+	ctx context.Context,
+	lecture client.Lecture,
+	report func(float64),
+) (app.DownloadResult, error) {
+	for _, percent := range stub.downloadProgress {
+		report(percent)
+	}
+	return stub.DownloadLecture(ctx, lecture)
 }
 
 func (stub actionStub) RecordPlayback(ctx context.Context, state library.PlaybackState) error {
@@ -282,10 +294,13 @@ func TestDownloadOperationReResolvesLectureAndProducesOneTerminal(t *testing.T) 
 	session, err := tuisession.Start(t.Context(), tuisession.Options{
 		Catalog:  backend,
 		Lectures: backend,
-		Actions: actionStub{download: func(_ context.Context, lecture client.Lecture) (app.DownloadResult, error) {
-			downloaded <- lecture
-			return app.DownloadResult{LibraryRecorded: true}, nil
-		}},
+		Actions: actionStub{
+			download: func(_ context.Context, lecture client.Lecture) (app.DownloadResult, error) {
+				downloaded <- lecture
+				return app.DownloadResult{LibraryRecorded: true}, nil
+			},
+			downloadProgress: []float64{25, 75},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Start() error = %v", err)
@@ -322,7 +337,10 @@ func TestDownloadOperationReResolvesLectureAndProducesOneTerminal(t *testing.T) 
 		t.Fatal("download operation did not reach the action service")
 	}
 	events := readOperationEvents(t, eventResponse, operation.ID)
-	if len(events) != 2 || events[0].Type != tuiproto.EventTypeOperationStarted || events[1].Type != tuiproto.EventTypeOperationCompleted {
+	if len(events) != 4 || events[0].Type != tuiproto.EventTypeOperationStarted ||
+		events[1].Type != tuiproto.EventTypeOperationProgress || events[1].Percent == nil || *events[1].Percent != 25 ||
+		events[2].Type != tuiproto.EventTypeOperationProgress || events[2].Percent == nil || *events[2].Percent != 75 ||
+		events[3].Type != tuiproto.EventTypeOperationCompleted {
 		t.Fatalf("download events = %+v", events)
 	}
 }

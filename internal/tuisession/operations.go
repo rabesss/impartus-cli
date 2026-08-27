@@ -45,6 +45,10 @@ type operationRegistry struct {
 	wait       sync.WaitGroup
 }
 
+type progressiveDownloadActions interface {
+	DownloadLectureWithProgress(context.Context, client.Lecture, func(float64)) (app.DownloadResult, error)
+}
+
 func newOperationRegistry(ctx context.Context, events *hub, options SelfTestOptions, actions Actions) *operationRegistry {
 	if options.Steps <= 0 {
 		options.Steps = defaultSelfTestSteps
@@ -163,7 +167,13 @@ func (registry *operationRegistry) runSelfTest(ctx context.Context, entry *opera
 func (registry *operationRegistry) runDownload(ctx context.Context, entry *operationEntry, lecture client.Lecture) {
 	defer registry.wait.Done()
 	defer close(entry.done)
-	result, err := registry.actions.DownloadLecture(ctx, lecture)
+	var result app.DownloadResult
+	var err error
+	if actions, ok := registry.actions.(progressiveDownloadActions); ok {
+		result, err = actions.DownloadLectureWithProgress(ctx, lecture, registry.downloadProgressReporter(entry))
+	} else {
+		result, err = registry.actions.DownloadLecture(ctx, lecture)
+	}
 	if ctx.Err() != nil {
 		registry.finish(entry, tuiproto.OperationStateCanceled, tuiproto.EventTypeOperationCanceled, "")
 		return
@@ -177,6 +187,32 @@ func (registry *operationRegistry) runDownload(ctx context.Context, entry *opera
 		message = "download completed with a local library warning"
 	}
 	registry.finish(entry, tuiproto.OperationStateCompleted, tuiproto.EventTypeOperationCompleted, message)
+}
+
+func (registry *operationRegistry) downloadProgressReporter(entry *operationEntry) func(float64) {
+	var mu sync.Mutex
+	last := float64(0)
+	return func(percent float64) {
+		if math.IsNaN(percent) || math.IsInf(percent, 0) {
+			return
+		}
+		percent = max(0, min(100, percent))
+		mu.Lock()
+		if percent <= last || (last > 0 && percent < 100 && percent-last < 2) {
+			mu.Unlock()
+			return
+		}
+		last = percent
+		mu.Unlock()
+		state := tuiproto.OperationStateRunning
+		identifier := entry.operation.ID
+		registry.events.publish(tuiproto.Event{
+			OperationID: &identifier,
+			Percent:     &percent,
+			State:       &state,
+			Type:        tuiproto.EventTypeOperationProgress,
+		})
+	}
 }
 
 func (registry *operationRegistry) runPlayback(ctx context.Context, entry *operationEntry, lecture client.Lecture, resume bool) {

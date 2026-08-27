@@ -365,6 +365,24 @@ func (d *Downloader) DownloadAndJoin(ctx context.Context, playlist client.Parsed
 	return d.DownloadAndJoinPlaylist(ctx, playlist, nil, nil)
 }
 
+// DownloadAndJoinWithProgress downloads one playlist and reports progress from
+// the same tracker used by the CLI downloader path.
+func (d *Downloader) DownloadAndJoinWithProgress(
+	ctx context.Context,
+	playlist client.ParsedPlaylist,
+	report func(float64),
+) (JoinResult, error) {
+	tracker := NewProgressTrackerWithOptions(1, d.totalChunksForPlaylist(playlist), nil, ProgressTrackerOptions{
+		OnProgress: report,
+	})
+	defer tracker.Stop()
+	result, err := d.DownloadAndJoinPlaylist(ctx, playlist, nil, tracker)
+	if err == nil {
+		LectureCompleted(tracker)
+	}
+	return result, err
+}
+
 // JoinLectureOutput joins the chunks described by the M3U8 file into final output.
 func (d *Downloader) JoinLectureOutput(ctx context.Context, file M3U8File) (JoinResult, error) {
 	if d.config.AudioOnly {
