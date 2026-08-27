@@ -24,7 +24,8 @@ import (
 )
 
 type tuiRemoteStub struct {
-	courseName string
+	courseName       string
+	downloadProgress []float64
 }
 
 func (stub *tuiRemoteStub) Courses(context.Context) (client.Courses, error) {
@@ -37,6 +38,17 @@ func (stub *tuiRemoteStub) Lectures(context.Context, client.Course) (client.Lect
 
 func (stub *tuiRemoteStub) DownloadLecture(context.Context, client.Lecture) (app.DownloadResult, error) {
 	return app.DownloadResult{}, nil
+}
+
+func (stub *tuiRemoteStub) DownloadLectureWithProgress(
+	_ context.Context,
+	_ client.Lecture,
+	report func(float64),
+) (app.DownloadResult, error) {
+	for _, percent := range stub.downloadProgress {
+		report(percent)
+	}
+	return app.DownloadResult{LibraryRecorded: true}, nil
 }
 
 func (stub *tuiRemoteStub) RecordPlayback(context.Context, library.PlaybackState) error {
@@ -103,6 +115,32 @@ func TestTUIAuthenticationCoordinatorDoesNotBuildWithoutCredentialsAndRecoversIn
 	courses, err := coordinator.Courses(t.Context())
 	if err != nil || len(courses) != 1 || courses[0].SubjectName != "Recovered" {
 		t.Fatalf("Courses() = (%+v, %v)", courses, err)
+	}
+}
+
+func TestTUIAuthenticationCoordinatorForwardsDownloadProgress(t *testing.T) {
+	service := &tuiRemoteStub{downloadProgress: []float64{20, 80}}
+	coordinator := newTUIAuthenticationCoordinator(
+		&tuiArtifactStoreStub{},
+		func() (*config.Config, error) { return &config.Config{Username: "user", Password: "password"}, nil },
+		func(context.Context, *config.Config) (tuiRemoteService, error) { return service, nil },
+	)
+	if err := coordinator.Retry(t.Context()); err != nil {
+		t.Fatalf("Retry() error = %v", err)
+	}
+
+	var progress []float64
+	result, err := coordinator.DownloadLectureWithProgress(t.Context(), client.Lecture{}, func(percent float64) {
+		progress = append(progress, percent)
+	})
+	if err != nil {
+		t.Fatalf("DownloadLectureWithProgress() error = %v", err)
+	}
+	if !result.LibraryRecorded {
+		t.Fatal("DownloadLectureWithProgress() lost the service result")
+	}
+	if fmt.Sprint(progress) != "[20 80]" {
+		t.Fatalf("download progress = %v, want [20 80]", progress)
 	}
 }
 

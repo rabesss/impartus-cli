@@ -76,9 +76,10 @@ export class FoundationView {
   #courseLabels: ReadonlyMap<Course, string>
   #state: FoundationState
   #tree: BoxRenderable | undefined
+  #blockedCommandReason: string | undefined
   #focus: PaneFocus = "collection"
   #filtering = false
-  #helpCursor = 0
+  #helpOffset = 0
   #navigationCursor = 0
   #wideNavigationPreviousFocus: PaneFocus | undefined
   #overlays: OverlayState[] = []
@@ -99,6 +100,7 @@ export class FoundationView {
     const next = normalizeState(state)
     if (!sameCourseCatalog(this.#state.courses, next.courses)) this.#courseLabels = courseLabels(next.courses)
     this.#state = next
+    this.#blockedCommandReason = undefined
     this.#transitionFocus(effectiveFocus(this.#focus, this.#layout()))
     this.#paletteCursor = clamp(this.#paletteCursor, 0, Math.max(0, this.#paletteMatches().length - 1))
     this.#rebuild()
@@ -121,6 +123,10 @@ export class FoundationView {
 
   readonly #onKeyPress = (key: KeyEvent): void => {
     const normalized = normalizedKey(key)
+    if (this.#blockedCommandReason !== undefined) {
+      this.#blockedCommandReason = undefined
+      this.#rebuild()
+    }
     if (normalized === "ctrl+c") {
       this.#callbacks.onQuit()
       return
@@ -139,9 +145,12 @@ export class FoundationView {
         this.#closeOverlay()
       } else if (["up", "down", "j", "k"].includes(normalized)) {
         const commands = commandsForHelp(this.#commandContext())
-        if (commands.length > 0) {
+        const rows = helpPageSize(commands.length, this.#renderer.terminalHeight)
+        const maximumOffset = Math.max(0, commands.length - rows)
+        if (maximumOffset > 0) {
           const delta = normalized === "up" || normalized === "k" ? -1 : 1
-          this.#helpCursor = (this.#helpCursor + delta + commands.length) % commands.length
+          const offset = clamp(this.#helpOffset, 0, maximumOffset)
+          this.#helpOffset = (offset + delta + maximumOffset + 1) % (maximumOffset + 1)
           this.#rebuild()
         }
       }
@@ -161,7 +170,9 @@ export class FoundationView {
     const result = commandForKey(this.#commandContext(), normalized)
     if (result?.availability.enabled === true) this.#dispatch(result.command.id, normalized)
     else if (result?.availability.visible === true && result.availability.reason !== "") {
+      this.#blockedCommandReason = result.availability.reason
       this.#callbacks.onBlockedCommand(result.availability.reason)
+      this.#rebuild()
     }
   }
 
@@ -249,7 +260,7 @@ export class FoundationView {
           this.#rebuild()
         } else this.#openOverlay("navigation")
         return
-      case "overlay.help": this.#helpCursor = 0; this.#openOverlay("help"); return
+      case "overlay.help": this.#helpOffset = 0; this.#openOverlay("help"); return
       case "overlay.palette":
         this.#paletteQuery = ""
         this.#paletteCursor = 0
@@ -350,7 +361,7 @@ export class FoundationView {
   }
 
   #layout(): WorkspaceLayout {
-    return calculateLayout(this.#renderer.terminalWidth, this.#renderer.terminalHeight, hasActivity(this.#state))
+    return calculateLayout(this.#renderer.terminalWidth, this.#renderer.terminalHeight, hasActivity(this.#state) || this.#blockedCommandReason !== undefined)
   }
 
   #rebuild(): void {
@@ -382,9 +393,9 @@ export class FoundationView {
     const header = new BoxRenderable(this.#renderer, { alignItems: "center", border: ["bottom"], borderColor: COLORS.border, flexDirection: "row", height, justifyContent: "space-between", paddingX: 2, width: "100%" })
     const narrowRecovery = this.#state.authStatus !== "ready" && this.#renderer.terminalWidth < 60
     const title = narrowRecovery ? "IMPARTUS  /  Workspace" : `IMPARTUS  /  ${screenTitle(this.#state.screen)}`
-    const status = this.#state.authStatus !== "ready" && this.#renderer.terminalWidth < 100 ? "Auth unavailable" : this.#state.status
+    const status = this.#blockedCommandReason ?? (this.#state.authStatus !== "ready" && this.#renderer.terminalWidth < 100 ? "Auth unavailable" : this.#state.status)
     header.add(text(this.#renderer, title, COLORS.foreground, TextAttributes.BOLD))
-    header.add(text(this.#renderer, `● ${status}`, this.#state.status === "Connected" ? COLORS.success : COLORS.warning))
+    header.add(text(this.#renderer, `● ${status}`, status === "Connected" ? COLORS.success : COLORS.warning))
     return header
   }
 
@@ -582,7 +593,8 @@ export class FoundationView {
   #activityDock(height: number): BoxRenderable {
     const dock = new BoxRenderable(this.#renderer, { border: ["top"], borderColor: this.#focus === "activity" ? COLORS.accent : COLORS.border, flexDirection: "row", height, justifyContent: "space-between", paddingX: 2, width: "100%" })
     const operation = this.#state.operation
-    dock.add(text(this.#renderer, `${this.#focus === "activity" ? "[ACTIVE] " : ""}${this.#state.error ?? this.#state.status}`, this.#state.error === undefined ? COLORS.dim : COLORS.danger))
+    const status = this.#blockedCommandReason ?? this.#state.error ?? this.#state.status
+    dock.add(text(this.#renderer, `${this.#focus === "activity" ? "[ACTIVE] " : ""}${status}`, this.#state.error === undefined ? COLORS.dim : COLORS.danger))
     if (operation !== undefined) dock.add(text(this.#renderer, `${operation.kind} ${operation.state} ${Math.round(operation.percent)}%`, COLORS.accent))
     return dock
   }
@@ -618,13 +630,15 @@ export class FoundationView {
   #helpOverlay(width: number, height: number): BoxRenderable {
     const commands = commandsForHelp(this.#commandContext())
     const overlay = overlayBox(this.#renderer, "Command guide", width, height, commands.length + 5)
-    const visible = visibleRange(commands, this.#helpCursor, Math.max(1, overlay.height - 5))
-    for (const entry of visible.items) {
+    const rows = Math.max(1, overlay.height - 5)
+    const offset = clamp(this.#helpOffset, 0, Math.max(0, commands.length - rows))
+    const visible = commands.slice(offset, offset + rows)
+    for (const entry of visible) {
       const reason = entry.availability.enabled || entry.availability.reason === "" ? "" : ` — ${entry.availability.reason}`
-      overlay.add(text(this.#renderer, `${entry.command.keys.join("/").padEnd(12)} ${entry.command.label}${reason}`, entry.availability.enabled ? COLORS.foreground : COLORS.dim))
+      overlay.add(singleLineText(this.#renderer, `${entry.command.keys.join("/").padEnd(12)} ${entry.command.label}${reason}`, entry.availability.enabled ? COLORS.foreground : COLORS.dim))
     }
-    const first = commands.length === 0 ? 0 : visible.offset + 1
-    const last = visible.offset + visible.items.length
+    const first = commands.length === 0 ? 0 : offset + 1
+    const last = offset + visible.length
     overlay.add(text(this.#renderer, `↑↓ scroll ${first}-${last}/${commands.length}   Esc close`, COLORS.dim))
     return overlay
   }
@@ -718,6 +732,10 @@ function text(renderer: CliRenderer, content: string, color: string, attributes 
   return new TextRenderable(renderer, { attributes, content, fg: color, height: content === "" ? 1 : "auto", wrapMode: "word", width: "100%" })
 }
 
+function singleLineText(renderer: CliRenderer, content: string, color: string): TextRenderable {
+  return new TextRenderable(renderer, { content, fg: color, height: 1, truncate: true, width: "100%" })
+}
+
 export function lectureAudioLabel(noAudio: boolean): string { return noAudio ? "🎙️× probably no audio" : "🎙️ audio reported" }
 export function courseRailLabels(courses: readonly Course[]): ReadonlyMap<Course, string> { return courseLabels(courses) }
 
@@ -769,6 +787,7 @@ function normalizedKey(key: KeyEvent): string {
 
 function printableInput(key: KeyEvent): boolean { return !key.ctrl && !key.meta && !key.option && graphemes(key.sequence).length === 1 && key.sequence >= " " && key.sequence !== "\u007f" }
 function visibleRange<T>(items: readonly T[], selected: number, rows: number): { items: readonly T[]; offset: number } { const count = Math.max(1, rows); const offset = selected >= count ? selected - count + 1 : 0; return { items: items.slice(offset, offset + count), offset } }
+function helpPageSize(commandCount: number, terminalHeight: number): number { return Math.max(1, Math.min(commandCount + 5, terminalHeight - 2) - 5) }
 function normalizedCourseName(value: string): string { return value.replace(/\s+/gu, " ").trim() }
 
 function commonLeadingTokens(values: readonly string[]): number {

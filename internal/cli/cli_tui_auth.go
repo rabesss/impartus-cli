@@ -32,6 +32,7 @@ type tuiRemoteService interface {
 	Courses(context.Context) (client.Courses, error)
 	Lectures(context.Context, client.Course) (client.Lectures, error)
 	DownloadLecture(context.Context, client.Lecture) (app.DownloadResult, error)
+	DownloadLectureWithProgress(context.Context, client.Lecture, func(float64)) (app.DownloadResult, error)
 	RecordPlayback(context.Context, library.PlaybackState) error
 	ResumeLecture(context.Context, client.Lecture) (library.PlaybackState, bool, error)
 	StartLecture(context.Context, client.Lecture, float64) (app.PlaybackStart, error)
@@ -182,6 +183,18 @@ func (coordinator *tuiAuthenticationCoordinator) DownloadLecture(ctx context.Con
 		return app.DownloadResult{}, err
 	}
 	return service.DownloadLecture(ctx, lecture)
+}
+
+func (coordinator *tuiAuthenticationCoordinator) DownloadLectureWithProgress(
+	ctx context.Context,
+	lecture client.Lecture,
+	report func(float64),
+) (app.DownloadResult, error) {
+	service, err := coordinator.snapshot()
+	if err != nil {
+		return app.DownloadResult{}, err
+	}
+	return service.DownloadLectureWithProgress(ctx, lecture, report)
 }
 
 func (coordinator *tuiAuthenticationCoordinator) RecordPlayback(ctx context.Context, state library.PlaybackState) error {
