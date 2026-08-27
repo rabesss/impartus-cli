@@ -124,6 +124,9 @@ type Options struct {
 	Version string
 	// EventQueueDepth bounds per-client event delivery. Zero uses the default.
 	EventQueueDepth int
+	// EventHeartbeatInterval keeps idle SSE connections alive. A non-positive
+	// interval uses the production default.
+	EventHeartbeatInterval time.Duration
 	// SelfTest tunes the cancellable operation seam.
 	SelfTest SelfTestOptions
 }
@@ -135,15 +138,16 @@ type Session struct {
 	address    string
 	version    string
 
-	listener    net.Listener
-	server      *http.Server
-	catalog     Catalog
-	lectures    LectureCatalog
-	artifacts   ArtifactCatalog
-	auth        Authentication
-	diagnostics []tuiproto.Diagnostic
-	events      *hub
-	operations  *operationRegistry
+	listener               net.Listener
+	server                 *http.Server
+	catalog                Catalog
+	lectures               LectureCatalog
+	artifacts              ArtifactCatalog
+	auth                   Authentication
+	diagnostics            []tuiproto.Diagnostic
+	events                 *hub
+	operations             *operationRegistry
+	eventHeartbeatInterval time.Duration
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -187,21 +191,26 @@ func newSession(ctx context.Context, listener net.Listener, options Options) (*S
 		return nil, fmt.Errorf("generate tui session identity: %w", err)
 	}
 	sessionCtx, cancel := context.WithCancel(ctx)
+	heartbeatInterval := options.EventHeartbeatInterval
+	if heartbeatInterval <= 0 {
+		heartbeatInterval = defaultHeartbeat
+	}
 	session := &Session{
-		id:          identity,
-		capability:  capability,
-		address:     listener.Addr().String(),
-		version:     options.Version,
-		listener:    listener,
-		catalog:     options.Catalog,
-		lectures:    options.Lectures,
-		artifacts:   options.Artifacts,
-		auth:        options.Authentication,
-		diagnostics: projectDiagnostics(options.Diagnostics),
-		events:      newHub(options.EventQueueDepth),
-		ctx:         sessionCtx,
-		cancel:      cancel,
-		serveErr:    make(chan error, 1),
+		id:                     identity,
+		capability:             capability,
+		address:                listener.Addr().String(),
+		version:                options.Version,
+		listener:               listener,
+		catalog:                options.Catalog,
+		lectures:               options.Lectures,
+		artifacts:              options.Artifacts,
+		auth:                   options.Authentication,
+		diagnostics:            projectDiagnostics(options.Diagnostics),
+		events:                 newHub(options.EventQueueDepth),
+		eventHeartbeatInterval: heartbeatInterval,
+		ctx:                    sessionCtx,
+		cancel:                 cancel,
+		serveErr:               make(chan error, 1),
 	}
 	session.id = identity
 	session.operations = newOperationRegistry(sessionCtx, session.events, options.SelfTest, options.Actions)
