@@ -114,7 +114,7 @@ func resolveCommandHelp(args []string) (commandHelp, bool) {
 		help, ok := commandHelpByName[name]
 		return help, ok
 	}
-	if !hasHelpBeforeSentinel(args[1:]) {
+	if !hasHelpBeforeSentinel(args[0], args[1:]) {
 		return commandHelp{}, false
 	}
 	name := args[0]
@@ -179,8 +179,13 @@ func isExplicitHelpCommand(argument string) bool {
 	}
 }
 
-func hasHelpBeforeSentinel(args []string) bool {
-	for _, argument := range args {
+func hasHelpBeforeSentinel(command string, args []string) bool {
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		if commandFlagConsumesNextValue(command, argument) {
+			index++
+			continue
+		}
 		if argument == "--" {
 			return false
 		}
