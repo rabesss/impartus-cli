@@ -221,6 +221,11 @@ func TestValidatePlayFlagsRejectsPartialDirectSelection(t *testing.T) {
 			in:   playFlags{mpvMode: "automatic"},
 			want: "mpv mode",
 		},
+		{
+			name: "invalid quality before playback startup",
+			in:   playFlags{quality: "1080", mpvMode: "ipc"},
+			want: `invalid quality value "1080"`,
+		},
 	}
 
 	for _, tt := range tests {

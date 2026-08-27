@@ -147,6 +147,9 @@ func executeDownloadWithDependenciesContext(ctx context.Context, args []string, 
 	if err != nil {
 		return downloadResult{}, err
 	}
+	if _, validationErr := applyAndValidateFlags(&config.Config{}, f.quality, f.views, f.audioOnly, f.audioOnlySet, f.format, f.output, f.skipNoAudio); validationErr != nil {
+		return downloadResult{}, validationErr
+	}
 
 	if ffmpegErr := deps.ensureFFmpeg(); ffmpegErr != nil {
 		return downloadResult{}, ffmpegErr

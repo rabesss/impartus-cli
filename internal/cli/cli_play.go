@@ -140,7 +140,8 @@ func validatePlayFlags(f playFlags) error {
 	if f.mpvMode != "" && f.mpvMode != "ipc" && f.mpvMode != "legacy" {
 		return errors.New("play mpv mode must be ipc or legacy")
 	}
-	return nil
+	_, err := applyAndValidateFlags(&config.Config{}, f.quality, f.views, false, false, "", "", f.skipNoAudio)
+	return err
 }
 
 func runPlayInteractive(ctx context.Context, cfg *config.Config, apiClient *client.Client, mpvMode string) error {

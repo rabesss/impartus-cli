@@ -108,3 +108,23 @@ func TestInvalidExplicitDownloadRangeStopsBeforePreflight(t *testing.T) {
 		})
 	}
 }
+
+func TestInvalidDownloadOverridesStopBeforePreflight(t *testing.T) {
+	_, err := executeDownloadWithDependencies(
+		[]string{"-s", "1", "-S", "2", "--quality", "1080"},
+		quietDownloadPresentation(),
+		downloadExecutionDependencies{
+			ensureFFmpeg: func() error {
+				t.Fatal("invalid quality reached FFmpeg preflight")
+				return nil
+			},
+			initClient: func(context.Context) (*config.Config, *client.Client, error) {
+				t.Fatal("invalid quality reached client login")
+				return nil, nil, nil
+			},
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), `invalid quality value "1080"`) {
+		t.Fatalf("executeDownloadWithDependencies() error = %v, want invalid quality", err)
+	}
+}
