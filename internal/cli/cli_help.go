@@ -10,6 +10,25 @@ type commandHelp struct {
 	command     string
 	description string
 	usage       []string
+	flags       []string
+}
+
+var downloadCommandHelpFlags = []string{
+	"--subject,-s <id>    Subject ID",
+	"--session,-S <id>    Session ID",
+	"--ttid <id>          Exact lecture TTID; cannot be combined with --start/--end",
+	"--start <n>          Start lecture index (1-based)",
+	"--end <n>            End lecture index (1-based)",
+	"--quality <value>    Quality override: 144, 450, or 720",
+	"--views <value>      View override: first, second, both, left, or right",
+	"--audio-only         Enable audio-only mode",
+	"--format <value>     Audio format override: mp3, m4a, aac, or opus",
+	"--output,-o <path>   Output directory",
+	"--skip-no-audio      Skip lectures with no audio track",
+	"--include-noaudio    Include lectures with no audio track",
+	"--events             Emit newline-delimited JSON lifecycle events",
+	"--json               Emit one JSON result envelope",
+	"--help,-h            Show command help",
 }
 
 var commandHelpByName = map[string]commandHelp{
@@ -34,6 +53,7 @@ var commandHelpByName = map[string]commandHelp{
 		usage: []string{
 			"impartus download --subject <id> --session <id> [--ttid <id> | --start <n> --end <n>] [flags]",
 		},
+		flags: downloadCommandHelpFlags,
 	},
 	"play": {
 		command:     "play",
@@ -87,7 +107,14 @@ var commandHelpByName = map[string]commandHelp{
 }
 
 func resolveCommandHelp(args []string) (commandHelp, bool) {
-	if len(args) == 0 || !hasHelpBeforeSentinel(args[1:]) {
+	if len(args) == 0 {
+		return commandHelp{}, false
+	}
+	if args[0] == "help" && len(args) == 2 {
+		help, ok := commandHelpByName[args[1]]
+		return help, ok
+	}
+	if !hasHelpBeforeSentinel(args[1:]) {
 		return commandHelp{}, false
 	}
 	name := args[0]
@@ -128,6 +155,16 @@ func showCommandHelp(output io.Writer, version, date string, help commandHelp) e
 	for _, usage := range help.usage {
 		if _, err := fmt.Fprintf(output, "  %s\n", usage); err != nil {
 			return err
+		}
+	}
+	if len(help.flags) > 0 {
+		if _, err := fmt.Fprintln(output, "\nFlags:"); err != nil {
+			return err
+		}
+		for _, flag := range help.flags {
+			if _, err := fmt.Fprintf(output, "  %s\n", flag); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

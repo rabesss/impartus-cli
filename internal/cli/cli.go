@@ -70,7 +70,7 @@ func executeHuman(args []string, version, date string) error {
 	case "version", "--version", "-version", "-v":
 		return executeHumanVersion(args, version, date)
 	case "help", "--help", "-help", "-h":
-		return showHelp(version, date)
+		return executeHumanRootHelp(args, version, date)
 	case "courses":
 		return runCoursesFn(args[1:])
 	case "lectures":
@@ -97,6 +97,13 @@ func executeHuman(args []string, version, date string) error {
 	}
 }
 
+func executeHumanRootHelp(args []string, version, date string) error {
+	if len(args) > 1 && args[1] != "--help" && args[1] != "-h" {
+		return fmt.Errorf("unknown command: %s", args[1])
+	}
+	return showHelp(version, date)
+}
+
 func executeHumanVersion(args []string, version, date string) error {
 	if len(args) > 1 {
 		return fmt.Errorf("version does not accept positional arguments")
@@ -120,7 +127,7 @@ func executeJSON(args []string, version, date string) error {
 	case "version", "--version", "-version", "-v":
 		return executeJSONVersion(args, version, date)
 	case "help", "--help", "-help", "-h":
-		return emitJSONEnvelope(newSuccessEnvelope("help", helpPayload()))
+		return executeJSONRootHelp(args)
 	case "courses":
 		return executeJSONCourses(args[1:])
 	case "lectures":
@@ -142,6 +149,13 @@ func executeJSON(args []string, version, date string) error {
 	default:
 		return newJSONError(command, fmt.Errorf("unknown command: %s", command))
 	}
+}
+
+func executeJSONRootHelp(args []string) error {
+	if len(args) > 1 && args[1] != "--help" && args[1] != "-h" {
+		return newJSONError("help", fmt.Errorf("unknown command: %s", args[1]))
+	}
+	return emitJSONEnvelope(newSuccessEnvelope("help", helpPayload()))
 }
 
 func executeJSONVersion(args []string, version, date string) error {

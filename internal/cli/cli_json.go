@@ -55,6 +55,7 @@ type commandHelpPayload struct {
 	Command     string   `json:"command"`
 	Description string   `json:"description"`
 	Usage       []string `json:"usage"`
+	Flags       []string `json:"flags,omitempty"`
 }
 
 type versionPayload struct {
@@ -68,6 +69,7 @@ func newCommandHelpPayload(help commandHelp) commandHelpPayload {
 		Command:     help.command,
 		Description: help.description,
 		Usage:       append([]string(nil), help.usage...),
+		Flags:       append([]string(nil), help.flags...),
 	}
 }
 

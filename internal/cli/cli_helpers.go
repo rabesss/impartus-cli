@@ -124,6 +124,12 @@ func showHelpTo(output io.Writer, version, date string) error {
 			return err
 		}
 	}
+	if _, err := fmt.Fprintln(output, "\nGlobal Flags:"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(output, "  --json               Emit one machine-readable JSON envelope"); err != nil {
+		return err
+	}
 	if _, err := fmt.Fprintln(output, "\nDownload / Play Flags:"); err != nil {
 		return err
 	}

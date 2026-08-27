@@ -103,6 +103,7 @@ func TestExecuteHumanCommandHelpMatrix(t *testing.T) {
 		{name: "root long", args: []string{"--help"}, usage: "impartus [command] [flags]"},
 		{name: "root short", args: []string{"-h"}, usage: "impartus [command] [flags]"},
 		{name: "help command", args: []string{"help"}, usage: "impartus [command] [flags]"},
+		{name: "help download", args: []string{"help", "download"}, usage: "impartus download --subject <id> --session <id>"},
 		{name: "help command short", args: []string{"help", "-h"}, usage: "impartus [command] [flags]"},
 		{name: "help command long", args: []string{"help", "--help"}, usage: "impartus [command] [flags]"},
 		{name: "courses", args: []string{"courses", "--help"}, usage: "impartus courses"},
@@ -169,6 +170,64 @@ func TestExecuteHumanCommandHelpMatrix(t *testing.T) {
 				t.Fatalf("Execute(%v) created state directory or returned unexpected stat error: %v", test.args, statErr)
 			}
 		})
+	}
+}
+
+func TestExecuteDownloadHelpFormsMatchAndListFlags(t *testing.T) {
+	restoreCLIState(t)
+	installHelpDispatchSentinels(t)
+	outputs := make([]string, 0, 2)
+	for _, args := range [][]string{{"help", "download"}, {"download", "--help"}} {
+		os.Args = append([]string{"impartus"}, args...)
+		stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+		if err != nil || stderr != "" {
+			t.Fatalf("Execute(%v) stdout/stderr/error = %q/%q/%v", args, stdout, stderr, err)
+		}
+		for _, want := range []string{"Flags:", "--subject,-s", "--session,-S", "--start", "--quality", "--json"} {
+			if !strings.Contains(stdout, want) {
+				t.Fatalf("Execute(%v) output omitted %q: %q", args, want, stdout)
+			}
+		}
+		outputs = append(outputs, stdout)
+	}
+	if outputs[0] != outputs[1] {
+		t.Fatalf("help download and download --help differ:\nhelp=%q\nflag=%q", outputs[0], outputs[1])
+	}
+}
+
+func TestExecuteJSONHelpDownloadListsFlags(t *testing.T) {
+	restoreCLIState(t)
+	installHelpDispatchSentinels(t)
+	os.Args = []string{"impartus", "help", "download", "--json"}
+	stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+	if err != nil || stderr != "" {
+		t.Fatalf("Execute(help download --json) stdout/stderr/error = %q/%q/%v", stdout, stderr, err)
+	}
+	var envelope struct {
+		Data struct {
+			Command string   `json:"command"`
+			Flags   []string `json:"flags"`
+		} `json:"data"`
+	}
+	if decodeErr := json.Unmarshal([]byte(stdout), &envelope); decodeErr != nil {
+		t.Fatalf("decode command help: %v; stdout=%q", decodeErr, stdout)
+	}
+	if envelope.Data.Command != "download" || !slices.ContainsFunc(envelope.Data.Flags, func(flag string) bool {
+		return strings.HasPrefix(flag, "--subject,-s")
+	}) || !slices.ContainsFunc(envelope.Data.Flags, func(flag string) bool {
+		return strings.HasPrefix(flag, "--json")
+	}) {
+		t.Fatalf("JSON download help = %+v, want command and flags", envelope.Data)
+	}
+}
+
+func TestRootHelpListsJSONAsGlobalFlag(t *testing.T) {
+	var output strings.Builder
+	if err := showHelpTo(&output, "v1", "d1"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "Global Flags:\n  --json") {
+		t.Fatalf("root help does not list --json as a global flag: %q", output.String())
 	}
 }
 
@@ -307,7 +366,7 @@ func TestExecuteJSONCommandHelpMatrix(t *testing.T) {
 				if decodeErr := json.Unmarshal([]byte(stdout), &envelope); decodeErr != nil {
 					t.Fatalf("decode Execute(%v): %v; stdout=%q", args, decodeErr, stdout)
 				}
-				if !envelope.Success || envelope.Error != nil || envelope.Meta.Command != "help" || envelope.Meta.Mode != "json" || len(envelope.Data) != 3 {
+				if !envelope.Success || envelope.Error != nil || envelope.Meta.Command != "help" || envelope.Meta.Mode != "json" || len(envelope.Data) < 3 || len(envelope.Data) > 4 {
 					t.Fatalf("Execute(%v) envelope = %+v", args, envelope)
 				}
 				var command, description string
