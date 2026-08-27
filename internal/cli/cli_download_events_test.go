@@ -402,8 +402,9 @@ func TestDownloadEventsCancellationEmitsCanceledTerminalAndExit130(t *testing.T)
 	var output bytes.Buffer
 	deps := downloadExecutionDependencies{
 		ensureFFmpeg: func() error { return nil },
-		initClient: func(got context.Context) (*config.Config, *client.Client, error) {
-			return nil, nil, fmt.Errorf("Authorization: Token secret-value: %w", got.Err())
+		loadConfig:   func() (*config.Config, error) { return &config.Config{}, nil },
+		login: func(got context.Context, _ *config.Config) (*client.Client, error) {
+			return nil, fmt.Errorf("Authorization: Token secret-value: %w", got.Err())
 		},
 	}
 	err := runDownloadEventsWithDependenciesContext(
@@ -527,9 +528,11 @@ func TestDownloadEventsFinishLibraryCommitAfterPostMediaCancellation(t *testing.
 	manifest := artifact.Manifest{SchemaVersion: 1, ArtifactID: "impartus:v1:test", Files: []artifact.File{{Path: "/absolute/lecture.mp3"}}}
 	deps := downloadExecutionDependencies{
 		ensureFFmpeg: func() error { return nil },
-		initClient: func(context.Context) (*config.Config, *client.Client, error) {
-			cfg := &config.Config{BaseURL: server.URL, Token: "test-token", DownloadLocation: t.TempDir(), Views: "left", Quality: "720"}
-			return cfg, client.New(server.Client(), nil), nil
+		loadConfig: func() (*config.Config, error) {
+			return &config.Config{BaseURL: server.URL, Token: "test-token", DownloadLocation: t.TempDir(), Views: "left", Quality: "720"}, nil
+		},
+		login: func(context.Context, *config.Config) (*client.Client, error) {
+			return client.New(server.Client(), nil), nil
 		},
 		downloadLectures: func(context.Context, *config.Config, *client.Client, client.Lectures, downloadPresentationOptions) (downloadResult, error) {
 			cancel()
