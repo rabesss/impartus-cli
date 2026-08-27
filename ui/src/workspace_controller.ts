@@ -396,8 +396,19 @@ function sameRequest(left: PendingRequest, right: PendingRequest | undefined): b
 function sameNavigationState(left: FoundationState, right: FoundationState): boolean {
   if (left.screen !== right.screen) return false
   if (!sameCourse(left.activeCourse, right.activeCourse)) return false
+  if (isStartingOperation(left) !== isStartingOperation(right)) return false
+  if (!sameOperationIdentity(left.operation, right.operation)) return false
   if (left.pending === undefined || right.pending === undefined) return left.pending === undefined && right.pending === undefined
   return sameRequest(left.pending, right.pending)
+}
+
+function isStartingOperation(state: FoundationState): boolean {
+  return state.loading && state.pending === undefined
+}
+
+function sameOperationIdentity(left: FoundationOperation | undefined, right: FoundationOperation | undefined): boolean {
+  if (left === undefined || right === undefined) return left === right
+  return left.id === right.id && left.kind === right.kind
 }
 
 function sameCourse(left: Course | undefined, right: Course | undefined): boolean {
