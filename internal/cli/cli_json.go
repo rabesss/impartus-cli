@@ -74,8 +74,14 @@ func newCommandHelpPayload(help commandHelp) commandHelpPayload {
 func stripGlobalJSONFlag(args []string) ([]string, bool) {
 	filtered := make([]string, 0, len(args))
 	jsonMode := false
+	afterSentinel := false
 	for _, arg := range args {
-		if arg == "--json" {
+		if arg == "--" {
+			afterSentinel = true
+			filtered = append(filtered, arg)
+			continue
+		}
+		if !afterSentinel && arg == "--json" {
 			jsonMode = true
 			continue
 		}
