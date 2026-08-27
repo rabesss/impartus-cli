@@ -217,9 +217,14 @@ async function controlPlayback(
 }
 
 async function goBack(client: SessionClient, controller: WorkspaceController, signal: AbortSignal): Promise<void> {
-  const state = controller.snapshot()
-  await cancelOperationBeforeBack(state, (identifier) => client.cancelOperation(identifier, signal))
-  if (!signal.aborted) controller.update((current) => completeBackNavigation(state, current))
+  const checkpoint = controller.navigationCheckpoint()
+  await cancelOperationBeforeBack(checkpoint.state, (identifier) => client.cancelOperation(identifier, signal))
+  if (!signal.aborted) {
+    controller.updateIfNavigationUnchanged(
+      checkpoint,
+      (current) => completeBackNavigation(checkpoint.state, current),
+    )
+  }
 }
 
 async function consumeEvents(client: SessionClient, controller: WorkspaceController, signal: AbortSignal): Promise<void> {
