@@ -320,6 +320,41 @@ describe("WorkspaceController", () => {
     expect(controller.snapshot().operation?.state).toBe("canceled")
   })
 
+  test("rejects delayed back completion after a replacement operation starts", async () => {
+    const controller = new WorkspaceController(new DeferredClient(), createFoundationState({
+      activeCourse: testCourse(3),
+      operation: newOperation("first-download", "download", "running"),
+      screen: "lectures",
+    }))
+    const back = controller.navigationCheckpoint()
+    const cancellation = deferred<void>()
+    const delayedBack = cancellation.promise.then(() => controller.updateIfNavigationUnchanged(
+      back,
+      (current) => completeBackNavigation(back.state, current),
+    ))
+
+    controller.applyEvent({
+      operationId: "first-download",
+      sequence: 2,
+      state: "canceled",
+      type: "operation.canceled",
+    })
+    controller.update((current) => ({ ...current, loading: true }))
+    expect(controller.updateIfNavigationUnchanged(back, (current) => current)).toBe(false)
+    controller.update((current) => ({
+      ...current,
+      loading: false,
+      operation: newOperation("replacement-download", "download", "running"),
+      status: "Downloading replacement lecture",
+    }))
+    cancellation.resolve()
+
+    expect(await delayedBack).toBe(false)
+    expect(controller.snapshot().screen).toBe("lectures")
+    expect(controller.snapshot().operation?.id).toBe("replacement-download")
+    expect(controller.snapshot().operation?.state).toBe("running")
+  })
+
   test("operation events preserve controller-owned collection state", () => {
     const initial = createFoundationState({
       operation: {
