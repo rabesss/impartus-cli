@@ -266,6 +266,55 @@ func TestExecuteJSONValidationAndDownloadEnvelope(t *testing.T) {
 	}
 }
 
+func TestExecuteGlobalJSONFlagDistinguishesFlagValueFromSentinel(t *testing.T) {
+	t.Run("output consumes double dash before global JSON", func(t *testing.T) {
+		restoreCLIState(t)
+		os.Args = []string{"impartus", "download", "--output", "--", "--json"}
+
+		stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+		if err == nil {
+			t.Fatal("Execute returned nil, want JSON validation error")
+		}
+		var payload jsonEnvelope
+		if decodeErr := json.Unmarshal([]byte(err.Error()), &payload); decodeErr != nil {
+			t.Fatalf("decode JSON error: %v; error=%q", decodeErr, err)
+		}
+		if payload.Success || payload.Error == nil || !strings.Contains(payload.Error.Message, "download requires --subject/-s and --session/-S") {
+			t.Fatalf("unexpected JSON validation envelope: %+v", payload)
+		}
+		if payload.Meta.Command != "download" || payload.Meta.Mode != "json" {
+			t.Fatalf("unexpected JSON envelope: %+v", payload)
+		}
+		if stdout != "" || stderr != "" {
+			t.Fatalf("Execute stdout/stderr = %q/%q, want empty", stdout, stderr)
+		}
+	})
+
+	t.Run("free double dash keeps JSON positional", func(t *testing.T) {
+		restoreCLIState(t)
+		runDownloadJSONFn = func([]string) (downloadResult, error) {
+			t.Fatal("post-sentinel --json should not enable JSON mode")
+			return downloadResult{}, nil
+		}
+		runDownloadFn = func(args []string) error {
+			_, err := parseDownloadFlags(args)
+			return err
+		}
+		os.Args = []string{"impartus", "download", "--", "--json"}
+
+		stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+		if err == nil || !strings.Contains(err.Error(), "download does not accept positional arguments") {
+			t.Fatalf("Execute error = %v, want positional-argument error", err)
+		}
+		if json.Valid([]byte(err.Error())) {
+			t.Fatalf("Execute returned a JSON envelope for positional --json: %v", err)
+		}
+		if stdout != "" || stderr != "" {
+			t.Fatalf("Execute stdout/stderr = %q/%q, want empty", stdout, stderr)
+		}
+	})
+}
+
 func TestExecuteJSONDownloadUsesStructuredResult(t *testing.T) {
 	result := downloadResult{Status: "completed", OutputPaths: []string{"/tmp/out.mp4"}, LectureCount: 1}
 	payload := newSuccessEnvelope("download", result)

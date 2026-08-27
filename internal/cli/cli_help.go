@@ -110,8 +110,8 @@ func resolveCommandHelp(args []string) (commandHelp, bool) {
 	if len(args) == 0 {
 		return commandHelp{}, false
 	}
-	if args[0] == "help" && len(args) == 2 {
-		help, ok := commandHelpByName[args[1]]
+	if name, ok := explicitHelpTarget(args); ok {
+		help, ok := commandHelpByName[name]
 		return help, ok
 	}
 	if !hasHelpBeforeSentinel(args[1:]) {
@@ -131,6 +131,39 @@ func resolveCommandHelp(args []string) (commandHelp, bool) {
 	}
 	help, ok := commandHelpByName[name]
 	return help, ok
+}
+
+func explicitHelpTarget(args []string) (string, bool) {
+	if len(args) < 2 || !isExplicitHelpCommand(args[0]) {
+		return "", false
+	}
+	target := args[1:]
+	if last := target[len(target)-1]; last == "--help" || last == "-h" {
+		target = target[:len(target)-1]
+	}
+	if len(target) != 1 {
+		if len(target) == 2 && target[0] == "library" {
+			return strings.Join(target, "."), true
+		}
+		return "", false
+	}
+	return target[0], true
+}
+
+func explicitNestedHelpError(args []string) (bool, error) {
+	if len(args) < 3 || !isExplicitHelpCommand(args[0]) || args[1] != "library" {
+		return false, nil
+	}
+	return true, fmt.Errorf("unknown library command: %s", args[2])
+}
+
+func isExplicitHelpCommand(argument string) bool {
+	switch argument {
+	case "help", "--help", "-help", "-h":
+		return true
+	default:
+		return false
+	}
 }
 
 func hasHelpBeforeSentinel(args []string) bool {

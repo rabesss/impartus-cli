@@ -19,6 +19,21 @@ func TestStripGlobalJSONFlag(t *testing.T) {
 		t.Error("expected jsonMode false when --json absent")
 	}
 
+	valueSentinel, valueSentinelMode := stripGlobalJSONFlag([]string{"download", "--output", "--", "--json"})
+	if !valueSentinelMode {
+		t.Error("expected --json after a --output value of -- to enable JSON mode")
+	}
+	if len(valueSentinel) != 3 || valueSentinel[0] != "download" || valueSentinel[1] != "--output" || valueSentinel[2] != "--" {
+		t.Fatalf("args with -- value = %v, want value preserved and --json stripped", valueSentinel)
+	}
+	jsonValue, jsonValueMode := stripGlobalJSONFlag([]string{"download", "--output", "--json"})
+	if jsonValueMode {
+		t.Error("expected --json consumed by --output to remain a flag value")
+	}
+	if len(jsonValue) != 3 || jsonValue[0] != "download" || jsonValue[1] != "--output" || jsonValue[2] != "--json" {
+		t.Fatalf("args with --json value = %v, want unchanged", jsonValue)
+	}
+
 	afterSentinel, afterSentinelMode := stripGlobalJSONFlag([]string{"courses", "--", "--json"})
 	if afterSentinelMode {
 		t.Error("expected --json after -- to remain positional")
