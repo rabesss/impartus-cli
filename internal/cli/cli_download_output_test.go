@@ -407,10 +407,9 @@ func TestJSONDownloadStreamContract(t *testing.T) {
 	defer cleanup()
 
 	deps := downloadExecutionDependencies{
-		ensureFFmpeg: func() error { return nil },
-		initClient: func(context.Context) (*config.Config, *client.Client, error) {
-			return cfg, apiClient, nil
-		},
+		ensureFFmpeg:     func() error { return nil },
+		loadConfig:       func() (*config.Config, error) { return cfg, nil },
+		login:            func(context.Context, *config.Config) (*client.Client, error) { return apiClient, nil },
 		downloadLectures: downloadLectures,
 	}
 	var humanProgress bytes.Buffer
@@ -553,10 +552,9 @@ func TestJSONDownloadFailureStreamSuppressesDownloaderLogs(t *testing.T) {
 	defer cleanup()
 
 	deps := downloadExecutionDependencies{
-		ensureFFmpeg: func() error { return nil },
-		initClient: func(context.Context) (*config.Config, *client.Client, error) {
-			return cfg, apiClient, nil
-		},
+		ensureFFmpeg:     func() error { return nil },
+		loadConfig:       func() (*config.Config, error) { return cfg, nil },
+		login:            func(context.Context, *config.Config) (*client.Client, error) { return apiClient, nil },
 		downloadLectures: downloadLectures,
 	}
 	runDownloadJSONFn = func(args []string) (downloadResult, error) {
@@ -613,9 +611,8 @@ func TestHumanDownloadRedactsReturnedCredentialErrors(t *testing.T) {
 	sentinel := errors.New("Proxy-Authorization: Custom proof=proxy-secret\nauth: Digest response=auth-secret\nX-Api-Key: api-secret")
 	err := runDownloadWithDependencies([]string{"-s", "1", "-S", "2"}, downloadExecutionDependencies{
 		ensureFFmpeg: func() error { return nil },
-		initClient: func(context.Context) (*config.Config, *client.Client, error) {
-			return nil, nil, sentinel
-		},
+		loadConfig:   func() (*config.Config, error) { return &config.Config{}, nil },
+		login:        func(context.Context, *config.Config) (*client.Client, error) { return nil, sentinel },
 	})
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("runDownloadWithDependencies() lost error identity: %v", err)
@@ -644,17 +641,15 @@ func TestConcurrentJSONAndHumanDownloadDiagnosticsStayIsolated(t *testing.T) {
 	defer humanCleanup()
 
 	jsonDeps := downloadExecutionDependencies{
-		ensureFFmpeg: func() error { return nil },
-		initClient: func(context.Context) (*config.Config, *client.Client, error) {
-			return jsonCfg, jsonClient, nil
-		},
+		ensureFFmpeg:     func() error { return nil },
+		loadConfig:       func() (*config.Config, error) { return jsonCfg, nil },
+		login:            func(context.Context, *config.Config) (*client.Client, error) { return jsonClient, nil },
 		downloadLectures: downloadLectures,
 	}
 	humanDeps := downloadExecutionDependencies{
-		ensureFFmpeg: func() error { return nil },
-		initClient: func(context.Context) (*config.Config, *client.Client, error) {
-			return humanCfg, humanClient, nil
-		},
+		ensureFFmpeg:     func() error { return nil },
+		loadConfig:       func() (*config.Config, error) { return humanCfg, nil },
+		login:            func(context.Context, *config.Config) (*client.Client, error) { return humanClient, nil },
 		downloadLectures: downloadLectures,
 	}
 	runDownloadJSONFn = func(args []string) (downloadResult, error) {

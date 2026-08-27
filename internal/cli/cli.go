@@ -98,6 +98,9 @@ func executeHuman(args []string, version, date string) error {
 }
 
 func executeHumanRootHelp(args []string, version, date string) error {
+	if ok, err := explicitNestedHelpError(args); ok {
+		return err
+	}
 	if len(args) > 1 && args[1] != "--help" && args[1] != "-h" {
 		return fmt.Errorf("unknown command: %s", args[1])
 	}
@@ -152,6 +155,9 @@ func executeJSON(args []string, version, date string) error {
 }
 
 func executeJSONRootHelp(args []string) error {
+	if ok, err := explicitNestedHelpError(args); ok {
+		return newJSONError("help", err)
+	}
 	if len(args) > 1 && args[1] != "--help" && args[1] != "-h" {
 		return newJSONError("help", fmt.Errorf("unknown command: %s", args[1]))
 	}
