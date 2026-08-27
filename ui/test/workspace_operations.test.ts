@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test"
 
 import type { Lecture } from "../src/protocol/types.gen.ts"
-import { beginPlaybackStart, cancelOperationBeforeBack, failOperationStart } from "../src/workspace_operations.ts"
+import {
+  beginPlaybackStart,
+  cancelOperationBeforeBack,
+  completeBackNavigation,
+  failOperationStart,
+} from "../src/workspace_operations.ts"
 import { createFoundationState, newOperation } from "../src/workspace_controller.ts"
 
 describe("workspace operation transitions", () => {
@@ -67,6 +72,18 @@ describe("workspace operation transitions", () => {
     expect(canceled).toEqual(["download-id"])
   })
 
+  test("cancels a running download from the local library", async () => {
+    const canceled: string[] = []
+    await cancelOperationBeforeBack(createFoundationState({
+      operation: newOperation("download-id", "download", "running"),
+      screen: "library",
+    }), async (identifier) => {
+      canceled.push(identifier)
+    })
+
+    expect(canceled).toEqual(["download-id"])
+  })
+
   test("keeps playback cancellation on the playback back path", async () => {
     const canceled: string[] = []
     await cancelOperationBeforeBack(createFoundationState({
@@ -78,7 +95,81 @@ describe("workspace operation transitions", () => {
 
     expect(canceled).toEqual(["playback-id"])
   })
+
+  test("does not cancel operations outside the back-navigation boundary", async () => {
+    const canceled: string[] = []
+    const cancel = async (identifier: string): Promise<void> => {
+      canceled.push(identifier)
+    }
+
+    await cancelOperationBeforeBack(createFoundationState({
+      operation: newOperation("selftest-id", "selftest", "running"),
+      screen: "lectures",
+    }), cancel)
+    await cancelOperationBeforeBack(createFoundationState({
+      operation: newOperation("playback-id", "playback", "running"),
+      screen: "lectures",
+    }), cancel)
+    await cancelOperationBeforeBack(createFoundationState({
+      operation: newOperation("completed-download-id", "download", "completed"),
+      screen: "library",
+    }), cancel)
+
+    expect(canceled).toEqual([])
+  })
+
+  test("completes back navigation when only the operation changed during cancellation", () => {
+    const before = createFoundationState({
+      activeCourse: testCourse(3),
+      operation: newOperation("download-id", "download", "running"),
+      screen: "lectures",
+    })
+    const current = {
+      ...before,
+      operation: newOperation("download-id", "download", "canceled"),
+      status: "Download canceled",
+    }
+
+    const state = completeBackNavigation(before, current)
+
+    expect(state.screen).toBe("courses")
+    expect(state.error).toBeUndefined()
+    expect(state.status).toBe("Download canceled")
+  })
+
+  test("does not let a delayed back overwrite a newer screen or pending request", () => {
+    const before = createFoundationState({ activeCourse: testCourse(3), screen: "lectures" })
+    const library = createFoundationState({ activeCourse: testCourse(3), screen: "library" })
+    const pending = createFoundationState({
+      activeCourse: testCourse(3),
+      loading: true,
+      pending: { courseKey: "1:2:3", generation: 4, target: "lectures" },
+      screen: "lectures",
+    })
+
+    expect(completeBackNavigation(before, library)).toEqual(library)
+    expect(completeBackNavigation(before, pending)).toEqual(pending)
+  })
+
+  test("does not let a delayed back close a newer course on the same screen", () => {
+    const before = createFoundationState({ activeCourse: testCourse(3), screen: "lectures" })
+    const current = createFoundationState({ activeCourse: testCourse(9), screen: "lectures" })
+
+    expect(completeBackNavigation(before, current)).toEqual(current)
+  })
 })
+
+function testCourse(subjectId: number) {
+  return {
+    instituteId: 1,
+    professorName: "Professor",
+    sessionId: 2,
+    sessionName: "Session",
+    subjectId,
+    subjectName: `Course ${subjectId}`,
+    videoCount: 1,
+  }
+}
 
 function testLecture(topic: string): Lecture {
   return {

@@ -163,8 +163,9 @@ func TestDownloadSIGINTProcessHelper(t *testing.T) {
 	}
 	deps := downloadExecutionDependencies{
 		ensureFFmpeg: func() error { return nil },
-		initClient: func(context.Context) (*config.Config, *client.Client, error) {
-			return cfg, client.New(server.Client(), nil), nil
+		loadConfig:   func() (*config.Config, error) { return cfg, nil },
+		login: func(context.Context, *config.Config) (*client.Client, error) {
+			return client.New(server.Client(), nil), nil
 		},
 		downloadLectures: downloadLectures,
 		recordArtifacts:  func(context.Context, []artifact.Manifest) error { return nil },
