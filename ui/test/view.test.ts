@@ -210,6 +210,29 @@ describe("FoundationView", () => {
     view.destroy()
   })
 
+  test("restores collection focus when Escape closes wide navigation focus", async () => {
+    const setup = await createTestRenderer({ height: 32, kittyKeyboard: true, width: 140 })
+    renderers.push(setup)
+    let backCount = 0
+    const view = new FoundationView(setup.renderer, foundationState(), {
+      ...callbacks(),
+      onBack() { backCount++ },
+    })
+
+    setup.mockInput.pressKey("g")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("> ● Courses")
+    expect(setup.captureCharFrame()).not.toContain("/ Filter collection")
+
+    setup.mockInput.pressEscape()
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("[ACTIVE] Learning workspace")
+    expect(frame).toContain("/ Filter collection")
+    expect(backCount).toBe(0)
+    view.destroy()
+  })
+
   test("opens the inspected course when the inspector advertises Enter", async () => {
     const setup = await createTestRenderer({ height: 32, kittyKeyboard: true, width: 140 })
     renderers.push(setup)

@@ -80,6 +80,7 @@ export class FoundationView {
   #filtering = false
   #helpCursor = 0
   #navigationCursor = 0
+  #wideNavigationPreviousFocus: PaneFocus | undefined
   #overlays: OverlayState[] = []
   #paletteCursor = 0
   #paletteQuery = ""
@@ -144,6 +145,12 @@ export class FoundationView {
           this.#rebuild()
         }
       }
+      return
+    }
+    if (this.#focus === "navigation" && (normalized === "escape" || normalized === "backspace")) {
+      this.#focus = effectiveFocus(this.#wideNavigationPreviousFocus ?? "collection", this.#layout())
+      this.#wideNavigationPreviousFocus = undefined
+      this.#rebuild()
       return
     }
     if (this.#filtering) {
@@ -236,6 +243,7 @@ export class FoundationView {
       case "navigation.library": this.#callbacks.onLibrary(); return
       case "navigation.open":
         if (this.#layout().mode === "wide") {
+          if (this.#focus !== "navigation") this.#wideNavigationPreviousFocus = this.#focus
           this.#focus = "navigation"
           this.#rebuild()
         } else this.#openOverlay("navigation")
