@@ -49,9 +49,8 @@ func TestExactTTIDRoutesOnlyRequestedScopedLecture(t *testing.T) {
 		quietDownloadPresentation(),
 		downloadExecutionDependencies{
 			ensureFFmpeg: func() error { return nil },
-			initClient: func(context.Context) (*config.Config, *client.Client, error) {
-				return cfg, apiClient, nil
-			},
+			loadConfig:   func() (*config.Config, error) { return cfg, nil },
+			login:        func(context.Context, *config.Config) (*client.Client, error) { return apiClient, nil },
 			downloadLectures: func(_ context.Context, _ *config.Config, _ *client.Client, lectures client.Lectures, _ downloadPresentationOptions) (downloadResult, error) {
 				downloaded = append(client.Lectures(nil), lectures...)
 				lecture := lectures[0]
@@ -114,9 +113,8 @@ func TestExactTTIDRejectsForeignScopeBeforeDownload(t *testing.T) {
 		quietDownloadPresentation(),
 		downloadExecutionDependencies{
 			ensureFFmpeg: func() error { return nil },
-			initClient: func(context.Context) (*config.Config, *client.Client, error) {
-				return cfg, apiClient, nil
-			},
+			loadConfig:   func() (*config.Config, error) { return cfg, nil },
+			login:        func(context.Context, *config.Config) (*client.Client, error) { return apiClient, nil },
 			downloadLectures: func(context.Context, *config.Config, *client.Client, client.Lectures, downloadPresentationOptions) (downloadResult, error) {
 				downloaded = true
 				return downloadResult{}, errors.New("download should not run")
@@ -152,9 +150,8 @@ func TestExactTTIDRejectsAmbiguousInstituteRowsBeforeDownload(t *testing.T) {
 		quietDownloadPresentation(),
 		downloadExecutionDependencies{
 			ensureFFmpeg: func() error { return nil },
-			initClient: func(context.Context) (*config.Config, *client.Client, error) {
-				return cfg, apiClient, nil
-			},
+			loadConfig:   func() (*config.Config, error) { return cfg, nil },
+			login:        func(context.Context, *config.Config) (*client.Client, error) { return apiClient, nil },
 			downloadLectures: func(context.Context, *config.Config, *client.Client, client.Lectures, downloadPresentationOptions) (downloadResult, error) {
 				downloaded = true
 				return downloadResult{}, errors.New("download should not run")

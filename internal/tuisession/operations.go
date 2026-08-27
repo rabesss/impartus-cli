@@ -204,6 +204,11 @@ func (registry *operationRegistry) downloadProgressReporter(entry *operationEntr
 		}
 		last = percent
 		mu.Unlock()
+		registry.mu.Lock()
+		if entry.operation.State != tuiproto.OperationStateRunning {
+			registry.mu.Unlock()
+			return
+		}
 		state := tuiproto.OperationStateRunning
 		identifier := entry.operation.ID
 		registry.events.publish(tuiproto.Event{
@@ -212,6 +217,7 @@ func (registry *operationRegistry) downloadProgressReporter(entry *operationEntr
 			State:       &state,
 			Type:        tuiproto.EventTypeOperationProgress,
 		})
+		registry.mu.Unlock()
 	}
 }
 
@@ -485,13 +491,12 @@ func playbackRangeCommand(ctx context.Context, value *float64, minimum, maximum 
 
 func (registry *operationRegistry) finish(entry *operationEntry, state tuiproto.OperationState, eventType tuiproto.EventType, message string) {
 	registry.mu.Lock()
+	defer registry.mu.Unlock()
 	if entry.operation.State != tuiproto.OperationStateRunning {
-		registry.mu.Unlock()
 		return
 	}
 	entry.operation.State = state
 	identifier := entry.operation.ID
-	registry.mu.Unlock()
 	event := tuiproto.Event{
 		OperationID: &identifier,
 		State:       &state,
