@@ -70,13 +70,19 @@ interface OverlayState {
   previousFocus: PaneFocus
 }
 
+interface BlockedCommandFeedback {
+  commandId: CommandID
+  key: string
+  reason: string
+}
+
 export class FoundationView {
   readonly #renderer: CliRenderer
   readonly #callbacks: FoundationCallbacks
   #courseLabels: ReadonlyMap<Course, string>
   #state: FoundationState
   #tree: BoxRenderable | undefined
-  #blockedCommandReason: string | undefined
+  #blockedCommandFeedback: BlockedCommandFeedback | undefined
   #focus: PaneFocus = "collection"
   #filtering = false
   #helpOffset = 0
@@ -100,7 +106,7 @@ export class FoundationView {
     const next = normalizeState(state)
     if (!sameCourseCatalog(this.#state.courses, next.courses)) this.#courseLabels = courseLabels(next.courses)
     this.#state = next
-    this.#blockedCommandReason = undefined
+    this.#refreshBlockedCommandFeedback()
     this.#transitionFocus(effectiveFocus(this.#focus, this.#layout()))
     this.#paletteCursor = clamp(this.#paletteCursor, 0, Math.max(0, this.#paletteMatches().length - 1))
     this.#rebuild()
@@ -118,13 +124,14 @@ export class FoundationView {
 
   readonly #onResize = (): void => {
     this.#transitionFocus(effectiveFocus(this.#focus, this.#layout()))
+    this.#refreshBlockedCommandFeedback()
     this.#rebuild()
   }
 
   readonly #onKeyPress = (key: KeyEvent): void => {
     const normalized = normalizedKey(key)
-    if (this.#blockedCommandReason !== undefined) {
-      this.#blockedCommandReason = undefined
+    if (this.#blockedCommandFeedback !== undefined) {
+      this.#blockedCommandFeedback = undefined
       this.#rebuild()
     }
     if (normalized === "ctrl+c") {
@@ -170,9 +177,26 @@ export class FoundationView {
     const result = commandForKey(this.#commandContext(), normalized)
     if (result?.availability.enabled === true) this.#dispatch(result.command.id, normalized)
     else if (result?.availability.visible === true && result.availability.reason !== "") {
-      this.#blockedCommandReason = result.availability.reason
+      this.#blockedCommandFeedback = {
+        commandId: result.command.id,
+        key: normalized,
+        reason: result.availability.reason,
+      }
       this.#callbacks.onBlockedCommand(result.availability.reason)
       this.#rebuild()
+    }
+  }
+
+  #refreshBlockedCommandFeedback(): void {
+    const blocked = this.#blockedCommandFeedback
+    if (blocked === undefined) return
+    const current = commandForKey(this.#commandContext(), blocked.key)
+    if (
+      current?.command.id !== blocked.commandId
+      || current.availability.enabled
+      || current.availability.reason !== blocked.reason
+    ) {
+      this.#blockedCommandFeedback = undefined
     }
   }
 
@@ -361,7 +385,7 @@ export class FoundationView {
   }
 
   #layout(): WorkspaceLayout {
-    return calculateLayout(this.#renderer.terminalWidth, this.#renderer.terminalHeight, hasActivity(this.#state) || this.#blockedCommandReason !== undefined)
+    return calculateLayout(this.#renderer.terminalWidth, this.#renderer.terminalHeight, hasActivity(this.#state) || this.#blockedCommandFeedback !== undefined)
   }
 
   #rebuild(): void {
@@ -393,7 +417,7 @@ export class FoundationView {
     const header = new BoxRenderable(this.#renderer, { alignItems: "center", border: ["bottom"], borderColor: COLORS.border, flexDirection: "row", height, justifyContent: "space-between", paddingX: 2, width: "100%" })
     const narrowRecovery = this.#state.authStatus !== "ready" && this.#renderer.terminalWidth < 60
     const title = narrowRecovery ? "IMPARTUS  /  Workspace" : `IMPARTUS  /  ${screenTitle(this.#state.screen)}`
-    const status = this.#blockedCommandReason ?? (this.#state.authStatus !== "ready" && this.#renderer.terminalWidth < 100 ? "Auth unavailable" : this.#state.status)
+    const status = this.#blockedCommandFeedback?.reason ?? (this.#state.authStatus !== "ready" && this.#renderer.terminalWidth < 100 ? "Auth unavailable" : this.#state.status)
     header.add(text(this.#renderer, title, COLORS.foreground, TextAttributes.BOLD))
     header.add(text(this.#renderer, `● ${status}`, status === "Connected" ? COLORS.success : COLORS.warning))
     return header
@@ -593,7 +617,7 @@ export class FoundationView {
   #activityDock(height: number): BoxRenderable {
     const dock = new BoxRenderable(this.#renderer, { border: ["top"], borderColor: this.#focus === "activity" ? COLORS.accent : COLORS.border, flexDirection: "row", height, justifyContent: "space-between", paddingX: 2, width: "100%" })
     const operation = this.#state.operation
-    const status = this.#blockedCommandReason ?? this.#state.error ?? this.#state.status
+    const status = this.#blockedCommandFeedback?.reason ?? this.#state.error ?? this.#state.status
     dock.add(text(this.#renderer, `${this.#focus === "activity" ? "[ACTIVE] " : ""}${status}`, this.#state.error === undefined ? COLORS.dim : COLORS.danger))
     if (operation !== undefined) dock.add(text(this.#renderer, `${operation.kind} ${operation.state} ${Math.round(operation.percent)}%`, COLORS.accent))
     return dock
