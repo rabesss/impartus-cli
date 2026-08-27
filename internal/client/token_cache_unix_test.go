@@ -5,7 +5,6 @@ package client
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -83,6 +82,9 @@ func TestPublishTokenCacheFileRejectsInsecureCandidateBeforeReplace(t *testing.T
 	parent := t.TempDir()
 	candidate := filepath.Join(parent, ".token.tmp-insecure")
 	destination := filepath.Join(parent, ".token")
+	if err := os.WriteFile(destination, []byte("existing-token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(candidate, []byte("secret"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -94,8 +96,11 @@ func TestPublishTokenCacheFileRejectsInsecureCandidateBeforeReplace(t *testing.T
 	if err == nil || !strings.Contains(err.Error(), "want 0600") {
 		t.Fatalf("publishTokenCacheFile(insecure candidate) error = %v, want mode rejection", err)
 	}
-	if _, statErr := os.Lstat(destination); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("insecure token cache was published: %v", statErr)
+	if content, readErr := os.ReadFile(destination); readErr != nil || string(content) != "existing-token" {
+		t.Fatalf("destination after rejected publish = %q, error = %v; want existing-token", content, readErr)
+	}
+	if content, readErr := os.ReadFile(candidate); readErr != nil || string(content) != "secret" {
+		t.Fatalf("candidate after rejected publish = %q, error = %v; want preserved secret", content, readErr)
 	}
 }
 

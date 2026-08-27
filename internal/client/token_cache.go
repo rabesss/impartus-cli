@@ -118,13 +118,6 @@ func publishTokenCacheFile(candidate, destination string) error {
 	if err := replaceTokenCacheFile(candidate, destination); err != nil {
 		return fmt.Errorf("replace token cache atomically: %w", err)
 	}
-	if err := validatePublishedTokenCache(destination); err != nil {
-		removeErr := os.Remove(destination)
-		if errors.Is(removeErr, os.ErrNotExist) {
-			removeErr = nil
-		}
-		return errors.Join(fmt.Errorf("validate published token cache: %w", err), removeErr)
-	}
 	return nil
 }
 
