@@ -161,6 +161,12 @@ func explicitRootHelpError(args []string) error {
 	if len(args) <= 1 {
 		return nil
 	}
+	if args[1] == "help" {
+		if len(args) == 2 || len(args) == 3 && (args[2] == "--help" || args[2] == "-h") {
+			return nil
+		}
+		return fmt.Errorf("help does not accept arguments after help: %s", strings.Join(args[2:], " "))
+	}
 	if args[1] != "--help" && args[1] != "-h" {
 		return fmt.Errorf("unknown command: %s", args[1])
 	}
@@ -180,9 +186,10 @@ func isExplicitHelpCommand(argument string) bool {
 }
 
 func hasHelpBeforeSentinel(command string, args []string) bool {
+	parsingCommandFlags := true
 	for index := 0; index < len(args); index++ {
 		argument := args[index]
-		if commandFlagConsumesNextValue(command, argument) {
+		if parsingCommandFlags && commandFlagConsumesNextValue(command, argument) {
 			index++
 			continue
 		}
@@ -191,6 +198,9 @@ func hasHelpBeforeSentinel(command string, args []string) bool {
 		}
 		if argument == "--help" || argument == "-h" {
 			return true
+		}
+		if parsingCommandFlags && (argument == "" || argument == "-" || !strings.HasPrefix(argument, "-")) {
+			parsingCommandFlags = false
 		}
 	}
 	return false
