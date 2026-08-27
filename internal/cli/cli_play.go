@@ -32,7 +32,27 @@ type playFlags struct {
 	mpvMode        string
 }
 
+type playExecutionDependencies struct {
+	ensureMpv  func() error
+	loadConfig func() (*config.Config, error)
+	login      func(context.Context, *config.Config) (*client.Client, error)
+}
+
+func defaultPlayExecutionDependencies() playExecutionDependencies {
+	return playExecutionDependencies{
+		ensureMpv:  ensureMpv,
+		loadConfig: loadConfig,
+		login:      newLoggedInFn,
+	}
+}
+
 func runPlay(args []string) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runPlayWithDependenciesContext(ctx, args, defaultPlayExecutionDependencies())
+}
+
+func runPlayWithDependenciesContext(ctx context.Context, args []string, deps playExecutionDependencies) error {
 	f, err := parsePlayFlags(args)
 	if err != nil {
 		return err
@@ -40,18 +60,10 @@ func runPlay(args []string) error {
 	if validateErr := validatePlayFlags(f); validateErr != nil {
 		return validateErr
 	}
-	if mpvErr := ensureMpv(); mpvErr != nil {
-		return mpvErr
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	cfg, apiClient, err := initClient(ctx)
+	cfg, err := deps.loadConfig()
 	if err != nil {
 		return err
 	}
-
 	cfg, err = applyAndValidateFlags(cfg, f.quality, f.views, false, false, "", "", f.skipNoAudio)
 	if err != nil {
 		return err
@@ -59,6 +71,13 @@ func runPlay(args []string) error {
 
 	if f.includeNoAudio {
 		cfg.SkipNoAudio = false
+	}
+	if mpvErr := deps.ensureMpv(); mpvErr != nil {
+		return mpvErr
+	}
+	apiClient, err := deps.login(ctx, cfg)
+	if err != nil {
+		return err
 	}
 
 	if f.subject <= 0 || f.session <= 0 {
@@ -140,8 +159,7 @@ func validatePlayFlags(f playFlags) error {
 	if f.mpvMode != "" && f.mpvMode != "ipc" && f.mpvMode != "legacy" {
 		return errors.New("play mpv mode must be ipc or legacy")
 	}
-	_, err := applyAndValidateFlags(&config.Config{}, f.quality, f.views, false, false, "", "", f.skipNoAudio)
-	return err
+	return nil
 }
 
 func runPlayInteractive(ctx context.Context, cfg *config.Config, apiClient *client.Client, mpvMode string) error {
