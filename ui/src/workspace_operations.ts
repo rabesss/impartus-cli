@@ -24,3 +24,14 @@ export function failOperationStart(state: FoundationState, kind: OperationStartK
   }
   return { ...state, loading: false, status: "Connection failed" }
 }
+
+export async function cancelOperationBeforeBack(
+  state: FoundationState,
+  cancel: (identifier: string) => Promise<unknown>,
+): Promise<void> {
+  const operation = state.operation
+  if (operation?.state !== "running") return
+  const shouldCancel = operation.kind === "download" || (state.screen === "playback" && operation.kind === "playback")
+  if (!shouldCancel) return
+  await cancel(operation.id).catch(() => undefined)
+}

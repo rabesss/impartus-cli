@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import type { Lecture } from "../src/protocol/types.gen.ts"
-import { beginPlaybackStart, failOperationStart } from "../src/workspace_operations.ts"
+import { beginPlaybackStart, cancelOperationBeforeBack, failOperationStart } from "../src/workspace_operations.ts"
 import { createFoundationState, newOperation } from "../src/workspace_controller.ts"
 
 describe("workspace operation transitions", () => {
@@ -53,6 +53,30 @@ describe("workspace operation transitions", () => {
     expect(state.error).toBe("Course catalog is unavailable")
     expect(state.loading).toBe(false)
     expect(state.status).toBe("Connection failed")
+  })
+
+  test("requests cancellation before backing out of a running download", async () => {
+    const canceled: string[] = []
+    await cancelOperationBeforeBack(createFoundationState({
+      operation: newOperation("download-id", "download", "running"),
+      screen: "lectures",
+    }), async (identifier) => {
+      canceled.push(identifier)
+    })
+
+    expect(canceled).toEqual(["download-id"])
+  })
+
+  test("keeps playback cancellation on the playback back path", async () => {
+    const canceled: string[] = []
+    await cancelOperationBeforeBack(createFoundationState({
+      operation: newOperation("playback-id", "playback", "running"),
+      screen: "playback",
+    }), async (identifier) => {
+      canceled.push(identifier)
+    })
+
+    expect(canceled).toEqual(["playback-id"])
   })
 })
 
