@@ -5,7 +5,7 @@ import { consumeBootstrap } from "./bootstrap.ts"
 import { SessionClient } from "./client.ts"
 import type { OperationState, PlaybackCommand } from "./protocol/types.gen.ts"
 import { FoundationView } from "./view.ts"
-import { beginPlaybackStart, cancelOperationBeforeBack, failOperationStart } from "./workspace_operations.ts"
+import { beginPlaybackStart, cancelOperationBeforeBack, completeBackNavigation, failOperationStart } from "./workspace_operations.ts"
 import {
   WorkspaceController,
   createFoundationState,
@@ -219,13 +219,7 @@ async function controlPlayback(
 async function goBack(client: SessionClient, controller: WorkspaceController, signal: AbortSignal): Promise<void> {
   const state = controller.snapshot()
   await cancelOperationBeforeBack(state, (identifier) => client.cancelOperation(identifier, signal))
-  if (state.screen === "playback") {
-    if (!signal.aborted) controller.update((current) => ({ ...current, error: undefined, loading: false, screen: "lectures" }))
-  } else if (state.screen === "lectures") {
-    controller.update((current) => ({ ...current, error: undefined, screen: "courses" }))
-  } else {
-    controller.update((current) => ({ ...current, error: undefined, screen: current.activeCourse === undefined ? "courses" : "lectures" }))
-  }
+  if (!signal.aborted) controller.update((current) => completeBackNavigation(state, current))
 }
 
 async function consumeEvents(client: SessionClient, controller: WorkspaceController, signal: AbortSignal): Promise<void> {
