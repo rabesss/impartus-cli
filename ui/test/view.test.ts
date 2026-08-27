@@ -379,6 +379,68 @@ describe("FoundationView", () => {
     view.destroy()
   })
 
+  test("scrolls compact help on the first navigation key", async () => {
+    const setup = await createTestRenderer({ height: 10, kittyKeyboard: true, width: 40 })
+    renderers.push(setup)
+    const view = new FoundationView(setup.renderer, foundationState(), callbacks())
+
+    setup.mockInput.pressKey("?")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("↑↓ scroll 1-3/")
+
+    setup.mockInput.pressArrow("down")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("↑↓ scroll 2-4/")
+    view.destroy()
+  })
+
+  test("keeps compact help entries and its footer to one row each", async () => {
+    const setup = await createTestRenderer({ height: 12, kittyKeyboard: true, width: 40 })
+    renderers.push(setup)
+    const view = new FoundationView(setup.renderer, {
+      ...foundationState(),
+      operation: {
+        durationSeconds: 0,
+        id: "playback-id",
+        kind: "playback",
+        muted: false,
+        paused: false,
+        percent: 100,
+        positionSeconds: 0,
+        speed: 1,
+        state: "completed",
+        volume: 100,
+      },
+      screen: "playback",
+    }, callbacks())
+
+    setup.mockInput.pressKey("?")
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("space/left/right/m/+/=/-/[/]/v")
+    expect(frame).not.toContain("Playback is unavailable")
+    expect(frame).toContain("↑↓ scroll 1-5/5")
+    view.destroy()
+  })
+
+  test("clears blocked-command feedback when the blocking state changes", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const state: FoundationState = { ...foundationState(), loading: true }
+    const view = new FoundationView(setup.renderer, state, callbacks())
+
+    setup.mockInput.pressKey("g")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("A request is pending")
+
+    view.update({ ...state, loading: false })
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).not.toContain("A request is pending")
+    expect(frame).toContain("Connected")
+    view.destroy()
+  })
+
   test("reports the reason when a direct command is blocked", async () => {
     const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
     renderers.push(setup)
