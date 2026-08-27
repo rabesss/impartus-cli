@@ -311,6 +311,7 @@ describe("FoundationView", () => {
     let openCount = 0
     const view = new FoundationView(setup.renderer, foundationState(), {
       onBack() {},
+      onBlockedCommand() {},
       onCollectionState() {},
       onCourses() {},
       onDiagnostics() {},
@@ -357,6 +358,53 @@ describe("FoundationView", () => {
     expect(selfTestCount).toBe(1)
     expect(quitCount).toBe(2)
     expect(openCount).toBe(1)
+    view.destroy()
+  })
+
+  test("shows every command key in the wide help overlay", async () => {
+    const setup = await createTestRenderer({ height: 44, kittyKeyboard: true, width: 148 })
+    renderers.push(setup)
+    const view = new FoundationView(setup.renderer, {
+      ...foundationState(),
+      lectures: [lecture(1, "Lecture", false)],
+      screen: "lectures",
+    }, callbacks())
+
+    setup.mockInput.pressKey("?")
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    for (const text of ["up/down/j/k", "Download lecture", "Open library", "Open diagnostics", "Quit"]) {
+      expect(frame).toContain(text)
+    }
+    view.destroy()
+  })
+
+  test("reports the reason when a direct command is blocked", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    let reason = ""
+    const view = new FoundationView(setup.renderer, {
+      ...foundationState(),
+      operation: {
+        durationSeconds: 0,
+        id: "download-id",
+        kind: "download",
+        muted: false,
+        paused: false,
+        percent: 25,
+        positionSeconds: 0,
+        speed: 1,
+        state: "running",
+        volume: 100,
+      },
+      screen: "lectures",
+    }, {
+      ...callbacks(),
+      onBlockedCommand(value: string) { reason = value },
+    })
+
+    setup.mockInput.pressKey("s")
+    expect(reason).toBe("An operation is already running")
     view.destroy()
   })
 
@@ -938,6 +986,7 @@ function foundationState(): FoundationState {
 function callbacks() {
   return {
     onBack() {},
+    onBlockedCommand() {},
     onCollectionState() {},
     onCourses() {},
     onDiagnostics() {},

@@ -35,6 +35,7 @@ async function benchmarkCase(label: string, width: number, height: number, initi
   const started = performance.now()
   view = new FoundationView(setup.renderer, state, {
     onBack() {},
+    onBlockedCommand() {},
     onCollectionState(screen, collection) {
       state = { ...state, collections: { ...state.collections, [screen]: collection } }
       view.update(state)

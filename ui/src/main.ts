@@ -58,6 +58,7 @@ async function runInteractive(client: SessionClient, initialState: FoundationSta
   const update = (state: FoundationState): void => controller.update(() => state)
   const view = new FoundationView(renderer, current(), {
     onBack: () => { void goBack(client, controller, eventsAbort.signal) },
+    onBlockedCommand: (reason) => controller.update((state) => ({ ...state, status: reason })),
     onCollectionState: (screen, state) => controller.setCollectionState(screen, state),
     onCourses: () => { controller.navigate("courses", undefined, eventsAbort.signal) },
     onDiagnostics: () => { controller.navigate("diagnostics", undefined, eventsAbort.signal) },
@@ -235,6 +236,7 @@ async function consumeEvents(client: SessionClient, controller: WorkspaceControl
 function emptyCallbacks() {
   return {
     onBack() {},
+    onBlockedCommand() {},
     onCollectionState() {},
     onCourses() {},
     onDiagnostics() {},

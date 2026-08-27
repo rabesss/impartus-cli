@@ -51,6 +51,7 @@ const NAVIGATION: ReadonlyArray<{ label: string; screen: CollectionScreen }> = [
 
 export interface FoundationCallbacks {
   onBack(): void
+  onBlockedCommand(reason: string): void
   onCollectionState(screen: CollectionScreen, state: CollectionState): void
   onCourses(): void
   onDiagnostics(): void
@@ -77,6 +78,7 @@ export class FoundationView {
   #tree: BoxRenderable | undefined
   #focus: PaneFocus = "collection"
   #filtering = false
+  #helpCursor = 0
   #navigationCursor = 0
   #overlays: OverlayState[] = []
   #paletteCursor = 0
@@ -132,7 +134,16 @@ export class FoundationView {
       return
     }
     if (overlay?.kind === "help") {
-      if (normalized === "escape" || normalized === "backspace" || normalized === "?") this.#closeOverlay()
+      if (normalized === "escape" || normalized === "backspace" || normalized === "?") {
+        this.#closeOverlay()
+      } else if (["up", "down", "j", "k"].includes(normalized)) {
+        const commands = commandsForHelp(this.#commandContext())
+        if (commands.length > 0) {
+          const delta = normalized === "up" || normalized === "k" ? -1 : 1
+          this.#helpCursor = (this.#helpCursor + delta + commands.length) % commands.length
+          this.#rebuild()
+        }
+      }
       return
     }
     if (this.#filtering) {
@@ -141,6 +152,9 @@ export class FoundationView {
     }
     const result = commandForKey(this.#commandContext(), normalized)
     if (result?.availability.enabled === true) this.#dispatch(result.command.id, normalized)
+    else if (result?.availability.visible === true && result.availability.reason !== "") {
+      this.#callbacks.onBlockedCommand(result.availability.reason)
+    }
   }
 
   #handlePaletteKey(key: KeyEvent, normalized: string): void {
@@ -226,7 +240,7 @@ export class FoundationView {
           this.#rebuild()
         } else this.#openOverlay("navigation")
         return
-      case "overlay.help": this.#openOverlay("help"); return
+      case "overlay.help": this.#helpCursor = 0; this.#openOverlay("help"); return
       case "overlay.palette":
         this.#paletteQuery = ""
         this.#paletteCursor = 0
@@ -580,13 +594,16 @@ export class FoundationView {
   }
 
   #helpOverlay(width: number, height: number): BoxRenderable {
-    const overlay = overlayBox(this.#renderer, "Command guide", width, height, 15)
-    const commands = commandsForHelp(this.#commandContext()).slice(0, Math.max(1, overlay.height - 5))
-    for (const entry of commands) {
+    const commands = commandsForHelp(this.#commandContext())
+    const overlay = overlayBox(this.#renderer, "Command guide", width, height, commands.length + 5)
+    const visible = visibleRange(commands, this.#helpCursor, Math.max(1, overlay.height - 5))
+    for (const entry of visible.items) {
       const reason = entry.availability.enabled || entry.availability.reason === "" ? "" : ` — ${entry.availability.reason}`
-      overlay.add(text(this.#renderer, `${(entry.command.keys[0] ?? "").padEnd(12)} ${entry.command.label}${reason}`, entry.availability.enabled ? COLORS.foreground : COLORS.dim))
+      overlay.add(text(this.#renderer, `${entry.command.keys.join("/").padEnd(12)} ${entry.command.label}${reason}`, entry.availability.enabled ? COLORS.foreground : COLORS.dim))
     }
-    overlay.add(text(this.#renderer, "Esc closes this overlay", COLORS.dim))
+    const first = commands.length === 0 ? 0 : visible.offset + 1
+    const last = visible.offset + visible.items.length
+    overlay.add(text(this.#renderer, `↑↓ scroll ${first}-${last}/${commands.length}   Esc close`, COLORS.dim))
     return overlay
   }
 

@@ -278,6 +278,10 @@ describe("workspace command registry", () => {
     const open = commandForKey(context, "enter")
     expect(open?.availability.enabled).toBe(false)
     expect(open?.availability.reason).toContain("operation")
+
+    const selfTest = commandForKey(context, "s")
+    expect(selfTest?.availability.enabled).toBe(false)
+    expect(selfTest?.availability.reason).toBe("An operation is already running")
   })
 })
 
