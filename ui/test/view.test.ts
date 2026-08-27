@@ -441,6 +441,48 @@ describe("FoundationView", () => {
     view.destroy()
   })
 
+  test("keeps blocked-command feedback across matching progress updates until the command is enabled", async () => {
+    const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
+    renderers.push(setup)
+    const state: FoundationState = {
+      ...foundationState(),
+      operation: {
+        durationSeconds: 0,
+        id: "download-id",
+        kind: "download",
+        muted: false,
+        paused: false,
+        percent: 25,
+        positionSeconds: 0,
+        speed: 1,
+        state: "running",
+        volume: 100,
+      },
+      screen: "lectures",
+    }
+    const view = new FoundationView(setup.renderer, state, callbacks())
+
+    setup.mockInput.pressKey("s")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("An operation is already running")
+
+    view.update({ ...state, operation: { ...state.operation!, percent: 26 } })
+    await setup.renderOnce()
+    const progressFrame = setup.captureCharFrame()
+    expect(progressFrame).toContain("An operation is already running")
+    expect(progressFrame).toContain("download running 26%")
+
+    view.update({
+      ...state,
+      operation: { ...state.operation!, percent: 100, state: "completed" },
+    })
+    await setup.renderOnce()
+    const completedFrame = setup.captureCharFrame()
+    expect(completedFrame).not.toContain("An operation is already running")
+    expect(completedFrame).toContain("Connected")
+    view.destroy()
+  })
+
   test("reports the reason when a direct command is blocked", async () => {
     const setup = await createTestRenderer({ height: 24, kittyKeyboard: true, width: 80 })
     renderers.push(setup)
