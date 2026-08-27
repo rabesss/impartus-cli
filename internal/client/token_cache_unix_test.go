@@ -5,6 +5,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -75,6 +76,26 @@ func TestValidatePublishedTokenCacheRejectsWrongModeAndSpecialFile(t *testing.T)
 	}
 	if err := writeTokenCache(fifo, []byte("secret")); err == nil || !strings.Contains(err.Error(), "regular file") {
 		t.Fatalf("writeTokenCache(FIFO) error = %v", err)
+	}
+}
+
+func TestPublishTokenCacheFileRejectsInsecureCandidateBeforeReplace(t *testing.T) {
+	parent := t.TempDir()
+	candidate := filepath.Join(parent, ".token.tmp-insecure")
+	destination := filepath.Join(parent, ".token")
+	if err := os.WriteFile(candidate, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(candidate, 0o666); err != nil {
+		t.Fatal(err)
+	}
+
+	err := publishTokenCacheFile(candidate, destination)
+	if err == nil || !strings.Contains(err.Error(), "want 0600") {
+		t.Fatalf("publishTokenCacheFile(insecure candidate) error = %v, want mode rejection", err)
+	}
+	if _, statErr := os.Lstat(destination); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("insecure token cache was published: %v", statErr)
 	}
 }
 
