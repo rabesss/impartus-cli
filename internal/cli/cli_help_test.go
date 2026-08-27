@@ -474,6 +474,9 @@ func TestExecuteNonHelpCompatibilityMatrix(t *testing.T) {
 		{name: "serve invalid port", args: []string{"serve", "--port", "0"}, want: "port must be between 1 and 65535"},
 		{name: "serve positional", args: []string{"serve", "extra"}, want: "serve does not accept positional arguments"},
 		{name: "tui positional", args: []string{"tui", "extra"}, want: "tui does not accept positional arguments"},
+		{name: "download flag-like positional before sentinel", args: []string{"download", "extra", "--output", "--", "--help"}, want: "download does not accept positional arguments"},
+		{name: "serve flag-like positional before sentinel", args: []string{"serve", "extra", "--port", "--", "--help"}, want: "serve does not accept positional arguments"},
+		{name: "watch flag-like positional before sentinel", args: []string{"watch", "extra", "--output", "--", "--help"}, want: "watch does not accept positional arguments"},
 		{name: "courses help after sentinel", args: []string{"courses", "--", "--help"}, want: "courses does not accept positional arguments"},
 		{name: "download help after sentinel", args: []string{"download", "--subject", "1", "--session", "2", "--", "--help"}, want: "download does not accept positional arguments"},
 		{name: "JSON courses help after sentinel", args: []string{"courses", "--json", "--", "--help"}, want: "courses does not accept positional arguments"},
@@ -492,6 +495,77 @@ func TestExecuteNonHelpCompatibilityMatrix(t *testing.T) {
 			}
 			if stdout != "" || stderr != "" {
 				t.Fatalf("Execute(%v) stdout/stderr = %q/%q, want empty", test.args, stdout, stderr)
+			}
+		})
+	}
+}
+
+func TestExecuteHelpHelpRemainsRootHelp(t *testing.T) {
+	humanArgs := [][]string{
+		{"help", "help"},
+		{"help", "help", "--help"},
+		{"help", "help", "-h"},
+		{"--help", "help"},
+	}
+	for _, args := range humanArgs {
+		t.Run(strings.Join(args, " ")+" human", func(t *testing.T) {
+			restoreCLIState(t)
+			installHelpDispatchSentinels(t)
+			os.Args = append([]string{"impartus"}, args...)
+
+			stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+			if err != nil || stderr != "" || !strings.Contains(stdout, "Usage:\n  impartus [command] [flags]") {
+				t.Fatalf("Execute(%v) stdout/stderr/error = %q/%q/%v, want root help", args, stdout, stderr, err)
+			}
+		})
+	}
+
+	for _, humanArgs := range humanArgs {
+		args := append(append([]string(nil), humanArgs...), "--json")
+		t.Run(strings.Join(args, " ")+" JSON", func(t *testing.T) {
+			restoreCLIState(t)
+			installHelpDispatchSentinels(t)
+			os.Args = append([]string{"impartus"}, args...)
+
+			stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+			if err != nil || stderr != "" {
+				t.Fatalf("Execute(%v) stdout/stderr/error = %q/%q/%v, want root JSON help", args, stdout, stderr, err)
+			}
+			var envelope struct {
+				Success bool              `json:"success"`
+				Data    capabilityPayload `json:"data"`
+				Error   *jsonErr          `json:"error"`
+				Meta    jsonMeta          `json:"meta"`
+			}
+			if decodeErr := json.Unmarshal([]byte(stdout), &envelope); decodeErr != nil {
+				t.Fatalf("decode Execute(%v): %v; stdout=%q", args, decodeErr, stdout)
+			}
+			if !envelope.Success || envelope.Error != nil || envelope.Meta.Command != "help" || envelope.Data.Name != "impartus" {
+				t.Fatalf("Execute(%v) envelope = %+v, want root JSON help", args, envelope)
+			}
+		})
+	}
+}
+
+func TestExecuteHelpHelpRejectsTrailingTarget(t *testing.T) {
+	for _, jsonMode := range []bool{false, true} {
+		name := "human"
+		args := []string{"help", "help", "download"}
+		if jsonMode {
+			name = "JSON"
+			args = append(args, "--json")
+		}
+		t.Run(name, func(t *testing.T) {
+			restoreCLIState(t)
+			installHelpDispatchSentinels(t)
+			os.Args = append([]string{"impartus"}, args...)
+
+			stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+			if err == nil || !strings.Contains(err.Error(), "help does not accept arguments after help: download") {
+				t.Fatalf("Execute(%v) error = %v, want trailing-target error", args, err)
+			}
+			if stdout != "" || stderr != "" {
+				t.Fatalf("Execute(%v) stdout/stderr = %q/%q, want empty", args, stdout, stderr)
 			}
 		})
 	}
