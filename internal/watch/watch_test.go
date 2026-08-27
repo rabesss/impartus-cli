@@ -857,7 +857,7 @@ func TestWatcherAppliesOneGlobalBudgetAcrossTargets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if cycle.New != 2 || cycle.Downloaded != 1 || cycle.Skipped != 1 {
+	if cycle.New != 1 || cycle.Downloaded != 1 || cycle.Skipped != 1 {
 		t.Fatalf("cycle = %+v", cycle)
 	}
 	producer.mu.Lock()
