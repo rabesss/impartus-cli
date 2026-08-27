@@ -519,6 +519,7 @@ describe("FoundationView", () => {
     })
 
     setup.mockInput.pressKey("/")
+    setup.mockInput.pressKey("/")
     await setup.mockInput.typeText("compiler")
     await setup.renderOnce()
     const frame = setup.captureCharFrame()
