@@ -157,6 +157,19 @@ func explicitNestedHelpError(args []string) (bool, error) {
 	return true, fmt.Errorf("unknown library command: %s", args[2])
 }
 
+func explicitRootHelpError(args []string) error {
+	if len(args) <= 1 {
+		return nil
+	}
+	if args[1] != "--help" && args[1] != "-h" {
+		return fmt.Errorf("unknown command: %s", args[1])
+	}
+	if len(args) > 2 {
+		return fmt.Errorf("help does not accept arguments after %s: %s", args[1], strings.Join(args[2:], " "))
+	}
+	return nil
+}
+
 func isExplicitHelpCommand(argument string) bool {
 	switch argument {
 	case "help", "--help", "-help", "-h":

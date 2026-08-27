@@ -595,6 +595,8 @@ func TestUnknownExplicitHelpTargetsRemainErrors(t *testing.T) {
 	}{
 		{name: "top level", args: []string{"help", "bogus"}, want: "unknown command: bogus"},
 		{name: "nested", args: []string{"help", "library", "vrfy"}, want: "unknown library command: vrfy"},
+		{name: "short help flag before target", args: []string{"help", "-h", "download"}, want: "help does not accept arguments after -h: download"},
+		{name: "long help flag before target", args: []string{"help", "--help", "frobnicate"}, want: "help does not accept arguments after --help: frobnicate"},
 	}
 	for _, test := range tests {
 		t.Run(test.name+" human", func(t *testing.T) {
