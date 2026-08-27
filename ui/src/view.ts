@@ -99,7 +99,7 @@ export class FoundationView {
     const next = normalizeState(state)
     if (!sameCourseCatalog(this.#state.courses, next.courses)) this.#courseLabels = courseLabels(next.courses)
     this.#state = next
-    this.#focus = effectiveFocus(this.#focus, this.#layout())
+    this.#transitionFocus(effectiveFocus(this.#focus, this.#layout()))
     this.#paletteCursor = clamp(this.#paletteCursor, 0, Math.max(0, this.#paletteMatches().length - 1))
     this.#rebuild()
   }
@@ -115,7 +115,7 @@ export class FoundationView {
   }
 
   readonly #onResize = (): void => {
-    this.#focus = effectiveFocus(this.#focus, this.#layout())
+    this.#transitionFocus(effectiveFocus(this.#focus, this.#layout()))
     this.#rebuild()
   }
 
@@ -148,8 +148,9 @@ export class FoundationView {
       return
     }
     if (this.#focus === "navigation" && (normalized === "escape" || normalized === "backspace")) {
-      this.#focus = effectiveFocus(this.#wideNavigationPreviousFocus ?? "collection", this.#layout())
+      const previousFocus = this.#wideNavigationPreviousFocus ?? "collection"
       this.#wideNavigationPreviousFocus = undefined
+      this.#focus = effectiveFocus(previousFocus, this.#layout())
       this.#rebuild()
       return
     }
@@ -230,17 +231,17 @@ export class FoundationView {
       case "app.quit": this.#callbacks.onQuit(); return
       case "collection.filter": this.#filtering = true; this.#rebuild(); return
       case "collection.retry": this.#callbacks.onRetry(); return
-      case "focus.next": this.#focus = moveFocus(this.#focus, 1, this.#layout()); this.#rebuild(); return
-      case "focus.previous": this.#focus = moveFocus(this.#focus, -1, this.#layout()); this.#rebuild(); return
+      case "focus.next": this.#transitionFocus(moveFocus(this.#focus, 1, this.#layout())); this.#rebuild(); return
+      case "focus.previous": this.#transitionFocus(moveFocus(this.#focus, -1, this.#layout())); this.#rebuild(); return
       case "lecture.download": {
         const lecture = this.#selectedLecture()
         if (lecture !== undefined) this.#callbacks.onDownload(lecture)
         return
       }
       case "navigation.back": this.#callbacks.onBack(); return
-      case "navigation.courses": this.#callbacks.onCourses(); return
-      case "navigation.diagnostics": this.#callbacks.onDiagnostics(); return
-      case "navigation.library": this.#callbacks.onLibrary(); return
+      case "navigation.courses": this.#dispatchNavigationDestination("courses"); return
+      case "navigation.diagnostics": this.#dispatchNavigationDestination("diagnostics"); return
+      case "navigation.library": this.#dispatchNavigationDestination("library"); return
       case "navigation.open":
         if (this.#layout().mode === "wide") {
           if (this.#focus !== "navigation") this.#wideNavigationPreviousFocus = this.#focus
@@ -290,10 +291,23 @@ export class FoundationView {
   }
 
   #dispatchNavigationSelection(): void {
-    const selected = NAVIGATION[this.#navigationCursor]
-    if (selected?.screen === "courses") this.#callbacks.onCourses()
-    else if (selected?.screen === "library") this.#callbacks.onLibrary()
-    else if (selected?.screen === "diagnostics") this.#callbacks.onDiagnostics()
+    this.#dispatchNavigationDestination(NAVIGATION[this.#navigationCursor]?.screen)
+  }
+
+  #dispatchNavigationDestination(screen: CollectionScreen | undefined): void {
+    if (screen === undefined) return
+    if (this.#focus === "navigation") {
+      this.#transitionFocus(effectiveFocus("collection", this.#layout()))
+      this.#rebuild()
+    }
+    if (screen === "courses") this.#callbacks.onCourses()
+    else if (screen === "library") this.#callbacks.onLibrary()
+    else this.#callbacks.onDiagnostics()
+  }
+
+  #transitionFocus(next: PaneFocus): void {
+    if (this.#focus === "navigation" && next !== "navigation") this.#wideNavigationPreviousFocus = undefined
+    this.#focus = next
   }
 
   #moveCollection(delta: number): void {
