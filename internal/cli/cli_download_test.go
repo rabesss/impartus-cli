@@ -93,17 +93,77 @@ func TestInvalidExplicitDownloadRangeStopsBeforePreflight(t *testing.T) {
 	} {
 		t.Run(strings.Join(args[len(args)-2:], "_"), func(t *testing.T) {
 			_, err := executeDownloadWithDependencies(args, quietDownloadPresentation(), downloadExecutionDependencies{
+				loadConfig: func() (*config.Config, error) {
+					t.Fatal("invalid range reached config loading")
+					return nil, nil
+				},
 				ensureFFmpeg: func() error {
 					t.Fatal("invalid range reached FFmpeg preflight")
 					return nil
 				},
-				initClient: func(context.Context) (*config.Config, *client.Client, error) {
+				login: func(context.Context, *config.Config) (*client.Client, error) {
 					t.Fatal("invalid range reached client login")
-					return nil, nil, nil
+					return nil, nil
 				},
 			})
 			if err == nil || !strings.Contains(err.Error(), "positive 1-based index") {
 				t.Fatalf("executeDownloadWithDependencies() error = %v, want range rejection", err)
+			}
+		})
+	}
+}
+
+func TestInvalidDownloadOverridesStopBeforePreflight(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		cfg     *config.Config
+		wantErr string
+	}{
+		{
+			name:    "invalid quality",
+			args:    []string{"-s", "1", "-S", "2", "--quality", "1080"},
+			cfg:     &config.Config{},
+			wantErr: `invalid quality value "1080"`,
+		},
+		{
+			name:    "invalid format combined with configured audio-only mode",
+			args:    []string{"-s", "1", "-S", "2", "--format", "wav"},
+			cfg:     &config.Config{AudioOnly: true},
+			wantErr: `invalid audioFormat value "wav"`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			loadCalls := 0
+			loginCalls := 0
+			_, err := executeDownloadWithDependencies(
+				test.args,
+				quietDownloadPresentation(),
+				downloadExecutionDependencies{
+					loadConfig: func() (*config.Config, error) {
+						loadCalls++
+						return test.cfg, nil
+					},
+					ensureFFmpeg: func() error {
+						t.Fatal("invalid media configuration reached FFmpeg preflight")
+						return nil
+					},
+					login: func(context.Context, *config.Config) (*client.Client, error) {
+						loginCalls++
+						return nil, nil
+					},
+				},
+			)
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("executeDownloadWithDependencies() error = %v, want %q", err, test.wantErr)
+			}
+			if loadCalls != 1 {
+				t.Fatalf("config loads = %d, want 1", loadCalls)
+			}
+			if loginCalls != 0 {
+				t.Fatalf("invalid media configuration reached client login %d time(s)", loginCalls)
 			}
 		})
 	}

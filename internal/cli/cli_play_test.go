@@ -236,6 +236,61 @@ func TestValidatePlayFlagsRejectsPartialDirectSelection(t *testing.T) {
 	}
 }
 
+func TestInvalidPlayConfigurationStopsBeforePreflight(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		cfg     *config.Config
+		wantErr string
+	}{
+		{
+			name:    "invalid quality",
+			args:    []string{"--quality", "1080"},
+			cfg:     &config.Config{},
+			wantErr: `invalid quality value "1080"`,
+		},
+		{
+			name:    "invalid configured audio format",
+			cfg:     &config.Config{AudioOnly: true, AudioFormat: "wav"},
+			wantErr: `invalid audioFormat value "wav"`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			loadCalls := 0
+			loginCalls := 0
+			err := runPlayWithDependenciesContext(
+				context.Background(),
+				test.args,
+				playExecutionDependencies{
+					loadConfig: func() (*config.Config, error) {
+						loadCalls++
+						return test.cfg, nil
+					},
+					ensureMpv: func() error {
+						t.Fatal("invalid media configuration reached mpv preflight")
+						return nil
+					},
+					login: func(context.Context, *config.Config) (*client.Client, error) {
+						loginCalls++
+						return nil, nil
+					},
+				},
+			)
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("runPlayWithDependenciesContext() error = %v, want %q", err, test.wantErr)
+			}
+			if loadCalls != 1 {
+				t.Fatalf("config loads = %d, want 1", loadCalls)
+			}
+			if loginCalls != 0 {
+				t.Fatalf("invalid media configuration reached client login %d time(s)", loginCalls)
+			}
+		})
+	}
+}
+
 func TestParsePlayFlags(t *testing.T) {
 	tests := []struct {
 		name          string

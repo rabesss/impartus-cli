@@ -59,7 +59,8 @@ func quietDownloadPresentation() downloadPresentationOptions {
 
 type downloadExecutionDependencies struct {
 	ensureFFmpeg     func() error
-	initClient       func(context.Context) (*config.Config, *client.Client, error)
+	loadConfig       func() (*config.Config, error)
+	login            func(context.Context, *config.Config) (*client.Client, error)
 	downloadLectures func(context.Context, *config.Config, *client.Client, client.Lectures, downloadPresentationOptions) (downloadResult, error)
 	recordArtifacts  func(context.Context, []artifact.Manifest) error
 }
@@ -75,7 +76,8 @@ type lectureDownloadRunner interface {
 func defaultDownloadExecutionDependencies() downloadExecutionDependencies {
 	return downloadExecutionDependencies{
 		ensureFFmpeg:     ensureFFmpeg,
-		initClient:       initClient,
+		loadConfig:       loadConfig,
+		login:            newLoggedInFn,
 		downloadLectures: downloadLectures,
 		recordArtifacts:  recordDownloadedArtifacts,
 	}
@@ -148,22 +150,25 @@ func executeDownloadWithDependenciesContext(ctx context.Context, args []string, 
 		return downloadResult{}, err
 	}
 
-	if ffmpegErr := deps.ensureFFmpeg(); ffmpegErr != nil {
-		return downloadResult{}, ffmpegErr
-	}
-
-	cfg, apiClient, err := deps.initClient(ctx)
+	cfg, err := deps.loadConfig()
 	if err != nil {
 		return downloadResult{}, err
 	}
-
 	cfg, err = applyAndValidateFlags(cfg, f.quality, f.views, f.audioOnly, f.audioOnlySet, f.format, f.output, f.skipNoAudio)
 	if err != nil {
 		return downloadResult{}, err
 	}
-
 	if f.includeNoAudio {
 		cfg.SkipNoAudio = false
+	}
+
+	if ffmpegErr := deps.ensureFFmpeg(); ffmpegErr != nil {
+		return downloadResult{}, ffmpegErr
+	}
+
+	apiClient, err := deps.login(ctx, cfg)
+	if err != nil {
+		return downloadResult{}, err
 	}
 
 	lectures, err := apiClient.GetLectures(ctx, cfg, client.Course{SubjectID: f.subject, SessionID: f.session})
