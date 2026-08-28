@@ -29,6 +29,10 @@ type lectureDownloads interface {
 	DownloadAndJoin(context.Context, client.ParsedPlaylist) (downloader.JoinResult, error)
 }
 
+type progressiveLectureDownloads interface {
+	DownloadAndJoinWithProgress(context.Context, client.ParsedPlaylist, func(float64)) (downloader.JoinResult, error)
+}
+
 type artifactLibrary interface {
 	CreateJob(context.Context, library.JobSpec) error
 	StartJob(context.Context, string) error

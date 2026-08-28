@@ -45,6 +45,7 @@ type ProgressTrackerOptions struct {
 	ShowETA         bool
 	SampleInterval  time.Duration
 	SpeedWindowSize int
+	OnProgress      func(float64)
 }
 
 // ProgressTracker tracks download progress across lectures and chunks, estimating speed and ETA.
@@ -65,6 +66,8 @@ type ProgressTracker struct {
 	maxSamples     int
 	showSpeed      bool
 	showETA        bool
+	onProgress     func(float64)
+	progressMu     sync.Mutex
 
 	statsBar     *mpb.Bar
 	updateTicker *time.Ticker
@@ -104,6 +107,7 @@ func NewProgressTrackerWithOptions(totalLectures, totalChunks int, p *mpb.Progre
 		maxSamples:     options.SpeedWindowSize,
 		showSpeed:      options.ShowSpeed,
 		showETA:        options.ShowETA,
+		onProgress:     options.OnProgress,
 		speedSamples:   make([]SpeedSample, 0, options.SpeedWindowSize),
 		stopChan:       make(chan struct{}),
 	}
@@ -141,6 +145,7 @@ func ChunkCompleted(pt *ProgressTracker, bytesDownloaded int64) {
 	atomic.AddInt32(&pt.completedChunks, 1)
 	atomic.AddInt64(&pt.downloadedBytes, bytesDownloaded)
 	pt.updateTotalBytesEstimate()
+	pt.reportProgress()
 }
 
 // LectureCompleted increments the completed lecture counter.
@@ -149,6 +154,16 @@ func LectureCompleted(pt *ProgressTracker) {
 		return
 	}
 	atomic.AddInt32(&pt.completedLectures, 1)
+	pt.reportProgress()
+}
+
+func (pt *ProgressTracker) reportProgress() {
+	if pt == nil || pt.onProgress == nil {
+		return
+	}
+	pt.progressMu.Lock()
+	defer pt.progressMu.Unlock()
+	pt.onProgress(pt.GetOverallProgress())
 }
 
 func (pt *ProgressTracker) updateTotalBytesEstimate() {
