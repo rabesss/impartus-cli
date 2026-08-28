@@ -41,7 +41,7 @@ func TestWatcherDryRunAppliesGlobalBudgetBeforePlaylistFetch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if cycle.New != 2 || cycle.Downloaded != 0 || cycle.Skipped != 1 || !cycle.DryRun {
+	if cycle.New != 1 || cycle.Downloaded != 0 || cycle.Skipped != 1 || !cycle.DryRun {
 		t.Fatalf("cycle = %+v", cycle)
 	}
 }
@@ -78,7 +78,7 @@ func TestWatcherFailedPlaylistResolveConsumesGlobalBudget(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "first playlist failed") || strings.Contains(err.Error(), "second playlist") {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if cycle.New != 2 || cycle.Downloaded != 0 || cycle.Skipped != 1 || cycle.Failed != 1 {
+	if cycle.New != 1 || cycle.Downloaded != 0 || cycle.Skipped != 1 || cycle.Failed != 1 {
 		t.Fatalf("cycle = %+v", cycle)
 	}
 }

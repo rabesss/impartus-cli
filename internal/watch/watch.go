@@ -349,12 +349,10 @@ func (watcher *Watcher) inspectAndProcess(ctx context.Context, target config.Wat
 	if skipErr != nil {
 		return lectureOutcome{}, skipErr
 	}
-	outcome := lectureOutcome{New: 1}
 	if !withinBudget {
-		outcome.Skipped = 1
-		return outcome, nil
+		return lectureOutcome{Skipped: 1}, nil
 	}
-	outcome.Attempted = true
+	outcome := lectureOutcome{New: 1, Attempted: true}
 	lecture, playlist, expected, resolvedArtifactID, resolveErr := watcher.resolveLecture(ctx, target, lecture)
 	if resolveErr != nil {
 		return outcome, watcher.lectureFailure(ctx, target, lecture, "", resolveErr)
