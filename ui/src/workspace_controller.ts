@@ -42,6 +42,11 @@ export interface PendingRequest {
   target: CollectionScreen
 }
 
+export interface NavigationCheckpoint {
+  readonly revision: number
+  readonly state: FoundationState
+}
+
 export interface FoundationState {
   activeCourse: Course | undefined
   activeLecture: Lecture | undefined
@@ -81,6 +86,7 @@ export class WorkspaceController {
   readonly #earlyOperationEvents = new Map<string, Event>()
   readonly #listeners = new Set<WorkspaceListener>()
   #generation = 0
+  #navigationRevision = 0
   #state: FoundationState
 
   public constructor(client: WorkspaceClient, initialState: FoundationState) {
@@ -90,6 +96,19 @@ export class WorkspaceController {
 
   public snapshot(): FoundationState {
     return cloneState(this.#state)
+  }
+
+  public navigationCheckpoint(): NavigationCheckpoint {
+    return { revision: this.#navigationRevision, state: this.snapshot() }
+  }
+
+  public updateIfNavigationUnchanged(
+    checkpoint: NavigationCheckpoint,
+    update: (state: FoundationState) => FoundationState,
+  ): boolean {
+    if (checkpoint.revision !== this.#navigationRevision) return false
+    this.#set(update(this.snapshot()))
+    return true
   }
 
   public subscribe(listener: WorkspaceListener): () => void {
@@ -296,6 +315,7 @@ export class WorkspaceController {
       }
     }
     if (!state.loading || state.pending !== undefined) this.#earlyOperationEvents.clear()
+    if (!sameNavigationState(this.#state, state)) this.#navigationRevision++
     this.#state = cloneState(state)
     for (const listener of this.#listeners) listener(this.snapshot())
   }
@@ -371,6 +391,29 @@ function courseKey(course: Course): string {
 
 function sameRequest(left: PendingRequest, right: PendingRequest | undefined): boolean {
   return right !== undefined && left.generation === right.generation && left.target === right.target && left.courseKey === right.courseKey
+}
+
+function sameNavigationState(left: FoundationState, right: FoundationState): boolean {
+  if (left.screen !== right.screen) return false
+  if (!sameCourse(left.activeCourse, right.activeCourse)) return false
+  if (isStartingOperation(left) !== isStartingOperation(right)) return false
+  if (!sameOperationIdentity(left.operation, right.operation)) return false
+  if (left.pending === undefined || right.pending === undefined) return left.pending === undefined && right.pending === undefined
+  return sameRequest(left.pending, right.pending)
+}
+
+function isStartingOperation(state: FoundationState): boolean {
+  return state.loading && state.pending === undefined
+}
+
+function sameOperationIdentity(left: FoundationOperation | undefined, right: FoundationOperation | undefined): boolean {
+  if (left === undefined || right === undefined) return left === right
+  return left.id === right.id && left.kind === right.kind
+}
+
+function sameCourse(left: Course | undefined, right: Course | undefined): boolean {
+  if (left === undefined || right === undefined) return left === undefined && right === undefined
+  return courseKey(left) === courseKey(right)
 }
 
 function retryFailureMessage(error: unknown): string {

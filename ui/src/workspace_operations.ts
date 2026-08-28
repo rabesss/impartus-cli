@@ -24,3 +24,35 @@ export function failOperationStart(state: FoundationState, kind: OperationStartK
   }
   return { ...state, loading: false, status: "Connection failed" }
 }
+
+export async function cancelOperationBeforeBack(
+  state: FoundationState,
+  cancel: (identifier: string) => Promise<unknown>,
+): Promise<void> {
+  const operation = state.operation
+  if (operation?.state !== "running") return
+  const shouldCancel = operation.kind === "download" || (state.screen === "playback" && operation.kind === "playback")
+  if (!shouldCancel) return
+  await cancel(operation.id).catch(() => undefined)
+}
+
+export function completeBackNavigation(start: FoundationState, current: FoundationState): FoundationState {
+  if (!sameBackOrigin(start, current) || current.loading || current.pending !== undefined) return current
+  if (current.screen === "playback") {
+    return { ...current, error: undefined, loading: false, screen: "lectures" }
+  }
+  if (current.screen === "lectures") {
+    return { ...current, error: undefined, screen: "courses" }
+  }
+  return { ...current, error: undefined, screen: current.activeCourse === undefined ? "courses" : "lectures" }
+}
+
+function sameBackOrigin(start: FoundationState, current: FoundationState): boolean {
+  if (start.screen !== current.screen) return false
+  if (start.activeCourse === undefined || current.activeCourse === undefined) {
+    return start.activeCourse === undefined && current.activeCourse === undefined
+  }
+  return start.activeCourse.instituteId === current.activeCourse.instituteId
+    && start.activeCourse.sessionId === current.activeCourse.sessionId
+    && start.activeCourse.subjectId === current.activeCourse.subjectId
+}

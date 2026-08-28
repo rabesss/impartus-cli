@@ -14,6 +14,7 @@ import {
   newOperation,
   type WorkspaceClient,
 } from "../src/workspace_controller.ts"
+import { completeBackNavigation } from "../src/workspace_operations.ts"
 
 describe("WorkspaceController", () => {
   test("retries unavailable authentication and reaches the catalog in the same controller", async () => {
@@ -257,6 +258,101 @@ describe("WorkspaceController", () => {
     expect(controller.snapshot().authStatus).toBe("unavailable")
     expect(controller.snapshot().loading).toBe(false)
     expect(client.courseRequests).toHaveLength(0)
+  })
+
+  test("rejects delayed back completion after navigation leaves and returns to the same lecture collection", async () => {
+    const client = new DeferredClient()
+    const course = testCourse(3)
+    const controller = new WorkspaceController(client, createFoundationState({
+      activeCourse: course,
+      operation: newOperation("download-id", "download", "running"),
+      screen: "lectures",
+    }))
+    const back = controller.navigationCheckpoint()
+
+    const library = controller.loadLibrary()
+    client.artifactRequests[0]!.resolve({ artifacts: [] })
+    await library
+    const courses = controller.loadCourses()
+    client.courseRequests[0]!.resolve({ courses: [course] })
+    await courses
+    const lectures = controller.loadLectures(course)
+    client.lectureRequests[0]!.resolve({ lectures: [testLecture(5)] })
+    await lectures
+
+    expect(controller.snapshot().screen).toBe("lectures")
+    expect(controller.snapshot().activeCourse).toEqual(course)
+    expect(controller.snapshot().pending).toBeUndefined()
+    expect(controller.updateIfNavigationUnchanged(
+      back,
+      (current) => completeBackNavigation(back.state, current),
+    )).toBe(false)
+    expect(controller.snapshot().screen).toBe("lectures")
+  })
+
+  test("allows delayed back completion after operation progress and terminal events", () => {
+    const controller = new WorkspaceController(new DeferredClient(), createFoundationState({
+      activeCourse: testCourse(3),
+      operation: newOperation("download-id", "download", "running"),
+      screen: "lectures",
+    }))
+    const back = controller.navigationCheckpoint()
+
+    controller.applyEvent({
+      operationId: "download-id",
+      percent: 50,
+      sequence: 2,
+      state: "running",
+      type: "operation.progress",
+    })
+    controller.applyEvent({
+      operationId: "download-id",
+      sequence: 3,
+      state: "canceled",
+      type: "operation.canceled",
+    })
+
+    expect(controller.updateIfNavigationUnchanged(
+      back,
+      (current) => completeBackNavigation(back.state, current),
+    )).toBe(true)
+    expect(controller.snapshot().screen).toBe("courses")
+    expect(controller.snapshot().operation?.state).toBe("canceled")
+  })
+
+  test("rejects delayed back completion after a replacement operation starts", async () => {
+    const controller = new WorkspaceController(new DeferredClient(), createFoundationState({
+      activeCourse: testCourse(3),
+      operation: newOperation("first-download", "download", "running"),
+      screen: "lectures",
+    }))
+    const back = controller.navigationCheckpoint()
+    const cancellation = deferred<void>()
+    const delayedBack = cancellation.promise.then(() => controller.updateIfNavigationUnchanged(
+      back,
+      (current) => completeBackNavigation(back.state, current),
+    ))
+
+    controller.applyEvent({
+      operationId: "first-download",
+      sequence: 2,
+      state: "canceled",
+      type: "operation.canceled",
+    })
+    controller.update((current) => ({ ...current, loading: true }))
+    expect(controller.updateIfNavigationUnchanged(back, (current) => current)).toBe(false)
+    controller.update((current) => ({
+      ...current,
+      loading: false,
+      operation: newOperation("replacement-download", "download", "running"),
+      status: "Downloading replacement lecture",
+    }))
+    cancellation.resolve()
+
+    expect(await delayedBack).toBe(false)
+    expect(controller.snapshot().screen).toBe("lectures")
+    expect(controller.snapshot().operation?.id).toBe("replacement-download")
+    expect(controller.snapshot().operation?.state).toBe("running")
   })
 
   test("operation events preserve controller-owned collection state", () => {
