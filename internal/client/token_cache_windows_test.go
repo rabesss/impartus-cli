@@ -108,6 +108,33 @@ func TestWriteTokenCachePublishesProtectedPrivateDACL(t *testing.T) {
 	}
 }
 
+func TestPublishTokenCacheFileRejectsInsecureCandidateBeforeReplace(t *testing.T) {
+	parent := t.TempDir()
+	grantWorldReadableParent(t, parent)
+	destination := filepath.Join(parent, "cache-token")
+	if err := writeTokenCache(destination, []byte("existing-token")); err != nil {
+		t.Fatalf("write existing private token cache: %v", err)
+	}
+	candidate := filepath.Join(parent, ".cache-token.tmp-insecure")
+	if err := os.WriteFile(candidate, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePublishedTokenCache(candidate); err == nil {
+		t.Fatal("test candidate unexpectedly has a private DACL")
+	}
+
+	err := publishTokenCacheFile(candidate, destination)
+	if err == nil {
+		t.Fatal("publishTokenCacheFile(insecure candidate) error = nil")
+	}
+	if content, readErr := os.ReadFile(destination); readErr != nil || string(content) != "existing-token" {
+		t.Fatalf("destination after rejected publish = %q, error = %v; want existing-token", content, readErr)
+	}
+	if content, readErr := os.ReadFile(candidate); readErr != nil || string(content) != "secret" {
+		t.Fatalf("candidate after rejected publish = %q, error = %v; want preserved secret", content, readErr)
+	}
+}
+
 func TestReadTokenCacheFileRejectsInheritedWorldReadableDACL(t *testing.T) {
 	parent := t.TempDir()
 	grantWorldReadableParent(t, parent)

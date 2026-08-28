@@ -78,6 +78,32 @@ func TestValidatePublishedTokenCacheRejectsWrongModeAndSpecialFile(t *testing.T)
 	}
 }
 
+func TestPublishTokenCacheFileRejectsInsecureCandidateBeforeReplace(t *testing.T) {
+	parent := t.TempDir()
+	candidate := filepath.Join(parent, ".token.tmp-insecure")
+	destination := filepath.Join(parent, ".token")
+	if err := os.WriteFile(destination, []byte("existing-token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(candidate, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(candidate, 0o666); err != nil {
+		t.Fatal(err)
+	}
+
+	err := publishTokenCacheFile(candidate, destination)
+	if err == nil || !strings.Contains(err.Error(), "want 0600") {
+		t.Fatalf("publishTokenCacheFile(insecure candidate) error = %v, want mode rejection", err)
+	}
+	if content, readErr := os.ReadFile(destination); readErr != nil || string(content) != "existing-token" {
+		t.Fatalf("destination after rejected publish = %q, error = %v; want existing-token", content, readErr)
+	}
+	if content, readErr := os.ReadFile(candidate); readErr != nil || string(content) != "secret" {
+		t.Fatalf("candidate after rejected publish = %q, error = %v; want preserved secret", content, readErr)
+	}
+}
+
 func TestNewLoggedInRejectsWorldReadableUnixCacheAndRewritesItPrivately(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "token")
 	if err := os.WriteFile(cachePath, []byte("unsafe-cached-token"), 0o600); err != nil {

@@ -104,11 +104,21 @@ func writeTokenCacheFile(parent, path string, token []byte) error {
 	if targetErr := validateTokenCacheTarget(path); targetErr != nil {
 		return targetErr
 	}
-	if err := replaceTokenCacheFile(tempPath, path); err != nil {
-		return fmt.Errorf("replace token cache atomically: %w", err)
+	if err := publishTokenCacheFile(tempPath, path); err != nil {
+		return err
 	}
 	removeTemp = false
-	return validatePublishedTokenCache(path)
+	return nil
+}
+
+func publishTokenCacheFile(candidate, destination string) error {
+	if err := validatePublishedTokenCache(candidate); err != nil {
+		return fmt.Errorf("validate token cache before publish: %w", err)
+	}
+	if err := replaceTokenCacheFile(candidate, destination); err != nil {
+		return fmt.Errorf("replace token cache atomically: %w", err)
+	}
+	return nil
 }
 
 func validateTokenCacheTarget(path string) error {
