@@ -233,8 +233,35 @@ func TestUnsupportedPullfrogWorkflowRefs(t *testing.T) {
 		{name: "frozen commit", workflow: "steps:\n  - uses: pullfrog/pullfrog@c4d0ca6f15d12382ddd20d2010bc596b405f42f0\n", unsupported: true},
 		{name: "wrong major", workflow: "steps:\n  - uses: pullfrog/pullfrog@v1\n", unsupported: true},
 		{name: "branch", workflow: "steps:\n  - uses: pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "folded recommended major", workflow: "steps:\n  - uses: >-\n      pullfrog/pullfrog@v0\n"},
+		{name: "folded branch", workflow: "steps:\n  - uses: >-\n      pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "plain multiline branch", workflow: "steps:\n  - uses:\n      pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "quoted key multiline branch", workflow: "steps:\n  - \"uses\":\n      pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "flow multiline branch", workflow: "steps:\n  - {uses:\n      pullfrog/pullfrog@main, with: {}}\n", unsupported: true},
+		{name: "flow list equal indent branch", workflow: "steps: [{name: n,\n  uses:\n  pullfrog/pullfrog@main}]\n", unsupported: true},
+		{name: "explicit flow key branch", workflow: "steps:\n  - {? uses: pullfrog/pullfrog@main}\n", unsupported: true},
+		{name: "explicit flow key split before value", workflow: "steps: [{? uses\n  : pullfrog/pullfrog@main}]\n", unsupported: true},
+		{name: "escaped quoted key branch", workflow: "steps:\n  - \"\\x75ses\": pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "escaped action value branch", workflow: "steps:\n  - uses: \"pullfrog/\\x70ullfrog@main\"\n", unsupported: true},
+		{name: "anchored alias branch", workflow: "steps:\n  - uses: &pullfrog pullfrog/pullfrog@main\n  - uses: *pullfrog\n", unsupported: true},
+		{name: "numeric anchored alias branch", workflow: "env:\n  ACTION_REF: &0 pullfrog/pullfrog@main\nsteps:\n  - uses: *0\n", unsupported: true},
+		{name: "anchored folded branch", workflow: "steps:\n  - uses: &pullfrog >-\n      pullfrog/pullfrog@main\n  - name: *pullfrog\n    run: echo ok\n", unsupported: true},
+		{name: "aliased plain multiline branch", workflow: "env:\n  ACTION_REF: &pullfrog pullfrog/pullfrog@main\nsteps:\n  - uses:\n      *pullfrog\n", unsupported: true},
+		{name: "aliased uses key branch", workflow: "name: &uses-key uses\nsteps:\n  - *uses-key: pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "compact flow mapping branch", workflow: "steps: [uses: pullfrog/pullfrog@main]\n", unsupported: true},
+		{name: "explicit block key branch", workflow: "steps:\n  - ? uses\n    : pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "explicit block key folded branch", workflow: "steps:\n  - ? uses\n    : >-\n      pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "block scalar sibling branch", workflow: "steps:\n  - name: >-\n      Run agent\n    uses: pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "ordinary quoted key folded branch", workflow: "steps:\n  - \"uses\": >-\n      pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "hash in flow scalar", workflow: "steps:\n  - {name: a#b, uses: pullfrog/pullfrog@main}\n", unsupported: true},
+		{name: "apostrophe in flow scalar", workflow: "steps:\n  - {name: it's agent, uses: pullfrog/pullfrog@main}\n", unsupported: true},
+		{name: "even backslashes before flow quote", workflow: "steps:\n  - {name: \"C:\\\\dir\\\\\", uses: pullfrog/pullfrog@main}\n", unsupported: true},
+		{name: "plain bracket does not hide later branch", workflow: "name: build [1\nsteps:\n  - uses: pullfrog/pullfrog@v0\n  - uses: pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "ref containing at sign", workflow: "steps:\n  - uses: pullfrog/pullfrog@release@latest\n", unsupported: true},
 		{name: "other action", workflow: "steps:\n  - uses: actions/checkout@v7\n"},
 		{name: "run text", workflow: "steps:\n  - run: echo pullfrog/pullfrog@main\n"},
+		{name: "run block text", workflow: "steps:\n  - run: |\n      uses: pullfrog/pullfrog@main\n"},
+		{name: "recursive alias without uses", workflow: "value: &self [*self]\n"},
 	}
 
 	for _, test := range tests {
@@ -248,6 +275,16 @@ func TestUnsupportedPullfrogWorkflowRefs(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("ordinary quoted key produces one diagnostic", func(t *testing.T) {
+		got, err := scanUnsupportedPullfrogWorkflowRefs("steps:\n  - \"uses\": pullfrog/pullfrog@main\n")
+		if err != nil {
+			t.Fatalf("scanUnsupportedPullfrogWorkflowRefs() error: %v", err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("unsupported refs = %v, want exactly one finding", got)
+		}
+	})
 }
 
 func scanUnsupportedPullfrogWorkflowRefs(workflow string) ([]workflowPullfrogRef, error) {
