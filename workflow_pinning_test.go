@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"os"
@@ -18,7 +17,7 @@ type workflowPullfrogRef struct {
 	ref  string
 }
 
-func TestPullfrogActionUsesImmutablePin(t *testing.T) {
+func TestPullfrogActionTracksCurrentMajor(t *testing.T) {
 	workflowPaths, err := pullfrogActionYAMLPaths(".github")
 	if err != nil {
 		t.Fatalf("list workflow and composite action files: %v", err)
@@ -29,12 +28,12 @@ func TestPullfrogActionUsesImmutablePin(t *testing.T) {
 		if readErr != nil {
 			t.Fatalf("read workflow %s: %v", workflowPath, readErr)
 		}
-		findings, scanErr := scanUnpinnedPullfrogWorkflowRefs(string(workflow))
+		findings, scanErr := scanUnsupportedPullfrogWorkflowRefs(string(workflow))
 		if scanErr != nil {
 			t.Fatalf("parse action YAML %s: %v", workflowPath, scanErr)
 		}
 		for _, finding := range findings {
-			t.Errorf("%s:%d: Pullfrog action ref %q is not an immutable commit SHA", workflowPath, finding.line, finding.ref)
+			t.Errorf("%s:%d: Pullfrog action ref %q does not track the recommended v0 major", workflowPath, finding.line, finding.ref)
 		}
 	}
 }
@@ -216,45 +215,6 @@ func localActionManifestPath(repoRoot, reference string) (string, bool, error) {
 	return "", false, nil
 }
 
-func TestUnpinnedPullfrogRefs(t *testing.T) {
-	sha := "c4d0ca6f15d12382ddd20d2010bc596b405f42f0"
-	tests := []struct {
-		name     string
-		line     string
-		unpinned bool
-	}{
-		{name: "canonical pin", line: "uses: pullfrog/pullfrog@" + sha},
-		{name: "quoted pin", line: `uses: "pullfrog/pullfrog@` + sha + `"`},
-		{name: "dash form pin", line: "- uses: pullfrog/pullfrog@" + sha + " # v0"},
-		{name: "uppercase pin", line: "uses: pullfrog/pullfrog@" + strings.ToUpper(sha)},
-		{name: "flow mapping pin", line: "- {uses: pullfrog/pullfrog@" + sha + "}"},
-		{name: "quoted key pin", line: `"uses": pullfrog/pullfrog@` + sha},
-		{name: "quoted flow key pin", line: `- {"uses": pullfrog/pullfrog@` + sha + `}`},
-		{name: "subpath pin", line: "uses: pullfrog/pullfrog/subdir@" + sha},
-		{name: "floating ref", line: "uses: pullfrog/pullfrog@v0", unpinned: true},
-		{name: "quoted floating ref", line: `uses: "pullfrog/pullfrog@v0"`, unpinned: true},
-		{name: "extra spacing floating ref", line: "uses:   pullfrog/pullfrog@v0", unpinned: true},
-		{name: "mixed case floating ref", line: "uses: Pullfrog/Pullfrog@v0", unpinned: true},
-		{name: "flow mapping floating ref", line: "- {uses: pullfrog/pullfrog@v0}", unpinned: true},
-		{name: "flow list floating ref", line: "steps: [{uses: pullfrog/pullfrog@v0}]", unpinned: true},
-		{name: "quoted key floating ref", line: `"uses": pullfrog/pullfrog@v0`, unpinned: true},
-		{name: "quoted flow key floating ref", line: `- {"uses": pullfrog/pullfrog@v0}`, unpinned: true},
-		{name: "subpath floating ref", line: "uses: pullfrog/pullfrog/subdir@v0", unpinned: true},
-		{name: "comment only", line: "# uses: pullfrog/pullfrog@v0"},
-		{name: "run command text", line: "run: echo pullfrog/pullfrog@v0"},
-		{name: "container image digest", line: "image: pullfrog/pullfrog@sha256:deadbeef"},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			got := unpinnedPullfrogRefs(test.line)
-			if (len(got) != 0) != test.unpinned {
-				t.Fatalf("unpinned refs = %v, want unpinned=%t", got, test.unpinned)
-			}
-		})
-	}
-}
-
 func TestWorkflowYAMLPathsRejectsEmptyWorkflowSet(t *testing.T) {
 	workflowPaths, err := workflowYAMLPaths(filepath.Join(t.TempDir(), "*"))
 	if err == nil {
@@ -262,116 +222,81 @@ func TestWorkflowYAMLPathsRejectsEmptyWorkflowSet(t *testing.T) {
 	}
 }
 
-func TestUnpinnedPullfrogWorkflowRefs(t *testing.T) {
-	sha := "c4d0ca6f15d12382ddd20d2010bc596b405f42f0"
+func TestUnsupportedPullfrogWorkflowRefs(t *testing.T) {
 	tests := []struct {
-		name     string
-		workflow string
-		unpinned bool
+		name        string
+		workflow    string
+		unsupported bool
 	}{
-		{name: "folded floating ref", workflow: "steps:\n  - uses: >-\n      pullfrog/pullfrog@v0\n", unpinned: true},
-		{name: "folded pinned ref", workflow: "steps:\n  - uses: >-\n      pullfrog/pullfrog@" + sha + "\n"},
-		{name: "plain multiline floating ref", workflow: "steps:\n  - uses:\n      pullfrog/pullfrog@v0\n", unpinned: true},
-		{name: "plain multiline pinned ref", workflow: "steps:\n  - uses:\n      pullfrog/pullfrog@" + sha + "\n"},
-		{name: "quoted plain multiline floating ref", workflow: "steps:\n  - \"uses\":\n      pullfrog/pullfrog@v0\n", unpinned: true},
-		{name: "quoted plain multiline pinned ref", workflow: "steps:\n  - \"uses\":\n      pullfrog/pullfrog@" + sha + "\n"},
-		{name: "flow multiline floating ref", workflow: "steps:\n  - {uses:\n      pullfrog/pullfrog@v0, with: {}}\n", unpinned: true},
-		{name: "flow multiline pinned ref", workflow: "steps:\n  - {uses:\n      pullfrog/pullfrog@" + sha + ", with: {}}\n"},
-		{name: "flow multiline equal indent floating ref", workflow: "steps: [{name: n,\n  uses:\n  pullfrog/pullfrog@v0}]\n", unpinned: true},
-		{name: "flow multiline equal indent pinned ref", workflow: "steps: [{name: n,\n  uses:\n  pullfrog/pullfrog@" + sha + "}]\n"},
-		{name: "flow list midline header floating ref", workflow: "steps: [{uses:\n  pullfrog/pullfrog@v0}]\n", unpinned: true},
-		{name: "flow list midline header pinned ref", workflow: "steps: [{uses:\n  pullfrog/pullfrog@" + sha + "}]\n"},
-		{name: "flow sibling midline header floating ref", workflow: "steps:\n  - {name: agent, uses:\n      pullfrog/pullfrog@v0}\n", unpinned: true},
-		{name: "flow sibling midline header pinned ref", workflow: "steps:\n  - {name: agent, uses:\n      pullfrog/pullfrog@" + sha + "}\n"},
-		{name: "flow continuation comma floating ref", workflow: "steps: [{name: agent,\n  env: {FOO: bar}, uses: pullfrog/pullfrog@v0}]\n", unpinned: true},
-		{name: "flow continuation comma pinned ref", workflow: "steps: [{name: agent,\n  env: {FOO: bar}, uses: pullfrog/pullfrog@" + sha + "}]\n"},
-		{name: "flow continuation comma header floating ref", workflow: "steps: [{name: agent,\n  env: {FOO: bar}, uses:\n  pullfrog/pullfrog@v0}]\n", unpinned: true},
-		{name: "flow continuation comma header pinned ref", workflow: "steps: [{name: agent,\n  env: {FOO: bar}, uses:\n  pullfrog/pullfrog@" + sha + "}]\n"},
-		{name: "explicit flow key floating ref", workflow: "steps:\n  - {? uses: pullfrog/pullfrog@v0}\n", unpinned: true},
-		{name: "explicit flow key pinned ref", workflow: "steps:\n  - {? uses: pullfrog/pullfrog@" + sha + "}\n"},
-		{name: "explicit flow key multiline floating ref", workflow: "steps:\n  - {? uses:\n      pullfrog/pullfrog@v0}\n", unpinned: true},
-		{name: "explicit flow key multiline pinned ref", workflow: "steps:\n  - {? uses:\n      pullfrog/pullfrog@" + sha + "}\n"},
-		{name: "explicit flow key split before value floating ref", workflow: "steps: [{? uses\n  : pullfrog/pullfrog@v0}]\n", unpinned: true},
-		{name: "explicit flow key split before value pinned ref", workflow: "steps: [{? uses\n  : pullfrog/pullfrog@" + sha + "}]\n"},
-		{name: "escaped quoted key floating ref", workflow: "steps:\n  - \"\\x75ses\": pullfrog/pullfrog@v0\n", unpinned: true},
-		{name: "escaped quoted key pinned ref", workflow: "steps:\n  - \"\\x75ses\": pullfrog/pullfrog@" + sha + "\n"},
-		{name: "escaped quoted key folded floating ref", workflow: "steps:\n  - \"\\x75ses\": >-\n      pullfrog/pullfrog@v0\n", unpinned: true},
-		{name: "escaped quoted key folded pinned ref", workflow: "steps:\n  - \"\\x75ses\": >-\n      pullfrog/pullfrog@" + sha + "\n"},
-		{name: "escaped quoted key plain multiline floating ref", workflow: "steps:\n  - \"\\x75ses\":\n      pullfrog/pullfrog@v0\n", unpinned: true},
-		{name: "escaped quoted key plain multiline pinned ref", workflow: "steps:\n  - \"\\x75ses\":\n      pullfrog/pullfrog@" + sha + "\n"},
-		{name: "escaped quoted action value floating ref", workflow: "steps:\n  - uses: \"pullfrog/\\x70ullfrog@v0\"\n", unpinned: true},
-		{name: "escaped quoted action value pinned ref", workflow: "steps:\n  - uses: \"pullfrog/\\x70ullfrog@" + sha + "\"\n"},
-		{name: "anchored alias floating ref", workflow: "steps:\n  - uses: &pullfrog pullfrog/pullfrog@v0\n  - uses: *pullfrog\n", unpinned: true},
-		{name: "anchored alias pinned ref", workflow: "steps:\n  - uses: &pullfrog pullfrog/pullfrog@" + sha + "\n  - uses: *pullfrog\n"},
-		{name: "numeric anchored alias floating ref", workflow: "env:\n  ACTION_REF: &0 pullfrog/pullfrog@v0\nsteps:\n  - uses: *0\n", unpinned: true},
-		{name: "numeric anchored alias pinned ref", workflow: "env:\n  ACTION_REF: &0 pullfrog/pullfrog@" + sha + "\nsteps:\n  - uses: *0\n"},
-		{name: "anchored direct floating ref", workflow: "steps:\n  - uses: &pullfrog pullfrog/pullfrog@v0\n  - name: *pullfrog\n    run: echo ok\n", unpinned: true},
-		{name: "anchored direct pinned ref", workflow: "steps:\n  - uses: &pullfrog pullfrog/pullfrog@" + sha + "\n  - name: *pullfrog\n    run: echo ok\n"},
-		{name: "anchored folded floating ref", workflow: "steps:\n  - uses: &pullfrog >-\n      pullfrog/pullfrog@v0\n  - name: *pullfrog\n    run: echo ok\n", unpinned: true},
-		{name: "anchored folded pinned ref", workflow: "steps:\n  - uses: &pullfrog >-\n      pullfrog/pullfrog@" + sha + "\n  - name: *pullfrog\n    run: echo ok\n"},
-		{name: "anchored plain multiline floating ref", workflow: "steps:\n  - uses:\n      &pullfrog pullfrog/pullfrog@v0\n  - name: *pullfrog\n    run: echo ok\n", unpinned: true},
-		{name: "anchored plain multiline pinned ref", workflow: "steps:\n  - uses:\n      &pullfrog pullfrog/pullfrog@" + sha + "\n  - name: *pullfrog\n    run: echo ok\n"},
-		{name: "aliased plain multiline floating ref", workflow: "env:\n  ACTION_REF: &pullfrog pullfrog/pullfrog@v0\nsteps:\n  - uses:\n      *pullfrog\n", unpinned: true},
-		{name: "aliased plain multiline pinned ref", workflow: "env:\n  ACTION_REF: &pullfrog pullfrog/pullfrog@" + sha + "\nsteps:\n  - uses:\n      *pullfrog\n"},
-		{name: "aliased uses key floating ref", workflow: "name: &uses-key uses\nsteps:\n  - *uses-key: pullfrog/pullfrog@v0\n", unpinned: true},
-		{name: "aliased uses key pinned ref", workflow: "name: &uses-key uses\nsteps:\n  - *uses-key: pullfrog/pullfrog@" + sha + "\n"},
-		{name: "compact flow mapping floating ref", workflow: "steps: [uses: pullfrog/pullfrog@v0]\n", unpinned: true},
-		{name: "compact flow mapping pinned ref", workflow: "steps: [uses: pullfrog/pullfrog@" + sha + "]\n"},
-		{name: "explicit block key floating ref", workflow: "steps:\n  - ? uses\n    : pullfrog/pullfrog@v0\n", unpinned: true},
-		{name: "explicit block key pinned ref", workflow: "steps:\n  - ? uses\n    : pullfrog/pullfrog@" + sha + "\n"},
-		{name: "explicit block key plain multiline floating ref", workflow: "steps:\n  - ? uses\n    :\n      pullfrog/pullfrog@v0\n", unpinned: true},
-		{name: "explicit block key plain multiline pinned ref", workflow: "steps:\n  - ? uses\n    :\n      pullfrog/pullfrog@" + sha + "\n"},
-		{name: "explicit block key folded floating ref", workflow: "steps:\n  - ? uses\n    : >-\n      pullfrog/pullfrog@v0\n", unpinned: true},
-		{name: "explicit block key folded pinned ref", workflow: "steps:\n  - ? uses\n    : >-\n      pullfrog/pullfrog@" + sha + "\n"},
-		{name: "plain multiline comment floating ref", workflow: "steps:\n  - uses:\n      # TODO: pin\n      pullfrog/pullfrog@v0\n", unpinned: true},
-		{name: "plain multiline comment pinned ref", workflow: "steps:\n  - uses:\n      # pinned below\n      pullfrog/pullfrog@" + sha + "\n"},
-		{name: "block scalar sibling floating ref", workflow: "steps:\n  - name: >-\n      Run agent\n    uses: pullfrog/pullfrog@v0\n", unpinned: true},
-		{name: "block scalar sibling pinned ref", workflow: "steps:\n  - name: >-\n      Run agent\n    uses: pullfrog/pullfrog@" + sha + "\n"},
-		{name: "ordinary quoted key folded floating ref", workflow: "steps:\n  - \"uses\": >-\n      pullfrog/pullfrog@v0\n", unpinned: true},
-		{name: "ordinary quoted key folded pinned ref", workflow: "steps:\n  - \"uses\": >-\n      pullfrog/pullfrog@" + sha + "\n"},
-		{name: "hash in flow plain scalar floating ref", workflow: "steps:\n  - {name: a#b, uses: pullfrog/pullfrog@v0}\n", unpinned: true},
-		{name: "hash in flow plain scalar pinned ref", workflow: "steps:\n  - {name: a#b, uses: pullfrog/pullfrog@" + sha + "}\n"},
-		{name: "apostrophe in flow plain scalar floating ref", workflow: "steps:\n  - {name: it's agent, uses: pullfrog/pullfrog@v0}\n", unpinned: true},
-		{name: "apostrophe in flow plain scalar pinned ref", workflow: "steps:\n  - {name: it's agent, uses: pullfrog/pullfrog@" + sha + "}\n"},
-		{name: "indicator-adjacent apostrophe floating ref", workflow: "steps:\n  - {name: it-'s, uses: pullfrog/pullfrog@v0}\n", unpinned: true},
-		{name: "indicator-adjacent apostrophe pinned ref", workflow: "steps:\n  - {name: it-'s, uses: pullfrog/pullfrog@" + sha + "}\n"},
-		{name: "even backslashes before flow quote floating ref", workflow: "steps:\n  - {name: \"C:\\\\dir\\\\\", uses: pullfrog/pullfrog@v0}\n", unpinned: true},
-		{name: "even backslashes before flow quote pinned ref", workflow: "steps:\n  - {name: \"C:\\\\dir\\\\\", uses: pullfrog/pullfrog@" + sha + "}\n"},
-		{name: "plain bracket does not create stale flow", workflow: "name: build [1\nsteps:\n  - uses:\n      pullfrog/pullfrog@" + sha + "\n    with:\n      args: x\n  - uses: pullfrog/pullfrog@v1\n", unpinned: true},
-		{name: "plain bracket with pinned uses", workflow: "name: build [1\nsteps:\n  - uses:\n      pullfrog/pullfrog@" + sha + "\n    with:\n      args: x\n  - uses: pullfrog/pullfrog@" + sha + "\n"},
-		{name: "run block text", workflow: "steps:\n  - run: |\n      uses: pullfrog/pullfrog@v0\n"},
-		{name: "quoted run flow text", workflow: "steps:\n  - run: \"echo {uses: pullfrog/pullfrog@v0}\"\n"},
-		{name: "plain run flow text without colon spacing", workflow: "steps:\n  - run: echo {uses:pullfrog/pullfrog@v0}\n"},
-		{name: "multiline quoted run line-start comma text", workflow: "steps:\n  - run: \"echo\n      , uses: pullfrog/pullfrog@v0\"\n"},
-		{name: "multiline quoted run direct uses text", workflow: "steps:\n  - run: \"echo\n      uses: pullfrog/pullfrog@v0\"\n"},
+		{name: "recommended major", workflow: "steps:\n  - uses: pullfrog/pullfrog@v0\n"},
+		{name: "quoted recommended major", workflow: "steps:\n  - uses: \"pullfrog/pullfrog@v0\"\n"},
+		{name: "subpath recommended major", workflow: "steps:\n  - uses: pullfrog/pullfrog/subdir@v0\n"},
+		{name: "mixed case recommended major", workflow: "steps:\n  - uses: Pullfrog/Pullfrog@v0\n"},
+		{name: "frozen commit", workflow: "steps:\n  - uses: pullfrog/pullfrog@c4d0ca6f15d12382ddd20d2010bc596b405f42f0\n", unsupported: true},
+		{name: "wrong major", workflow: "steps:\n  - uses: pullfrog/pullfrog@v1\n", unsupported: true},
+		{name: "branch", workflow: "steps:\n  - uses: pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "subpath branch", workflow: "steps:\n  - uses: pullfrog/pullfrog/subdir@main\n", unsupported: true},
+		{name: "mixed case branch", workflow: "steps:\n  - uses: Pullfrog/Pullfrog@main\n", unsupported: true},
+		{name: "folded recommended major", workflow: "steps:\n  - uses: >-\n      pullfrog/pullfrog@v0\n"},
+		{name: "folded branch", workflow: "steps:\n  - uses: >-\n      pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "plain multiline recommended major", workflow: "steps:\n  - uses:\n      pullfrog/pullfrog@v0\n"},
+		{name: "plain multiline branch", workflow: "steps:\n  - uses:\n      pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "quoted key multiline branch", workflow: "steps:\n  - \"uses\":\n      pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "flow multiline recommended major", workflow: "steps:\n  - {uses:\n      pullfrog/pullfrog@v0, with: {}}\n"},
+		{name: "flow multiline branch", workflow: "steps:\n  - {uses:\n      pullfrog/pullfrog@main, with: {}}\n", unsupported: true},
+		{name: "flow list equal indent branch", workflow: "steps: [{name: n,\n  uses:\n  pullfrog/pullfrog@main}]\n", unsupported: true},
+		{name: "explicit flow key branch", workflow: "steps:\n  - {? uses: pullfrog/pullfrog@main}\n", unsupported: true},
+		{name: "explicit flow key split before value", workflow: "steps: [{? uses\n  : pullfrog/pullfrog@main}]\n", unsupported: true},
+		{name: "escaped quoted key recommended major", workflow: "steps:\n  - \"\\x75ses\": pullfrog/pullfrog@v0\n"},
+		{name: "escaped quoted key branch", workflow: "steps:\n  - \"\\x75ses\": pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "escaped action value branch", workflow: "steps:\n  - uses: \"pullfrog/\\x70ullfrog@main\"\n", unsupported: true},
+		{name: "anchored alias recommended major", workflow: "steps:\n  - uses: &pullfrog pullfrog/pullfrog@v0\n  - uses: *pullfrog\n"},
+		{name: "anchored alias branch", workflow: "steps:\n  - uses: &pullfrog pullfrog/pullfrog@main\n  - uses: *pullfrog\n", unsupported: true},
+		{name: "numeric anchored alias branch", workflow: "env:\n  ACTION_REF: &0 pullfrog/pullfrog@main\nsteps:\n  - uses: *0\n", unsupported: true},
+		{name: "anchored folded branch", workflow: "steps:\n  - uses: &pullfrog >-\n      pullfrog/pullfrog@main\n  - name: *pullfrog\n    run: echo ok\n", unsupported: true},
+		{name: "aliased plain multiline branch", workflow: "env:\n  ACTION_REF: &pullfrog pullfrog/pullfrog@main\nsteps:\n  - uses:\n      *pullfrog\n", unsupported: true},
+		{name: "aliased uses key branch", workflow: "name: &uses-key uses\nsteps:\n  - *uses-key: pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "compact flow mapping branch", workflow: "steps: [uses: pullfrog/pullfrog@main]\n", unsupported: true},
+		{name: "explicit block key recommended major", workflow: "steps:\n  - ? uses\n    : pullfrog/pullfrog@v0\n"},
+		{name: "explicit block key branch", workflow: "steps:\n  - ? uses\n    : pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "explicit block key folded branch", workflow: "steps:\n  - ? uses\n    : >-\n      pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "block scalar sibling branch", workflow: "steps:\n  - name: >-\n      Run agent\n    uses: pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "ordinary quoted key folded branch", workflow: "steps:\n  - \"uses\": >-\n      pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "hash in flow scalar", workflow: "steps:\n  - {name: a#b, uses: pullfrog/pullfrog@main}\n", unsupported: true},
+		{name: "apostrophe in flow scalar", workflow: "steps:\n  - {name: it's agent, uses: pullfrog/pullfrog@main}\n", unsupported: true},
+		{name: "even backslashes before flow quote", workflow: "steps:\n  - {name: \"C:\\\\dir\\\\\", uses: pullfrog/pullfrog@main}\n", unsupported: true},
+		{name: "plain bracket does not hide later branch", workflow: "name: build [1\nsteps:\n  - uses: pullfrog/pullfrog@v0\n  - uses: pullfrog/pullfrog@main\n", unsupported: true},
+		{name: "ref containing at sign", workflow: "steps:\n  - uses: pullfrog/pullfrog@release@latest\n", unsupported: true},
+		{name: "other action", workflow: "steps:\n  - uses: actions/checkout@v7\n"},
+		{name: "run text", workflow: "steps:\n  - run: echo pullfrog/pullfrog@main\n"},
+		{name: "run block text", workflow: "steps:\n  - run: |\n      uses: pullfrog/pullfrog@main\n"},
 		{name: "recursive alias without uses", workflow: "value: &self [*self]\n"},
-		{name: "floating ref containing at sign", workflow: "steps:\n  - uses: pullfrog/pullfrog@release@latest\n", unpinned: true},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := scanUnpinnedPullfrogWorkflowRefs(test.workflow)
+			got, err := scanUnsupportedPullfrogWorkflowRefs(test.workflow)
 			if err != nil {
-				t.Fatalf("scanUnpinnedPullfrogWorkflowRefs() error: %v", err)
+				t.Fatalf("scanUnsupportedPullfrogWorkflowRefs() error: %v", err)
 			}
-			if (len(got) != 0) != test.unpinned {
-				t.Fatalf("unpinned refs = %v, want unpinned=%t", got, test.unpinned)
+			if (len(got) != 0) != test.unsupported {
+				t.Fatalf("unsupported refs = %v, want unsupported=%t", got, test.unsupported)
 			}
 		})
 	}
 
 	t.Run("ordinary quoted key produces one diagnostic", func(t *testing.T) {
-		got, err := scanUnpinnedPullfrogWorkflowRefs("steps:\n  - \"uses\": pullfrog/pullfrog@v0\n")
+		got, err := scanUnsupportedPullfrogWorkflowRefs("steps:\n  - \"uses\": pullfrog/pullfrog@main\n")
 		if err != nil {
-			t.Fatalf("scanUnpinnedPullfrogWorkflowRefs() error: %v", err)
+			t.Fatalf("scanUnsupportedPullfrogWorkflowRefs() error: %v", err)
 		}
 		if len(got) != 1 {
-			t.Fatalf("unpinned refs = %v, want exactly one finding", got)
+			t.Fatalf("unsupported refs = %v, want exactly one finding", got)
 		}
 	})
 }
 
-func scanUnpinnedPullfrogWorkflowRefs(workflow string) ([]workflowPullfrogRef, error) {
+func scanUnsupportedPullfrogWorkflowRefs(workflow string) ([]workflowPullfrogRef, error) {
 	var document yaml.Node
 	if err := yaml.Unmarshal([]byte(workflow), &document); err != nil {
 		return nil, err
@@ -388,7 +313,7 @@ func scanUnpinnedPullfrogWorkflowRefs(workflow string) ([]workflowPullfrogRef, e
 			return
 		}
 		ref, ok := pullfrogActionRef(actionValue)
-		if ok && !isImmutableCommitRef(ref) {
+		if ok && ref != "v0" {
 			findings = append(findings, workflowPullfrogRef{line: key.Line, ref: ref})
 		}
 	})
@@ -473,24 +398,4 @@ func pullfrogActionRef(value string) (string, bool) {
 		return "", false
 	}
 	return ref, true
-}
-
-func isImmutableCommitRef(ref string) bool {
-	if len(ref) != 40 {
-		return false
-	}
-	_, err := hex.DecodeString(ref)
-	return err == nil
-}
-
-func unpinnedPullfrogRefs(line string) []string {
-	findings, err := scanUnpinnedPullfrogWorkflowRefs(line)
-	if err != nil {
-		return []string{"invalid YAML"}
-	}
-	refs := make([]string, 0, len(findings))
-	for _, finding := range findings {
-		refs = append(refs, finding.ref)
-	}
-	return refs
 }
