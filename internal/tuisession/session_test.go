@@ -176,7 +176,7 @@ func TestSessionStreamsOneTerminalOperationLifecycle(t *testing.T) {
 
 	eventContext, cancelEvents := context.WithCancel(t.Context())
 	defer cancelEvents()
-	eventResponse := sessionRequestContext(eventContext, t, session, http.MethodGet, "/events", nil)
+	eventResponse := eventStreamRequest(eventContext, t, session)
 	defer closeResponseBody(t, eventResponse.Body)
 	if eventResponse.StatusCode != http.StatusOK {
 		t.Fatalf("GET events status = %d, want %d", eventResponse.StatusCode, http.StatusOK)
@@ -245,7 +245,7 @@ func TestSessionCancellationProducesOneCanceledTerminal(t *testing.T) {
 
 	eventContext, cancelEvents := context.WithCancel(t.Context())
 	defer cancelEvents()
-	eventResponse := sessionRequestContext(eventContext, t, session, http.MethodGet, "/events", nil)
+	eventResponse := eventStreamRequest(eventContext, t, session)
 	defer closeResponseBody(t, eventResponse.Body)
 
 	startResponse := sessionRequest(t, session, http.MethodPost, "/operations", tuiproto.OperationRequest{
@@ -1099,6 +1099,44 @@ func closeResponseBody(t *testing.T, body io.Closer) {
 	}
 }
 
+func TestEventStreamSendsIdleHeartbeatComments(t *testing.T) {
+	session, err := tuisession.Start(t.Context(), tuisession.Options{
+		Catalog:                catalogStub{},
+		EventHeartbeatInterval: 5 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	cleanupSession(t, session)
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	response := eventStreamRequest(ctx, t, session)
+	defer closeResponseBody(t, response.Body)
+
+	scanner := bufio.NewScanner(response.Body)
+	ready := false
+	heartbeat := false
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "data: ") {
+			var event tuiproto.Event
+			if decodeErr := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event); decodeErr != nil {
+				t.Fatalf("decode event: %v", decodeErr)
+			}
+			ready = ready || event.Type == tuiproto.EventTypeSessionReady
+		}
+		heartbeat = heartbeat || line == ": heartbeat"
+		if ready && heartbeat {
+			return
+		}
+	}
+	if scanErr := scanner.Err(); scanErr != nil && !errors.Is(scanErr, context.DeadlineExceeded) {
+		t.Fatalf("read event stream: %v", scanErr)
+	}
+	t.Fatalf("event stream ready/heartbeat = %t/%t, want both", ready, heartbeat)
+}
+
 func TestSlowEventConsumerReceivesExplicitOverflow(t *testing.T) {
 	session, err := tuisession.Start(t.Context(), tuisession.Options{
 		Catalog:         catalogStub{},
@@ -1112,7 +1150,7 @@ func TestSlowEventConsumerReceivesExplicitOverflow(t *testing.T) {
 
 	eventContext, cancelEvents := context.WithCancel(t.Context())
 	defer cancelEvents()
-	eventResponse := sessionRequestContext(eventContext, t, session, http.MethodGet, "/events", nil)
+	eventResponse := eventStreamRequest(eventContext, t, session)
 	defer closeResponseBody(t, eventResponse.Body)
 
 	startResponse := sessionRequest(t, session, http.MethodPost, "/operations", tuiproto.OperationRequest{
@@ -1169,16 +1207,9 @@ func rawSessionRequest(
 	return rawSessionRequestContext(t.Context(), t, session, method, path, body, headers)
 }
 
-func sessionRequestContext(
-	ctx context.Context,
-	t *testing.T,
-	session *tuisession.Session,
-	method string,
-	path string,
-	body any,
-) *http.Response {
+func eventStreamRequest(ctx context.Context, t *testing.T, session *tuisession.Session) *http.Response {
 	t.Helper()
-	return rawSessionRequestContext(ctx, t, session, method, path, body, map[string]string{
+	return rawSessionRequestContext(ctx, t, session, http.MethodGet, "/events", nil, map[string]string{
 		tuiproto.ProtocolHeader:   tuiproto.ProtocolVersion,
 		tuiproto.CapabilityHeader: session.Capability(),
 	})

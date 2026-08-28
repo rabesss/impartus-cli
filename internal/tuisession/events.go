@@ -3,8 +3,10 @@ package tuisession
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/rabesss/impartus-cli/internal/tuiproto"
 )
@@ -12,6 +14,7 @@ import (
 const (
 	defaultEventQueueDepth = 64
 	maxEventQueueDepth     = 1024
+	defaultHeartbeat       = 15 * time.Second
 )
 
 type eventSubscriber struct {
@@ -133,6 +136,8 @@ func (session *Session) streamEvents(writer http.ResponseWriter, request *http.R
 	writer.Header().Set("Connection", "keep-alive")
 	writer.WriteHeader(http.StatusOK)
 	flusher.Flush()
+	heartbeats := time.NewTicker(session.eventHeartbeatInterval)
+	defer heartbeats.Stop()
 
 	for {
 		select {
@@ -147,12 +152,22 @@ func (session *Session) streamEvents(writer http.ResponseWriter, request *http.R
 			}
 			flusher.Flush()
 			return
+		case <-heartbeats.C:
+			if writeSSEHeartbeat(writer) != nil {
+				return
+			}
+			flusher.Flush()
 		case <-request.Context().Done():
 			return
 		case <-session.events.done:
 			return
 		}
 	}
+}
+
+func writeSSEHeartbeat(writer io.Writer) error {
+	_, err := io.WriteString(writer, ": heartbeat\n\n")
+	return err
 }
 
 func writeSSEEvent(writer http.ResponseWriter, event tuiproto.Event) error {

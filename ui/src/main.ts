@@ -1,4 +1,5 @@
 import { CliRenderer, createCliRenderer } from "@opentui/core"
+import { inspect } from "node:util"
 
 import { consumeBootstrap } from "./bootstrap.ts"
 import { SessionClient } from "./client.ts"
@@ -250,7 +251,7 @@ function emptyCallbacks() {
   }
 }
 
-await main().catch(() => {
-  process.stderr.write(`impartus-ui: terminal frontend failed during ${startupStage}\n`)
+await main().catch((error: unknown) => {
+  process.stderr.write(`impartus-ui: terminal frontend failed during ${startupStage}\n${inspect(error)}\n`)
   process.exitCode = 1
 })

@@ -254,8 +254,8 @@ export class SessionClient {
     let response: Response
     try {
       response = await fetch(this.#bootstrap.baseUrl + path, request)
-    } catch {
-      throw new Error("UI session is unavailable")
+    } catch (error) {
+      throw new Error("UI session is unavailable", { cause: error })
     }
     if (!response.ok) {
       const problem = await readSafeProblem(response)

@@ -128,7 +128,8 @@ describe("SessionClient", () => {
                 type: "operation.completed",
               },
             ]
-            return new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), {
+            const stream = events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(": heartbeat\n\n")
+            return new Response(stream, {
               headers: { "Content-Type": "text/event-stream" },
             })
           }
@@ -196,6 +197,25 @@ describe("SessionClient", () => {
     })
 
     await expect(client.retryAuthentication()).rejects.toThrow("Invalid UI session response")
+  })
+
+  test("preserves the original fetch failure as the error cause", async () => {
+    const server = Bun.serve({ port: 0, fetch: () => Response.json({ status: "ok" }) })
+    const client = new SessionClient({
+      baseUrl: `http://127.0.0.1:${server.port}/tui/v2`,
+      capability: "c".repeat(43),
+      protocol: PROTOCOL_VERSION,
+      sessionId: "session-id",
+    })
+    server.stop(true)
+
+    try {
+      await client.health()
+      expect.unreachable()
+    } catch (error) {
+      expect((error as Error).message).toBe("UI session is unavailable")
+      expect((error as Error).cause).toBeDefined()
+    }
   })
 
   test("surfaces only validated safe Problems and discards arbitrary failure bodies", async () => {
