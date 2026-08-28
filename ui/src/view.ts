@@ -256,7 +256,7 @@ export class FoundationView {
     const collection = this.#state.collections[screen]
     if (normalized === "backspace") {
       this.#setCollection(screen, { filter: graphemes(collection.filter).slice(0, -1).join(""), selected: 0 })
-    } else if (printableInput(key)) {
+    } else if (normalized !== "/" && printableInput(key)) {
       this.#setCollection(screen, { filter: truncateGraphemes(collection.filter + key.sequence, 120), selected: 0 })
     }
   }
