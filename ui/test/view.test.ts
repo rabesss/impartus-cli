@@ -210,6 +210,117 @@ describe("FoundationView", () => {
     view.destroy()
   })
 
+  test("restores inspector focus on Backspace without navigating away from lectures", async () => {
+    const setup = await createTestRenderer({ height: 32, kittyKeyboard: true, width: 140 })
+    renderers.push(setup)
+    let backCount = 0
+    const state = foundationState()
+    const view = new FoundationView(setup.renderer, {
+      ...state,
+      lectures: [lecture(1, "Lecture", false)],
+      screen: "lectures",
+    }, {
+      ...callbacks(),
+      onBack() { backCount++ },
+    })
+
+    setup.mockInput.pressTab()
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("[ACTIVE] Inspector")
+
+    setup.mockInput.pressKey("g")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("> ● Courses")
+    expect(setup.captureCharFrame()).not.toContain("/ Filter collection")
+
+    setup.mockInput.pressBackspace()
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("[ACTIVE] Inspector")
+    expect(backCount).toBe(0)
+    view.destroy()
+  })
+
+  test("forgets the temporary return focus when Tab leaves wide navigation", async () => {
+    const setup = await createTestRenderer({ height: 32, kittyKeyboard: true, width: 140 })
+    renderers.push(setup)
+    const view = new FoundationView(setup.renderer, foundationState(), callbacks())
+
+    setup.mockInput.pressTab()
+    setup.mockInput.pressKey("g")
+    setup.mockInput.pressTab()
+    setup.mockInput.pressTab({ shift: true })
+    setup.mockInput.pressEscape()
+    await setup.renderOnce()
+
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("[ACTIVE] Learning workspace")
+    expect(frame).not.toContain("[ACTIVE] Inspector")
+    view.destroy()
+  })
+
+  test("forgets the temporary return focus when a resize hides wide navigation", async () => {
+    const setup = await createTestRenderer({ height: 32, kittyKeyboard: true, width: 140 })
+    renderers.push(setup)
+    const view = new FoundationView(setup.renderer, foundationState(), callbacks())
+
+    setup.mockInput.pressTab()
+    setup.mockInput.pressKey("g")
+    setup.resize(100, 32)
+    setup.resize(140, 32)
+    setup.mockInput.pressTab({ shift: true })
+    setup.mockInput.pressEscape()
+    await setup.renderOnce()
+
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("[ACTIVE] Learning workspace")
+    expect(frame).not.toContain("[ACTIVE] Inspector")
+    view.destroy()
+  })
+
+  test("moves focus to the selected destination instead of retaining a stale return pane", async () => {
+    const setup = await createTestRenderer({ height: 32, kittyKeyboard: true, width: 140 })
+    renderers.push(setup)
+    let libraryCount = 0
+    const view = new FoundationView(setup.renderer, foundationState(), {
+      ...callbacks(),
+      onLibrary() { libraryCount++ },
+    })
+
+    setup.mockInput.pressTab()
+    setup.mockInput.pressKey("g")
+    setup.mockInput.pressArrow("down")
+    setup.mockInput.pressEnter()
+    await setup.renderOnce()
+
+    const frame = setup.captureCharFrame()
+    expect(libraryCount).toBe(1)
+    expect(frame).toContain("[ACTIVE] Learning workspace")
+    expect(frame).not.toContain("[ACTIVE] Inspector")
+    view.destroy()
+  })
+
+  test("moves focus to a destination opened by a direct navigation shortcut", async () => {
+    const setup = await createTestRenderer({ height: 32, kittyKeyboard: true, width: 140 })
+    renderers.push(setup)
+    let libraryCount = 0
+    const view = new FoundationView(setup.renderer, foundationState(), {
+      ...callbacks(),
+      onLibrary() { libraryCount++ },
+    })
+
+    setup.mockInput.pressTab()
+    setup.mockInput.pressKey("g")
+    setup.mockInput.pressKey("l")
+    await setup.renderOnce()
+
+    const frame = setup.captureCharFrame()
+    expect(libraryCount).toBe(1)
+    expect(frame).toContain("[ACTIVE] Learning workspace")
+    expect(frame).not.toContain("[ACTIVE] Inspector")
+    view.destroy()
+  })
+
   test("opens the inspected course when the inspector advertises Enter", async () => {
     const setup = await createTestRenderer({ height: 32, kittyKeyboard: true, width: 140 })
     renderers.push(setup)
