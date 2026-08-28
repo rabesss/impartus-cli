@@ -23,6 +23,19 @@ func TestPrintLibraryVerificationEmptyWritesExplicitMessage(t *testing.T) {
 	}
 }
 
+func TestUnknownLibraryCommandRejectedBeforeStoreOpen(t *testing.T) {
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	command, _, err := executeLibrary(context.Background(), []string{"vrfy"})
+	if err == nil || !strings.Contains(err.Error(), "unknown library command: vrfy") {
+		t.Fatalf("executeLibrary(vrfy) command/error = %q/%v", command, err)
+	}
+	if _, statErr := os.Stat(filepath.Join(stateHome, "impartus")); !os.IsNotExist(statErr) {
+		t.Fatalf("unknown library command created state or returned unexpected stat error: %v", statErr)
+	}
+}
+
 func TestExecuteEmptyLibraryVerificationHumanAndJSONContracts(t *testing.T) {
 	restoreCLIState(t)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())

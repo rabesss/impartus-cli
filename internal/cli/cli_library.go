@@ -52,6 +52,9 @@ func executeLibrary(ctx context.Context, args []string) (string, any, error) {
 	if len(args) == 0 {
 		return command, nil, errors.New("library requires list, show, or verify")
 	}
+	if !validLibraryCommand(args[0]) {
+		return command, nil, fmt.Errorf("unknown library command: %s", args[0])
+	}
 	store, err := library.Open(ctx, library.Options{})
 	if err != nil {
 		return command, nil, err
@@ -75,6 +78,15 @@ func executeLibrary(ctx context.Context, args []string) (string, any, error) {
 		return executeLibraryVerify(ctx, store, command, args[1:])
 	default:
 		return command, nil, fmt.Errorf("unknown library command: %s", args[0])
+	}
+}
+
+func validLibraryCommand(command string) bool {
+	switch command {
+	case "list", "show", "verify":
+		return true
+	default:
+		return false
 	}
 }
 
