@@ -10,6 +10,25 @@ type commandHelp struct {
 	command     string
 	description string
 	usage       []string
+	flags       []string
+}
+
+var downloadCommandHelpFlags = []string{
+	"--subject,-s <id>    Subject ID",
+	"--session,-S <id>    Session ID",
+	"--ttid <id>          Exact lecture TTID; cannot be combined with --start/--end",
+	"--start <n>          Start lecture index (1-based)",
+	"--end <n>            End lecture index (1-based)",
+	"--quality <value>    Quality override: 144, 450, or 720",
+	"--views <value>      View override: first, second, both, left, or right",
+	"--audio-only         Enable audio-only mode",
+	"--format <value>     Audio format override: mp3, m4a, aac, or opus",
+	"--output,-o <path>   Output directory",
+	"--skip-no-audio      Skip lectures with no audio track",
+	"--include-noaudio    Include lectures with no audio track",
+	"--events             Emit newline-delimited JSON lifecycle events",
+	"--json               Emit one JSON result envelope",
+	"--help,-h            Show command help",
 }
 
 var commandHelpByName = map[string]commandHelp{
@@ -34,6 +53,7 @@ var commandHelpByName = map[string]commandHelp{
 		usage: []string{
 			"impartus download --subject <id> --session <id> [--ttid <id> | --start <n> --end <n>] [flags]",
 		},
+		flags: downloadCommandHelpFlags,
 	},
 	"play": {
 		command:     "play",
@@ -87,7 +107,14 @@ var commandHelpByName = map[string]commandHelp{
 }
 
 func resolveCommandHelp(args []string) (commandHelp, bool) {
-	if len(args) == 0 || !hasHelpBeforeSentinel(args[1:]) {
+	if len(args) == 0 {
+		return commandHelp{}, false
+	}
+	if name, ok := explicitHelpTarget(args); ok {
+		help, ok := commandHelpByName[name]
+		return help, ok
+	}
+	if !hasHelpBeforeSentinel(args[0], args[1:]) {
 		return commandHelp{}, false
 	}
 	name := args[0]
@@ -106,13 +133,74 @@ func resolveCommandHelp(args []string) (commandHelp, bool) {
 	return help, ok
 }
 
-func hasHelpBeforeSentinel(args []string) bool {
-	for _, argument := range args {
+func explicitHelpTarget(args []string) (string, bool) {
+	if len(args) < 2 || !isExplicitHelpCommand(args[0]) {
+		return "", false
+	}
+	target := args[1:]
+	if last := target[len(target)-1]; last == "--help" || last == "-h" {
+		target = target[:len(target)-1]
+	}
+	if len(target) != 1 {
+		if len(target) == 2 && target[0] == "library" {
+			return strings.Join(target, "."), true
+		}
+		return "", false
+	}
+	return target[0], true
+}
+
+func explicitNestedHelpError(args []string) (bool, error) {
+	if len(args) < 3 || !isExplicitHelpCommand(args[0]) || args[1] != "library" {
+		return false, nil
+	}
+	return true, fmt.Errorf("unknown library command: %s", args[2])
+}
+
+func explicitRootHelpError(args []string) error {
+	if len(args) <= 1 {
+		return nil
+	}
+	if args[1] == "help" {
+		if len(args) == 2 || len(args) == 3 && (args[2] == "--help" || args[2] == "-h") {
+			return nil
+		}
+		return fmt.Errorf("help does not accept arguments after help: %s", strings.Join(args[2:], " "))
+	}
+	if args[1] != "--help" && args[1] != "-h" {
+		return fmt.Errorf("unknown command: %s", args[1])
+	}
+	if len(args) > 2 {
+		return fmt.Errorf("help does not accept arguments after %s: %s", args[1], strings.Join(args[2:], " "))
+	}
+	return nil
+}
+
+func isExplicitHelpCommand(argument string) bool {
+	switch argument {
+	case "help", "--help", "-help", "-h":
+		return true
+	default:
+		return false
+	}
+}
+
+func hasHelpBeforeSentinel(command string, args []string) bool {
+	parsingCommandFlags := true
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		if parsingCommandFlags && commandFlagConsumesNextValue(command, argument) {
+			index++
+			continue
+		}
 		if argument == "--" {
 			return false
 		}
 		if argument == "--help" || argument == "-h" {
 			return true
+		}
+		if parsingCommandFlags && (argument == "" || argument == "-" || !strings.HasPrefix(argument, "-")) {
+			parsingCommandFlags = false
 		}
 	}
 	return false
@@ -128,6 +216,16 @@ func showCommandHelp(output io.Writer, version, date string, help commandHelp) e
 	for _, usage := range help.usage {
 		if _, err := fmt.Fprintf(output, "  %s\n", usage); err != nil {
 			return err
+		}
+	}
+	if len(help.flags) > 0 {
+		if _, err := fmt.Fprintln(output, "\nFlags:"); err != nil {
+			return err
+		}
+		for _, flag := range help.flags {
+			if _, err := fmt.Fprintf(output, "  %s\n", flag); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

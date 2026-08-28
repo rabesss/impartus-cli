@@ -88,6 +88,43 @@ func TestExecuteLibraryVerifyHelpIsNestedAndSideEffectFree(t *testing.T) {
 	}
 }
 
+func TestExecuteLibraryVerifyExplicitHelpIsNestedAndSideEffectFree(t *testing.T) {
+	restoreCLIState(t)
+	installHelpDispatchSentinels(t)
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	os.Args = []string{"impartus", "help", "library", "verify"}
+	stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+	if err != nil || stderr != "" {
+		t.Fatalf("Execute(help library verify) stdout/stderr/error = %q/%q/%v", stdout, stderr, err)
+	}
+	if !strings.Contains(stdout, "Usage:\n  impartus library verify [--hash] [artifact-id]") {
+		t.Fatalf("Execute(help library verify) stdout = %q, want nested verify usage", stdout)
+	}
+
+	os.Args = []string{"impartus", "help", "library", "verify", "--json"}
+	stdout, stderr, err = captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+	if err != nil || stderr != "" {
+		t.Fatalf("Execute(help library verify --json) stdout/stderr/error = %q/%q/%v", stdout, stderr, err)
+	}
+	var envelope struct {
+		Success bool               `json:"success"`
+		Data    commandHelpPayload `json:"data"`
+		Error   *jsonErr           `json:"error"`
+		Meta    jsonMeta           `json:"meta"`
+	}
+	if decodeErr := json.Unmarshal([]byte(stdout), &envelope); decodeErr != nil {
+		t.Fatalf("decode nested help: %v; stdout=%q", decodeErr, stdout)
+	}
+	if !envelope.Success || envelope.Error != nil || envelope.Meta.Command != "help" || envelope.Data.Command != "library.verify" {
+		t.Fatalf("nested help envelope = %+v", envelope)
+	}
+	if _, statErr := os.Stat(filepath.Join(stateHome, "impartus")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("explicit nested help created state directory or returned unexpected stat error: %v", statErr)
+	}
+}
+
 func TestExecuteHumanCommandHelpMatrix(t *testing.T) {
 	restoreCLIState(t)
 	installHelpDispatchSentinels(t)
@@ -103,6 +140,7 @@ func TestExecuteHumanCommandHelpMatrix(t *testing.T) {
 		{name: "root long", args: []string{"--help"}, usage: "impartus [command] [flags]"},
 		{name: "root short", args: []string{"-h"}, usage: "impartus [command] [flags]"},
 		{name: "help command", args: []string{"help"}, usage: "impartus [command] [flags]"},
+		{name: "help download", args: []string{"help", "download"}, usage: "impartus download --subject <id> --session <id>"},
 		{name: "help command short", args: []string{"help", "-h"}, usage: "impartus [command] [flags]"},
 		{name: "help command long", args: []string{"help", "--help"}, usage: "impartus [command] [flags]"},
 		{name: "courses", args: []string{"courses", "--help"}, usage: "impartus courses"},
@@ -169,6 +207,84 @@ func TestExecuteHumanCommandHelpMatrix(t *testing.T) {
 				t.Fatalf("Execute(%v) created state directory or returned unexpected stat error: %v", test.args, statErr)
 			}
 		})
+	}
+}
+
+func TestExecuteDownloadHelpFormsMatchAndListFlags(t *testing.T) {
+	restoreCLIState(t)
+	installHelpDispatchSentinels(t)
+	outputs := make([]string, 0, 4)
+	for _, args := range [][]string{
+		{"help", "download"},
+		{"help", "download", "--help"},
+		{"--help", "download"},
+		{"download", "--help"},
+	} {
+		os.Args = append([]string{"impartus"}, args...)
+		stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+		if err != nil || stderr != "" {
+			t.Fatalf("Execute(%v) stdout/stderr/error = %q/%q/%v", args, stdout, stderr, err)
+		}
+		for _, want := range []string{"Flags:", "--subject,-s", "--session,-S", "--start", "--quality", "--json"} {
+			if !strings.Contains(stdout, want) {
+				t.Fatalf("Execute(%v) output omitted %q: %q", args, want, stdout)
+			}
+		}
+		outputs = append(outputs, stdout)
+	}
+	for index, output := range outputs[1:] {
+		if outputs[0] != output {
+			t.Fatalf("download help form %d differs from help download:\nhelp=%q\nother=%q", index+1, outputs[0], output)
+		}
+	}
+}
+
+func TestExecuteJSONHelpDownloadListsFlags(t *testing.T) {
+	restoreCLIState(t)
+	installHelpDispatchSentinels(t)
+	var first string
+	for _, args := range [][]string{
+		{"help", "download", "--json"},
+		{"help", "download", "--help", "--json"},
+		{"--help", "download", "--json"},
+		{"download", "--help", "--json"},
+	} {
+		os.Args = append([]string{"impartus"}, args...)
+		stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+		if err != nil || stderr != "" {
+			t.Fatalf("Execute(%v) stdout/stderr/error = %q/%q/%v", args, stdout, stderr, err)
+		}
+		var envelope struct {
+			Data struct {
+				Command string   `json:"command"`
+				Flags   []string `json:"flags"`
+			} `json:"data"`
+		}
+		if decodeErr := json.Unmarshal([]byte(stdout), &envelope); decodeErr != nil {
+			t.Fatalf("decode command help: %v; stdout=%q", decodeErr, stdout)
+		}
+		if envelope.Data.Command != "download" || !slices.ContainsFunc(envelope.Data.Flags, func(flag string) bool {
+			return strings.HasPrefix(flag, "--subject,-s")
+		}) || !slices.ContainsFunc(envelope.Data.Flags, func(flag string) bool {
+			return strings.HasPrefix(flag, "--json")
+		}) {
+			t.Fatalf("JSON download help = %+v, want command and flags", envelope.Data)
+		}
+		if first == "" {
+			first = stdout
+		} else if stdout != first {
+			t.Fatalf("Execute(%v) JSON differs from help download:\nfirst=%q\ncurrent=%q", args, first, stdout)
+		}
+	}
+}
+
+func TestRootHelpListsJSONAsGlobalFlag(t *testing.T) {
+	var output strings.Builder
+	if err := showHelpTo(&output, "v1", "d1"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "Global Flags:\n  --json") {
+		t.Fatalf("root help does not list --json as a global flag: %q", output.String())
 	}
 }
 
@@ -307,7 +423,7 @@ func TestExecuteJSONCommandHelpMatrix(t *testing.T) {
 				if decodeErr := json.Unmarshal([]byte(stdout), &envelope); decodeErr != nil {
 					t.Fatalf("decode Execute(%v): %v; stdout=%q", args, decodeErr, stdout)
 				}
-				if !envelope.Success || envelope.Error != nil || envelope.Meta.Command != "help" || envelope.Meta.Mode != "json" || len(envelope.Data) != 3 {
+				if !envelope.Success || envelope.Error != nil || envelope.Meta.Command != "help" || envelope.Meta.Mode != "json" || len(envelope.Data) < 3 || len(envelope.Data) > 4 {
 					t.Fatalf("Execute(%v) envelope = %+v", args, envelope)
 				}
 				var command, description string
@@ -358,6 +474,9 @@ func TestExecuteNonHelpCompatibilityMatrix(t *testing.T) {
 		{name: "serve invalid port", args: []string{"serve", "--port", "0"}, want: "port must be between 1 and 65535"},
 		{name: "serve positional", args: []string{"serve", "extra"}, want: "serve does not accept positional arguments"},
 		{name: "tui positional", args: []string{"tui", "extra"}, want: "tui does not accept positional arguments"},
+		{name: "download flag-like positional before sentinel", args: []string{"download", "extra", "--output", "--", "--help"}, want: "download does not accept positional arguments"},
+		{name: "serve flag-like positional before sentinel", args: []string{"serve", "extra", "--port", "--", "--help"}, want: "serve does not accept positional arguments"},
+		{name: "watch flag-like positional before sentinel", args: []string{"watch", "extra", "--output", "--", "--help"}, want: "watch does not accept positional arguments"},
 		{name: "courses help after sentinel", args: []string{"courses", "--", "--help"}, want: "courses does not accept positional arguments"},
 		{name: "download help after sentinel", args: []string{"download", "--subject", "1", "--session", "2", "--", "--help"}, want: "download does not accept positional arguments"},
 		{name: "JSON courses help after sentinel", args: []string{"courses", "--json", "--", "--help"}, want: "courses does not accept positional arguments"},
@@ -378,6 +497,139 @@ func TestExecuteNonHelpCompatibilityMatrix(t *testing.T) {
 				t.Fatalf("Execute(%v) stdout/stderr = %q/%q, want empty", test.args, stdout, stderr)
 			}
 		})
+	}
+}
+
+func TestExecuteHelpHelpRemainsRootHelp(t *testing.T) {
+	humanArgs := [][]string{
+		{"help", "help"},
+		{"help", "help", "--help"},
+		{"help", "help", "-h"},
+		{"--help", "help"},
+	}
+	for _, args := range humanArgs {
+		t.Run(strings.Join(args, " ")+" human", func(t *testing.T) {
+			restoreCLIState(t)
+			installHelpDispatchSentinels(t)
+			os.Args = append([]string{"impartus"}, args...)
+
+			stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+			if err != nil || stderr != "" || !strings.Contains(stdout, "Usage:\n  impartus [command] [flags]") {
+				t.Fatalf("Execute(%v) stdout/stderr/error = %q/%q/%v, want root help", args, stdout, stderr, err)
+			}
+		})
+	}
+
+	for _, humanArgs := range humanArgs {
+		args := append(append([]string(nil), humanArgs...), "--json")
+		t.Run(strings.Join(args, " ")+" JSON", func(t *testing.T) {
+			restoreCLIState(t)
+			installHelpDispatchSentinels(t)
+			os.Args = append([]string{"impartus"}, args...)
+
+			stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+			if err != nil || stderr != "" {
+				t.Fatalf("Execute(%v) stdout/stderr/error = %q/%q/%v, want root JSON help", args, stdout, stderr, err)
+			}
+			var envelope struct {
+				Success bool              `json:"success"`
+				Data    capabilityPayload `json:"data"`
+				Error   *jsonErr          `json:"error"`
+				Meta    jsonMeta          `json:"meta"`
+			}
+			if decodeErr := json.Unmarshal([]byte(stdout), &envelope); decodeErr != nil {
+				t.Fatalf("decode Execute(%v): %v; stdout=%q", args, decodeErr, stdout)
+			}
+			if !envelope.Success || envelope.Error != nil || envelope.Meta.Command != "help" || envelope.Data.Name != "impartus" {
+				t.Fatalf("Execute(%v) envelope = %+v, want root JSON help", args, envelope)
+			}
+		})
+	}
+}
+
+func TestExecuteHelpHelpRejectsTrailingTarget(t *testing.T) {
+	for _, jsonMode := range []bool{false, true} {
+		name := "human"
+		args := []string{"help", "help", "download"}
+		if jsonMode {
+			name = "JSON"
+			args = append(args, "--json")
+		}
+		t.Run(name, func(t *testing.T) {
+			restoreCLIState(t)
+			installHelpDispatchSentinels(t)
+			os.Args = append([]string{"impartus"}, args...)
+
+			stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+			if err == nil || !strings.Contains(err.Error(), "help does not accept arguments after help: download") {
+				t.Fatalf("Execute(%v) error = %v, want trailing-target error", args, err)
+			}
+			if stdout != "" || stderr != "" {
+				t.Fatalf("Execute(%v) stdout/stderr = %q/%q, want empty", args, stdout, stderr)
+			}
+		})
+	}
+}
+
+func TestExecuteHelpDetectionDistinguishesFlagValueFromSentinel(t *testing.T) {
+	tests := []struct {
+		name  string
+		args  []string
+		usage string
+	}{
+		{
+			name:  "download output consumes double dash",
+			args:  []string{"download", "--output", "--", "--help"},
+			usage: "impartus download --subject <id> --session <id>",
+		},
+		{
+			name:  "serve port consumes double dash",
+			args:  []string{"serve", "--port", "--", "--help"},
+			usage: "impartus serve [--port <port>]",
+		},
+		{
+			name:  "watch output consumes double dash before short help",
+			args:  []string{"watch", "--output", "--", "-h"},
+			usage: "impartus watch [--subject <id> --session <id>]",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			restoreCLIState(t)
+			installHelpDispatchSentinels(t)
+			os.Args = append([]string{"impartus"}, test.args...)
+
+			stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+			if err != nil || stderr != "" {
+				t.Fatalf("Execute(%v) stdout/stderr/error = %q/%q/%v", test.args, stdout, stderr, err)
+			}
+			if !strings.Contains(stdout, test.usage) {
+				t.Fatalf("Execute(%v) stdout = %q, want usage %q", test.args, stdout, test.usage)
+			}
+		})
+	}
+}
+
+func TestExecuteHelpFlagConsumedAsOptionValueDoesNotShowHelp(t *testing.T) {
+	restoreCLIState(t)
+	called := false
+	runDownloadFn = func(args []string) error {
+		called = true
+		want := []string{"--output", "--help"}
+		if !slices.Equal(args, want) {
+			t.Fatalf("download args = %v, want %v", args, want)
+		}
+		return errors.New("download dispatched")
+	}
+	os.Args = []string{"impartus", "download", "--output", "--help"}
+
+	stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+	if !called || err == nil || err.Error() != "download dispatched" {
+		t.Fatalf("Execute dispatched=%t error=%v, want download runner error", called, err)
+	}
+	if stdout != "" || stderr != "" {
+		t.Fatalf("Execute stdout/stderr = %q/%q, want empty", stdout, stderr)
 	}
 }
 
@@ -463,6 +715,59 @@ func TestUnknownCommandHelpDoesNotBecomeSuccessfulHelp(t *testing.T) {
 		if stdout != "" || stderr != "" {
 			t.Fatalf("Execute(%v) stdout/stderr = %q/%q, want empty Execute streams", args, stdout, stderr)
 		}
+	}
+}
+
+func TestUnknownExplicitHelpTargetsRemainErrors(t *testing.T) {
+	restoreCLIState(t)
+	installHelpDispatchSentinels(t)
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "top level", args: []string{"help", "bogus"}, want: "unknown command: bogus"},
+		{name: "nested", args: []string{"help", "library", "vrfy"}, want: "unknown library command: vrfy"},
+		{name: "short help flag before target", args: []string{"help", "-h", "download"}, want: "help does not accept arguments after -h: download"},
+		{name: "long help flag before target", args: []string{"help", "--help", "frobnicate"}, want: "help does not accept arguments after --help: frobnicate"},
+	}
+	for _, test := range tests {
+		t.Run(test.name+" human", func(t *testing.T) {
+			os.Args = append([]string{"impartus"}, test.args...)
+			stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+			if err == nil || ExitCode(err) != 1 || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Execute(%v) stdout/stderr/error = %q/%q/%v, want %q", test.args, stdout, stderr, err, test.want)
+			}
+			if stdout != "" || stderr != "" {
+				t.Fatalf("Execute(%v) stdout/stderr = %q/%q, want empty", test.args, stdout, stderr)
+			}
+		})
+
+		t.Run(test.name+" JSON", func(t *testing.T) {
+			args := append(append([]string{"impartus"}, test.args...), "--json")
+			os.Args = args
+			stdout, stderr, err := captureOutputStreams(t, func() error { return Execute("v1", "d1") })
+			if err == nil || ExitCode(err) != 1 || stdout != "" || stderr != "" {
+				t.Fatalf("Execute(%v) stdout/stderr/error = %q/%q/%v", args[1:], stdout, stderr, err)
+			}
+			var envelope struct {
+				Success bool     `json:"success"`
+				Error   jsonErr  `json:"error"`
+				Meta    jsonMeta `json:"meta"`
+			}
+			if decodeErr := json.Unmarshal([]byte(err.Error()), &envelope); decodeErr != nil {
+				t.Fatalf("decode Execute(%v): %v; raw=%q", args[1:], decodeErr, err)
+			}
+			if envelope.Success || !strings.Contains(envelope.Error.Message, test.want) || envelope.Meta.Command != "help" || envelope.Meta.Mode != "json" {
+				t.Fatalf("Execute(%v) envelope = %+v, want %q", args[1:], envelope, test.want)
+			}
+		})
+	}
+	if _, statErr := os.Stat(filepath.Join(stateHome, "impartus")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("unknown explicit help created state directory or returned unexpected stat error: %v", statErr)
 	}
 }
 
