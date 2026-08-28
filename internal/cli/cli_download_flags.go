@@ -65,14 +65,27 @@ func parseDownloadFlags(args []string) (downloadFlags, error) {
 			f.audioOnlySet = true
 		}
 	})
-	if f.subject <= 0 || f.session <= 0 {
-		return downloadFlags{}, errors.New("download requires --subject/-s and --session/-S")
-	}
-	if f.ttidSet && f.ttid <= 0 {
-		return downloadFlags{}, errors.New("download --ttid must be positive")
-	}
-	if f.ttidSet && (f.startSet || f.endSet) {
-		return downloadFlags{}, errors.New("download --ttid cannot be combined with --start/--end")
+	if err := validateDownloadSelectionFlags(f); err != nil {
+		return downloadFlags{}, err
 	}
 	return f, nil
+}
+
+func validateDownloadSelectionFlags(f downloadFlags) error {
+	if f.subject <= 0 || f.session <= 0 {
+		return errors.New("download requires --subject/-s and --session/-S")
+	}
+	if f.ttidSet && f.ttid <= 0 {
+		return errors.New("download --ttid must be positive")
+	}
+	if f.ttidSet && (f.startSet || f.endSet) {
+		return errors.New("download --ttid cannot be combined with --start/--end")
+	}
+	if f.startSet && f.start <= 0 {
+		return errors.New("download --start must be a positive 1-based index")
+	}
+	if f.endSet && f.end <= 0 {
+		return errors.New("download --end must be a positive 1-based index")
+	}
+	return nil
 }
