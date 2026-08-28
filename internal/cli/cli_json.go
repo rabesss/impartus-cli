@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"os"
+	"strings"
 
 	"github.com/rabesss/impartus-cli/internal/secrets"
 )
@@ -74,14 +75,72 @@ func newCommandHelpPayload(help commandHelp) commandHelpPayload {
 func stripGlobalJSONFlag(args []string) ([]string, bool) {
 	filtered := make([]string, 0, len(args))
 	jsonMode := false
-	for _, arg := range args {
+	command := ""
+	parsingCommandFlags := false
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if command == "" && arg != "--json" && arg != "--" {
+			command = arg
+			parsingCommandFlags = true
+			filtered = append(filtered, arg)
+			continue
+		}
+		if parsingCommandFlags && commandFlagConsumesNextValue(command, arg) {
+			filtered = append(filtered, arg)
+			if index+1 < len(args) {
+				index++
+				filtered = append(filtered, args[index])
+			}
+			continue
+		}
+		if arg == "--" {
+			filtered = append(filtered, args[index:]...)
+			break
+		}
 		if arg == "--json" {
 			jsonMode = true
 			continue
 		}
 		filtered = append(filtered, arg)
+		if parsingCommandFlags && (arg == "" || arg == "-" || !strings.HasPrefix(arg, "-")) {
+			parsingCommandFlags = false
+		}
 	}
 	return filtered, jsonMode
+}
+
+func commandFlagConsumesNextValue(command, argument string) bool {
+	if strings.Contains(argument, "=") {
+		return false
+	}
+	name := strings.TrimPrefix(argument, "-")
+	name = strings.TrimPrefix(name, "-")
+	if name == argument || name == "" {
+		return false
+	}
+
+	switch command {
+	case "lectures":
+		return name == "subject" || name == "s" || name == "session" || name == "S"
+	case "download":
+		switch name {
+		case "subject", "s", "session", "S", "ttid", "start", "end", "quality", "views", "format", "output", "o":
+			return true
+		}
+	case "play":
+		switch name {
+		case "subject", "s", "session", "S", "start", "end", "lecture", "l", "quality", "views", "mpv-mode":
+			return true
+		}
+	case "watch":
+		switch name {
+		case "subject", "s", "session", "S", "interval", "output", "o":
+			return true
+		}
+	case "serve":
+		return name == "port"
+	}
+	return false
 }
 
 func newSuccessEnvelope(command string, data any) jsonEnvelope {

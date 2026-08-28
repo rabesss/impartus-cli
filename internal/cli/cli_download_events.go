@@ -123,21 +123,12 @@ func emitDownloadResultEvents(ctx context.Context, output io.Writer, jobID strin
 
 func requestedEvents(args []string) bool {
 	enabled := false
-	valueFlags := map[string]bool{
-		"--subject": true, "-subject": true, "-s": true,
-		"--session": true, "-session": true, "-S": true,
-		"--ttid": true, "-ttid": true,
-		"--start": true, "-start": true, "--end": true, "-end": true,
-		"--quality": true, "-quality": true, "--views": true, "-views": true,
-		"--format": true, "-format": true, "--output": true, "-output": true, "-o": true,
-		"--interval": true, "-interval": true,
-	}
 	for index := 0; index < len(args); index++ {
 		argument := args[index]
 		if argument == "--" {
 			break
 		}
-		if valueFlags[argument] {
+		if commandFlagConsumesNextValue("download", argument) || commandFlagConsumesNextValue("watch", argument) {
 			index++
 			continue
 		}

@@ -18,6 +18,37 @@ func TestStripGlobalJSONFlag(t *testing.T) {
 	if _, jsonMode2 := stripGlobalJSONFlag([]string{"courses"}); jsonMode2 {
 		t.Error("expected jsonMode false when --json absent")
 	}
+
+	valueSentinel, valueSentinelMode := stripGlobalJSONFlag([]string{"download", "--output", "--", "--json"})
+	if !valueSentinelMode {
+		t.Error("expected --json after a --output value of -- to enable JSON mode")
+	}
+	if len(valueSentinel) != 3 || valueSentinel[0] != "download" || valueSentinel[1] != "--output" || valueSentinel[2] != "--" {
+		t.Fatalf("args with -- value = %v, want value preserved and --json stripped", valueSentinel)
+	}
+	jsonValue, jsonValueMode := stripGlobalJSONFlag([]string{"download", "--output", "--json"})
+	if jsonValueMode {
+		t.Error("expected --json consumed by --output to remain a flag value")
+	}
+	if len(jsonValue) != 3 || jsonValue[0] != "download" || jsonValue[1] != "--output" || jsonValue[2] != "--json" {
+		t.Fatalf("args with --json value = %v, want unchanged", jsonValue)
+	}
+
+	afterSentinel, afterSentinelMode := stripGlobalJSONFlag([]string{"courses", "--", "--json"})
+	if afterSentinelMode {
+		t.Error("expected --json after -- to remain positional")
+	}
+	if len(afterSentinel) != 3 || afterSentinel[0] != "courses" || afterSentinel[1] != "--" || afterSentinel[2] != "--json" {
+		t.Fatalf("args after sentinel = %v, want unchanged positional --json", afterSentinel)
+	}
+
+	mixed, mixedMode := stripGlobalJSONFlag([]string{"courses", "--json", "--", "--json"})
+	if !mixedMode {
+		t.Error("expected --json before -- to enable JSON mode")
+	}
+	if len(mixed) != 3 || mixed[0] != "courses" || mixed[1] != "--" || mixed[2] != "--json" {
+		t.Fatalf("mixed args = %v, want only pre-sentinel --json stripped", mixed)
+	}
 }
 
 func TestNewSuccessEnvelope(t *testing.T) {
