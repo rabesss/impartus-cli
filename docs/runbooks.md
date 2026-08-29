@@ -119,21 +119,34 @@ sudo pacman -S ffmpeg
 
 ### Issue: Authentication Failed (401)
 
-**Symptoms:** API returns 401 Unauthorized
+**Symptoms:** A protected API or WebSocket request returns 401 Unauthorized.
 
 **Resolution:**
-1. Verify the configured username, password, and base URL. Configuration may
-   come from `config.json` or the corresponding `IMPARTUS_*` environment
-   variables.
-2. Test the same credentials through the institution's browser login.
-3. If credentials were rotated, restart `impartus serve` to clear its in-memory
-   upstream client and token, which are cached for approximately 23 hours.
-4. Verify the persistent bearer-token cache path. `tokenCachePath` selects it,
-   `IMPARTUS_TOKEN_CACHE` overrides that setting, and the legacy default is
-   `.token`. Stop Impartus processes before replacing only that exact private
-   cache; the next successful login recreates it.
-5. If the API returns `RATE_LIMITED` (429), wait for the response's
-   `retryAfter` interval before retrying login.
+1. Inspect `error.code` in the response. `MISSING_TOKEN` and
+   `INVALID_TOKEN_FORMAT` mean the request needs a correctly formatted
+   `Authorization: Bearer <token>` header. `INVALID_TOKEN` means the local API
+   token is unknown or expired; obtain a new one from `POST /api/v1/auth/login`
+   as documented in the [API authentication guide](api-reference.md#authentication).
+2. If the login endpoint returns `AUTH_FAILED`, verify that its username and
+   password match the server's configured values. Configuration may come from
+   `config.json` or the corresponding `IMPARTUS_*` environment variables.
+3. If login returns `RATE_LIMITED` (429), wait for the response's `retryAfter`
+   interval before retrying.
+
+The local API token and the upstream Impartus token are separate credentials.
+API tokens live only in the server process and expire after 24 hours; restarting
+the server invalidates them. The upstream token cache is selected by
+`tokenCachePath`, overridden by `IMPARTUS_TOKEN_CACHE`, and defaults to `.token`.
+The client validates a cached upstream token and replaces it automatically when
+the upstream profile rejects it, so do not remove that file to fix a local API
+401. Address the upstream cache only when Impartus reports a cache path,
+permission, or target error.
+
+After an upstream credential rotation, verify the configured base URL and the
+same credentials through the institution's browser login. If the server still
+holds its approximately 23-hour in-memory upstream session, schedule a restart
+after active jobs finish; interrupted running or pending jobs are restored as
+failed and cannot resume.
 
 ### Issue: Download Timeout
 
