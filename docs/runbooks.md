@@ -122,13 +122,18 @@ sudo pacman -S ffmpeg
 **Symptoms:** API returns 401 Unauthorized
 
 **Resolution:**
-1. Verify credentials in `config.json` match Impartus account
-2. Check base URL is correct (e.g., `http://bitshyd.impartus.com/api`)
-3. Test credentials manually via browser login
-4. Regenerate token: `POST /api/v1/auth/login`
-5. If you see `RATE_LIMITED` (429), wait for `retryAfter` seconds (default 60) before retrying login
-
-**Note:** The API server caches upstream Impartus login tokens for ~23 hours. Stale-cache issues after credential rotation are rare; restarting `impartus serve` clears the cache.
+1. Verify the configured username, password, and base URL. Configuration may
+   come from `config.json` or the corresponding `IMPARTUS_*` environment
+   variables.
+2. Test the same credentials through the institution's browser login.
+3. If credentials were rotated, restart `impartus serve` to clear its in-memory
+   upstream client and token, which are cached for approximately 23 hours.
+4. Verify the persistent bearer-token cache path. `tokenCachePath` selects it,
+   `IMPARTUS_TOKEN_CACHE` overrides that setting, and the legacy default is
+   `.token`. Stop Impartus processes before replacing only that exact private
+   cache; the next successful login recreates it.
+5. If the API returns `RATE_LIMITED` (429), wait for the response's
+   `retryAfter` interval before retrying login.
 
 ### Issue: Download Timeout
 
@@ -238,11 +243,17 @@ chmod +x impartus
 
 ### Config Rollback
 
+`config.json` is intentionally ignored because it can contain credentials; Git
+cannot restore it. Recover configuration from an owner-private backup or the
+deployment's secret manager, then validate it before restarting the service:
+
 ```bash
-# Restore previous config
-cp config.json config.json.backup
-git checkout HEAD~1 -- config.json
+install -m 600 /secure/backup/config.json ./config.json
+./impartus doctor
 ```
+
+For environment-only deployments, restore the managed `IMPARTUS_*` variables
+instead of creating a local config file.
 
 ### Database/State Recovery
 
