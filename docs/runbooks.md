@@ -119,16 +119,36 @@ sudo pacman -S ffmpeg
 
 ### Issue: Authentication Failed (401)
 
-**Symptoms:** API returns 401 Unauthorized
+**Symptoms:** A protected API or WebSocket request returns 401 Unauthorized.
 
 **Resolution:**
-1. Verify credentials in `config.json` match Impartus account
-2. Check base URL is correct (e.g., `http://bitshyd.impartus.com/api`)
-3. Test credentials manually via browser login
-4. Regenerate token: `POST /api/v1/auth/login`
-5. If you see `RATE_LIMITED` (429), wait for `retryAfter` seconds (default 60) before retrying login
+1. Inspect `error.code` in the response. `MISSING_TOKEN` and
+   `INVALID_TOKEN_FORMAT` mean the request needs a correctly formatted
+   `Authorization: Bearer <token>` header. `INVALID_TOKEN` means the local API
+   token is unknown or expired; obtain a new one from `POST /api/v1/auth/login`
+   as documented in the [API authentication guide](api-reference.md#authentication).
+2. If the login endpoint returns `AUTH_FAILED`, verify that its username and
+   password match the server's configured values. Configuration may come from
+   `config.json` or the corresponding `IMPARTUS_*` environment variables. The
+   server loads those values at startup, so restart it after changing them and
+   then request a new API token.
+3. If login returns `RATE_LIMITED` (429), wait for the response's `retryAfter`
+   interval before retrying.
 
-**Note:** The API server caches upstream Impartus login tokens for ~23 hours. Stale-cache issues after credential rotation are rare; restarting `impartus serve` clears the cache.
+The local API token and the upstream Impartus token are separate credentials.
+API tokens live only in the server process and expire after 24 hours; restarting
+the server invalidates them. The upstream token cache is selected by
+`tokenCachePath`, overridden by `IMPARTUS_TOKEN_CACHE`, and defaults to `.token`.
+The client validates a cached upstream token and replaces it automatically when
+the upstream profile rejects it, so do not remove that file to fix a local API
+401. Address the upstream cache only when Impartus reports a cache path,
+permission, or target error.
+
+After an upstream credential rotation, verify the configured base URL and the
+same credentials through the institution's browser login. If the server still
+holds its approximately 23-hour in-memory upstream session, schedule a restart
+after active jobs finish; interrupted running or pending jobs are restored as
+failed and cannot resume.
 
 ### Issue: Download Timeout
 
@@ -238,11 +258,25 @@ chmod +x impartus
 
 ### Config Rollback
 
+`config.json` is intentionally ignored because it can contain credentials; Git
+cannot restore it. Recover configuration from an owner-private backup or the
+deployment's secret manager, then run the local preflight before restarting the
+service:
+
 ```bash
-# Restore previous config
-cp config.json config.json.backup
-git checkout HEAD~1 -- config.json
+install -m 600 /secure/backup/config.json ./config.json
+./impartus doctor
 ```
+
+`impartus doctor` checks syntax, file safety, dependencies, and local runtime
+paths. It does not apply configuration defaults or `IMPARTUS_*` overrides and
+does not perform strict semantic validation. `impartus serve` validates the
+effective configuration at startup and can still reject it, so retain the
+previous backup or managed variables and observe startup before declaring the
+rollback complete.
+
+For environment-only deployments, restore the managed `IMPARTUS_*` variables
+instead of creating a local config file.
 
 ### Database/State Recovery
 

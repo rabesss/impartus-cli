@@ -23,7 +23,11 @@
 
 Real-time progress updates for download jobs.
 
-> **NOTE:** This documentation describes the **actual implementation** as of 2025-02-12. The event format differs from the original design spec.
+> **Compatibility note:** This page documents the current server WebSocket
+> contract. Its event type retains the historical `job.cancelled` spelling,
+> while the payload status is `canceled`. The separate CLI event stream uses
+> `job.canceled`; clients must treat the server and CLI names as distinct,
+> versioned contracts.
 
 ## Connection
 

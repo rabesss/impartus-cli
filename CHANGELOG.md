@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.1.29](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.28...impartus-cli-v0.1.29) (2026-08-29)
+
+
+### Bug Fixes
+
+* **ci:** track Pullfrog v0 cleanup updates ([0c00867](https://github.com/rabesss/impartus-cli/commit/0c0086717ecdf9f37ef5850681b265e3f5016b95))
+* **cli:** cancel TUI downloads on back ([085ed9a](https://github.com/rabesss/impartus-cli/commit/085ed9a101d70bcbbc4dd027f65548632768369c))
+* **cli:** distinguish help sentinel from flag values ([9d11f1d](https://github.com/rabesss/impartus-cli/commit/9d11f1d8f90388a054c69bde3d433fe34dc0f6d6))
+* **cli:** distinguish JSON sentinel from flag values ([b3db851](https://github.com/rabesss/impartus-cli/commit/b3db851e46e20354aad39b5d652c52990dc90053))
+* **client:** validate token cache before publish ([b82f99f](https://github.com/rabesss/impartus-cli/commit/b82f99f85a8c3bd62da3b3b1f0348fdfd3a378d3))
+* **cli:** expose TUI command help and blockers ([caebe07](https://github.com/rabesss/impartus-cli/commit/caebe0791163c033f240dd5f51d9a823fe96c976))
+* **cli:** honor JSON flag sentinel ([b4235c4](https://github.com/rabesss/impartus-cli/commit/b4235c44787cf661b45a7f6a7747d15ea08346ec))
+* **cli:** ignore filter shortcut while editing ([b38dec6](https://github.com/rabesss/impartus-cli/commit/b38dec65d47c05329fae7e0e30f31a1441d02979))
+* **cli:** keep TUI event streams alive ([1a7bee6](https://github.com/rabesss/impartus-cli/commit/1a7bee61ee1077913d0d9e277a2239128293e66f))
+* **cli:** make command help truthful ([d561f51](https://github.com/rabesss/impartus-cli/commit/d561f51798a7eb6f79e9a5f09f5ac0be9b368207))
+* **cli:** make watch budget counts exclusive ([d91390b](https://github.com/rabesss/impartus-cli/commit/d91390bb6f8081e41d286d7771cd7ec49ac75b72))
+* **cli:** preserve parser state during help scans ([a925dff](https://github.com/rabesss/impartus-cli/commit/a925dffcc7e28470bb0b925cdad367b8cda42923))
+* **cli:** publish TUI download progress ([3bef1e9](https://github.com/rabesss/impartus-cli/commit/3bef1e9b07c2628e166e0604e1770877adb5c207))
+* **cli:** reject library verbs before opening state ([3affcb6](https://github.com/rabesss/impartus-cli/commit/3affcb620926451683e0fa57f8903dc4bc00de61))
+* **cli:** reject non-positive download ranges ([2edcbc3](https://github.com/rabesss/impartus-cli/commit/2edcbc3e06cb5c376c9977655b01f1de71b7d76a))
+* **cli:** reject trailing explicit help targets ([5a7764c](https://github.com/rabesss/impartus-cli/commit/5a7764cd282cbcc55b1ce083805d9882c2227181))
+* **cli:** restore focus after wide navigation ([5f1188f](https://github.com/rabesss/impartus-cli/commit/5f1188f1c611ade37555faf5b20a7016b7275ebb))
+* **cli:** scope wide navigation focus restore ([adc90e3](https://github.com/rabesss/impartus-cli/commit/adc90e326bdd52ae73feac75899114e71053bf75))
+* **cli:** support alternate help forms ([fe24068](https://github.com/rabesss/impartus-cli/commit/fe240687923a893b5023602fde36c17899b0bf5d))
+* **cli:** validate media flags before login ([77bea1b](https://github.com/rabesss/impartus-cli/commit/77bea1bc31b43835001044ebe55105f21f9dc11c))
+* **cli:** validate resolved media config before login ([8db6e8d](https://github.com/rabesss/impartus-cli/commit/8db6e8d347abb4278d4e75b81b6e5fda1f043d6d))
+* **security:** preserve cache on rejected publish ([b24ae33](https://github.com/rabesss/impartus-cli/commit/b24ae33776cf93638cb614e18886fbe54b7707f9))
+* **tui:** guard delayed back transitions ([f73a069](https://github.com/rabesss/impartus-cli/commit/f73a06947353e3fea4459f45d9249dd15cd7575d))
+* **tui:** invalidate back on replacement operation ([2317061](https://github.com/rabesss/impartus-cli/commit/2317061ee0722f6d620737c525a6441fffd6c3ea))
+* **tui:** preserve download progress ordering ([337c97a](https://github.com/rabesss/impartus-cli/commit/337c97a77e0827a4c8175b806ca55de9a40050cc))
+* **tui:** reject stale back navigation after ABA route changes ([cce93ee](https://github.com/rabesss/impartus-cli/commit/cce93ee0e8394f0be2c50b22bd27d80b10060690))
+* **ui:** keep command feedback transient ([1e0934d](https://github.com/rabesss/impartus-cli/commit/1e0934d5dd4b7c51639e3a23f548bb19865c4821))
+* **ui:** retain blocked feedback during progress ([b8974ce](https://github.com/rabesss/impartus-cli/commit/b8974ce9741b8f67d84df184d8dfd30219e37cb3))
+
+
+### Documentation
+
+* remove stale plans and refresh operational guidance ([#217](https://github.com/rabesss/impartus-cli/pull/217))
+
+
+### Testing
+
+* **ci:** cover Pullfrog subpath refs ([89df6c4](https://github.com/rabesss/impartus-cli/commit/89df6c460bc6513f745b5c46b370953cd9217bc6))
+* **ci:** preserve Pullfrog ref policy coverage ([d0da2a3](https://github.com/rabesss/impartus-cli/commit/d0da2a31a42d18780ef0da595f13e0d9d8ef5b61))
+
 ## [0.1.28](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.27...impartus-cli-v0.1.28) (2026-08-24)
 
 
