@@ -260,12 +260,20 @@ chmod +x impartus
 
 `config.json` is intentionally ignored because it can contain credentials; Git
 cannot restore it. Recover configuration from an owner-private backup or the
-deployment's secret manager, then validate it before restarting the service:
+deployment's secret manager, then run the local preflight before restarting the
+service:
 
 ```bash
 install -m 600 /secure/backup/config.json ./config.json
 ./impartus doctor
 ```
+
+`impartus doctor` checks syntax, file safety, dependencies, and local runtime
+paths. It does not apply configuration defaults or `IMPARTUS_*` overrides and
+does not perform strict semantic validation. `impartus serve` validates the
+effective configuration at startup and can still reject it, so retain the
+previous backup or managed variables and observe startup before declaring the
+rollback complete.
 
 For environment-only deployments, restore the managed `IMPARTUS_*` variables
 instead of creating a local config file.
