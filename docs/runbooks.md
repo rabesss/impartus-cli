@@ -129,7 +129,9 @@ sudo pacman -S ffmpeg
    as documented in the [API authentication guide](api-reference.md#authentication).
 2. If the login endpoint returns `AUTH_FAILED`, verify that its username and
    password match the server's configured values. Configuration may come from
-   `config.json` or the corresponding `IMPARTUS_*` environment variables.
+   `config.json` or the corresponding `IMPARTUS_*` environment variables. The
+   server loads those values at startup, so restart it after changing them and
+   then request a new API token.
 3. If login returns `RATE_LIMITED` (429), wait for the response's `retryAfter`
    interval before retrying.
 
