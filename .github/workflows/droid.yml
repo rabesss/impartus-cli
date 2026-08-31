@@ -33,6 +33,6 @@ jobs:
         with:
           fetch-depth: 1
       - name: Run Droid Exec
-        uses: Factory-AI/droid-action@4e44f79cb0a5f54f986e2898fc60facde6cd7360 # v5
+        uses: Factory-AI/droid-action@9547b0cf20a6357bfac0aa715fcfd0f47e5cf621 # v5
         with:
           factory_api_key: ${{ secrets.FACTORY_API_KEY }}
