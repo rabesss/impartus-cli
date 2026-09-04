@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,8 +31,16 @@ func NewHTTPClient(timeout time.Duration) *http.Client {
 }
 
 func (c *Client) doRequestWithToken(ctx context.Context, method, url string, body io.Reader, token string) (*http.Response, error) {
+	c.initialize()
+	return c.doRequestWithTokenUsingClient(ctx, c.httpClient, method, url, body, token)
+}
+
+func (c *Client) doRequestWithTokenUsingClient(ctx context.Context, httpClient *http.Client, method, url string, body io.Reader, token string) (*http.Response, error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if httpClient == nil {
+		return nil, errors.New("http client is required")
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
@@ -50,7 +59,7 @@ func (c *Client) doRequestWithToken(ctx context.Context, method, url string, bod
 		req.Header.Set("Content-Type", "application/json;charset=UTF-8")
 	}
 
-	response, err := c.httpClient.Do(req)
+	response, err := httpClient.Do(req)
 	if err != nil {
 		// http.Client.Do returns a *url.Error whose Error() embeds the full
 		// request URL (including query tokens). Sanitize it before wrapping so

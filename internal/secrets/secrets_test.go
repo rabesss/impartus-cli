@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestRedactURL_RedactsKnownSensitiveParams(t *testing.T) {
@@ -103,6 +104,41 @@ func TestRedactURL_MalformedFallbackRedactsNestedPercentEncodedCredential(t *tes
 	}
 }
 
+func TestRedactURL_ScrubsAllEmbeddedURLCandidatesIncludingFirst(t *testing.T) {
+	t.Parallel()
+
+	first := "https://first.example.test/cb?token=first-embedded-secret"
+	second := "https://second.example.test/cb?token=second-embedded-secret"
+	// The malformed outer URL forces the raw decoder path. Both nested URLs
+	// become adjacent candidates after one decode, which previously skipped the
+	// first candidate and returned after sanitizing only the later one.
+	raw := "https://outer.example.test/%zz?next=" + url.QueryEscape(first+" "+second)
+	got := RedactURL(raw)
+	for _, secret := range []string{"first-embedded-secret", "second-embedded-secret"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("RedactURL(%q) leaked embedded URL credential %q: %q", raw, secret, got)
+		}
+	}
+	if !strings.Contains(got, "REDACTED") {
+		t.Fatalf("RedactURL(%q) = %q, want marker", raw, got)
+	}
+}
+
+func TestScrub_ScrubsUppercaseHTTPSCredentials(t *testing.T) {
+	t.Parallel()
+
+	input := "upstream HTTPS://user:upper-user-secret@host/path?token=upper-query-secret"
+	got := Scrub(input)
+	for _, secret := range []string{"upper-user-secret", "upper-query-secret", "user:"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("Scrub(%q) leaked %q: %q", input, secret, got)
+		}
+	}
+	if !strings.Contains(got, "REDACTED") {
+		t.Fatalf("Scrub(%q) = %q, want marker", input, got)
+	}
+}
+
 func TestRedactURL_StripsRepeatedUserinfo(t *testing.T) {
 	const rawURL = "https://first-user@second-user@host/path"
 	got := RedactURL(rawURL)
@@ -143,6 +179,90 @@ func TestRedactWithTokenRedactsMixedPercentEncodedViews(t *testing.T) {
 		if !strings.Contains(got, "REDACTED") {
 			t.Fatalf("RedactWithToken(%q) = %q, want redaction marker", input, got)
 		}
+	}
+}
+
+func TestRedactWithTokenTreatsCredentialBytesAsCaseSensitive(t *testing.T) {
+	t.Parallel()
+
+	const token = "İ-token"
+	for _, test := range []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "exact unicode token", input: "prefix " + token + " suffix", want: "prefix REDACTED suffix"},
+		{name: "different case remains distinct", input: "prefix i-token suffix", want: "prefix i-token suffix"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := RedactWithToken(test.input, token)
+			if got != test.want {
+				t.Fatalf("RedactWithToken(%q) = %q, want %q", test.input, got, test.want)
+			}
+			if !utf8.ValidString(got) {
+				t.Fatalf("RedactWithToken(%q) returned invalid UTF-8: %q", test.input, got)
+			}
+		})
+	}
+}
+
+func TestRedactWithTokenDecodesArbitraryJSONEscapeSpellings(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name  string
+		token string
+		input string
+	}{
+		{
+			name:  "mixed unicode and slash escapes",
+			token: "secret/&part",
+			input: `upstream \u0073ecret\/\u0026part`,
+		},
+		{
+			name:  "surrogate pair and escaped slash",
+			token: "café/🔐",
+			input: `upstream c\u0061f\u00e9\/\ud83d\udd10`,
+		},
+		{
+			name:  "escaped quote and backslash",
+			token: "quote\"slash\\tail",
+			input: `upstream quote\u0022slash\\tail`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := RedactWithToken(test.input, test.token)
+			if strings.Contains(got, test.token) || strings.Contains(got, test.input[len("upstream "):]) {
+				t.Fatalf("RedactWithToken(%q) leaked JSON-spelled token: %q", test.input, got)
+			}
+			if !strings.Contains(got, "REDACTED") {
+				t.Fatalf("RedactWithToken(%q) = %q, want redaction marker", test.input, got)
+			}
+		})
+	}
+}
+
+func TestRedactWithTokenFailsClosedAfterPercentDecodeBudget(t *testing.T) {
+	t.Parallel()
+
+	const token = "deep-percent-secret"
+	encoded := fullyPercentEncode(token)
+	for index := 0; index < maxRawPercentDecodeDepth+4; index++ {
+		encoded = strings.ReplaceAll(encoded, "%", "%25")
+	}
+	got := RedactWithToken("upstream payload="+encoded, token)
+	if got != "REDACTED" {
+		t.Fatalf("RedactWithToken() = %q, want fixed fail-safe marker", got)
+	}
+}
+
+func TestRedactWithTokenFailsClosedBeforeLargeVariantScan(t *testing.T) {
+	t.Parallel()
+
+	value := strings.Repeat("safe-diagnostic ", maxEncodedTokenViewSize/len("safe-diagnostic ")+1)
+	got := RedactWithToken(value, "small-secret")
+	if got != "REDACTED" {
+		t.Fatalf("RedactWithToken() = %q, want fixed fail-safe marker", got)
 	}
 }
 
@@ -917,6 +1037,101 @@ func TestSanitizedErrorPreservesTimeoutNetworkMetadata(t *testing.T) {
 	var networkErr net.Error
 	if !errors.As(sanitized, &networkErr) || !networkErr.Timeout() {
 		t.Fatalf("SanitizeError() network metadata = %#v, want timeout net.Error", sanitized)
+	}
+}
+
+type panicErrorMessage struct{}
+
+func (panicErrorMessage) Error() string { panic("hostile Error must not escape") }
+
+type panicUnwrapError struct{}
+
+func (panicUnwrapError) Error() string { return "panic unwrap" }
+func (panicUnwrapError) Unwrap() error { panic("hostile Unwrap must not escape") }
+
+type panicClassificationError struct{}
+
+func (panicClassificationError) Error() string { return "panic classifications" }
+func (panicClassificationError) classifications() []error {
+	panic("hostile classifications must not escape")
+}
+
+type panicNetworkMetadataError struct{}
+
+func (panicNetworkMetadataError) Error() string { return "panic metadata" }
+func (panicNetworkMetadataError) networkMetadata() networkMetadata {
+	panic("hostile network metadata must not escape")
+}
+
+type panicTimeoutError struct{}
+
+func (panicTimeoutError) Error() string   { return "panic timeout" }
+func (panicTimeoutError) Timeout() bool   { panic("hostile Timeout must not escape") }
+func (panicTimeoutError) Temporary() bool { return false }
+
+type wideUnwrapError struct {
+	children []error
+}
+
+func (wideUnwrapError) Error() string       { return "wide unwrap" }
+func (err wideUnwrapError) Unwrap() []error { return err.children }
+
+func TestSanitizeErrorPanicSafeAcrossHostileInterfaces(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []error{
+		panicErrorMessage{}, panicUnwrapError{}, panicClassificationError{}, panicNetworkMetadataError{}, panicTimeoutError{},
+	} {
+		t.Run(fmt.Sprintf("%T", raw), func(t *testing.T) {
+			sanitized := SanitizeError(raw)
+			if sanitized == nil {
+				t.Fatal("SanitizeError() = nil")
+			}
+			if got := sanitized.Error(); got == "" {
+				t.Fatal("SanitizeError() returned an empty safe message")
+			}
+			if errors.Unwrap(sanitized) != nil {
+				t.Fatalf("SanitizeError() exposed a hostile chain: %v", errors.Unwrap(sanitized))
+			}
+		})
+	}
+}
+
+func TestSanitizeErrorBoundsTotalHostileUnwrapTree(t *testing.T) {
+	t.Parallel()
+
+	children := make([]error, maxSanitizeErrorChildren*maxSanitizeErrorChildren)
+	for index := range children {
+		children[index] = fmt.Errorf("child-%d", index)
+	}
+	collector := classificationCollector{}
+	collector.collect(wideUnwrapError{children: children}, 0)
+	if collector.nodes > maxSanitizeErrorNodes {
+		t.Fatalf("classification traversal visited %d nodes, want <= %d", collector.nodes, maxSanitizeErrorNodes)
+	}
+	if len(collector.classifications) > maxSanitizeErrorDepth*2 {
+		t.Fatalf("classification collection kept %d values, want <= %d", len(collector.classifications), maxSanitizeErrorDepth*2)
+	}
+}
+
+func TestSanitizeErrorIgnoresTypedNilNetworkErrors(t *testing.T) {
+	t.Parallel()
+
+	var dns *net.DNSError
+	var timeout *panicTimeoutError
+	for _, raw := range []error{dns, timeout} {
+		sanitized := SanitizeError(raw)
+		if sanitized == nil {
+			t.Fatal("SanitizeError(typed nil) = nil")
+		}
+		var dnsResult *net.DNSError
+		if errors.As(sanitized, &dnsResult) {
+			t.Fatalf("typed nil DNS error was exposed: %#v", dnsResult)
+		}
+		var networkResult net.Error
+		if errors.As(sanitized, &networkResult) {
+			t.Fatalf("typed nil net.Error was exposed: %#v", networkResult)
+		}
 	}
 }
 

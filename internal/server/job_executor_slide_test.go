@@ -129,6 +129,62 @@ func TestDownloadLectureSlideNewFileUsesReadableMode(t *testing.T) {
 	assertNoSlideParts(t, downloadDir)
 }
 
+func TestDownloadLectureSlideUsesCanonicalEndpointPath(t *testing.T) {
+	t.Parallel()
+
+	var gotPath string
+	var gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		if r.Header.Get("Authorization") != "Bearer slide-token" {
+			t.Errorf("Authorization = %q, want bearer token", r.Header.Get("Authorization"))
+		}
+		_, _ = io.WriteString(w, "slide") //nolint:errcheck
+	}))
+	defer server.Close()
+
+	err := downloadLectureSlideWithLimit(context.Background(), client.New(server.Client(), nil), &config.Config{
+		BaseURL:          server.URL + "/api///",
+		DownloadLocation: t.TempDir(),
+		Token:            "slide-token",
+	}, client.Lecture{VideoID: 10, SeqNo: 1, Topic: "Lecture"}, 8)
+	if err != nil {
+		t.Fatalf("downloadLectureSlideWithLimit() error = %v", err)
+	}
+	if gotPath != "/api/videos/10/auto-generated-pdf" || gotQuery != "" {
+		t.Fatalf("slide request URL = %q?%s, want canonical /api/videos/10/auto-generated-pdf", gotPath, gotQuery)
+	}
+}
+
+func TestDownloadLectureSlideUnauthorizedReturnsAuthenticationError(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	err := downloadLectureSlideWithLimit(context.Background(), client.New(server.Client(), nil), &config.Config{
+		BaseURL:          server.URL,
+		DownloadLocation: t.TempDir(),
+		Token:            "slide-token",
+	}, client.Lecture{VideoID: 10, SeqNo: 1, Topic: "Lecture"}, 8)
+	if err == nil {
+		t.Fatal("downloadLectureSlideWithLimit() error = nil, want AuthenticationError")
+	}
+	var authErr *client.AuthenticationError
+	if !errors.As(err, &authErr) {
+		t.Fatalf("error = %T %v, want *client.AuthenticationError", err, err)
+	}
+	if authErr.Operation != "slide download" || authErr.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("AuthenticationError = %+v, want slide download/401", authErr)
+	}
+	if !errors.Is(err, client.ErrAuthentication) {
+		t.Fatalf("error = %v, want ErrAuthentication classification", err)
+	}
+}
+
 func TestDownloadLectureSlideSanitizesNonUnauthorizedResponseBody(t *testing.T) {
 	const body = "Authorization: Bearer slide-body-bearer-secret\n" +
 		"URL: https://media.example.test/chunk.ts?token=slide-body-query-secret\n" +

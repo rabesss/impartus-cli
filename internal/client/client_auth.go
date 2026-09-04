@@ -105,7 +105,17 @@ func (c *Client) validateStoredToken(ctx context.Context, baseURL, token string)
 	if err != nil {
 		return false, err
 	}
-	resp, err := c.GetAuthorizedWithToken(ctx, profileURL, token)
+	// Stored credentials are bearer credentials. Validate them with a private
+	// client copy that cannot follow a redirect (or carry the caller's cookie
+	// jar) before the origin-policy stack is introduced. A 3xx is therefore a
+	// failed validation, and the bearer is never sent to a redirect target.
+	c.initialize()
+	requestClient := *c.httpClient
+	requestClient.Jar = nil
+	requestClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	resp, err := c.doRequestWithTokenUsingClient(ctx, &requestClient, http.MethodGet, profileURL, nil, token)
 	if err != nil {
 		return false, err
 	}

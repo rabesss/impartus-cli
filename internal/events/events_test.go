@@ -215,6 +215,39 @@ func TestFailureEventScrubsSecrets(t *testing.T) {
 	}
 }
 
+func TestWriterScrubsPublicRawErrorField(t *testing.T) {
+	t.Parallel()
+
+	const querySecret = "writer-query-secret"
+	const userinfoSecret = "writer-userinfo-secret"
+	rawError := "upstream HTTPS://user:" + userinfoSecret + "@host/path?token=" + querySecret
+	var output bytes.Buffer
+	event := Event{
+		Type:      JobFailed,
+		JobID:     "job-raw-error",
+		Command:   "watch",
+		Timestamp: time.Unix(5, 0).UTC(),
+		Error:     rawError,
+	}
+	if err := NewWriter(&output).Emit(event); err != nil {
+		t.Fatalf("Emit() error = %v", err)
+	}
+	if strings.Contains(output.String(), querySecret) || strings.Contains(output.String(), userinfoSecret) {
+		t.Fatalf("writer serialized raw credential-bearing Error: %q", output.String())
+	}
+	if !strings.Contains(output.String(), "REDACTED") {
+		t.Fatalf("writer output = %q, want redaction marker", output.String())
+	}
+
+	var decoded Event
+	if err := json.Unmarshal(output.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode writer output: %v", err)
+	}
+	if decoded.Error != RedactError(errors.New(rawError)) {
+		t.Fatalf("writer Error = %q, want idempotent scrubbed value %q", decoded.Error, RedactError(errors.New(rawError)))
+	}
+}
+
 func TestRedactErrorCoversAnyAuthorizationScheme(t *testing.T) {
 	t.Parallel()
 

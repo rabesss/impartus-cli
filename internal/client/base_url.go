@@ -93,3 +93,10 @@ func baseURLPath(rawBaseURL, endpoint string) (string, error) {
 	parsed.Fragment = ""
 	return parsed.String(), nil
 }
+
+// BaseURLPath appends an internal endpoint to a validated API base. It is the
+// exported boundary for callers in sibling internal packages that construct
+// authenticated API paths (for example, slide downloads).
+func BaseURLPath(rawBaseURL, endpoint string) (string, error) {
+	return baseURLPath(rawBaseURL, endpoint)
+}
