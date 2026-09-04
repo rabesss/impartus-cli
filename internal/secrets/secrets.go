@@ -6,6 +6,7 @@
 package secrets
 
 import (
+	"encoding/json"
 	"errors"
 	"net/url"
 	"regexp"
@@ -15,41 +16,57 @@ import (
 	"unicode/utf8"
 )
 
-// sensitiveParams is the single source of truth for query-parameter keys whose
+// sensitiveParams is the single source of truth for URL parameter keys whose
 // values may carry credentials or signed tokens. Values are replaced with
 // "REDACTED" before logging. The malformed-URL fallback regex is derived from
 // these keys (see sensitiveQueryRe) so the two redaction paths cannot drift.
 var sensitiveParams = map[string]bool{
-	"access_token":  true,
-	"token":         true,
-	"sig":           true,
-	"signature":     true,
-	"secret":        true,
-	"key":           true,
-	"api_key":       true,
-	"auth":          true,
-	"authorization": true,
-	"cookie":        true,
-	"set-cookie":    true,
-	"x-api-key":     true,
-	"x_api_key":     true,
-	"refresh_token": true,
-	"client_secret": true,
-	"password":      true,
+	"access_token":        true,
+	"token":               true,
+	"sig":                 true,
+	"signature":           true,
+	"secret":              true,
+	"key":                 true,
+	"api_key":             true,
+	"auth":                true,
+	"authorization":       true,
+	"cookie":              true,
+	"set-cookie":          true,
+	"x-api-key":           true,
+	"x_api_key":           true,
+	"api-key":             true,
+	"apikey":              true,
+	"xapikey":             true,
+	"proxy-authorization": true,
+	"proxy_authorization": true,
+	"proxyauthorization":  true,
+	"set_cookie":          true,
+	"setcookie":           true,
+	"access-token":        true,
+	"accesstoken":         true,
+	"refresh_token":       true,
+	"refresh-token":       true,
+	"refreshtoken":        true,
+	"client_secret":       true,
+	"client-secret":       true,
+	"clientsecret":        true,
+	"password":            true,
 }
 
 // urlTokenRe matches absolute http(s) URLs embedded in free-form text so they
 // can be scrubbed even when an error string was built without a structured URL.
 var urlTokenRe = regexp.MustCompile(`https?://[^\s"'<>]+`)
 
-// sensitiveQueryRe matches sensitive query parameters (key=value) at a URL "?"
-// or "&" boundary. It is built from sensitiveParams so there is one source of
-// truth, and tolerates malformed URLs that url.Parse refuses.
+// sensitiveQueryRe matches sensitive query or fragment parameters (key=value)
+// at a URL delimiter boundary. It is built from sensitiveParams so there is
+// one source of truth, and tolerates malformed URLs that url.Parse refuses.
 var sensitiveQueryRe = buildSensitiveQueryRe()
 
-// userinfoRe strips embedded HTTP basic-auth credentials (user:pass@) from raw
-// URL strings, including those url.Parse cannot interpret.
-var userinfoRe = regexp.MustCompile(`(?i)(https?://)[^/\s:@]+:[^/\s@]+@`)
+// userinfoRe strips any HTTP userinfo (including username-only and
+// percent-encoded forms) from raw URL strings, including those url.Parse
+// cannot interpret. Query and fragment delimiters stop the authority scan so
+// an @ in ordinary diagnostic data is not mistaken for userinfo.
+var userinfoRe = regexp.MustCompile(`(?i)(https?://)[^/?#\s@]*@`)
 
 // Free-form response bodies use the same exact credential keys as URL query
 // redaction, plus common suffix forms such as refresh_token and client_secret.
@@ -156,7 +173,7 @@ func buildSensitiveQueryRe() *regexp.Regexp {
 		keys = append(keys, encodedQueryKeyPattern(k))
 	}
 	sort.Strings(keys)
-	return regexp.MustCompile(`(?i)([?&;])(` + strings.Join(keys, "|") + `)=[^&#;\s]*`)
+	return regexp.MustCompile(`(?i)([?&;#])(` + strings.Join(keys, "|") + `)(?:=|%3d)[^&#;\s]*`)
 }
 
 // encodedQueryKeyPattern matches a credential key whether its bytes are
@@ -190,7 +207,18 @@ func buildSensitiveAssignmentKey() string {
 }
 
 func isSensitiveParam(key string) bool {
-	return sensitiveParams[strings.ToLower(key)]
+	for depth := 0; depth <= 2; depth++ {
+		lowerKey := strings.ToLower(key)
+		if sensitiveParams[lowerKey] || sensitiveParams[strings.NewReplacer("-", "_").Replace(lowerKey)] {
+			return true
+		}
+		decoded, err := url.QueryUnescape(key)
+		if err != nil || decoded == key {
+			break
+		}
+		key = decoded
+	}
+	return false
 }
 
 // IsCredentialScheme reports whether value is an authentication scheme that
@@ -216,8 +244,14 @@ func scrubRawQueryWithEvidence(s string) (string, RedactionEvidence) {
 		scrubbed.WriteString(s[last:index[0]])
 		scrubbed.Write(sensitiveQueryRe.ExpandString(nil, "${1}${2}=REDACTED", s, index))
 		match := s[index[0]:index[1]]
-		if separator := strings.IndexByte(match, '='); separator >= 0 {
-			value := match[separator+1:]
+		separator := strings.IndexByte(match, '=')
+		separatorWidth := 1
+		if separator < 0 {
+			separator = strings.Index(strings.ToLower(match), "%3d")
+			separatorWidth = len("%3d")
+		}
+		if separator >= 0 {
+			value := match[separator+separatorWidth:]
 			if value != "REDACTED" {
 				evidence.values = append(evidence.values, value)
 			}
@@ -293,7 +327,7 @@ func ScrubCredentialURLsWithEvidence(s string) (string, RedactionEvidence) {
 }
 
 // RedactURL returns rawURL with sensitive data scrubbed: embedded HTTP
-// basic-auth userinfo is removed, and sensitive query parameters are replaced
+// userinfo is removed, and sensitive query or fragment parameters are replaced
 // with "REDACTED". Tokens nested inside the value of a non-sensitive parameter
 // (e.g. ?next=...?token=SECRET, including percent-encoded forms) are scrubbed
 // too, since values are decoded before inspection. If rawURL cannot be parsed,
@@ -328,10 +362,34 @@ func SanitizeErrorWithToken(err error, token string) error {
 		return nil
 	}
 	redacted := RedactWithToken(sanitized.Error(), token)
-	if redacted == sanitized.Error() {
+	if redacted == sanitized.Error() && !errorChainContainsToken(err, token, 0) {
 		return sanitized
 	}
-	return errors.New(redacted)
+	return newSanitizedError(redacted, err)
+}
+
+// errorChainContainsToken checks every error that a caller could reach before
+// sanitization. A wrapper may hide its child credential from Error(), so only
+// checking the outer message would leave the original chain reachable.
+func errorChainContainsToken(err error, token string, depth int) bool {
+	if err == nil || depth >= maxSanitizeErrorDepth || token == "" {
+		return false
+	}
+	if replaceTokenVariants(err.Error(), token) != err.Error() {
+		return true
+	}
+	if multi, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, child := range multi.Unwrap() {
+			if errorChainContainsToken(child, token, depth+1) {
+				return true
+			}
+		}
+		return false
+	}
+	if single, ok := err.(interface{ Unwrap() error }); ok {
+		return errorChainContainsToken(single.Unwrap(), token, depth+1)
+	}
+	return false
 }
 
 func replaceTokenVariants(value, token string) string {
@@ -357,11 +415,62 @@ func tokenVariants(token string) []string {
 	} else {
 		values = append(values, "Bearer "+trimmed)
 	}
-	variants := make([]string, 0, len(values)*3)
+	// A token can be copied through more than one URL parser before it reaches
+	// an error string. Keep the expansion bounded while covering the raw,
+	// standard query/path, fully percent-encoded, and twice-encoded forms.
+	const maxEncodingDepth = 2
+	variants := make([]string, 0, len(values)*20)
+	seen := make(map[string]struct{}, len(values)*20)
 	for _, value := range values {
-		variants = append(variants, value, url.QueryEscape(value), url.PathEscape(value))
+		frontier := []string{value}
+		for depth := 0; depth <= maxEncodingDepth; depth++ {
+			next := make([]string, 0, len(frontier)*3)
+			for _, candidate := range frontier {
+				if candidate != "" {
+					if _, ok := seen[candidate]; !ok {
+						seen[candidate] = struct{}{}
+						variants = append(variants, candidate)
+					}
+				}
+				if depth == maxEncodingDepth {
+					continue
+				}
+				next = append(next,
+					url.QueryEscape(candidate),
+					url.PathEscape(candidate),
+					fullyPercentEncodeToken(candidate),
+					jsonEscapeToken(candidate),
+				)
+			}
+			frontier = next
+		}
 	}
+	// Replace longer encodings first. This prevents a shorter representation
+	// from consuming part of a longer, still-secret representation.
+	sort.SliceStable(variants, func(left, right int) bool {
+		return len(variants[left]) > len(variants[right])
+	})
 	return variants
+}
+
+func fullyPercentEncodeToken(value string) string {
+	const hex = "0123456789ABCDEF"
+	var encoded strings.Builder
+	encoded.Grow(len(value) * 3)
+	for index := 0; index < len(value); index++ {
+		encoded.WriteByte('%')
+		encoded.WriteByte(hex[value[index]>>4])
+		encoded.WriteByte(hex[value[index]&0x0f])
+	}
+	return encoded.String()
+}
+
+func jsonEscapeToken(value string) string {
+	escaped, err := json.Marshal(value)
+	if err != nil || len(escaped) < 2 {
+		return ""
+	}
+	return string(escaped[1 : len(escaped)-1])
 }
 
 func replaceCaseInsensitive(value, needle, replacement string) string {
@@ -404,6 +513,17 @@ func redactURLWithEvidence(rawURL string) (string, bool, RedactionEvidence) {
 		evidence.values = append(evidence.values, u.User.String())
 	}
 	u.User = nil // strip embedded HTTP basic-auth credentials
+	if u.Fragment != "" {
+		fragment, fragmentEvidence := scrubFragmentWithEvidence(u.Fragment)
+		if fragment != u.Fragment {
+			u.Fragment = fragment
+			// RawFragment is an optional spelling of Fragment. Clear it after
+			// changing the decoded value so URL.String cannot restore the leak.
+			u.RawFragment = ""
+			changed = true
+		}
+		evidence.values = append(evidence.values, fragmentEvidence.values...)
+	}
 	// Scrub sensitive keys, and scrub any sensitive URL embedded in the decoded
 	// value of a non-sensitive parameter (covers percent-encoded nested tokens).
 	params, queryErr := url.ParseQuery(u.RawQuery)
@@ -437,6 +557,33 @@ func redactURLWithEvidence(rawURL string) (string, bool, RedactionEvidence) {
 	return u.String(), changed, evidence
 }
 
+// scrubFragmentWithEvidence checks a fragment after a small, fixed number of
+// percent-decoding passes. Fragments sometimes carry redirect metadata that
+// has already been encoded once or twice by the caller. Returning the first
+// scrubbed decoded spelling is safe because it discards the original encoding
+// only when a credential was found.
+func scrubFragmentWithEvidence(fragment string) (string, RedactionEvidence) {
+	candidate := fragment
+	for depth := 0; depth <= 2; depth++ {
+		// Treat query-shaped fragments as parameter lists so an &-delimited
+		// safe field is retained when a preceding credential is removed.
+		scrubbed, evidence := scrubRawQueryWithEvidence("#" + candidate)
+		if scrubbed != "#"+candidate {
+			return strings.TrimPrefix(scrubbed, "#"), evidence
+		}
+		scrubbed, evidence = ScrubWithEvidence(candidate)
+		if scrubbed != candidate {
+			return scrubbed, evidence
+		}
+		next, err := url.QueryUnescape(candidate)
+		if err != nil || next == candidate {
+			break
+		}
+		candidate = next
+	}
+	return fragment, RedactionEvidence{}
+}
+
 // SanitizeError scrubs sensitive URL data from HTTP errors. http.Client.Do and
 // http.NewRequest return a *url.Error whose Error() embeds the full request URL
 // (including query tokens); this rebuilds it with a redacted URL so the value is
@@ -447,21 +594,74 @@ func redactURLWithEvidence(rawURL string) (string, bool, RedactionEvidence) {
 // whole message (preserving the outer context) rather than discarding it to
 // return only the inner *url.Error.
 func SanitizeError(err error) error {
+	_, sanitized := sanitizeErrorTree(err, 0)
+	return sanitized
+}
+
+const maxSanitizeErrorDepth = 64
+
+// sanitizeErrorTree sanitizes every reachable child before deciding whether
+// the current error can be returned. Generic wrappers cannot be rebuilt with a
+// sanitized child, so a changed child produces an opaque error that retains
+// only errors.Is classification through sanitizedError.Is. Known URL errors
+// can be rebuilt and keep their useful type and operation metadata.
+func sanitizeErrorTree(err error, depth int) (bool, error) {
 	if err == nil {
-		return nil
+		return false, nil
+	}
+	if depth >= maxSanitizeErrorDepth {
+		return true, newSanitizedError(Scrub(err.Error()), err)
 	}
 	if ue, ok := err.(*url.Error); ok {
-		return &url.Error{Op: ue.Op, URL: RedactURL(ue.URL), Err: SanitizeError(ue.Err)}
+		safeURL := RedactURL(ue.URL)
+		childChanged, safeErr := sanitizeErrorTree(ue.Err, depth+1)
+		if safeURL == ue.URL && !childChanged {
+			return false, err
+		}
+		return true, &url.Error{Op: ue.Op, URL: safeURL, Err: safeErr}
 	}
-	// Defense-in-depth for wrapped/non-*url.Error types whose message embeds a
-	// tokenized URL: scrub any embedded URLs. An unchanged message passes through
-	// so the original error identity is kept; a changed message yields an opaque
-	// error with no chain back to the secret (a true redaction boundary).
+
 	scrubbed := Scrub(err.Error())
-	if scrubbed == err.Error() {
-		return err
+	childChanged := false
+	if multi, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, child := range multi.Unwrap() {
+			changed, safeChild := sanitizeErrorTree(child, depth+1)
+			_ = safeChild
+			childChanged = childChanged || changed
+		}
+	} else if single, ok := err.(interface{ Unwrap() error }); ok {
+		var safeChild error
+		childChanged, safeChild = sanitizeErrorTree(single.Unwrap(), depth+1)
+		_ = safeChild
 	}
-	return errors.New(scrubbed)
+	if scrubbed == err.Error() && !childChanged {
+		return false, err
+	}
+	if _, unwraps := err.(interface{ Unwrap() error }); unwraps {
+		return true, newSanitizedError(scrubbed, err)
+	}
+	if _, unwraps := err.(interface{ Unwrap() []error }); unwraps {
+		return true, newSanitizedError(scrubbed, err)
+	}
+	return true, errors.New(scrubbed)
+}
+
+// sanitizedError deliberately has no Unwrap or As method. Its private cause
+// is used only to preserve errors.Is classification, never exposed as a
+// reachable child that could carry a credential.
+type sanitizedError struct {
+	message string
+	cause   error
+}
+
+func newSanitizedError(message string, cause error) error {
+	return sanitizedError{message: message, cause: cause}
+}
+
+func (err sanitizedError) Error() string { return err.message }
+
+func (err sanitizedError) Is(target error) bool {
+	return err.cause != nil && errors.Is(err.cause, target)
 }
 
 // Scrub redacts sensitive URLs and credential assignments from free-form text.
