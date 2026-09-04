@@ -23,6 +23,7 @@ type Client struct {
 	initOnce          sync.Once
 	httpClient        *http.Client
 	UserAgentProvider func() string
+	tokenMu           sync.RWMutex
 	token             string
 }
 
@@ -121,8 +122,7 @@ func (c *Client) getAuthorizedWithToken(ctx context.Context, rawURL, token strin
 		return nil, validateErr
 	}
 
-	initialHasCredentialQuery := hasCredentialQuery(parsedURL)
-	if token == "" && initialHasCredentialQuery {
+	if token == "" && hasCredentialQuery(parsedURL) {
 		// A tokenless call must not forward a credential-bearing query alias
 		// supplied by an upstream playlist or caller. Keep the media redirect
 		// wrapper enabled below so aliases introduced by a redirect are stripped
@@ -138,32 +138,36 @@ func (c *Client) getAuthorizedWithToken(ctx context.Context, rawURL, token strin
 		}
 	}
 
-	requestClient := c.httpClient
-	if token != "" || initialHasCredentialQuery {
-		if token != "" && !policy.allows(parsedURL) {
-			// A playlist or media endpoint may be public, but an unconfigured
-			// origin must never receive the Impartus bearer token. Remove known
-			// and token-bearing query aliases, then fail closed if the token is
-			// still present in any other URL component (for example a path or
-			// hostname). There is no safe way to rewrite those components while
-			// preserving the requested destination.
-			strippedURL, stripErr := stripBearerTokenQuery(rawURL, token)
-			if stripErr != nil {
-				return nil, stripErr
-			}
-			parsedStrippedURL, parseErr := parseRequestURL(strippedURL)
-			if parseErr != nil {
-				return nil, parseErr
-			}
-			if boundaryErr := validateRedirectCredentialBoundary(parsedStrippedURL, token, false); boundaryErr != nil {
-				return nil, boundaryErr
-			}
-			rawURL = parsedStrippedURL.String()
-			parsedURL = parsedStrippedURL
-			token = ""
+	if token != "" && !policy.allows(parsedURL) {
+		// A playlist or media endpoint may be public, but an unconfigured
+		// origin must never receive the Impartus bearer token. Remove known
+		// and token-bearing query aliases, then fail closed if the token is
+		// still present in any other URL component (for example a path or
+		// hostname). There is no safe way to rewrite those components while
+		// preserving the requested destination.
+		strippedURL, stripErr := stripBearerTokenQuery(rawURL, token)
+		if stripErr != nil {
+			return nil, stripErr
 		}
-		requestClient = c.httpClientForMediaRequest(parsedURL, token, policy)
+		parsedStrippedURL, parseErr := parseRequestURL(strippedURL)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		if boundaryErr := validateRedirectCredentialBoundary(parsedStrippedURL, token, false); boundaryErr != nil {
+			return nil, boundaryErr
+		}
+		rawURL = parsedStrippedURL.String()
+		parsedURL = parsedStrippedURL
+		token = ""
 	}
+
+	// Every media request goes through a request-local copy of the HTTP
+	// client. This keeps redirect policy, the default redirect bound, cookie
+	// isolation, and credential-header stripping active even for public
+	// tokenless URLs. The compatibility entry point still permits its exact
+	// initial origin and loopback HTTP; the wrapper only broadens the policy
+	// for an explicitly configured origin.
+	requestClient := c.httpClientForMediaRequest(parsedURL, token, policy)
 	return c.doRequestWithTokenClient(ctx, http.MethodGet, rawURL, nil, token, requestClient, redactionToken)
 }
 
@@ -173,10 +177,7 @@ func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, e
 		return nil, errors.New("config is required")
 	}
 
-	if cfg.BaseURL == "" {
-		return nil, errors.New("baseUrl is required")
-	}
-	policy, err := newMediaOriginPolicy(cfg.BaseURL)
+	baseURL, policy, err := newBaseURLPolicy(cfg.BaseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +187,7 @@ func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, e
 		return nil, err
 	}
 
-	url := fmt.Sprintf("%s/subjects", cfg.BaseURL)
+	url := fmt.Sprintf("%s/subjects", baseURL)
 	resp, err := c.getAuthorizedWithToken(ctx, url, token, policy)
 	if err != nil {
 		return nil, err
@@ -229,10 +230,7 @@ func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Cou
 		return nil, errors.New("config is required")
 	}
 
-	if cfg.BaseURL == "" {
-		return nil, errors.New("baseUrl is required")
-	}
-	policy, err := newMediaOriginPolicy(cfg.BaseURL)
+	baseURL, policy, err := newBaseURLPolicy(cfg.BaseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +240,7 @@ func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Cou
 		return nil, err
 	}
 
-	url := fmt.Sprintf("%s/subjects/%d/lectures/%d", cfg.BaseURL, course.SubjectID, course.SessionID)
+	url := fmt.Sprintf("%s/subjects/%d/lectures/%d", baseURL, course.SubjectID, course.SessionID)
 	resp, err := c.getAuthorizedWithToken(ctx, url, token, policy)
 	if err != nil {
 		return nil, err
@@ -295,11 +293,7 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 		return nil, errors.New("config is required")
 	}
 
-	if cfg.BaseURL == "" {
-		return nil, errors.New("baseUrl is required")
-	}
-	origins := append([]string{cfg.BaseURL}, cfg.MediaOrigins...)
-	policy, err := newMediaOriginPolicy(origins...)
+	baseURL, policy, err := newBaseURLPolicy(cfg.BaseURL, cfg.MediaOrigins...)
 	if err != nil {
 		return nil, err
 	}
@@ -312,7 +306,7 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 	parsedPlaylists := make([]ParsedPlaylist, 0, len(lectures))
 	unavailableQualities := make(map[string]struct{})
 	for _, lecture := range lectures {
-		streamInfos, err := c.getStreamInfosWithPolicy(ctx, cfg.BaseURL, token, lecture, policy)
+		streamInfos, err := c.getStreamInfosWithPolicy(ctx, baseURL, token, lecture, policy)
 		if err != nil {
 			return parsedPlaylists, err
 		}

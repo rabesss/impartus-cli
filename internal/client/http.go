@@ -121,6 +121,7 @@ func (c *Client) handleMediaRedirect(initialURL *url.URL, token string, policy m
 	}
 	// A custom hook may rewrite the URL or add sensitive headers. Recheck
 	// the policy and enforce the cross-origin header boundary after it runs.
+	canonicalizeMediaRedirectScheme(next)
 	if err := validateMediaRedirect(initialURL, next.URL, policy); err != nil {
 		return err
 	}
@@ -194,8 +195,8 @@ func validateRedirectRequestCredentialBoundary(request *http.Request, token stri
 	if err := validateRedirectCredentialBoundary(request.URL, token, allowQuery); err != nil {
 		return err
 	}
-	if containsTokenRepresentation(request.Host, token) {
-		return newMediaOriginError(ErrMediaOrigin)
+	if err := validateRedirectRequestHost(request, token); err != nil {
+		return err
 	}
 	if request.RequestURI == "" {
 		return nil
@@ -239,7 +240,13 @@ func deleteHeaderCaseInsensitive(header http.Header, names ...string) {
 }
 
 func validateMediaRedirect(initial, destination *url.URL, policy mediaOriginPolicy) error {
-	if err := validateMediaURL(destination, true); err != nil {
+	// A tokenless compatibility request may legitimately begin on a public
+	// HTTP origin. Preserve that public/loopback behavior for its redirects;
+	// authenticated requests have already been rejected before this hook when
+	// their initial URL is a remote HTTP origin, and a secure initial request
+	// still rejects HTTPS downgrades here.
+	requireHTTPS := initial == nil || !strings.EqualFold(initial.Scheme, "http")
+	if err := validateMediaURL(destination, requireHTTPS); err != nil {
 		return err
 	}
 	if !policy.allowsRedirect(initial, destination) {
@@ -359,6 +366,9 @@ func applyRedirectHookChanges(next, baseline, modified *http.Request, token stri
 	if err := validateRedirectHeaderCredentialBoundary(modified.Header, token); err != nil {
 		return err
 	}
+	if err := validateRedirectRequestHost(modified, token); err != nil {
+		return err
+	}
 	if !sameRedirectURL(baseline.URL, modified.URL) {
 		next.URL = cloneRedirectURL(modified.URL)
 	}
@@ -374,9 +384,6 @@ func applyRedirectHookChanges(next, baseline, modified *http.Request, token stri
 		return newMediaOriginError(ErrMediaOrigin)
 	}
 	if baseline.Host != modified.Host {
-		if containsTokenRepresentation(modified.Host, token) {
-			return newMediaOriginError(ErrMediaOrigin)
-		}
 		next.Host = modified.Host
 	}
 	applyRedirectHeaderChanges(next.Header, baseline.Header, modified.Header, token)
@@ -390,6 +397,9 @@ func applyRedirectHookChanges(next, baseline, modified *http.Request, token stri
 // same-origin redirect.
 func validateRedirectHeaderCredentialBoundary(header http.Header, token string) error {
 	for key, values := range header {
+		if containsTokenRepresentation(key, token) {
+			return newMediaOriginError(ErrMediaOrigin)
+		}
 		if isSensitiveRedirectHeader(key) {
 			continue
 		}
@@ -398,6 +408,28 @@ func validateRedirectHeaderCredentialBoundary(header http.Header, token string) 
 				return newMediaOriginError(ErrMediaOrigin)
 			}
 		}
+	}
+	return nil
+}
+
+func validateRedirectRequestHost(request *http.Request, token string) error {
+	if request == nil || request.URL == nil {
+		return newMediaOriginError(ErrInvalidMediaURL)
+	}
+	if containsTokenRepresentation(request.Host, token) {
+		return newMediaOriginError(ErrMediaOrigin)
+	}
+	if request.Host == "" {
+		return nil
+	}
+	parsedHost, err := url.Parse("//" + request.Host)
+	if err != nil || parsedHost.User != nil || parsedHost.Path != "" || parsedHost.RawQuery != "" || parsedHost.Fragment != "" || parsedHost.Host == "" {
+		return newMediaOriginError(ErrMediaOrigin)
+	}
+	expectedOrigin, expectedErr := requestOriginKey(request.URL)
+	actualOrigin, actualErr := requestOriginKey(&url.URL{Scheme: request.URL.Scheme, Host: parsedHost.Host})
+	if expectedErr != nil || actualErr != nil || expectedOrigin != actualOrigin {
+		return newMediaOriginError(ErrMediaOrigin)
 	}
 	return nil
 }
@@ -463,7 +495,7 @@ func redirectHeaderValues(header http.Header, name string) ([]string, bool) {
 }
 
 func sameMediaOrigin(left, right *url.URL) bool {
-	leftOrigin, leftErr := mediaOriginKey(left)
-	rightOrigin, rightErr := mediaOriginKey(right)
+	leftOrigin, leftErr := requestOriginKey(left)
+	rightOrigin, rightErr := requestOriginKey(right)
 	return leftErr == nil && rightErr == nil && leftOrigin == rightOrigin
 }

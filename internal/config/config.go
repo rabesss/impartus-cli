@@ -44,22 +44,26 @@ type Config struct {
 	// MediaOrigins lists additional exact origins (typically a CDN) that may
 	// receive the upstream bearer token for playlist and media requests. The
 	// API base URL is always authorized separately.
-	MediaOrigins     []string    `json:"mediaOrigins,omitempty"`
-	Quality          string      `json:"quality"`
-	Views            string      `json:"views"`
-	DownloadLocation string      `json:"downloadLocation"`
-	Token            string      `json:"token"`
-	TokenCachePath   string      `json:"tokenCachePath,omitempty"`
-	TempDirLocation  string      `json:"tempDirLocation"`
-	NumWorkers       int         `json:"numWorkers"`
-	Slides           bool        `json:"slides"`
-	AudioOnly        bool        `json:"audioOnly"`
-	AudioFormat      string      `json:"audioFormat"`
-	RateLimit        float64     `json:"rateLimit"`
-	APIRateLimit     float64     `json:"apiRateLimit"`
-	EnableJitter     bool        `json:"enableJitter"`
-	SkipNoAudio      bool        `json:"skipNoAudio"`
-	Watch            WatchConfig `json:"watch,omitempty"`
+	MediaOrigins     []string `json:"mediaOrigins,omitempty"`
+	Quality          string   `json:"quality"`
+	Views            string   `json:"views"`
+	DownloadLocation string   `json:"downloadLocation"`
+	// Token is populated by client.LoginAndSetToken for backwards compatibility.
+	// Config values, including Token, are caller-owned and must not be read or
+	// mutated concurrently with login. Concurrent API requests should leave
+	// Token empty and use the Client's synchronized cached token instead.
+	Token           string      `json:"token"`
+	TokenCachePath  string      `json:"tokenCachePath,omitempty"`
+	TempDirLocation string      `json:"tempDirLocation"`
+	NumWorkers      int         `json:"numWorkers"`
+	Slides          bool        `json:"slides"`
+	AudioOnly       bool        `json:"audioOnly"`
+	AudioFormat     string      `json:"audioFormat"`
+	RateLimit       float64     `json:"rateLimit"`
+	APIRateLimit    float64     `json:"apiRateLimit"`
+	EnableJitter    bool        `json:"enableJitter"`
+	SkipNoAudio     bool        `json:"skipNoAudio"`
+	Watch           WatchConfig `json:"watch,omitempty"`
 
 	EnablePipeline            bool           `json:"enablePipeline"`
 	DownloadWorkersPerLecture int            `json:"downloadWorkersPerLecture"`

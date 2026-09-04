@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
 var (
@@ -106,8 +108,13 @@ func (p mediaOriginPolicy) allowsRedirect(initial, destination *url.URL) bool {
 	if initial == nil || destination == nil {
 		return false
 	}
-	initialOrigin, initialErr := mediaOriginKey(initial)
-	destinationOrigin, destinationErr := mediaOriginKey(destination)
+	// Redirects from the compatibility entry point may start at a public
+	// loopback or HTTP URL. Compare request origins without imposing the
+	// authenticated-origin HTTPS requirement; the explicit allowlist below
+	// still uses mediaOriginKey and therefore never authorizes a remote HTTP
+	// destination.
+	initialOrigin, initialErr := requestOriginKey(initial)
+	destinationOrigin, destinationErr := requestOriginKey(destination)
 	if initialErr != nil || destinationErr != nil {
 		return false
 	}
@@ -146,7 +153,15 @@ func validateMediaURL(parsed *url.URL, requireHTTPS bool) error {
 }
 
 func mediaOriginKey(parsed *url.URL) (string, error) {
-	if err := validateMediaURL(parsed, true); err != nil {
+	return mediaOriginKeyWithHTTPS(parsed, true)
+}
+
+func requestOriginKey(parsed *url.URL) (string, error) {
+	return mediaOriginKeyWithHTTPS(parsed, false)
+}
+
+func mediaOriginKeyWithHTTPS(parsed *url.URL, requireHTTPS bool) (string, error) {
+	if err := validateMediaURL(parsed, requireHTTPS); err != nil {
 		return "", err
 	}
 	scheme := strings.ToLower(parsed.Scheme)
@@ -188,25 +203,6 @@ func isLoopbackMediaHost(hostname string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-var credentialQueryKeys = map[string]struct{}{
-	"auth":          {},
-	"authorization": {},
-	"token":         {},
-	"access_token":  {},
-	"sig":           {},
-	"signature":     {},
-	"secret":        {},
-	"key":           {},
-	"api_key":       {},
-	"cookie":        {},
-	"set-cookie":    {},
-	"x-api-key":     {},
-	"x_api_key":     {},
-	"refresh_token": {},
-	"client_secret": {},
-	"password":      {},
-}
-
 func hasCredentialQuery(parsed *url.URL) bool {
 	if parsed == nil || parsed.RawQuery == "" {
 		return false
@@ -216,7 +212,7 @@ func hasCredentialQuery(parsed *url.URL) bool {
 		return true
 	}
 	for key := range query {
-		if _, ok := credentialQueryKeys[strings.ToLower(key)]; ok {
+		if secrets.IsSensitiveQueryKey(key) {
 			return true
 		}
 	}
@@ -269,7 +265,7 @@ func stripBearerTokenQuery(rawURL, token string) (string, error) {
 	}
 	changed := false
 	for key, values := range query {
-		_, knownCredentialKey := credentialQueryKeys[strings.ToLower(key)]
+		knownCredentialKey := secrets.IsSensitiveQueryKey(key)
 		remove := knownCredentialKey
 		for _, value := range values {
 			if queryCredentialContainsBearer(value, token) {

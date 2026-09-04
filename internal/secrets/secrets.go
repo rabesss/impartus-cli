@@ -232,6 +232,13 @@ func IsCredentialScheme(value string) bool {
 	return false
 }
 
+// IsSensitiveQueryKey reports whether key is one of the credential-bearing
+// query aliases covered by URL redaction. It is shared with request policy
+// code so stripping and diagnostics cannot drift as aliases are added.
+func IsSensitiveQueryKey(key string) bool {
+	return isSensitiveParam(key)
+}
+
 func scrubRawQueryWithEvidence(s string) (string, RedactionEvidence) {
 	var evidence RedactionEvidence
 	indices := sensitiveQueryRe.FindAllStringSubmatchIndex(s, -1)

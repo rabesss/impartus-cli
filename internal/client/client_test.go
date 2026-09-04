@@ -525,6 +525,36 @@ func TestGetCourses_InputValidation(t *testing.T) {
 	}
 }
 
+func TestCatalogMethodsRejectUnsafeBaseURLWithoutConfigValidation(t *testing.T) {
+	const secret = "catalog-base-url-secret"
+	for _, rawBaseURL := range []string{
+		"https://api.example.test?token=" + secret,
+		"https://api.example.test/auth?",
+		"https://api.example.test/auth#" + secret,
+	} {
+		t.Run(rawBaseURL, func(t *testing.T) {
+			c := New(nil, nil)
+			cfg := &config.Config{BaseURL: rawBaseURL, Token: "request-token"}
+
+			if _, err := c.GetCourses(context.Background(), cfg); err == nil || !errors.Is(err, ErrInvalidMediaURL) {
+				t.Fatalf("GetCourses() error = %v, want ErrInvalidMediaURL", err)
+			} else if strings.Contains(err.Error(), secret) {
+				t.Fatalf("GetCourses() error leaked BaseURL credential: %v", err)
+			}
+			if _, err := c.GetLectures(context.Background(), cfg, Course{}); err == nil || !errors.Is(err, ErrInvalidMediaURL) {
+				t.Fatalf("GetLectures() error = %v, want ErrInvalidMediaURL", err)
+			} else if strings.Contains(err.Error(), secret) {
+				t.Fatalf("GetLectures() error leaked BaseURL credential: %v", err)
+			}
+			if _, err := c.GetPlaylists(context.Background(), cfg, nil); err == nil || !errors.Is(err, ErrInvalidMediaURL) {
+				t.Fatalf("GetPlaylists() error = %v, want ErrInvalidMediaURL", err)
+			} else if strings.Contains(err.Error(), secret) {
+				t.Fatalf("GetPlaylists() error leaked BaseURL credential: %v", err)
+			}
+		})
+	}
+}
+
 // TestGetLectures_InputValidation tests input validation without network
 func TestGetLectures_InputValidation(t *testing.T) {
 	c := New(nil, nil)

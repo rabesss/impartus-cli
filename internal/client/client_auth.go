@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -49,14 +50,27 @@ func newClientFromConfig(cfg *config.Config) (*Client, error) {
 }
 
 func (c *Client) tokenValue() string {
+	if c == nil {
+		return ""
+	}
+	c.tokenMu.RLock()
+	defer c.tokenMu.RUnlock()
 	return c.token
 }
 
 func (c *Client) setToken(token string) {
+	if c == nil {
+		return
+	}
+	c.tokenMu.Lock()
+	defer c.tokenMu.Unlock()
 	c.token = token
 }
 
-// LoginAndSetToken authenticates with the Impartus API and stores the resulting token.
+// LoginAndSetToken authenticates with the Impartus API and stores the resulting
+// token. It also updates cfg.Token for compatibility; cfg remains caller-owned
+// and must not be read or mutated concurrently by code that bypasses Client's
+// synchronized token access.
 func (c *Client) LoginAndSetToken(ctx context.Context, cfg *config.Config) error {
 	cli, baseURL, err := c.prepareLogin(cfg)
 	if err != nil {
@@ -72,16 +86,32 @@ func (c *Client) LoginAndSetToken(ctx context.Context, cfg *config.Config) error
 	return cli.storeToken(cfg, token)
 }
 
-// resolveToken returns the token from config, falling back to the client's stored token.
+// resolveToken returns the token from config, falling back to the client's
+// synchronized stored token. A config token is treated as an immutable caller
+// value while requests are in flight.
 func (c *Client) resolveToken(cfg *config.Config) (string, error) {
+	c.tokenMu.RLock()
 	token := cfg.Token
 	if token == "" {
-		token = c.tokenValue()
+		token = c.token
 	}
+	c.tokenMu.RUnlock()
 	if token == "" {
 		return "", errors.New("token is not set")
 	}
 	return token, nil
+}
+
+func (c *Client) setActiveToken(cfg *config.Config, token string) {
+	if c == nil {
+		return
+	}
+	c.tokenMu.Lock()
+	c.token = token
+	if cfg != nil {
+		cfg.Token = token
+	}
+	c.tokenMu.Unlock()
 }
 
 func (c *Client) readStoredToken() (string, bool) {
@@ -123,10 +153,50 @@ func (c *Client) prepareLogin(cfg *config.Config) (*Client, string, error) {
 	if cfg.BaseURL == "" {
 		return nil, "", errors.New("baseUrl is required")
 	}
-	if _, err := newMediaOriginPolicy(append([]string{cfg.BaseURL}, cfg.MediaOrigins...)...); err != nil {
+	baseURL, err := validateAndCanonicalizeBaseURL(cfg.BaseURL)
+	if err != nil {
 		return nil, "", err
 	}
-	return cli, cfg.BaseURL, nil
+	if _, err := newMediaOriginPolicy(append([]string{baseURL}, cfg.MediaOrigins...)...); err != nil {
+		return nil, "", err
+	}
+	return cli, baseURL, nil
+}
+
+// validateAndCanonicalizeBaseURL applies the upstream URL boundary that
+// Config.Validate cannot guarantee for callers that invoke client methods
+// directly. API and login URLs must never carry query or fragment credentials,
+// and rejecting them before request construction keeps unsafe values out of
+// HTTP errors and redirect metadata.
+func validateAndCanonicalizeBaseURL(rawBaseURL string) (string, error) {
+	parsed, err := url.Parse(rawBaseURL)
+	if err != nil {
+		return "", newMediaOriginError(ErrInvalidMediaURL)
+	}
+	if err := validateMediaURL(parsed, true); err != nil {
+		return "", err
+	}
+	if parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.RawFragment != "" {
+		return "", newMediaOriginError(ErrInvalidMediaURL)
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	return parsed.String(), nil
+}
+
+func newBaseURLPolicy(rawBaseURL string, additionalOrigins ...string) (string, mediaOriginPolicy, error) {
+	if rawBaseURL == "" {
+		return "", mediaOriginPolicy{}, errors.New("baseUrl is required")
+	}
+	baseURL, err := validateAndCanonicalizeBaseURL(rawBaseURL)
+	if err != nil {
+		return "", mediaOriginPolicy{}, err
+	}
+	origins := append([]string{baseURL}, additionalOrigins...)
+	policy, err := newMediaOriginPolicy(origins...)
+	if err != nil {
+		return "", mediaOriginPolicy{}, err
+	}
+	return baseURL, policy, nil
 }
 
 func (c *Client) tryStoredToken(ctx context.Context, cfg *config.Config, baseURL string) bool {
@@ -138,8 +208,7 @@ func (c *Client) tryStoredToken(ctx context.Context, cfg *config.Config, baseURL
 	if err != nil || !valid {
 		return false
 	}
-	cfg.Token = token
-	c.setToken(token)
+	c.setActiveToken(cfg, token)
 	return true
 }
 
@@ -209,8 +278,7 @@ func validateLoginResponse(response *http.Response) error {
 }
 
 func (c *Client) storeToken(cfg *config.Config, token string) error {
-	cfg.Token = token
-	c.setToken(token)
+	c.setActiveToken(cfg, token)
 	path := resolvedTokenCachePath(cfg)
 	if err := writeTokenCache(path, []byte(token)); err != nil {
 		return fmt.Errorf("failed to persist token cache: %w", err)

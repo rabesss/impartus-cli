@@ -183,7 +183,10 @@ func TestGetAuthorizedWithTokenRejectsBearerInUnconfiguredInitialURLFields(t *te
 }
 
 func TestGetAuthorizedWithTokenStripsTokenlessInitialCredentialAliases(t *testing.T) {
-	for _, key := range []string{"authorization", "AUTHORIZATION", "token", "x-api-key", "Cookie"} {
+	for _, key := range []string{
+		"authorization", "AUTHORIZATION", "token", "x-api-key", "Cookie",
+		"api-key", "apikey", "xapikey", "proxy-authorization", "proxy_authorization",
+	} {
 		t.Run(key, func(t *testing.T) {
 			transport := &mediaOriginCaptureTransport{}
 			c := New(&http.Client{Transport: transport}, nil)
@@ -221,6 +224,98 @@ func TestGetAuthorizedWithTokenCanonicalizesInitialURLScheme(t *testing.T) {
 	if transport.request.URL.Scheme != "http" {
 		t.Fatalf("request scheme = %q, want lower-case http", transport.request.URL.Scheme)
 	}
+}
+
+func TestGetAuthorizedWithTokenWrapsTokenlessHTTPMediaRequests(t *testing.T) {
+	var startCookie string
+	var finalCookie string
+	var finalReferer string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/start" {
+			startCookie = r.Header.Get("Cookie")
+			http.Redirect(w, r, "/final", http.StatusFound)
+			return
+		}
+		finalCookie = r.Header.Get("Cookie")
+		finalReferer = r.Header.Get("Referer")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("cookiejar.New() error = %v", err)
+	}
+	serverURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	jar.SetCookies(serverURL, []*http.Cookie{{Name: "session", Value: "must-not-cross"}})
+	httpClient := server.Client()
+	httpClient.Jar = jar
+
+	resp, err := New(httpClient, nil).GetAuthorizedWithToken(context.Background(), server.URL+"/start", "")
+	if err != nil {
+		t.Fatalf("GetAuthorizedWithToken() error = %v", err)
+	}
+	if resp == nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("GetAuthorizedWithToken() response = %#v, want 200 response", resp)
+	}
+	_ = resp.Body.Close() //nolint:errcheck
+	if startCookie != "" {
+		t.Fatalf("tokenless request carried cookie %q, want cookie jar isolation", startCookie)
+	}
+	if finalCookie != "" {
+		t.Fatalf("tokenless redirect carried cookie %q, want cookie jar isolation", finalCookie)
+	}
+	if finalReferer != "" {
+		t.Fatalf("tokenless redirect carried Referer %q, want redirect referer stripped", finalReferer)
+	}
+}
+
+func TestGetAuthorizedWithTokenTokenlessRedirectRemainsSameOrigin(t *testing.T) {
+	var targetRequests atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		targetRequests.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/final", http.StatusFound)
+	}))
+	defer source.Close()
+
+	resp, err := New(source.Client(), nil).GetAuthorizedWithToken(context.Background(), source.URL+"/start", "")
+	if resp != nil {
+		_ = resp.Body.Close() //nolint:errcheck
+	}
+	if err == nil || !errors.Is(err, ErrMediaOrigin) {
+		t.Fatalf("tokenless cross-origin redirect error = %v, want ErrMediaOrigin", err)
+	}
+	if got := targetRequests.Load(); got != 0 {
+		t.Fatalf("tokenless cross-origin redirect requests = %d, want 0", got)
+	}
+}
+
+func TestGetAuthorizedWithTokenPreservesTokenlessHTTPRedirectCompatibility(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/start" {
+			http.Redirect(w, r, "/final", http.StatusTemporaryRedirect)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	resp, err := New(server.Client(), nil).GetAuthorizedWithToken(context.Background(), server.URL+"/start", "")
+	if err != nil {
+		t.Fatalf("tokenless HTTP redirect error = %v, want compatibility success", err)
+	}
+	if resp == nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("tokenless HTTP redirect response = %#v, want 200 response", resp)
+	}
+	_ = resp.Body.Close() //nolint:errcheck
 }
 
 func TestGetAuthorizedWithTokenAttachesTokenToExactCallerOrigin(t *testing.T) {
@@ -641,6 +736,12 @@ func TestGetAuthorizedWithTokenRejectsCredentialReintroducedInRedirectRequestFie
 		{name: "request URI query", set: func(next *http.Request) {
 			next.RequestURI = "/segment.ts?authorization=Bearer+" + token
 		}},
+		{name: "header name", set: func(next *http.Request) {
+			next.Header["X-"+token] = []string{"safe-value"}
+		}},
+		{name: "clean host mismatch", set: func(next *http.Request) {
+			next.Host = "vhost.example.test"
+		}},
 		{name: "method", set: func(next *http.Request) { next.Method = http.MethodPost }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -670,6 +771,36 @@ func TestGetAuthorizedWithTokenRejectsCredentialReintroducedInRedirectRequestFie
 				t.Fatalf("redirect %s target requests = %d, want 0", tc.name, targetRequests)
 			}
 		})
+	}
+}
+
+func TestGetAuthorizedWithTokenCanonicalizesRedirectSchemeAfterHook(t *testing.T) {
+	var targetRequests atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		targetRequests.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+	source := httptest.NewServer(http.RedirectHandler(target.URL+"/segment.ts", http.StatusFound))
+	defer source.Close()
+
+	httpClient := source.Client()
+	httpClient.CheckRedirect = func(next *http.Request, _ []*http.Request) error {
+		next.URL.Scheme = strings.ToUpper(next.URL.Scheme)
+		return nil
+	}
+	resp, err := New(httpClient, nil).GetAuthorizedWithTokenForOrigins(
+		context.Background(), source.URL+"/start", "redirect-scheme-secret", source.URL, target.URL,
+	)
+	if err != nil {
+		t.Fatalf("GetAuthorizedWithTokenForOrigins() error = %v, want canonicalized redirect success", err)
+	}
+	if resp == nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("response = %#v, want 200 response", resp)
+	}
+	_ = resp.Body.Close() //nolint:errcheck
+	if got := targetRequests.Load(); got != 1 {
+		t.Fatalf("target requests = %d, want one request", got)
 	}
 }
 

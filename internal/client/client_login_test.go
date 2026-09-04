@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -75,6 +76,83 @@ func TestNewLoggedIn(t *testing.T) {
 				t.Errorf("client token = %q, want %q", got, tc.token)
 			}
 		})
+	}
+}
+
+func TestDirectLoginEntryPointsRejectUnsafeBaseURL(t *testing.T) {
+	const leakedSecret = "direct-login-base-url-secret"
+	for _, test := range []struct {
+		name string
+		raw  string
+		want error
+	}{
+		{name: "userinfo", raw: "https://user:" + leakedSecret + "@api.example.test", want: ErrMediaURLUserinfo},
+		{name: "query", raw: "https://api.example.test/auth?token=" + leakedSecret, want: ErrInvalidMediaURL},
+		{name: "force query", raw: "https://api.example.test/auth?", want: ErrInvalidMediaURL},
+		{name: "fragment", raw: "https://api.example.test/auth#" + leakedSecret, want: ErrInvalidMediaURL},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, entryPoint := range []struct {
+				name string
+				run  func(*config.Config) error
+			}{
+				{
+					name: "LoginAndSetToken",
+					run: func(cfg *config.Config) error {
+						return New(&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+							t.Fatal("unsafe BaseURL reached the login transport")
+							return nil, nil
+						})}, nil).LoginAndSetToken(context.Background(), cfg)
+					},
+				},
+				{
+					name: "NewLoggedIn",
+					run: func(cfg *config.Config) error {
+						_, err := NewLoggedIn(context.Background(), cfg)
+						return err
+					},
+				},
+			} {
+				t.Run(entryPoint.name, func(t *testing.T) {
+					err := entryPoint.run(&config.Config{
+						Username: "user",
+						Password: "password",
+						BaseURL:  test.raw,
+					})
+					if err == nil || !errors.Is(err, test.want) {
+						t.Fatalf("%s() error = %v, want errors.Is(..., %v)", entryPoint.name, err, test.want)
+					}
+					if strings.Contains(err.Error(), leakedSecret) {
+						t.Fatalf("%s() error leaked BaseURL credential: %v", entryPoint.name, err)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestLoginCanonicalizesMixedCaseBaseURLScheme(t *testing.T) {
+	var requestScheme string
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requestScheme = req.URL.Scheme
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"token":"mixed-case-token"}`)),
+			Header:     make(http.Header),
+			Request:    req,
+		}, nil
+	})
+	cfg := &config.Config{
+		Username:       "user",
+		Password:       "password",
+		BaseURL:        "HtTpS://api.example.test",
+		TokenCachePath: filepath.Join(t.TempDir(), "token-cache"),
+	}
+	if err := New(&http.Client{Transport: transport}, nil).LoginAndSetToken(context.Background(), cfg); err != nil {
+		t.Fatalf("LoginAndSetToken() error = %v", err)
+	}
+	if requestScheme != "https" {
+		t.Fatalf("login request scheme = %q, want lower-case https", requestScheme)
 	}
 }
 
