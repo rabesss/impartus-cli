@@ -285,3 +285,33 @@ func TestLoginDoesNotUseHTTPClientCookieJar(t *testing.T) {
 		t.Fatalf("login request Cookie = %q, want no cookie-jar credentials", got)
 	}
 }
+
+func TestValidateStoredTokenNeverFollowsRedirect(t *testing.T) {
+	t.Parallel()
+
+	var targetRequests int
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		targetRequests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/user/profile" {
+			t.Fatalf("profile request path = %q", r.URL.Path)
+		}
+		w.Header().Set("Location", target.URL+"/user/profile")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer source.Close()
+
+	valid, err := New(source.Client(), nil).validateStoredToken(context.Background(), source.URL, "stored-token")
+	if err != nil {
+		t.Fatalf("validateStoredToken() error = %v, want a false result for redirect", err)
+	}
+	if valid {
+		t.Fatal("validateStoredToken() = true for redirect response")
+	}
+	if targetRequests != 0 {
+		t.Fatalf("redirect target received %d requests, want zero", targetRequests)
+	}
+}

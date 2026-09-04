@@ -6,6 +6,7 @@
 package secrets
 
 import (
+	"bytes"
 	"encoding/json"
 	"net"
 	"net/url"
@@ -56,7 +57,7 @@ var sensitiveParams = map[string]bool{
 
 // urlTokenRe matches absolute http(s) URLs embedded in free-form text so they
 // can be scrubbed even when an error string was built without a structured URL.
-var urlTokenRe = regexp.MustCompile(`https?://[^\s"'<>]+`)
+var urlTokenRe = regexp.MustCompile(`(?i)https?://[^\s"'<>]+`)
 
 // sensitiveQueryRe matches sensitive query or fragment parameters (key=value)
 // at a URL delimiter boundary. It is built from sensitiveParams so there is
@@ -301,14 +302,24 @@ func scrubRawWithEvidenceDepth(rawURL string, depth int) (string, RedactionEvide
 }
 
 func scrubEmbeddedURLsWithEvidence(value string, depth int) (string, RedactionEvidence) {
+	if depth >= maxURLRedactionDepth {
+		return value, RedactionEvidence{}
+	}
 	indices := httpsSchemeRe.FindAllStringIndex(value, -1)
-	if len(indices) < 2 || depth >= maxURLRedactionDepth {
+	if len(indices) == 0 {
+		return value, RedactionEvidence{}
+	}
+	// When the decoded value is itself one complete URL, handing it back to
+	// redactURLWithEvidenceDepth would recurse on the same candidate. Let the
+	// raw decoder advance its depth in that case; genuinely embedded or
+	// multiple URL candidates are still processed below.
+	if len(indices) == 1 && indices[0][0] == 0 && indices[0][1] == len(value) {
 		return value, RedactionEvidence{}
 	}
 	var evidence RedactionEvidence
 	changed := false
-	for index := len(indices) - 1; index >= 1; index-- {
-		start := indices[index][0]
+	for occurrence := len(indices) - 1; occurrence >= 0; occurrence-- {
+		start := indices[occurrence][0]
 		end := start
 		for end < len(value) {
 			switch value[end] {
@@ -319,13 +330,15 @@ func scrubEmbeddedURLsWithEvidence(value string, depth int) (string, RedactionEv
 			}
 		}
 	embeddedURLDone:
-		redacted, redactedChanged, urlEvidence := redactURLWithEvidenceDepth(value[start:end], depth+1)
-		if !redactedChanged {
+		if len(indices) == 1 && start == 0 && end == len(value) {
 			continue
 		}
-		value = value[:start] + redacted + value[end:]
+		redacted, redactedChanged, urlEvidence := redactURLWithEvidenceDepth(value[start:end], depth+1)
+		if redactedChanged {
+			value = value[:start] + redacted + value[end:]
+			changed = true
+		}
 		evidence.values = append(evidence.values, urlEvidence.values...)
-		changed = true
 	}
 	if !changed {
 		return value, evidence
@@ -517,6 +530,16 @@ func replaceTokenVariants(value, token string) string {
 		// retain only a fixed marker for this hostile-size input.
 		return "REDACTED"
 	}
+	if value == "" {
+		return value
+	}
+	// Variant generation includes percent and JSON spellings. Do not spend a
+	// bounded-but-expensive scan over an arbitrarily large diagnostic before
+	// reaching the fail-safe: preserving a large unknown representation could
+	// leak a credential that is hidden behind an encoding not in the catalog.
+	if len(value) > maxEncodedTokenViewSize {
+		return "REDACTED"
+	}
 	redacted := replaceTokenVariantsDirect(value, token)
 	if redacted != value {
 		return redacted
@@ -524,26 +547,23 @@ func replaceTokenVariants(value, token string) string {
 	// URL parsers and upstream diagnostics can percent-encode only selected
 	// bytes (for example, "a%62c"). Inspect a small, bounded number of decoded
 	// views so mixed encodings are covered without enumerating combinations.
-	if len(value) > maxEncodedTokenViewSize {
-		// A percent-bearing diagnostic larger than the inspection budget may hide
-		// an unknown mixed encoding. Preserve only a fixed marker rather than
-		// returning a potentially credential-bearing value unchanged.
-		if strings.Contains(value, "%") {
-			return "REDACTED"
-		}
-		return value
-	}
 	candidate := value
 	for depth := 0; depth < maxRawPercentDecodeDepth; depth++ {
 		decoded, changed := decodePercentEscapes(candidate)
 		if !changed {
-			break
+			return value
 		}
 		decodedRedacted := replaceTokenVariantsDirect(decoded, token)
 		if decodedRedacted != decoded {
 			return decodedRedacted
 		}
 		candidate = decoded
+	}
+	// A representation that is still changing after the decode budget is
+	// exhausted is intentionally opaque. Returning the original value here
+	// would make a deep percent-encoding an escape hatch around token removal.
+	if _, changed := decodePercentEscapes(candidate); changed {
+		return "REDACTED"
 	}
 	return value
 }
@@ -561,7 +581,13 @@ func replaceTokenVariantsDirect(value, token string) string {
 		if variant == "" {
 			continue
 		}
-		value = replaceCaseInsensitive(value, variant, "REDACTED")
+		// Credentials are case-sensitive. In particular, case-folding Unicode
+		// before indexing the original byte string can splice at the wrong byte
+		// offsets and leak or corrupt adjacent text. Authentication schemes are
+		// handled by the free-form assignment rules; the credential itself is
+		// always matched byte-for-byte.
+		value = strings.ReplaceAll(value, variant, "REDACTED")
+		value = replaceJSONEscapedToken(value, variant)
 	}
 	return value
 }
@@ -662,30 +688,175 @@ func jsonEscapeToken(value string) string {
 	return string(escaped[1 : len(escaped)-1])
 }
 
-func replaceCaseInsensitive(value, needle, replacement string) string {
-	lowerValue := strings.ToLower(value)
-	lowerNeedle := strings.ToLower(needle)
-	if lowerNeedle == "" {
+// replaceJSONEscapedToken removes token occurrences represented by any valid
+// JSON escape spelling. It keeps a mapping from decoded bytes back to their
+// original byte spans, so replacements never split a UTF-8 sequence or leave
+// the escaped spelling behind. The caller caps the diagnostic size before
+// entering this helper.
+func replaceJSONEscapedToken(value, token string) string {
+	if value == "" || token == "" || !strings.Contains(value, "\\") {
 		return value
 	}
+	tokenBytes := []byte(token)
+	units := decodeJSONUnits(value)
+	if len(units) == 0 {
+		return value
+	}
+
 	var scrubbed strings.Builder
-	searchFrom := 0
-	for searchFrom < len(lowerValue) {
-		index := strings.Index(lowerValue[searchFrom:], lowerNeedle)
-		if index < 0 {
-			break
+	lastRaw := 0
+	changed := false
+	for start := 0; start < len(units); {
+		end, ok := matchJSONToken(units, start, tokenBytes)
+		if !ok {
+			start++
+			continue
 		}
-		index += searchFrom
-		scrubbed.WriteString(value[searchFrom:index])
-		scrubbed.WriteString(replacement)
-		searchFrom = index + len(needle)
+		rawStart := units[start].rawStart
+		rawEnd := units[end-1].rawEnd
+		if rawStart < lastRaw || rawEnd <= rawStart {
+			// Units are generated in source order; this is defensive only, but
+			// refusing an invalid span keeps this boundary fail-closed.
+			start++
+			continue
+		}
+		scrubbed.WriteString(value[lastRaw:rawStart])
+		scrubbed.WriteString("REDACTED")
+		lastRaw = rawEnd
+		changed = true
+		start = end
 	}
-	if searchFrom == 0 {
+	if !changed {
 		return value
 	}
-	scrubbed.WriteString(value[searchFrom:])
+	scrubbed.WriteString(value[lastRaw:])
 	return scrubbed.String()
 }
+
+type jsonDecodedUnit struct {
+	rawStart int
+	rawEnd   int
+	decoded  []byte
+}
+
+func decodeJSONUnits(value string) []jsonDecodedUnit {
+	units := make([]jsonDecodedUnit, 0, len(value))
+	for index := 0; index < len(value); {
+		if decoded, width, ok := decodeJSONEscapeAt(value, index); ok {
+			units = append(units, jsonDecodedUnit{
+				rawStart: index,
+				rawEnd:   index + width,
+				decoded:  decoded,
+			})
+			index += width
+			continue
+		}
+		units = append(units, jsonDecodedUnit{
+			rawStart: index,
+			rawEnd:   index + 1,
+			decoded:  []byte{value[index]},
+		})
+		index++
+	}
+	return units
+}
+
+func matchJSONToken(units []jsonDecodedUnit, start int, token []byte) (int, bool) {
+	if len(token) == 0 || start >= len(units) {
+		return 0, false
+	}
+	matched := 0
+	for end := start; end < len(units) && matched < len(token); end++ {
+		decoded := units[end].decoded
+		if len(decoded) > len(token)-matched || !bytes.Equal(decoded, token[matched:matched+len(decoded)]) {
+			return 0, false
+		}
+		matched += len(decoded)
+		if matched == len(token) {
+			return end + 1, true
+		}
+	}
+	return 0, false
+}
+
+func decodeJSONEscapeAt(value string, index int) ([]byte, int, bool) {
+	if index < 0 || index+1 >= len(value) || value[index] != '\\' {
+		return nil, 0, false
+	}
+	switch value[index+1] {
+	case '"':
+		return []byte{'"'}, 2, true
+	case '\\':
+		return []byte{'\\'}, 2, true
+	case '/':
+		return []byte{'/'}, 2, true
+	case 'b':
+		return []byte{'\b'}, 2, true
+	case 'f':
+		return []byte{'\f'}, 2, true
+	case 'n':
+		return []byte{'\n'}, 2, true
+	case 'r':
+		return []byte{'\r'}, 2, true
+	case 't':
+		return []byte{'\t'}, 2, true
+	case 'u':
+		return decodeJSONUnicodeEscape(value, index)
+	default:
+		return nil, 0, false
+	}
+}
+
+func decodeJSONUnicodeEscape(value string, index int) ([]byte, int, bool) {
+	if index+6 > len(value) {
+		return nil, 0, false
+	}
+	code, ok := parseJSONHex4(value[index+2 : index+6])
+	if !ok {
+		return nil, 0, false
+	}
+	if isJSONHighSurrogate(code) && index+12 <= len(value) && value[index+6] == '\\' && value[index+7] == 'u' {
+		low, lowOK := parseJSONHex4(value[index+8 : index+12])
+		if lowOK && isJSONLowSurrogate(low) {
+			combined := uint32(0x10000) + (uint32(code-0xd800)<<10 | uint32(low-0xdc00))
+			return encodeJSONCodePoint(combined), 12, true
+		}
+	}
+	if isJSONSurrogate(code) {
+		// encoding/json replaces an unpaired surrogate with U+FFFD. Match
+		// that behavior instead of emitting invalid UTF-8.
+		code = 0xfffd
+	}
+	return encodeJSONCodePoint(uint32(code)), 6, true
+}
+
+func encodeJSONCodePoint(code uint32) []byte {
+	if code > utf8.MaxRune {
+		code = utf8.RuneError
+	}
+	var encoded [utf8.UTFMax]byte
+	count := utf8.EncodeRune(encoded[:], rune(code))
+	return encoded[:count]
+}
+
+func parseJSONHex4(value string) (uint16, bool) {
+	if len(value) != 4 {
+		return 0, false
+	}
+	var result uint16
+	for index := 0; index < len(value); index++ {
+		nibble, ok := percentNibble(value[index])
+		if !ok {
+			return 0, false
+		}
+		result = result<<4 | uint16(nibble)
+	}
+	return result, true
+}
+
+func isJSONHighSurrogate(value uint16) bool { return value >= 0xd800 && value <= 0xdbff }
+func isJSONLowSurrogate(value uint16) bool  { return value >= 0xdc00 && value <= 0xdfff }
+func isJSONSurrogate(value uint16) bool     { return value >= 0xd800 && value <= 0xdfff }
 
 func redactURLWithEvidence(rawURL string) (string, bool, RedactionEvidence) {
 	return redactURLWithEvidenceDepth(rawURL, 0)
@@ -812,36 +983,103 @@ func SanitizeError(err error) error {
 	}
 	collector := classificationCollector{}
 	collector.collect(err, 0)
-	return newSanitizedError(Scrub(err.Error()), collector.classifications, collector.network)
+	return newSanitizedError(Scrub(safeErrorMessage(err)), collector.classifications, collector.network)
+}
+
+func safeErrorMessage(err error) (message string) {
+	if err == nil {
+		return ""
+	}
+	completed := false
+	func() {
+		defer swallowPanic()
+		message = err.Error()
+		completed = true
+	}()
+	if !completed {
+		return panicSafeErrorMessage
+	}
+	return message
 }
 
 const maxSanitizeErrorDepth = 64
 
+const (
+	// Error chains are application-controlled input. Keep both recursion and
+	// total work bounded, including errors.Join trees and private metadata
+	// slices returned by trusted in-package wrappers.
+	maxSanitizeErrorNodes       = 256
+	maxSanitizeErrorChildren    = 64
+	maxSanitizeErrorClassifiers = 64
+	panicSafeErrorMessage       = "upstream error"
+)
+
 type classificationCollector struct {
 	classifications []error
 	network         networkMetadata
+	nodes           int
 }
 
 func (collector *classificationCollector) collect(err error, depth int) {
-	if err == nil || depth >= maxSanitizeErrorDepth || len(collector.classifications) >= maxSanitizeErrorDepth*2 {
+	if err == nil || depth >= maxSanitizeErrorDepth || collector.nodes >= maxSanitizeErrorNodes {
 		return
 	}
+	collector.nodes++
 	if safe, ok := err.(interface{ classifications() []error }); ok {
-		for _, classification := range safe.classifications() {
+		for _, classification := range boundedClassifications(safe) {
 			collector.addClassification(classification)
 		}
 	}
 	collector.addClassification(err)
 	collector.network.observe(err)
 	if multi, ok := err.(interface{ Unwrap() []error }); ok {
-		for _, child := range multi.Unwrap() {
+		for _, child := range boundedUnwrapErrors(multi) {
 			collector.collect(child, depth+1)
 		}
 		return
 	}
 	if single, ok := err.(interface{ Unwrap() error }); ok {
-		collector.collect(single.Unwrap(), depth+1)
+		collector.collect(safeUnwrapError(single), depth+1)
 	}
+}
+
+func boundedClassifications(source interface{ classifications() []error }) []error {
+	var classifications []error
+	completed := false
+	func() {
+		defer swallowPanic()
+		classifications = source.classifications()
+		completed = true
+	}()
+	if !completed || len(classifications) == 0 {
+		return nil
+	}
+	if len(classifications) > maxSanitizeErrorClassifiers {
+		classifications = classifications[:maxSanitizeErrorClassifiers]
+	}
+	return classifications
+}
+
+func boundedUnwrapErrors(source interface{ Unwrap() []error }) []error {
+	var children []error
+	completed := false
+	func() {
+		defer swallowPanic()
+		children = source.Unwrap()
+		completed = true
+	}()
+	if !completed || len(children) == 0 {
+		return nil
+	}
+	if len(children) > maxSanitizeErrorChildren {
+		children = children[:maxSanitizeErrorChildren]
+	}
+	return children
+}
+
+func safeUnwrapError(source interface{ Unwrap() error }) (child error) {
+	defer swallowPanic()
+	return source.Unwrap()
 }
 
 func (collector *classificationCollector) addClassification(candidate error) {
@@ -877,17 +1115,52 @@ type networkMetadata struct {
 
 func (metadata *networkMetadata) observe(err error) {
 	if safe, ok := err.(interface{ networkMetadata() networkMetadata }); ok {
-		metadata.merge(safe.networkMetadata())
+		metadata.merge(safeNetworkMetadata(safe))
 	}
-	if dnsErr, ok := err.(*net.DNSError); ok {
+	if dnsErr, ok := err.(*net.DNSError); ok && dnsErr != nil {
 		metadata.hasNetwork = true
 		metadata.dns = true
 		metadata.timeout = metadata.timeout || dnsErr.IsTimeout
 	}
-	if netErr, ok := err.(net.Error); ok {
+	if netErr, ok := err.(net.Error); ok && !isNilInterface(netErr) {
 		metadata.hasNetwork = true
-		metadata.timeout = metadata.timeout || netErr.Timeout()
+		metadata.timeout = metadata.timeout || safeTimeout(netErr)
 	}
+}
+
+func isNilInterface(value any) bool {
+	reflected := reflect.ValueOf(value)
+	if !reflected.IsValid() {
+		return true
+	}
+	switch reflected.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
+		return reflected.IsNil()
+	case reflect.Invalid, reflect.Bool, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64, reflect.Complex64, reflect.Complex128, reflect.Array, reflect.String,
+		reflect.Struct:
+		return false
+	}
+	return false
+}
+
+func safeNetworkMetadata(source interface{ networkMetadata() networkMetadata }) (metadata networkMetadata) {
+	defer swallowPanic()
+	return source.networkMetadata()
+}
+
+func safeTimeout(source net.Error) (timeout bool) {
+	defer swallowPanic()
+	return source.Timeout()
+}
+
+func swallowPanic() {
+	if recover() == nil {
+		return
+	}
+	// Hostile error implementations are treated as opaque. The recovered
+	// value is intentionally discarded and never enters a diagnostic.
 }
 
 func (metadata *networkMetadata) merge(other networkMetadata) {
@@ -1052,5 +1325,5 @@ func ScrubError(err error) string {
 	if err == nil {
 		return ""
 	}
-	return Scrub(err.Error())
+	return Scrub(safeErrorMessage(err))
 }

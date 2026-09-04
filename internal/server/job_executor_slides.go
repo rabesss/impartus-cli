@@ -52,17 +52,16 @@ func downloadLectureSlide(ctx context.Context, c *client.Client, cfg *config.Con
 }
 
 func downloadLectureSlideWithLimit(ctx context.Context, c *client.Client, cfg *config.Config, lecture client.Lecture, limit int64) error {
-	if cfg.BaseURL == "" {
-		return errors.New("baseUrl is required")
-	}
-
 	// G301: 0755 is standard for user download directories
 	// #nosec G301
 	if err := os.MkdirAll(cfg.DownloadLocation, 0o755); err != nil {
 		return err
 	}
 
-	url := fmt.Sprintf("%s/videos/%d/auto-generated-pdf", cfg.BaseURL, lecture.VideoID)
+	url, err := client.BaseURLPath(cfg.BaseURL, fmt.Sprintf("videos/%d/auto-generated-pdf", lecture.VideoID))
+	if err != nil {
+		return err
+	}
 	origins := append([]string{cfg.BaseURL}, cfg.MediaOrigins...)
 	resp, err := c.GetAuthorizedWithTokenForOrigins(ctx, url, cfg.Token, origins...)
 	if err != nil {
@@ -76,11 +75,7 @@ func downloadLectureSlideWithLimit(ctx context.Context, c *client.Client, cfg *c
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		body, readErr := readSanitizedSlideErrorBody(resp.Body, cfg.Token)
-		if readErr != nil {
-			return fmt.Errorf("slide download failed for lecture %d with status %d and unreadable body: %w", lecture.SeqNo, resp.StatusCode, readErr)
-		}
-		return fmt.Errorf("slide download failed for lecture %d with status %d: %s", lecture.SeqNo, resp.StatusCode, strings.TrimSpace(string(body)))
+		return slideResponseError(resp, lecture.SeqNo, cfg.Token)
 	}
 	if resp.ContentLength > limit {
 		return fmt.Errorf("slide download exceeds max size %d bytes: %w", limit, errSlideSizeLimit)
@@ -121,6 +116,20 @@ func downloadLectureSlideWithLimit(ctx context.Context, c *client.Client, cfg *c
 	}
 	removePart = false
 	return nil
+}
+
+func slideResponseError(resp *http.Response, sequence int, token string) error {
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("slide download failed with status %d: %w", resp.StatusCode, &client.AuthenticationError{
+			Operation:  "slide download",
+			StatusCode: resp.StatusCode,
+		})
+	}
+	body, readErr := readSanitizedSlideErrorBody(resp.Body, token)
+	if readErr != nil {
+		return fmt.Errorf("slide download failed for lecture %d with status %d and unreadable body: %w", sequence, resp.StatusCode, readErr)
+	}
+	return fmt.Errorf("slide download failed for lecture %d with status %d: %s", sequence, resp.StatusCode, body)
 }
 
 func finalizeSlideDownload(partPath, filePath string) error {
