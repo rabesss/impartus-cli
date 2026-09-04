@@ -264,8 +264,9 @@ func (c *Client) getPlaylist(ctx context.Context, streamURL, token string, lectu
 	}
 	scanner := bufio.NewScanner(bytes.NewReader(body))
 	// Scanner's maximum token size includes the line delimiter. Keep the
-	// public payload limit at 1 MiB while allowing its terminating newline.
-	scanner.Buffer(make([]byte, 64*1024), maxPlaylistLineSize+1)
+	// public payload limit at 1 MiB while allowing either LF or CRLF.
+	scanner.Buffer(make([]byte, 64*1024), maxPlaylistLineSize+2)
+	scanner.Split(scanPlaylistLines)
 	parsed, parseErr := parsePlaylist(scanner, streamURL, lecture.TTID, lecture.Topic, lecture.SeqNo)
 	_ = resp.Body.Close() //nolint:errcheck
 	if parseErr != nil {
