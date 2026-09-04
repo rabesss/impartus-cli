@@ -196,8 +196,10 @@ func (s *APIServer) probeUpstreamHTTP(parent context.Context) (reachable, probed
 	if upstreamClient == nil {
 		upstreamClient = client.New(&http.Client{Timeout: upstreamProbeTimeout}, nil)
 	}
-	origins := append([]string{profileURL}, s.cfg.MediaOrigins...)
-	resp, err := upstreamClient.GetAuthorizedWithTokenForOrigins(ctx, profileURL, cached.token, origins...)
+	// Health is an API-origin probe, not a media probe. Keep the redirect
+	// allowlist scoped to the canonical API origin so a profile endpoint that
+	// redirects to a configured CDN cannot make an unhealthy API look healthy.
+	resp, err := upstreamClient.GetAuthorizedWithTokenForOrigins(ctx, profileURL, cached.token, profileURL)
 	if err != nil {
 		return false, true
 	}

@@ -911,6 +911,88 @@ func TestTokenlessCredentialQueryIsStrippedAcrossExplicitRedirect(t *testing.T) 
 	}
 }
 
+func TestTokenlessCredentialQueryIsStrippedOnAllowlistedSameOriginRedirect(t *testing.T) {
+	const credential = "same-origin-query-only-secret"
+	var finalQuery string
+	var finalAuthorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/start" {
+			http.Redirect(w, r, "/final?token="+credential+"&keep=1", http.StatusFound)
+			return
+		}
+		finalQuery = r.URL.RawQuery
+		finalAuthorization = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	resp, err := New(server.Client(), nil).GetAuthorizedWithTokenForOrigins(
+		context.Background(),
+		server.URL+"/start",
+		"",
+		server.URL,
+	)
+	if err != nil {
+		t.Fatalf("GetAuthorizedWithTokenForOrigins() error = %v", err)
+	}
+	if resp != nil {
+		_ = resp.Body.Close() //nolint:errcheck
+	}
+	if finalQuery != "keep=1" || finalAuthorization != "" {
+		t.Fatalf("tokenless allowlisted same-origin redirect query=%q Authorization=%q, want keep=1 and no auth", finalQuery, finalAuthorization)
+	}
+}
+
+func TestTokenlessCredentialQueryIsStrippedAfterSameOriginRedirectHook(t *testing.T) {
+	const credential = "same-origin-hook-query-only-secret"
+	var finalQuery string
+	var finalAuthorization string
+	var finalCookie string
+	var finalReferer string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/start" {
+			http.Redirect(w, r, "/final?keep=1", http.StatusFound)
+			return
+		}
+		finalQuery = r.URL.RawQuery
+		finalAuthorization = r.Header.Get("Authorization")
+		finalCookie = r.Header.Get("Cookie")
+		finalReferer = r.Header.Get("Referer")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	httpClient := server.Client()
+	httpClient.CheckRedirect = func(next *http.Request, _ []*http.Request) error {
+		query := next.URL.Query()
+		query.Set("token", credential)
+		query.Set("keep", "2")
+		next.URL.RawQuery = query.Encode()
+		// These are intentionally hostile additions. The redirect boundary must
+		// keep tokenless requests credential-free after a caller hook runs.
+		next.Header.Set("Authorization", "Bearer "+credential)
+		next.Header.Set("Cookie", "session="+credential)
+		next.Header.Set("Referer", "https://source.example.test/?token="+credential)
+		return nil
+	}
+
+	resp, err := New(httpClient, nil).GetAuthorizedWithTokenForOrigins(
+		context.Background(),
+		server.URL+"/start",
+		"",
+		server.URL,
+	)
+	if err != nil {
+		t.Fatalf("GetAuthorizedWithTokenForOrigins() error = %v", err)
+	}
+	if resp != nil {
+		_ = resp.Body.Close() //nolint:errcheck
+	}
+	if finalQuery != "keep=2" || finalAuthorization != "" || finalCookie != "" || finalReferer != "" {
+		t.Fatalf("tokenless hook redirect query=%q Authorization=%q Cookie=%q Referer=%q, want keep=2 and no credentials", finalQuery, finalAuthorization, finalCookie, finalReferer)
+	}
+}
+
 func TestGetAuthorizedWithTokenStripsDoubleEncodedUnknownCredential(t *testing.T) {
 	const token = "double encoded+secret"
 	transport := &mediaOriginCaptureTransport{}

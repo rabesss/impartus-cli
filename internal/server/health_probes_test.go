@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
 )
 
@@ -222,6 +224,50 @@ func TestHealthUpstreamStatusWithValidBaseUrl(t *testing.T) {
 	upstream := assertMapField(t, data, "upstream")
 	if upstream["status"] != "reachable" {
 		t.Errorf("expected upstream.status=reachable (stub returned 200), got %v", upstream["status"])
+	}
+}
+
+func TestProbeUpstreamHTTPRejectsRedirectToConfiguredMediaOrigin(t *testing.T) {
+	var mediaRequests atomic.Int32
+	media := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mediaRequests.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer media.Close()
+
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/user/profile" {
+			http.Redirect(w, r, media.URL+"/user/profile", http.StatusTemporaryRedirect)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer api.Close()
+
+	s := newAPIServer(&config.Config{
+		Username:         "user",
+		Password:         "pass",
+		BaseURL:          api.URL,
+		MediaOrigins:     []string{media.URL},
+		DownloadLocation: "./downloads",
+	})
+	s.upstreamCacheMu.Lock()
+	s.upstreamCache = &upstreamCacheEntry{
+		client:    client.New(api.Client(), nil),
+		token:     "test-token",
+		expiresAt: time.Now().Add(time.Hour),
+	}
+	s.upstreamCacheMu.Unlock()
+
+	reachable, probed := s.probeUpstreamHTTP(context.Background())
+	if !probed {
+		t.Fatal("expected authenticated HTTP probe")
+	}
+	if reachable {
+		t.Fatal("API profile redirect to a configured media origin must be unhealthy")
+	}
+	if got := mediaRequests.Load(); got != 0 {
+		t.Fatalf("configured media origin received %d health probe requests, want 0", got)
 	}
 }
 

@@ -103,17 +103,20 @@ func (c *Client) handleMediaRedirect(initialURL *url.URL, redactionToken string,
 		return err
 	}
 
-	// Strip bearer query credentials before invoking a caller-supplied hook,
-	// so the hook cannot accidentally log or persist them. An initial
-	// unconfigured origin never carries this token; a configured request may
-	// retain it on same-origin redirects because the upstream may require the
-	// query form in addition to the Authorization header.
+	// Strip credential query aliases before invoking a caller-supplied hook,
+	// so the hook cannot accidentally log or persist them. Tokenless requests
+	// must strip aliases even when their initial origin is explicitly
+	// allowlisted: an allowlist authorizes the destination, not credentials
+	// supplied by an upstream redirect. A configured, token-bearing request may
+	// retain its query form on same-origin redirects because the upstream may
+	// require it in addition to the Authorization header.
 	initialAuthorized := policy.allows(initialURL)
 	sameOrigin := sameMediaOrigin(initialURL, next.URL)
-	if err := maybeStripRedirectURL(next.URL, redactionToken, !initialAuthorized || !sameOrigin); err != nil {
+	stripRedirectCredentials := redactionToken == "" || !initialAuthorized || !sameOrigin
+	if err := maybeStripRedirectURL(next.URL, redactionToken, stripRedirectCredentials); err != nil {
 		return err
 	}
-	removeMediaRedirectHeaders(next.Header, !initialAuthorized || !sameOrigin)
+	removeMediaRedirectHeaders(next.Header, stripRedirectCredentials)
 	if previousCheckRedirect != nil {
 		if err := callMediaRedirectHook(previousCheckRedirect, next, via, redactionToken); err != nil {
 			return err
@@ -126,11 +129,12 @@ func (c *Client) handleMediaRedirect(initialURL *url.URL, redactionToken string,
 		return err
 	}
 	sameOrigin = sameMediaOrigin(initialURL, next.URL)
-	if err := maybeStripRedirectURL(next.URL, redactionToken, !initialAuthorized || !sameOrigin); err != nil {
+	stripRedirectCredentials = redactionToken == "" || !initialAuthorized || !sameOrigin
+	if err := maybeStripRedirectURL(next.URL, redactionToken, stripRedirectCredentials); err != nil {
 		return err
 	}
-	removeMediaRedirectHeaders(next.Header, !initialAuthorized || !sameOrigin)
-	return validateRedirectRequestCredentialBoundary(next, redactionToken, initialAuthorized && sameOrigin)
+	removeMediaRedirectHeaders(next.Header, stripRedirectCredentials)
+	return validateRedirectRequestCredentialBoundary(next, redactionToken, !stripRedirectCredentials && initialAuthorized && sameOrigin)
 }
 
 func canonicalizeMediaRedirectScheme(request *http.Request) {
