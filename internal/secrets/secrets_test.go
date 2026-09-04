@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestRedactURL_RedactsKnownSensitiveParams(t *testing.T) {
@@ -82,6 +86,62 @@ func TestRedactURL_MalformedFallbackStripsAllUserinfoForms(t *testing.T) {
 		}
 		if !strings.Contains(got, "https://host/") {
 			t.Fatalf("RedactURL(%q) lost safe URL context: %q", rawURL, got)
+		}
+	}
+}
+
+func TestRedactURL_MalformedFallbackRedactsNestedPercentEncodedCredential(t *testing.T) {
+	const secret = "malformed-nested-secret"
+	nested := url.QueryEscape("https://inner.example.test/cb?next=%61ccess_token%3D" + secret)
+	rawURL := "https://host/%zz?next=" + nested
+	got := RedactURL(rawURL)
+	if strings.Contains(got, secret) {
+		t.Fatalf("RedactURL(%q) leaked nested credential: %q", rawURL, got)
+	}
+	if !strings.Contains(got, "REDACTED") {
+		t.Fatalf("RedactURL(%q) = %q, want redaction marker", rawURL, got)
+	}
+}
+
+func TestRedactURL_StripsRepeatedUserinfo(t *testing.T) {
+	const rawURL = "https://first-user@second-user@host/path"
+	got := RedactURL(rawURL)
+	if got != "https://host/path" {
+		t.Fatalf("RedactURL(%q) = %q, want final host without userinfo", rawURL, got)
+	}
+}
+
+func TestRedactURL_RedactsMixedAndDoubleEncodedDelimiters(t *testing.T) {
+	const secret = "encoded-delimiter-secret"
+	for _, rawURL := range []string{
+		"https://host/%zz?%74oken%253D" + secret,
+		"https://host/path#%74oken%3D" + secret,
+		"https://host/path#%3F%61%62ccess_token%3D" + secret,
+	} {
+		got := RedactURL(rawURL)
+		if strings.Contains(got, secret) {
+			t.Fatalf("RedactURL(%q) leaked encoded credential: %q", rawURL, got)
+		}
+		if !strings.Contains(got, "REDACTED") {
+			t.Fatalf("RedactURL(%q) = %q, want redaction marker", rawURL, got)
+		}
+	}
+}
+
+func TestRedactWithTokenRedactsMixedPercentEncodedViews(t *testing.T) {
+	const token = "abc"
+	for _, input := range []string{
+		"https://host/a%62c/path",
+		"https://host/path#unknown=a%62c",
+		"https://host/%zz?unknown=a%62c",
+		"upstream unknown=a%62c",
+	} {
+		got := RedactWithToken(input, token)
+		if strings.Contains(got, token) || strings.Contains(got, "a%62c") {
+			t.Fatalf("RedactWithToken(%q) leaked mixed-encoded token: %q", input, got)
+		}
+		if !strings.Contains(got, "REDACTED") {
+			t.Fatalf("RedactWithToken(%q) = %q, want redaction marker", input, got)
 		}
 	}
 }
@@ -698,6 +758,165 @@ func TestSanitizeErrorSeversHiddenCredentialChain(t *testing.T) {
 	}
 	if !errors.Is(sanitized, classification) {
 		t.Fatal("SanitizeError() lost safe error classification")
+	}
+}
+
+type customAsSecretError struct {
+	secret string
+}
+
+func (cause customAsSecretError) Error() string { return "opaque transport failure" }
+
+func (cause customAsSecretError) As(target any) bool {
+	recovered, ok := target.(*customAsSecretError)
+	if !ok {
+		return false
+	}
+	*recovered = cause
+	return true
+}
+
+func TestSanitizeErrorTreatsCustomAsAsOpaque(t *testing.T) {
+	const secret = "custom-as-secret"
+	raw := &url.Error{
+		Op:  "Get",
+		URL: "https://host/path?token=" + secret,
+		Err: customAsSecretError{secret: secret},
+	}
+	sanitized := SanitizeError(raw)
+	if sanitized == nil {
+		t.Fatal("SanitizeError() = nil, want sanitized error")
+	}
+	var recovered customAsSecretError
+	if errors.As(sanitized, &recovered) {
+		t.Fatalf("SanitizeError() exposed custom As error: %#v", recovered)
+	}
+	if errors.Unwrap(sanitized) != nil {
+		t.Fatalf("SanitizeError() exposed raw chain: %v", errors.Unwrap(sanitized))
+	}
+}
+
+type cyclicSecretError struct{}
+
+func (cyclicSecretError) Error() string { return "cyclic transport failure" }
+
+func (cause *cyclicSecretError) Unwrap() error { return cause }
+
+func TestSanitizeErrorBoundsCyclicClassificationTraversal(t *testing.T) {
+	raw := &cyclicSecretError{}
+	started := time.Now()
+	sanitized := SanitizeErrorWithToken(raw, "cycle-token")
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("SanitizeErrorWithToken() took %v on cyclic error", elapsed)
+	}
+	if sanitized == nil || errors.Unwrap(sanitized) != nil {
+		t.Fatalf("SanitizeErrorWithToken() = %v, want opaque non-unwrapping error", sanitized)
+	}
+	if !errors.Is(sanitized, raw) {
+		t.Fatal("SanitizeErrorWithToken() lost exact cyclic classification")
+	}
+}
+
+func TestRedactURLBoundsNestedFragmentWork(t *testing.T) {
+	fragment := "token=fragment-secret"
+	for index := 0; index < 200; index++ {
+		fragment = "next=https://host/path#" + url.QueryEscape(fragment)
+	}
+	rawURL := "https://host/path#" + fragment
+	started := time.Now()
+	got := RedactURL(rawURL)
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("RedactURL() took %v on nested fragment", elapsed)
+	}
+	if strings.Contains(got, "fragment-secret") {
+		t.Fatalf("RedactURL() leaked nested fragment secret: %q", got)
+	}
+}
+
+func TestTokenVariantsBoundsOversizedToken(t *testing.T) {
+	token := strings.Repeat("x", 1<<20)
+	variants := tokenVariants(token)
+	if len(variants) != 1 || variants[0] != token {
+		t.Fatalf("tokenVariants(1MiB token) returned %d expanded variants", len(variants))
+	}
+}
+
+func TestRedactWithTokenOmitsOversizedJSONEncodedToken(t *testing.T) {
+	token := strings.Repeat("x", maxTokenVariantInputSize+1) + "\n"
+	encoded := jsonEscapeToken(token)
+	got := RedactWithToken("upstream payload="+encoded, token)
+	if got != "REDACTED" {
+		t.Fatalf("RedactWithToken() = %q, want opaque marker for oversized credential", got)
+	}
+}
+
+type pointerClassificationError struct {
+	message string
+}
+
+func (cause *pointerClassificationError) Error() string { return cause.message }
+
+func TestSanitizedErrorMatchesOnlyExactPointerClassification(t *testing.T) {
+	first := &pointerClassificationError{message: "same classification"}
+	second := &pointerClassificationError{message: "same classification"}
+	sanitized := SanitizeError(first)
+	if !errors.Is(sanitized, first) {
+		t.Fatal("SanitizeError() lost exact pointer classification")
+	}
+	if errors.Is(sanitized, second) {
+		t.Fatal("SanitizeError() matched a distinct pointer classification")
+	}
+	runtime.GC()
+	if errors.Is(sanitized, second) {
+		t.Fatal("SanitizeError() matched a distinct pointer after GC")
+	}
+}
+
+func TestSanitizedErrorPreservesComparableErrnoClassification(t *testing.T) {
+	const first syscall.Errno = 13
+	const second syscall.Errno = 14
+	sanitized := SanitizeError(first)
+	if !errors.Is(sanitized, first) {
+		t.Fatal("SanitizeError() lost comparable errno classification")
+	}
+	if errors.Is(sanitized, second) {
+		t.Fatal("SanitizeError() matched a distinct errno classification")
+	}
+}
+
+func TestSanitizedErrorExposesOnlySafeNetworkMetadata(t *testing.T) {
+	dns := &net.DNSError{Err: "no such host", Name: "token=credential.example"}
+	sanitized := SanitizeError(fmt.Errorf("lookup failed: %w", dns))
+	var recoveredDNS *net.DNSError
+	if !errors.As(sanitized, &recoveredDNS) {
+		t.Fatal("SanitizeError() did not preserve DNS classification")
+	}
+	if recoveredDNS.Err != "upstream DNS failure" || recoveredDNS.Name != "" || recoveredDNS.Server != "" {
+		t.Fatalf("sanitized DNS metadata = %#v, want fixed fields", recoveredDNS)
+	}
+	var networkErr net.Error
+	if !errors.As(sanitized, &networkErr) {
+		t.Fatal("SanitizeError() did not preserve net.Error classification")
+	}
+	if networkErr.Timeout() {
+		t.Fatal("non-timeout DNS error was classified as a timeout")
+	}
+	if strings.Contains(sanitized.Error(), "credential.example") {
+		t.Fatalf("SanitizeError() exposed DNS credential marker: %v", sanitized)
+	}
+}
+
+type timeoutNetworkError struct{}
+
+func (timeoutNetworkError) Error() string   { return "network timeout" }
+func (timeoutNetworkError) Timeout() bool   { return true }
+func (timeoutNetworkError) Temporary() bool { return true }
+
+func TestSanitizedErrorPreservesTimeoutNetworkMetadata(t *testing.T) {
+	sanitized := SanitizeError(&timeoutNetworkError{})
+	var networkErr net.Error
+	if !errors.As(sanitized, &networkErr) || !networkErr.Timeout() {
+		t.Fatalf("SanitizeError() network metadata = %#v, want timeout net.Error", sanitized)
 	}
 }
 

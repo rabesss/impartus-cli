@@ -124,6 +124,72 @@ func TestSanitizeUpstreamErrNetworkTimeout(t *testing.T) {
 	}
 }
 
+func TestSanitizeUpstreamErrPreservesClientSanitizedNetworkMetadata(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		failure       error
+		assertNetwork func(*testing.T, error)
+	}{
+		{
+			name:    "timeout",
+			failure: &net.OpError{Op: "dial", Net: "tcp", Err: timeoutErr{}},
+			assertNetwork: func(t *testing.T, err error) {
+				var networkErr net.Error
+				if !errors.As(err, &networkErr) || !networkErr.Timeout() {
+					t.Fatalf("sanitized error = %v, want timeout net.Error", err)
+				}
+			},
+		},
+		{
+			name: "dns",
+			failure: &net.OpError{
+				Op:  "dial",
+				Net: "tcp",
+				Err: &net.DNSError{Err: "no such host", Name: "token=dns-secret.example"},
+			},
+			assertNetwork: func(t *testing.T, err error) {
+				var dnsErr *net.DNSError
+				if !errors.As(err, &dnsErr) {
+					t.Fatalf("sanitized error = %v, want DNS metadata", err)
+				}
+				if dnsErr.Name != "" || dnsErr.Server != "" || dnsErr.Err != "upstream DNS failure" {
+					t.Fatalf("sanitized DNS metadata = %#v, want fixed fields", dnsErr)
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			apiClient := client.New(&http.Client{Transport: networkFailureRoundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, test.failure
+			})}, nil)
+			response, err := apiClient.GetAuthorizedWithToken(t.Context(), "https://api.example.test/subjects", "request-token")
+			if response != nil {
+				_ = response.Body.Close() //nolint:errcheck
+			}
+			if err == nil {
+				t.Fatal("GetAuthorizedWithToken() error = nil, want network failure")
+			}
+			if got := sanitizeUpstreamErr(err); got != "upstream connection failed" {
+				t.Fatalf("sanitizeUpstreamErr() = %q, want upstream connection failed", got)
+			}
+			test.assertNetwork(t, err)
+			if strings.Contains(err.Error(), "dns-secret.example") {
+				t.Fatalf("sanitized network error exposed DNS name: %v", err)
+			}
+		})
+	}
+}
+
+type networkFailureRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn networkFailureRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
+
 func TestContainsAny(t *testing.T) {
 	if !containsAny("Has TOKEN here", []string{"token"}) {
 		t.Error("expected case-insensitive substring match")

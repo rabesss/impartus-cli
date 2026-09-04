@@ -163,6 +163,53 @@ func TestDownloadLectureSlideSanitizesNonUnauthorizedResponseBody(t *testing.T) 
 	}
 }
 
+func TestDownloadLectureSlideOmitsOversizedErrorBodyBeforeRedaction(t *testing.T) {
+	const token = "slide-oversized-unknown-token"
+	body := strings.Repeat("prefix ", 70) + "unknown=" + token + " trailing diagnostic"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, body) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	err := downloadLectureSlideWithLimit(context.Background(), client.New(server.Client(), nil), &config.Config{
+		BaseURL:          server.URL,
+		DownloadLocation: t.TempDir(),
+		Token:            token,
+	}, client.Lecture{VideoID: 10, SeqNo: 1, Topic: "Lecture"}, 8)
+	if err == nil {
+		t.Fatal("downloadLectureSlideWithLimit() error = nil, want upstream failure")
+	}
+	if strings.Contains(err.Error(), "unknown=") || strings.Contains(err.Error(), token[:12]) {
+		t.Fatalf("slide error exposed an oversized body prefix: %v", err)
+	}
+	if !strings.Contains(err.Error(), slideErrorBodyOmitted) {
+		t.Fatalf("slide error = %v, want bounded omission", err)
+	}
+}
+
+func TestDownloadLectureSlideOmitsTokenPrefixWithinBodyCap(t *testing.T) {
+	token := strings.Repeat("long-token-", 60)
+	prefix := token[:maxSlideErrorBodySize-1]
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, prefix) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	err := downloadLectureSlideWithLimit(context.Background(), client.New(server.Client(), nil), &config.Config{
+		BaseURL:          server.URL,
+		DownloadLocation: t.TempDir(),
+		Token:            token,
+	}, client.Lecture{VideoID: 10, SeqNo: 1, Topic: "Lecture"}, 8)
+	if err == nil {
+		t.Fatal("downloadLectureSlideWithLimit() error = nil, want upstream failure")
+	}
+	if strings.Contains(err.Error(), prefix) || !strings.Contains(err.Error(), slideErrorBodyOmitted) {
+		t.Fatalf("slide error exposed token prefix: %v", err)
+	}
+}
+
 func TestDownloadLectureSlideSanitizesSuccessfulBodyCopyError(t *testing.T) {
 	const token = "slide-copy-secret"
 	httpClient := &http.Client{Transport: slideRoundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -195,6 +242,36 @@ func TestDownloadLectureSlideInterruptedReadPreservesFinal(t *testing.T) {
 
 func TestDownloadLectureSlideResponseCloseFailurePreservesFinal(t *testing.T) {
 	testDownloadLectureSlideTransportFailure(t, &closeErrorSlideBody{Reader: io.NopCloser(&fixedSlideReader{})}, "close-response")
+}
+
+func TestDownloadLectureSlideResponseCloseErrorSanitizesToken(t *testing.T) {
+	const token = "slide-close-secret"
+	downloadDir := t.TempDir()
+	httpClient := &http.Client{Transport: slideRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			ContentLength: -1,
+			Body: &closeErrorSlideBody{
+				Reader: io.NopCloser(&fixedSlideReader{}),
+				Err:    fmt.Errorf("close failed unknown=%s", token),
+			},
+			Header: make(http.Header),
+		}, nil
+	})}
+	err := downloadLectureSlideWithLimit(context.Background(), client.New(httpClient, nil), &config.Config{
+		BaseURL:          "https://api.placeholder.test",
+		DownloadLocation: downloadDir,
+		Token:            token,
+	}, client.Lecture{VideoID: 10, SeqNo: 1, Topic: "Lecture"}, 8)
+	if err == nil {
+		t.Fatal("downloadLectureSlideWithLimit() error = nil, want response close failure")
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Fatalf("slide response close error leaked token: %v", err)
+	}
+	if !strings.Contains(err.Error(), "REDACTED") {
+		t.Fatalf("slide response close error = %v, want redaction marker", err)
+	}
 }
 
 func testDownloadLectureSlideTransportFailure(t *testing.T, body io.ReadCloser, operation string) {
@@ -269,6 +346,7 @@ func (r *fixedSlideReader) Read(p []byte) (int, error) {
 
 type closeErrorSlideBody struct {
 	Reader io.ReadCloser
+	Err    error
 }
 
 func (b *closeErrorSlideBody) Read(p []byte) (int, error) {
@@ -277,6 +355,9 @@ func (b *closeErrorSlideBody) Read(p []byte) (int, error) {
 
 func (b *closeErrorSlideBody) Close() error {
 	_ = b.Reader.Close() //nolint:errcheck
+	if b.Err != nil {
+		return b.Err
+	}
 	return errors.New("synthetic close failure")
 }
 

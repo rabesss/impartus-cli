@@ -78,6 +78,42 @@ func TestNewLoggedIn(t *testing.T) {
 	}
 }
 
+func TestNewLoginRequestRejectsCredentialBearingBaseURL(t *testing.T) {
+	const secret = "base-url-secret"
+	for _, rawBaseURL := range []string{
+		"https://user:" + secret + "@example.com",
+		"https://example.com/api?token=" + secret,
+		"https://example.com/api#token=" + secret,
+		"https://example.com/api/../private",
+	} {
+		t.Run(rawBaseURL, func(t *testing.T) {
+			_, err := New(nil, nil).newLoginRequest(context.Background(), &config.Config{
+				Username: "user",
+				Password: "pass",
+			}, rawBaseURL)
+			if err == nil {
+				t.Fatal("newLoginRequest() error = nil, want unsafe base URL rejection")
+			}
+			if strings.Contains(err.Error(), secret) {
+				t.Fatalf("newLoginRequest() leaked base URL credential: %v", err)
+			}
+		})
+	}
+}
+
+func TestNewLoginRequestCanonicalizesBaseURLPath(t *testing.T) {
+	request, err := New(nil, nil).newLoginRequest(context.Background(), &config.Config{
+		Username: "user",
+		Password: "pass",
+	}, "HTTPS://EXAMPLE.COM/api///")
+	if err != nil {
+		t.Fatalf("newLoginRequest() error = %v", err)
+	}
+	if got, want := request.URL.String(), "https://example.com/api/auth/signin"; got != want {
+		t.Fatalf("newLoginRequest() URL = %q, want %q", got, want)
+	}
+}
+
 func TestLoginNeverFollowsCredentialBearingRedirect(t *testing.T) {
 	for _, test := range []struct {
 		name       string

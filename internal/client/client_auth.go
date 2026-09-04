@@ -101,7 +101,10 @@ func (c *Client) readStoredTokenAt(path string) (string, bool) {
 }
 
 func (c *Client) validateStoredToken(ctx context.Context, baseURL, token string) (bool, error) {
-	profileURL := fmt.Sprintf("%s/user/profile", baseURL)
+	profileURL, err := baseURLPath(baseURL, "user/profile")
+	if err != nil {
+		return false, err
+	}
 	resp, err := c.GetAuthorizedWithToken(ctx, profileURL, token)
 	if err != nil {
 		return false, err
@@ -123,7 +126,11 @@ func (c *Client) prepareLogin(cfg *config.Config) (*Client, string, error) {
 	if cfg.BaseURL == "" {
 		return nil, "", errors.New("baseUrl is required")
 	}
-	return cli, cfg.BaseURL, nil
+	baseURL, err := canonicalBaseURL(cfg.BaseURL)
+	if err != nil {
+		return nil, "", err
+	}
+	return cli, baseURL, nil
 }
 
 func (c *Client) tryStoredToken(ctx context.Context, cfg *config.Config, baseURL string) bool {
@@ -179,14 +186,20 @@ func (c *Client) login(ctx context.Context, cfg *config.Config, baseURL string) 
 }
 
 func (c *Client) newLoginRequest(ctx context.Context, cfg *config.Config, baseURL string) (*http.Request, error) {
+	if cfg == nil {
+		return nil, errors.New("config is required")
+	}
 	requestBody, err := json.Marshal(map[string]string{"username": cfg.Username, "password": cfg.Password})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal login body: %w", err)
 	}
-	loginURL := fmt.Sprintf("%s/auth/signin", baseURL)
+	loginURL, err := baseURLPath(baseURL, "auth/signin")
+	if err != nil {
+		return nil, fmt.Errorf("failed to construct login URL: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, bytes.NewBuffer(requestBody))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create login request: %w", err)
+		return nil, fmt.Errorf("failed to create login request: %w", secrets.SanitizeError(err))
 	}
 	req.Header.Set("Content-Type", "application/json;charset=UTF-8")
 	req.Header.Set("Accept", "application/json, text/plain, */*")

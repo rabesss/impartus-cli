@@ -231,24 +231,12 @@ func RedactError(cause error) string {
 	return scrubFailure(cause)
 }
 
-// RedactedError returns an error whose rendered message and reachable chain are
-// safe for CLI and automation output. It preserves errors.Is classification
-// without exposing the original cause through errors.Unwrap or errors.As.
+// RedactedError returns the shared opaque secrets boundary for CLI and
+// automation output. It preserves exact classifications and safe network
+// metadata without exposing the original cause through errors.Unwrap or an
+// arbitrary errors.As traversal.
 func RedactedError(cause error) error {
-	if cause == nil {
-		return nil
-	}
-	if _, ok := cause.(redactedError); ok {
-		return cause
-	}
-	return redactedError{cause: cause}
-}
-
-type redactedError struct{ cause error }
-
-func (err redactedError) Error() string { return RedactError(err.cause) }
-func (err redactedError) Is(target error) bool {
-	return errors.Is(err.cause, target)
+	return secrets.SanitizeError(cause)
 }
 
 func scrubFailure(cause error) string {

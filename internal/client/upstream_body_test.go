@@ -162,6 +162,59 @@ func TestSuccessfulUpstreamBodyReadErrorsAreSanitized(t *testing.T) {
 	}
 }
 
+func TestReadSanitizedErrorBodyDoesNotExposeTruncatedTokenPrefix(t *testing.T) {
+	const token = "unknown-key-token-that-must-not-be-partially-exposed"
+	body := strings.Repeat("prefix ", 70) + "unknown=" + token + " trailing diagnostic"
+	got, err := readSanitizedErrorBody(strings.NewReader(body), token)
+	if err != nil {
+		t.Fatalf("readSanitizedErrorBody() error = %v", err)
+	}
+	if got != upstreamErrorBodyOmitted {
+		t.Fatalf("readSanitizedErrorBody() = %q, want bounded omission", got)
+	}
+	if strings.Contains(got, "unknown=") || strings.Contains(got, token[:12]) {
+		t.Fatalf("readSanitizedErrorBody() exposed an oversized body prefix: %q", got)
+	}
+}
+
+func TestReadSanitizedErrorBodyOmitsPrefixWhenTokenExceedsBodyCap(t *testing.T) {
+	token := strings.Repeat("long-token-", 60)
+	prefix := token[:maxUpstreamErrorBodySize-1]
+	got, err := readSanitizedErrorBody(strings.NewReader(prefix), token)
+	if err != nil {
+		t.Fatalf("readSanitizedErrorBody() error = %v", err)
+	}
+	if got != upstreamErrorBodyOmitted {
+		t.Fatalf("readSanitizedErrorBody() = %q, want bounded omission", got)
+	}
+}
+
+func TestGetStreamInfosEscapesTokenQueryValue(t *testing.T) {
+	const token = "stream&;#secret\r\nsecond-line"
+	var captured *http.Request
+	c := New(&http.Client{Transport: captureRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		captured = request
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader("https://media.example.test/1280x720/master.m3u8\n")),
+			Header:     make(http.Header),
+			Request:    request,
+		}, nil
+	})}, nil)
+	if _, err := c.getStreamInfos(context.Background(), "https://api.example.test", token, Lecture{TTID: 42}); err != nil {
+		t.Fatalf("getStreamInfos() error = %v", err)
+	}
+	if captured == nil {
+		t.Fatal("getStreamInfos() did not issue a request")
+	}
+	if got := captured.URL.Query().Get("token"); got != token {
+		t.Fatalf("stream-info token query = %q, want exact token %q", got, token)
+	}
+	if strings.Contains(captured.URL.RawQuery, "\r") || strings.Contains(captured.URL.RawQuery, "\n") {
+		t.Fatalf("stream-info raw query contains control characters: %q", captured.URL.RawQuery)
+	}
+}
+
 type statusBodyTransport struct {
 	statusCode int
 	body       string
@@ -177,6 +230,12 @@ func (t *errorTransport) RoundTrip(*http.Request) (*http.Response, error) {
 
 type readErrorTransport struct {
 	err error
+}
+
+type captureRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn captureRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
 }
 
 func (t *readErrorTransport) RoundTrip(req *http.Request) (*http.Response, error) {

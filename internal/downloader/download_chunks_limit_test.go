@@ -171,6 +171,59 @@ func TestDownloadChunkScrubsUpstreamErrorBodyAtSource(t *testing.T) {
 	}
 }
 
+func TestDownloadChunkOmitsOversizedErrorBodyBeforeRedaction(t *testing.T) {
+	t.Parallel()
+
+	const token = "chunk-oversized-unknown-token"
+	body := strings.Repeat("prefix ", 70) + "unknown=" + token + " trailing diagnostic"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, body) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	d := testLimitDownloader(t.TempDir(), client.New(server.Client(), nil))
+	d.config.Token = token
+	path, data, written, err := d.doDownloadChunkWithLimit(t.Context(), server.URL+"/chunk.ts", 1, 0, "left", true, 8)
+	if err == nil {
+		t.Fatal("doDownloadChunkWithLimit() error = nil, want upstream failure")
+	}
+	if path != "" || data != nil || written != 0 {
+		t.Fatalf("failed download returned path=%q data=%v written=%d", path, data, written)
+	}
+	if strings.Contains(err.Error(), "unknown=") || strings.Contains(err.Error(), token[:12]) {
+		t.Fatalf("chunk error exposed an oversized body prefix: %v", err)
+	}
+	if !strings.Contains(err.Error(), chunkErrorBodyOmitted) {
+		t.Fatalf("chunk error = %v, want bounded omission", err)
+	}
+}
+
+func TestDownloadChunkOmitsTokenPrefixWithinBodyCap(t *testing.T) {
+	t.Parallel()
+
+	token := strings.Repeat("long-token-", 60)
+	prefix := token[:chunkErrorBodyLimit-1]
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, prefix) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	d := testLimitDownloader(t.TempDir(), client.New(server.Client(), nil))
+	d.config.Token = token
+	path, data, written, err := d.doDownloadChunkWithLimit(t.Context(), server.URL+"/chunk.ts", 1, 0, "left", true, 8)
+	if err == nil {
+		t.Fatal("doDownloadChunkWithLimit() error = nil, want upstream failure")
+	}
+	if path != "" || data != nil || written != 0 {
+		t.Fatalf("failed download returned path=%q data=%v written=%d", path, data, written)
+	}
+	if strings.Contains(err.Error(), prefix) || !strings.Contains(err.Error(), chunkErrorBodyOmitted) {
+		t.Fatalf("chunk error exposed token prefix: %v", err)
+	}
+}
+
 func testLimitDownloader(tempDir string, apiClient *client.Client) *Downloader {
 	return &Downloader{
 		config:      &config.Config{TempDirLocation: tempDir, Token: "placeholder-token"},
