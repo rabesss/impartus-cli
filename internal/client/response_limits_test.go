@@ -129,6 +129,18 @@ func TestPlaylistResponseRejectsOversizedBody(t *testing.T) {
 	}
 }
 
+func TestPlaylistResponseAcceptsExactTotalLimit(t *testing.T) {
+	body := strings.Repeat("#\n", responseLimitPlaylistBytes/2)
+	if len(body) != responseLimitPlaylistBytes {
+		t.Fatalf("test playlist length = %d, want %d", len(body), responseLimitPlaylistBytes)
+	}
+	c := New(&http.Client{Transport: &limitResponseTransport{body: body}}, nil)
+
+	if _, err := c.getPlaylist(context.Background(), "https://media.example.test/playlist.m3u8", "playlist-token", Lecture{TTID: 42}); err != nil {
+		t.Fatalf("getPlaylist() error = %v, want exact total-limit response to succeed", err)
+	}
+}
+
 func TestPlaylistLineBelowNewLimitRemainsSupported(t *testing.T) {
 	longURL := "https://media.example.test/" + strings.Repeat("a", 100*1024)
 	c := New(&http.Client{Transport: &limitResponseTransport{
@@ -144,6 +156,39 @@ func TestPlaylistLineBelowNewLimitRemainsSupported(t *testing.T) {
 	}
 }
 
+func TestPlaylistLineLimitCountsPayloadBytes(t *testing.T) {
+	prefix := "https://media.example.test/"
+	for _, test := range []struct {
+		name      string
+		lineBytes int
+		wantErr   bool
+	}{
+		{name: "exact payload limit", lineBytes: maxPlaylistLineSize, wantErr: false},
+		{name: "one byte over payload limit", lineBytes: maxPlaylistLineSize + 1, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			line := prefix + strings.Repeat("a", test.lineBytes-len(prefix))
+			c := New(&http.Client{Transport: &limitResponseTransport{
+				body: "#EXTM3U\n" + line + "\n",
+			}}, nil)
+
+			playlist, err := c.getPlaylist(context.Background(), "https://media.example.test/playlist.m3u8", "playlist-token", Lecture{TTID: 42})
+			if test.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "token too long") {
+					t.Fatalf("getPlaylist() error = %v, want line-size rejection", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("getPlaylist() error = %v, want exact payload-limit line to succeed", err)
+			}
+			if len(playlist.FirstViewURLs) != 1 || playlist.FirstViewURLs[0] != line {
+				t.Fatalf("playlist segments = %d, want exact-limit line preserved", len(playlist.FirstViewURLs))
+			}
+		})
+	}
+}
+
 func TestPlaylistParserRejectsExcessiveSegmentCount(t *testing.T) {
 	var body strings.Builder
 	body.WriteString("#EXTM3U\n")
@@ -155,6 +200,22 @@ func TestPlaylistParserRejectsExcessiveSegmentCount(t *testing.T) {
 	_, err := parsePlaylist(scanner, "https://media.example.test/playlist.m3u8", 1, "Lecture", 1)
 	if err == nil || !strings.Contains(err.Error(), "too many media segments") {
 		t.Fatalf("parsePlaylist() error = %v, want segment-count limit", err)
+	}
+}
+
+func TestPlaylistParserAcceptsExactSegmentCount(t *testing.T) {
+	var body strings.Builder
+	for i := 0; i < maxPlaylistSegments; i++ {
+		body.WriteString("segment.ts\n")
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(body.String()))
+	playlist, err := parsePlaylist(scanner, "https://media.example.test/playlist.m3u8", 1, "Lecture", 1)
+	if err != nil {
+		t.Fatalf("parsePlaylist() error = %v, want exact segment-count limit to succeed", err)
+	}
+	if len(playlist.FirstViewURLs) != maxPlaylistSegments {
+		t.Fatalf("playlist segment count = %d, want %d", len(playlist.FirstViewURLs), maxPlaylistSegments)
 	}
 }
 
