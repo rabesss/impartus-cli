@@ -24,6 +24,17 @@ const (
 	maxStreamInfoResponseSize int64 = 1 * 1024 * 1024
 )
 
+func scanPlaylistLines(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	advance, token, err = bufio.ScanLines(data, atEOF)
+	if err != nil {
+		return advance, token, err
+	}
+	if len(token) > maxPlaylistLineSize {
+		return 0, nil, errors.New("playlist line exceeds max size")
+	}
+	return advance, token, nil
+}
+
 // getStreamInfos fetches stream information for a given lecture.
 func (c *Client) getStreamInfos(ctx context.Context, baseURL, token string, lecture Lecture) ([]StreamInfo, error) {
 	uri := fmt.Sprintf("%s/fetchvideo?ttid=%d&token=%s&type=index.m3u8", baseURL, lecture.TTID, token)
