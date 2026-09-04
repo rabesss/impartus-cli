@@ -248,6 +248,26 @@ func TestWriterScrubsPublicRawErrorField(t *testing.T) {
 	}
 }
 
+func TestWriterScrubsEncodedUnknownCredentialAssignments(t *testing.T) {
+	t.Parallel()
+
+	const secret = "encoded-writer-secret"
+	var output bytes.Buffer
+	event := Event{
+		Type:      JobFailed,
+		JobID:     "job-encoded-error",
+		Command:   "watch",
+		Timestamp: time.Unix(6, 0).UTC(),
+		Error:     "upstream token%3D" + secret,
+	}
+	if err := NewWriter(&output).Emit(event); err != nil {
+		t.Fatalf("Emit() error = %v", err)
+	}
+	if strings.Contains(output.String(), secret) || !strings.Contains(output.String(), "REDACTED") {
+		t.Fatalf("writer serialized encoded credential: %q", output.String())
+	}
+}
+
 func TestRedactErrorCoversAnyAuthorizationScheme(t *testing.T) {
 	t.Parallel()
 

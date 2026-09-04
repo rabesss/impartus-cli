@@ -582,6 +582,18 @@ func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got := Scrub(test.input)
+			if test.name == "encoded authorization" {
+				view := decodeEncodedViewLayer(rawEncodedView(test.input), true)
+				ranges, _ := credentialValueRangesForView(view)
+				t.Logf("view=%q ranges=%+v", view.text, ranges)
+				for _, step := range credentialAssignmentSteps() {
+					for _, index := range step.expression.FindAllStringSubmatchIndex(view.text, -1) {
+						prefixEnd := index[step.prefixGroup*2+1]
+						t.Logf("step=%p match=%q value=%q", step.expression, view.text[index[0]:index[1]], view.text[prefixEnd:index[1]])
+					}
+				}
+				t.Logf("canonical=%+v", canonicalCredentialValueRanges(view.text))
+			}
 			if strings.Contains(got, test.secret) || !strings.Contains(got, "REDACTED") {
 				t.Fatalf("Scrub(%q) = %q", test.input, got)
 			}
@@ -675,6 +687,147 @@ func TestScrub_RedactsAmbiguousParserTokenValueButPreservesContext(t *testing.T)
 	const diagnostic = "decode failed: unexpected token: EOF"
 	if got := Scrub(diagnostic); got != "decode failed: unexpected token: REDACTED" {
 		t.Fatalf("Scrub(%q) = %q", diagnostic, got)
+	}
+}
+
+func TestScrub_RedactsEncodedFreeFormAssignmentsWithoutKnownToken(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		input  string
+		secret string
+		want   string
+	}{
+		{name: "encoded equals", input: "prefix token%3Dunknown-secret suffix", secret: "unknown-secret", want: "prefix token%3DREDACTED suffix"},
+		{name: "lowercase delimiter hex", input: "prefix TOKEN%3dcase-secret suffix", secret: "case-secret", want: "prefix TOKEN%3dREDACTED suffix"},
+		{name: "encoded authorization", input: "prefix authorization%3A%20Bearer%20authorization-secret suffix", secret: "authorization-secret", want: "prefix authorization%3A%20Bearer%20REDACTED suffix"},
+		{name: "mixed encoded key", input: "prefix a%62ccess_token%3dmixed-secret suffix", secret: "mixed-secret", want: "prefix a%62ccess_token%3dREDACTED suffix"},
+		{name: "double encoded delimiter", input: "prefix token%253Ddouble-secret suffix", secret: "double-secret", want: "prefix token%253DREDACTED suffix"},
+		{name: "triple encoded delimiter", input: "prefix token%25253Dtriple-secret suffix", secret: "triple-secret", want: "prefix token%25253DREDACTED suffix"},
+		{name: "json escaped key", input: `body {"access\u005ftoken":"json-key-secret"}`, secret: "json-key-secret", want: `body {"access\u005ftoken":"REDACTED"}`},
+		{name: "json escaped value", input: `body {"token":"json\u002dvalue-secret"}`, secret: "json-value-secret", want: `body {"token":"REDACTED"}`},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			got := Scrub(test.input)
+			if strings.Contains(got, test.secret) {
+				t.Fatalf("Scrub(%q) leaked %q: %q", test.input, test.secret, got)
+			}
+			if !strings.Contains(got, "REDACTED") {
+				t.Fatalf("Scrub(%q) = %q, want redaction marker", test.input, got)
+			}
+			if test.want != "" && got != test.want {
+				t.Fatalf("Scrub(%q) = %q, want %q", test.input, got, test.want)
+			}
+		})
+	}
+
+	const deepSecret = "too-deep-secret"
+	deep := "token%2525253D" + deepSecret
+	if got := Scrub("prefix " + deep + " suffix"); strings.Contains(got, deepSecret) {
+		t.Fatalf("Scrub() leaked credential after decode budget: %q", got)
+	}
+	mixed := "token%3Dknown-secret token%2525253D" + deepSecret
+	if got := Scrub(mixed); strings.Contains(got, deepSecret) {
+		t.Fatalf("Scrub() leaked a deeper credential beside a redacted one: %q", got)
+	}
+	deeperDelimiter := "%3D"
+	for index := 0; index < maxCredentialDecodeDepth+2; index++ {
+		deeperDelimiter = strings.ReplaceAll(deeperDelimiter, "%", "%25")
+	}
+	if got := Scrub("prefix token" + deeperDelimiter + deepSecret + " suffix"); strings.Contains(got, deepSecret) {
+		t.Fatalf("Scrub() leaked credential beyond the decode budget: %q", got)
+	}
+}
+
+func TestScrub_RedactsPercentEncodedNestedJSONAssignment(t *testing.T) {
+	t.Parallel()
+
+	const secret = "nested-json-secret"
+	nested := url.QueryEscape(`{"token":"` + secret + `"}`)
+	input := "redirect next=" + nested
+	got := Scrub(input)
+	if strings.Contains(got, secret) {
+		t.Fatalf("Scrub(%q) leaked nested JSON credential: %q", input, got)
+	}
+	if !strings.Contains(got, "REDACTED") {
+		t.Fatalf("Scrub(%q) = %q, want redaction marker", input, got)
+	}
+	want := "redirect next=" + url.QueryEscape(`{"token":"REDACTED"}`)
+	if got != want {
+		t.Fatalf("Scrub(%q) = %q, want %q", input, got, want)
+	}
+}
+
+func TestSanitizeError_RedactsEncodedUnknownAssignment(t *testing.T) {
+	t.Parallel()
+
+	const secret = "encoded-error-secret"
+	raw := errors.New("upstream response authorization%3A%20Bearer%20" + secret)
+	got := SanitizeError(raw)
+	if got == nil {
+		t.Fatal("SanitizeError() = nil")
+	}
+	if strings.Contains(got.Error(), secret) {
+		t.Fatalf("SanitizeError() leaked encoded credential: %q", got)
+	}
+	if !strings.Contains(got.Error(), "REDACTED") {
+		t.Fatalf("SanitizeError() = %q, want redaction marker", got)
+	}
+}
+
+func TestScrub_RedactsFormatObfuscatedCredentialKey(t *testing.T) {
+	t.Parallel()
+
+	for _, input := range []string{
+		"to\u200bken=zero-width-secret",
+		"access\u2060_token: word-joiner-secret",
+		`{"to\u200bken":"json-zero-width-secret"}`,
+	} {
+		got := Scrub(input)
+		for _, secret := range []string{"zero-width-secret", "word-joiner-secret", "json-zero-width-secret"} {
+			if strings.Contains(got, secret) {
+				t.Fatalf("Scrub(%q) leaked %q: %q", input, secret, got)
+			}
+		}
+		if !strings.Contains(got, "REDACTED") {
+			t.Fatalf("Scrub(%q) = %q, want redaction marker", input, got)
+		}
+	}
+}
+
+func TestScrubRejectsOversizedDiagnosticsBeforeScanning(t *testing.T) {
+	t.Parallel()
+
+	input := strings.Repeat("safe diagnostic ", maxScrubInputSize/len("safe diagnostic ")+1)
+	started := time.Now()
+	got := Scrub(input)
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("Scrub() took %v on oversized diagnostic", elapsed)
+	}
+	if got != "REDACTED" {
+		t.Fatalf("Scrub() = %q, want fixed fail-safe marker", got)
+	}
+}
+
+func TestReplaceJSONEscapedTokenAvoidsPerByteAllocations(t *testing.T) {
+	const tokenLength = 4096
+	token := strings.Repeat("x", tokenLength)
+	input := strings.Repeat(`\u0078`, tokenLength)
+	started := time.Now()
+	got := replaceJSONEscapedToken(input, token)
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("replaceJSONEscapedToken() took %v on a bounded escaped value", elapsed)
+	}
+	if got != "REDACTED" {
+		t.Fatalf("replaceJSONEscapedToken() = %q, want fixed marker", got)
+	}
+	allocs := testing.AllocsPerRun(5, func() {
+		_ = replaceJSONEscapedToken(input, token)
+	})
+	if allocs > 100 {
+		t.Fatalf("replaceJSONEscapedToken() allocated %.0f times, want bounded allocations", allocs)
 	}
 }
 
@@ -953,6 +1106,24 @@ func TestRedactURLBoundsNestedFragmentWork(t *testing.T) {
 	}
 }
 
+func TestScrubEmbeddedURLsFailsClosedAfterCandidateBudget(t *testing.T) {
+	t.Parallel()
+
+	parts := make([]string, maxEmbeddedURLCandidates+1)
+	for index := range parts {
+		parts[index] = fmt.Sprintf("https://host-%d.test/path?token=embedded-secret-%d", index, index)
+	}
+	input := strings.Join(parts, " ")
+	started := time.Now()
+	got, _ := scrubEmbeddedURLsWithEvidence(input, 0)
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("scrubEmbeddedURLsWithEvidence() took %v on many candidates", elapsed)
+	}
+	if got != "REDACTED" {
+		t.Fatalf("scrubEmbeddedURLsWithEvidence() = %q, want fixed fail-safe marker", got)
+	}
+}
+
 func TestTokenVariantsBoundsOversizedToken(t *testing.T) {
 	token := strings.Repeat("x", 1<<20)
 	variants := tokenVariants(token)
@@ -989,6 +1160,30 @@ func TestSanitizedErrorMatchesOnlyExactPointerClassification(t *testing.T) {
 	runtime.GC()
 	if errors.Is(sanitized, second) {
 		t.Fatal("SanitizeError() matched a distinct pointer after GC")
+	}
+}
+
+type interfaceFieldClassification struct {
+	value any
+}
+
+func (cause interfaceFieldClassification) Error() string { return "interface classification" }
+
+func TestSanitizedErrorContainsUncomparableInterfaceClassification(t *testing.T) {
+	t.Parallel()
+
+	raw := interfaceFieldClassification{value: []byte("credential")}
+	sanitized := SanitizeError(raw)
+	if sanitized == nil {
+		t.Fatal("SanitizeError() = nil")
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("classification comparison panicked: %v", recovered)
+		}
+	}()
+	if errors.Is(sanitized, raw) {
+		t.Fatal("SanitizeError() matched an uncomparable dynamic classification")
 	}
 }
 
