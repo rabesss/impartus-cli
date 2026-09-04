@@ -45,11 +45,20 @@ func (c *Client) getStreamInfos(ctx context.Context, baseURL, token string, lect
 }
 
 func (c *Client) getStreamInfosWithPolicy(ctx context.Context, baseURL, token string, lecture Lecture, policy mediaOriginPolicy) ([]StreamInfo, error) {
+	uri, err := baseURLPath(baseURL, "fetchvideo")
+	if err != nil {
+		return nil, err
+	}
+	parsedURI, err := url.Parse(uri)
+	if err != nil {
+		return nil, errInvalidBaseURL
+	}
 	query := url.Values{}
 	query.Set("ttid", strconv.Itoa(lecture.TTID))
 	query.Set("token", normalizeBearerToken(token))
 	query.Set("type", "index.m3u8")
-	uri := fmt.Sprintf("%s/fetchvideo?%s", baseURL, query.Encode())
+	parsedURI.RawQuery = query.Encode()
+	uri = parsedURI.String()
 	resp, err := c.getAuthorizedWithToken(ctx, uri, token, policy)
 	if err != nil {
 		return nil, err

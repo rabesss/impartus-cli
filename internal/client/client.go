@@ -33,6 +33,8 @@ const maxCatalogResponseSize int64 = 10 * 1024 * 1024
 
 const maxUpstreamErrorBodySize int64 = 512
 
+const upstreamErrorBodyOmitted = "upstream response body omitted"
+
 var errResponseSizeLimit = errors.New("response exceeds max size")
 
 func readResponseBodyWithLimit(body io.Reader, limit int64) ([]byte, error) {
@@ -47,9 +49,17 @@ func readResponseBodyWithLimit(body io.Reader, limit int64) ([]byte, error) {
 }
 
 func readSanitizedErrorBody(body io.Reader, token string) (string, error) {
-	contents, err := io.ReadAll(io.LimitReader(body, maxUpstreamErrorBodySize))
+	if int64(len(strings.TrimSpace(token))) > maxUpstreamErrorBodySize {
+		return upstreamErrorBodyOmitted, nil
+	}
+	contents, err := io.ReadAll(io.LimitReader(body, maxUpstreamErrorBodySize+1))
 	if err != nil {
 		return "", secrets.SanitizeErrorWithToken(err, token)
+	}
+	if int64(len(contents)) > maxUpstreamErrorBodySize {
+		// Do not expose a prefix of an oversized body: an unknown credential may
+		// begin before the cap and continue beyond it, defeating token redaction.
+		return upstreamErrorBodyOmitted, nil
 	}
 	return secrets.RedactWithToken(strings.TrimSpace(string(contents)), token), nil
 }
@@ -187,7 +197,10 @@ func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, e
 		return nil, err
 	}
 
-	url := fmt.Sprintf("%s/subjects", baseURL)
+	url, err := baseURLPath(baseURL, "subjects")
+	if err != nil {
+		return nil, err
+	}
 	resp, err := c.getAuthorizedWithToken(ctx, url, token, policy)
 	if err != nil {
 		return nil, err
@@ -240,7 +253,10 @@ func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Cou
 		return nil, err
 	}
 
-	url := fmt.Sprintf("%s/subjects/%d/lectures/%d", baseURL, course.SubjectID, course.SessionID)
+	url, err := baseURLPath(baseURL, fmt.Sprintf("subjects/%d/lectures/%d", course.SubjectID, course.SessionID))
+	if err != nil {
+		return nil, err
+	}
 	resp, err := c.getAuthorizedWithToken(ctx, url, token, policy)
 	if err != nil {
 		return nil, err

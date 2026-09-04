@@ -22,6 +22,10 @@ const maxChunkSize = 50 * 1024 * 1024 // 50 MB
 
 var errDownloadSizeLimit = errors.New("download exceeds size limit")
 
+const chunkErrorBodyLimit int64 = 512
+
+const chunkErrorBodyOmitted = "upstream response body omitted"
+
 func copyWithLimit(dst io.Writer, src io.Reader, limit int64) (int64, error) {
 	written, err := io.Copy(dst, io.LimitReader(src, limit+1))
 	if err != nil {
@@ -112,9 +116,15 @@ func chunkResponseError(resp *http.Response, url, token string) error {
 	if resp.StatusCode == http.StatusOK {
 		return nil
 	}
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
+	if int64(len(strings.TrimSpace(token))) > chunkErrorBodyLimit {
+		return fmt.Errorf("chunk request failed with status %d for URL %s: %s", resp.StatusCode, secrets.RedactURLWithToken(url, token), chunkErrorBodyOmitted)
+	}
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, chunkErrorBodyLimit+1))
 	if readErr != nil {
 		return fmt.Errorf("chunk request failed with status %d and unreadable error body: %w", resp.StatusCode, secrets.SanitizeErrorWithToken(readErr, token))
+	}
+	if int64(len(body)) > chunkErrorBodyLimit {
+		return fmt.Errorf("chunk request failed with status %d for URL %s: %s", resp.StatusCode, secrets.RedactURLWithToken(url, token), chunkErrorBodyOmitted)
 	}
 	message := secrets.RedactWithToken(strings.TrimSpace(string(body)), token)
 	if message == "" {

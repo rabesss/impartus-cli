@@ -131,7 +131,10 @@ func (c *Client) readStoredTokenAt(path string) (string, bool) {
 }
 
 func (c *Client) validateStoredToken(ctx context.Context, baseURL, token string) (bool, error) {
-	profileURL := fmt.Sprintf("%s/user/profile", baseURL)
+	profileURL, err := baseURLPath(baseURL, "user/profile")
+	if err != nil {
+		return false, err
+	}
 	resp, err := c.GetAuthorizedWithTokenForOrigins(ctx, profileURL, token, baseURL)
 	if err != nil {
 		return false, err
@@ -163,24 +166,26 @@ func (c *Client) prepareLogin(cfg *config.Config) (*Client, string, error) {
 	return cli, baseURL, nil
 }
 
-// validateAndCanonicalizeBaseURL applies the upstream URL boundary that
-// Config.Validate cannot guarantee for callers that invoke client methods
-// directly. API and login URLs must never carry query or fragment credentials,
-// and rejecting them before request construction keeps unsafe values out of
-// HTTP errors and redirect metadata.
+// validateAndCanonicalizeBaseURL applies the strict authenticated URL boundary
+// before a login or API request is constructed. canonicalBaseURL supplies the
+// shared path, authority, query, fragment, and scheme canonicalization; the
+// media validator retains typed userinfo/HTTPS errors for callers and tests.
 func validateAndCanonicalizeBaseURL(rawBaseURL string) (string, error) {
-	parsed, err := url.Parse(rawBaseURL)
+	parsed, err := url.Parse(strings.TrimSpace(rawBaseURL))
 	if err != nil {
 		return "", newMediaOriginError(ErrInvalidMediaURL)
 	}
-	if err := validateMediaURL(parsed, true); err != nil {
-		return "", err
+	if validateErr := validateMediaURL(parsed, true); validateErr != nil {
+		return "", validateErr
 	}
 	if parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.RawFragment != "" {
 		return "", newMediaOriginError(ErrInvalidMediaURL)
 	}
-	parsed.Scheme = strings.ToLower(parsed.Scheme)
-	return parsed.String(), nil
+	canonical, err := canonicalBaseURL(rawBaseURL)
+	if err != nil {
+		return "", newMediaOriginError(ErrInvalidMediaURL)
+	}
+	return canonical, nil
 }
 
 func newBaseURLPolicy(rawBaseURL string, additionalOrigins ...string) (string, mediaOriginPolicy, error) {
@@ -251,14 +256,20 @@ func (c *Client) login(ctx context.Context, cfg *config.Config, baseURL string) 
 }
 
 func (c *Client) newLoginRequest(ctx context.Context, cfg *config.Config, baseURL string) (*http.Request, error) {
+	if cfg == nil {
+		return nil, errors.New("config is required")
+	}
 	requestBody, err := json.Marshal(map[string]string{"username": cfg.Username, "password": cfg.Password})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal login body: %w", err)
 	}
-	loginURL := fmt.Sprintf("%s/auth/signin", baseURL)
+	loginURL, err := baseURLPath(baseURL, "auth/signin")
+	if err != nil {
+		return nil, fmt.Errorf("failed to construct login URL: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, bytes.NewBuffer(requestBody))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create login request: %w", err)
+		return nil, fmt.Errorf("failed to create login request: %w", secrets.SanitizeError(err))
 	}
 	req.Header.Set("Content-Type", "application/json;charset=UTF-8")
 	req.Header.Set("Accept", "application/json, text/plain, */*")

@@ -265,3 +265,44 @@ func TestRedactedErrorPreservesClassificationWithoutExposingRawCause(t *testing.
 		t.Fatalf("RedactedError() exposed raw cause through errors.As: %v", recovered)
 	}
 }
+
+type panicIsEventError struct{}
+
+func (panicIsEventError) Error() string { return "event failure" }
+
+func (panicIsEventError) Is(error) bool {
+	panic("source custom Is must not be invoked by RedactedError")
+}
+
+func TestRedactedErrorDoesNotInvokeSourceCustomIs(t *testing.T) {
+	got := RedactedError(panicIsEventError{})
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("RedactedError() invoked source custom Is: %v", recovered)
+		}
+	}()
+	if errors.Is(got, errors.New("unrelated")) {
+		t.Fatal("RedactedError() matched unrelated classification")
+	}
+}
+
+type cyclicEventError struct{}
+
+func (cause *cyclicEventError) Error() string { return "cyclic event failure" }
+
+func (cause *cyclicEventError) Unwrap() error { return cause }
+
+func TestRedactedErrorBoundsCyclicClassification(t *testing.T) {
+	raw := &cyclicEventError{}
+	started := time.Now()
+	got := RedactedError(raw)
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("RedactedError() took %v on cyclic error", elapsed)
+	}
+	if !errors.Is(got, raw) {
+		t.Fatal("RedactedError() lost exact cyclic classification")
+	}
+	if errors.Unwrap(got) != nil {
+		t.Fatalf("RedactedError() exposed raw cause: %v", errors.Unwrap(got))
+	}
+}

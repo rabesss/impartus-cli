@@ -31,10 +31,18 @@ var errSlideSizeLimit = errors.New("slide exceeds size limit")
 
 const maxSlideErrorBodySize int64 = 512
 
+const slideErrorBodyOmitted = "upstream response body omitted"
+
 func readSanitizedSlideErrorBody(body io.Reader, token string) (string, error) {
-	contents, err := io.ReadAll(io.LimitReader(body, maxSlideErrorBodySize))
+	if int64(len(strings.TrimSpace(token))) > maxSlideErrorBodySize {
+		return slideErrorBodyOmitted, nil
+	}
+	contents, err := io.ReadAll(io.LimitReader(body, maxSlideErrorBodySize+1))
 	if err != nil {
 		return "", secrets.SanitizeErrorWithToken(err, token)
+	}
+	if int64(len(contents)) > maxSlideErrorBodySize {
+		return slideErrorBodyOmitted, nil
 	}
 	return secrets.RedactWithToken(strings.TrimSpace(string(contents)), token), nil
 }
@@ -105,7 +113,7 @@ func downloadLectureSlideWithLimit(ctx context.Context, c *client.Client, cfg *c
 		return fmt.Errorf("close slide download: %w", closeErr)
 	}
 	if closeErr := resp.Body.Close(); closeErr != nil {
-		return fmt.Errorf("close slide response: %w", closeErr)
+		return fmt.Errorf("close slide response: %w", secrets.SanitizeErrorWithToken(closeErr, cfg.Token))
 	}
 	bodyClosed = true
 	if finalizeErr := finalizeSlideDownload(partPath, filePath); finalizeErr != nil {
