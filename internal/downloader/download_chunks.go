@@ -63,7 +63,7 @@ func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, i
 	if toMemory {
 		data, readErr := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 		if readErr != nil {
-			return "", nil, 0, fmt.Errorf("could not read chunk %d: %w", chunk, readErr)
+			return "", nil, 0, fmt.Errorf("could not read chunk %d: %w", chunk, secrets.SanitizeErrorWithToken(readErr, d.config.Token))
 		}
 		if int64(len(data)) > limit {
 			return "", nil, 0, fmt.Errorf("chunk %d exceeds max size %d bytes: %w", chunk, limit, errDownloadSizeLimit)
@@ -89,7 +89,7 @@ func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, i
 		if errors.Is(copyErr, errDownloadSizeLimit) {
 			return "", nil, 0, fmt.Errorf("chunk %d exceeds max size %d bytes: %w", chunk, limit, copyErr)
 		}
-		return "", nil, 0, fmt.Errorf("could not write chunk %d: %w", chunk, copyErr)
+		return "", nil, 0, fmt.Errorf("could not write chunk %d: %w", chunk, secrets.SanitizeErrorWithToken(copyErr, d.config.Token))
 	}
 	if closeErr := outFile.Close(); closeErr != nil {
 		return "", nil, 0, fmt.Errorf("could not close chunk %d: %w", chunk, closeErr)

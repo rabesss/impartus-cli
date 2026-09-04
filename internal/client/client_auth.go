@@ -147,6 +147,7 @@ func (c *Client) login(ctx context.Context, cfg *config.Config, baseURL string) 
 		return "", err
 	}
 	requestClient := *c.httpClient
+	requestClient.Jar = nil
 	requestClient.CheckRedirect = func(*http.Request, []*http.Request) error {
 		// Login requests carry the username and password in the body. Never
 		// replay that body to a redirected origin or across an HTTPS downgrade.

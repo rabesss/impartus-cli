@@ -95,7 +95,7 @@ func downloadLectureSlideWithLimit(ctx context.Context, c *client.Client, cfg *c
 
 	written, copyErr := io.Copy(f, io.LimitReader(resp.Body, limit+1))
 	if copyErr != nil {
-		return fmt.Errorf("write slide download: %w", copyErr)
+		return fmt.Errorf("write slide download: %w", secrets.SanitizeErrorWithToken(copyErr, cfg.Token))
 	}
 	if written > limit {
 		return fmt.Errorf("slide download exceeds max size %d bytes: %w", limit, errSlideSizeLimit)

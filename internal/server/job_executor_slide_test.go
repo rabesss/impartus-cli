@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -162,6 +163,32 @@ func TestDownloadLectureSlideSanitizesNonUnauthorizedResponseBody(t *testing.T) 
 	}
 }
 
+func TestDownloadLectureSlideSanitizesSuccessfulBodyCopyError(t *testing.T) {
+	const token = "slide-copy-secret"
+	httpClient := &http.Client{Transport: slideRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(slideTokenErrorReader{token: token}),
+			Header:     make(http.Header),
+			Request:    req,
+		}, nil
+	})}
+	err := downloadLectureSlideWithLimit(context.Background(), client.New(httpClient, nil), &config.Config{
+		BaseURL:          "https://api.example.test",
+		DownloadLocation: t.TempDir(),
+		Token:            token,
+	}, client.Lecture{VideoID: 10, SeqNo: 1, Topic: "Lecture"}, 8)
+	if err == nil {
+		t.Fatal("downloadLectureSlideWithLimit() error = nil, want body copy failure")
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Fatalf("slide copy error leaked token: %v", err)
+	}
+	if !strings.Contains(err.Error(), "REDACTED") {
+		t.Fatalf("slide copy error = %v, want redaction marker", err)
+	}
+}
+
 func TestDownloadLectureSlideInterruptedReadPreservesFinal(t *testing.T) {
 	testDownloadLectureSlideTransportFailure(t, io.NopCloser(&failingSlideReader{}), "interrupted-read")
 }
@@ -222,6 +249,14 @@ type failingSlideReader struct {
 
 type fixedSlideReader struct {
 	read bool
+}
+
+type slideTokenErrorReader struct {
+	token string
+}
+
+func (r slideTokenErrorReader) Read([]byte) (int, error) {
+	return 0, fmt.Errorf("copy failed unknown=%s", r.token)
 }
 
 func (r *fixedSlideReader) Read(p []byte) (int, error) {

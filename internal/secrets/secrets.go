@@ -156,7 +156,7 @@ func buildSensitiveQueryRe() *regexp.Regexp {
 		keys = append(keys, encodedQueryKeyPattern(k))
 	}
 	sort.Strings(keys)
-	return regexp.MustCompile(`(?i)([?&])(` + strings.Join(keys, "|") + `)=[^&#\s]*`)
+	return regexp.MustCompile(`(?i)([?&;])(` + strings.Join(keys, "|") + `)=[^&#;\s]*`)
 }
 
 // encodedQueryKeyPattern matches a credential key whether its bytes are

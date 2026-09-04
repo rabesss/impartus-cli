@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -131,5 +133,41 @@ func TestLoginNeverFollowsCredentialBearingRedirect(t *testing.T) {
 				t.Fatalf("redirect target received requests=%d body=%q, want zero requests/body", targetRequests, targetBody)
 			}
 		})
+	}
+}
+
+func TestLoginDoesNotUseHTTPClientCookieJar(t *testing.T) {
+	receivedCookie := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedCookie <- r.Header.Get("Cookie")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"token":"login-token"}`) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("cookiejar.New() error = %v", err)
+	}
+	serverURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	jar.SetCookies(serverURL, []*http.Cookie{{Name: "session", Value: "jar-secret"}})
+	httpClient := server.Client()
+	httpClient.Jar = jar
+
+	token, err := New(httpClient, nil).login(context.Background(), &config.Config{
+		Username: "user",
+		Password: "password",
+	}, server.URL)
+	if err != nil {
+		t.Fatalf("login() error = %v", err)
+	}
+	if token != "login-token" {
+		t.Fatalf("login() token = %q, want login-token", token)
+	}
+	if got := <-receivedCookie; got != "" {
+		t.Fatalf("login request Cookie = %q, want no cookie-jar credentials", got)
 	}
 }

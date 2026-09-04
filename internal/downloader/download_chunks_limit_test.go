@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -117,6 +118,36 @@ func TestDownloadURLWithLimitRemovesInterruptedPartial(t *testing.T) {
 	assertNoChunkPartial(t, tempDir)
 }
 
+func TestDownloadChunkReadErrorsSanitizeToken(t *testing.T) {
+	const token = "chunk-read-secret"
+	httpClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			ContentLength: -1,
+			Body:          io.NopCloser(tokenErrorChunkReader{token: token}),
+			Header:        make(http.Header),
+			Request:       req,
+		}, nil
+	})}
+	d := testLimitDownloader(t.TempDir(), client.New(httpClient, nil))
+	d.config.Token = token
+
+	for _, toMemory := range []bool{true, false} {
+		t.Run(fmt.Sprintf("toMemory=%t", toMemory), func(t *testing.T) {
+			path, data, written, err := d.doDownloadChunkWithLimit(t.Context(), "https://media.example.test/chunk.ts", 1, 0, "left", toMemory, 8)
+			if err == nil {
+				t.Fatal("doDownloadChunkWithLimit() error = nil, want read failure")
+			}
+			if path != "" || data != nil || written != 0 {
+				t.Fatalf("failed download returned path=%q data=%v written=%d", path, data, written)
+			}
+			if strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), "REDACTED") {
+				t.Fatalf("doDownloadChunkWithLimit() leaked token: %v", err)
+			}
+		})
+	}
+}
+
 func TestDownloadChunkScrubsUpstreamErrorBodyAtSource(t *testing.T) {
 	t.Parallel()
 
@@ -167,6 +198,14 @@ func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 
 type failingChunkReader struct {
 	read bool
+}
+
+type tokenErrorChunkReader struct {
+	token string
+}
+
+func (r tokenErrorChunkReader) Read([]byte) (int, error) {
+	return 0, fmt.Errorf("chunk read failed unknown=%s", r.token)
 }
 
 func (r *failingChunkReader) Read(p []byte) (int, error) {

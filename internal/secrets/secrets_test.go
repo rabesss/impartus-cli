@@ -391,6 +391,21 @@ func TestRedactURL_MalformedQueryStillPreservesOtherParameters(t *testing.T) {
 	}
 }
 
+func TestRedactURLRedactsSemicolonCredentialDelimiter(t *testing.T) {
+	for _, rawURL := range []string{
+		"https://host/path?keep=1;token=semicolon-secret",
+		"https://host/%zz?keep=1;authorization=Bearer%20semicolon-secret",
+	} {
+		got := RedactURL(rawURL)
+		if strings.Contains(got, "semicolon-secret") {
+			t.Fatalf("RedactURL(%q) leaked semicolon-delimited credential: %q", rawURL, got)
+		}
+		if !strings.Contains(got, "REDACTED") {
+			t.Fatalf("RedactURL(%q) = %q, want redaction marker", rawURL, got)
+		}
+	}
+}
+
 // TestSanitizeError_MalformedURLErrorStillRedacts: http.NewRequest wraps a
 // url.Parse failure in a *url.Error whose URL is the raw malformed tokenized
 // URL. SanitizeError must scrub it, not rebuild the leak.

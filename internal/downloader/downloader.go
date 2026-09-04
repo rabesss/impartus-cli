@@ -414,7 +414,7 @@ func (d *Downloader) fetchDecryptionKey(ctx context.Context, keyURL string) ([]b
 	keyURLContent, err := io.ReadAll(io.LimitReader(resp.Body, maxDecryptionKeyResponseSize+1))
 	if err != nil {
 		zeroKey(keyURLContent)
-		return nil, fmt.Errorf("failed to read decryption key response: %w", err)
+		return nil, fmt.Errorf("failed to read decryption key response: %w", secrets.SanitizeErrorWithToken(err, d.config.Token))
 	}
 	if int64(len(keyURLContent)) > maxDecryptionKeyResponseSize {
 		zeroKey(keyURLContent)

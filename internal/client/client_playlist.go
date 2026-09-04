@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
 var invalidFileNameRe = regexp.MustCompile(`[<>:"/\\|?*\n\r]`)
@@ -47,7 +49,7 @@ func (c *Client) getStreamInfos(ctx context.Context, baseURL, token string, lect
 
 	body, err := readResponseBodyWithLimit(resp.Body, maxStreamInfoResponseSize)
 	if err != nil {
-		return nil, err
+		return nil, secrets.SanitizeErrorWithToken(err, token)
 	}
 
 	return ParseStreamInfosFromBody(body)

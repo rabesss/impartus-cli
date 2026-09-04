@@ -108,6 +108,60 @@ func TestGetAuthorizedWithTokenRedactsUnknownQueryTokenFromNetworkError(t *testi
 	}
 }
 
+func TestSuccessfulUpstreamBodyReadErrorsAreSanitized(t *testing.T) {
+	const token = "successful-read-secret"
+	tests := []struct {
+		name string
+		call func(*Client) error
+	}{
+		{
+			name: "courses",
+			call: func(c *Client) error {
+				_, err := c.GetCourses(context.Background(), &config.Config{BaseURL: "https://api.example.test", Token: token})
+				return err
+			},
+		},
+		{
+			name: "lectures",
+			call: func(c *Client) error {
+				_, err := c.GetLectures(context.Background(), &config.Config{BaseURL: "https://api.example.test", Token: token}, Course{SubjectID: 7, SessionID: 9})
+				return err
+			},
+		},
+		{
+			name: "stream info",
+			call: func(c *Client) error {
+				_, err := c.getStreamInfos(context.Background(), "https://api.example.test", token, Lecture{TTID: 42})
+				return err
+			},
+		},
+		{
+			name: "playlist",
+			call: func(c *Client) error {
+				_, err := c.getPlaylist(context.Background(), "https://media.example.test/playlist.m3u8", token, Lecture{TTID: 42})
+				return err
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c := New(&http.Client{Transport: &readErrorTransport{
+				err: errors.New("read failed unknown=" + token),
+			}}, nil)
+			err := test.call(c)
+			if err == nil {
+				t.Fatal("call error = nil, want read failure")
+			}
+			if strings.Contains(err.Error(), token) {
+				t.Fatalf("call error leaked token: %v", err)
+			}
+			if !strings.Contains(err.Error(), "REDACTED") {
+				t.Fatalf("call error = %v, want redaction marker", err)
+			}
+		})
+	}
+}
+
 type statusBodyTransport struct {
 	statusCode int
 	body       string
@@ -119,6 +173,27 @@ type errorTransport struct {
 
 func (t *errorTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	return nil, t.err
+}
+
+type readErrorTransport struct {
+	err error
+}
+
+func (t *readErrorTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(errorReader{err: t.err}),
+		Header:     make(http.Header),
+		Request:    req,
+	}, nil
+}
+
+type errorReader struct {
+	err error
+}
+
+func (r errorReader) Read([]byte) (int, error) {
+	return 0, r.err
 }
 
 func (t *statusBodyTransport) RoundTrip(req *http.Request) (*http.Response, error) {

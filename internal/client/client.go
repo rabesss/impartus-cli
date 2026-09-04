@@ -119,7 +119,7 @@ func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, e
 
 	body, err := readResponseBodyWithLimit(resp.Body, maxCatalogResponseSize)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read courses response: %w", err)
+		return nil, fmt.Errorf("failed to read courses response: %w", secrets.SanitizeErrorWithToken(err, token))
 	}
 	var courses Courses
 	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&courses); err != nil {
@@ -171,7 +171,7 @@ func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Cou
 
 	body, err := readResponseBodyWithLimit(resp.Body, maxCatalogResponseSize)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read lectures response: %w", err)
+		return nil, fmt.Errorf("failed to read lectures response: %w", secrets.SanitizeErrorWithToken(err, token))
 	}
 	var lectures Lectures
 	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&lectures); err != nil {
@@ -271,7 +271,7 @@ func (c *Client) getPlaylist(ctx context.Context, streamURL, token string, lectu
 		if errors.Is(readErr, errResponseSizeLimit) {
 			return ParsedPlaylist{}, fmt.Errorf("playlist response exceeds max size %d bytes", maxPlaylistResponseSize)
 		}
-		return ParsedPlaylist{}, fmt.Errorf("read playlist response: %w", readErr)
+		return ParsedPlaylist{}, fmt.Errorf("read playlist response: %w", secrets.SanitizeErrorWithToken(readErr, token))
 	}
 	scanner := bufio.NewScanner(bytes.NewReader(body))
 	// Scanner's maximum token size includes the line delimiter. Keep the
