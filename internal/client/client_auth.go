@@ -13,6 +13,8 @@ import (
 	"github.com/rabesss/impartus-cli/internal/config"
 )
 
+const maxLoginResponseSize int64 = 1 * 1024 * 1024
+
 // NewLoggedIn creates a Client and authenticates it against the Impartus API
 // using the provided config. It is the shared bootstrap for the CLI's
 // initClient and the server's default upstream login, replacing duplicated
@@ -159,8 +161,15 @@ func (c *Client) login(ctx context.Context, cfg *config.Config, baseURL string) 
 	if err := validateLoginResponse(response); err != nil {
 		return "", err
 	}
+	body, readErr := readResponseBodyWithLimit(response.Body, maxLoginResponseSize)
+	if readErr != nil {
+		if errors.Is(readErr, errResponseSizeLimit) {
+			return "", fmt.Errorf("login response exceeds max size %d bytes", maxLoginResponseSize)
+		}
+		return "", fmt.Errorf("failed to read login response: %w", readErr)
+	}
 	var loginResponse LoginResponse
-	if err := json.NewDecoder(response.Body).Decode(&loginResponse); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&loginResponse); err != nil {
 		return "", fmt.Errorf("failed to decode login response: %w", err)
 	}
 	if loginResponse.Token == "" {

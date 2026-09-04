@@ -16,6 +16,13 @@ import (
 var invalidFileNameRe = regexp.MustCompile(`[<>:"/\\|?*\n\r]`)
 var uriValueRe = regexp.MustCompile(`URI="([^"]+)"`)
 
+const (
+	maxPlaylistResponseSize   int64 = 10 * 1024 * 1024
+	maxPlaylistLineSize       int   = 1 * 1024 * 1024
+	maxPlaylistSegments             = 10000
+	maxStreamInfoResponseSize int64 = 1 * 1024 * 1024
+)
+
 // getStreamInfos fetches stream information for a given lecture.
 func (c *Client) getStreamInfos(ctx context.Context, baseURL, token string, lecture Lecture) ([]StreamInfo, error) {
 	uri := fmt.Sprintf("%s/fetchvideo?ttid=%d&token=%s&type=index.m3u8", baseURL, lecture.TTID, token)
@@ -39,7 +46,7 @@ func (c *Client) getStreamInfos(ctx context.Context, baseURL, token string, lect
 		return nil, fmt.Errorf("stream info request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := readResponseBodyWithLimit(resp.Body, maxStreamInfoResponseSize)
 	if err != nil {
 		return nil, err
 	}
@@ -75,6 +82,7 @@ func parsePlaylistWithBase(scanner *bufio.Scanner, baseURL *url.URL, id int, tit
 	firstDurations := make([]float64, 0)
 	secondDurations := make([]float64, 0)
 	pendingDuration := 0.0
+	segmentCount := 0
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -95,6 +103,9 @@ func parsePlaylistWithBase(scanner *bufio.Scanner, baseURL *url.URL, id int, tit
 		} else if line == "#EXT-X-DISCONTINUITY" {
 			isFirstView = false
 		} else if !strings.HasPrefix(line, "#") {
+			if segmentCount >= maxPlaylistSegments {
+				return ParsedPlaylist{}, errors.New("playlist contains too many media segments")
+			}
 			segmentURL, err := resolveMediaReference(baseURL, line)
 			if err != nil {
 				return ParsedPlaylist{}, fmt.Errorf("invalid playlist segment URI: %w", err)
@@ -107,6 +118,7 @@ func parsePlaylistWithBase(scanner *bufio.Scanner, baseURL *url.URL, id int, tit
 				secondDurations = append(secondDurations, pendingDuration)
 			}
 			pendingDuration = 0
+			segmentCount++
 		}
 	}
 

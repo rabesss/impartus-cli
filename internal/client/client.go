@@ -3,6 +3,7 @@ package client
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,6 +24,21 @@ type Client struct {
 }
 
 const defaultUserAgent = "impartus-downloader"
+
+const maxCatalogResponseSize int64 = 10 * 1024 * 1024
+
+var errResponseSizeLimit = errors.New("response exceeds max size")
+
+func readResponseBodyWithLimit(body io.Reader, limit int64) ([]byte, error) {
+	contents, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(contents)) > limit {
+		return nil, fmt.Errorf("%w %d bytes", errResponseSizeLimit, limit)
+	}
+	return contents, nil
+}
 
 // New creates a new Impartus API client with the given HTTP client and user agent
 // provider. Nil arguments fall back to sensible defaults.
@@ -90,8 +106,12 @@ func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, e
 		return nil, fmt.Errorf("subjects request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
+	body, err := readResponseBodyWithLimit(resp.Body, maxCatalogResponseSize)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read courses response: %w", err)
+	}
 	var courses Courses
-	if err := json.NewDecoder(resp.Body).Decode(&courses); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&courses); err != nil {
 		return nil, fmt.Errorf("failed to decode courses response: %w", err)
 	}
 
@@ -138,8 +158,12 @@ func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Cou
 		return nil, fmt.Errorf("lectures request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
+	body, err := readResponseBodyWithLimit(resp.Body, maxCatalogResponseSize)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read lectures response: %w", err)
+	}
 	var lectures Lectures
-	if err := json.NewDecoder(resp.Body).Decode(&lectures); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&lectures); err != nil {
 		return nil, fmt.Errorf("failed to decode lectures response: %w", err)
 	}
 
@@ -230,7 +254,16 @@ func (c *Client) getPlaylist(ctx context.Context, streamURL, token string, lectu
 		return ParsedPlaylist{}, fmt.Errorf("playlist request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	scanner := bufio.NewScanner(resp.Body)
+	body, readErr := readResponseBodyWithLimit(resp.Body, maxPlaylistResponseSize)
+	if readErr != nil {
+		_ = resp.Body.Close() //nolint:errcheck
+		if errors.Is(readErr, errResponseSizeLimit) {
+			return ParsedPlaylist{}, fmt.Errorf("playlist response exceeds max size %d bytes", maxPlaylistResponseSize)
+		}
+		return ParsedPlaylist{}, fmt.Errorf("read playlist response: %w", readErr)
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	scanner.Buffer(make([]byte, 64*1024), maxPlaylistLineSize)
 	parsed, parseErr := parsePlaylist(scanner, streamURL, lecture.TTID, lecture.Topic, lecture.SeqNo)
 	_ = resp.Body.Close() //nolint:errcheck
 	if parseErr != nil {

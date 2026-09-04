@@ -113,6 +113,8 @@ type Downloader struct {
 	pipelineObserver func(*LecturePipeline)
 }
 
+const maxDecryptionKeyResponseSize int64 = 4 * 1024
+
 // New creates a new Downloader with the given config and API client.
 func New(cfg *config.Config, apiClient *client.Client) *Downloader {
 	return newDownloader(cfg, apiClient, log.Default())
@@ -409,9 +411,14 @@ func (d *Downloader) fetchDecryptionKey(ctx context.Context, keyURL string) ([]b
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("decryption key request failed with status %d", resp.StatusCode)
 	}
-	keyURLContent, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	keyURLContent, err := io.ReadAll(io.LimitReader(resp.Body, maxDecryptionKeyResponseSize+1))
 	if err != nil {
+		zeroKey(keyURLContent)
 		return nil, fmt.Errorf("failed to read decryption key response: %w", err)
+	}
+	if int64(len(keyURLContent)) > maxDecryptionKeyResponseSize {
+		zeroKey(keyURLContent)
+		return nil, fmt.Errorf("decryption key response exceeds max size %d bytes", maxDecryptionKeyResponseSize)
 	}
 	derivedKey := deriveDecryptionKey(keyURLContent)
 	zeroKey(keyURLContent) // zero raw key material after deriving
