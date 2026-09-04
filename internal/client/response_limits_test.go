@@ -161,20 +161,23 @@ func TestPlaylistLineLimitCountsPayloadBytes(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		lineBytes int
+		delimiter string
 		wantErr   bool
 	}{
-		{name: "exact payload limit", lineBytes: maxPlaylistLineSize, wantErr: false},
-		{name: "one byte over payload limit", lineBytes: maxPlaylistLineSize + 1, wantErr: true},
+		{name: "exact payload limit with LF", lineBytes: maxPlaylistLineSize, delimiter: "\n", wantErr: false},
+		{name: "one byte over payload limit with LF", lineBytes: maxPlaylistLineSize + 1, delimiter: "\n", wantErr: true},
+		{name: "exact payload limit with CRLF", lineBytes: maxPlaylistLineSize, delimiter: "\r\n", wantErr: false},
+		{name: "one byte over payload limit with CRLF", lineBytes: maxPlaylistLineSize + 1, delimiter: "\r\n", wantErr: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			line := prefix + strings.Repeat("a", test.lineBytes-len(prefix))
 			c := New(&http.Client{Transport: &limitResponseTransport{
-				body: "#EXTM3U\n" + line + "\n",
+				body: "#EXTM3U\n" + line + test.delimiter,
 			}}, nil)
 
 			playlist, err := c.getPlaylist(context.Background(), "https://media.example.test/playlist.m3u8", "playlist-token", Lecture{TTID: 42})
 			if test.wantErr {
-				if err == nil || !strings.Contains(err.Error(), "token too long") {
+				if err == nil || (!strings.Contains(err.Error(), "token too long") && !strings.Contains(err.Error(), "line exceeds max size")) {
 					t.Fatalf("getPlaylist() error = %v, want line-size rejection", err)
 				}
 				return

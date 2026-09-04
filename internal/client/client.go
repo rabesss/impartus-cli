@@ -349,8 +349,9 @@ func (c *Client) getPlaylistWithPolicy(ctx context.Context, streamURL, token str
 	}
 	scanner := bufio.NewScanner(bytes.NewReader(body))
 	// Scanner's maximum token size includes the line delimiter. Keep the
-	// public payload limit at 1 MiB while allowing its terminating newline.
-	scanner.Buffer(make([]byte, 64*1024), maxPlaylistLineSize+1)
+	// public payload limit at 1 MiB while allowing either LF or CRLF.
+	scanner.Buffer(make([]byte, 64*1024), maxPlaylistLineSize+2)
+	scanner.Split(scanPlaylistLines)
 	playlistBaseURL := streamURL
 	if resp.Request != nil && resp.Request.URL != nil {
 		playlistBaseURL = resp.Request.URL.String()
