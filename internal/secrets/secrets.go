@@ -81,22 +81,22 @@ var singleQuotedSecretValue = regexp.MustCompile(
 	`(?i)(\b` + sensitiveAssignmentKey + `\s*["']\s*[:=]\s*')((?:\\.|[^'\\])*)`,
 )
 var quotedKeySchemeSecretValue = regexp.MustCompile(
-	`(?i)(\b` + sensitiveAssignmentKey + `\s*["']\s*[:=]\s*)(?:` + strings.Join(credentialSchemes, "|") + `)\s+[^\s,;}]+`,
+	`(?i)(\b` + sensitiveAssignmentKey + `\s*["']\s*[:=]\s*)(?:` + strings.Join(credentialSchemes, "|") + `)\s+[^\s,;&}]+`,
 )
 var quotedKeyBareSecretValue = regexp.MustCompile(
-	`(?i)(\b` + sensitiveAssignmentKey + `\s*["']\s*[:=]\s*)[^\s"',;}][^\s,;}]*`,
+	`(?i)(\b` + sensitiveAssignmentKey + `\s*["']\s*[:=]\s*)[^\s"',;&}][^\s,;&}]*`,
 )
 var strongCredentialAssignment = regexp.MustCompile(
-	`(?i)(^|[^/\\a-z0-9_-])((?:authorization|proxy[-_]?authorization|auth|(?:x[-_])?api[-_]?key|cookie|set[-_]?cookie)\s*[:=]\s*)[^\r\n]+`,
+	`(?i)(^|[^/\\a-z0-9_-])((?:authorization|proxy[-_]?authorization|auth|(?:x[-_])?api[-_]?key|cookie|set[-_]?cookie)\s*[:=]\s*)[^\r\n&]+`,
 )
 var schemeSecretAssignment = regexp.MustCompile(
-	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*[:=]\s*)(?:` + strings.Join(credentialSchemes, "|") + `)\s+[^\s,;}]+`,
+	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*[:=]\s*)(?:` + strings.Join(credentialSchemes, "|") + `)\s+[^\s,;&}]+`,
 )
 var bareSecretEquals = regexp.MustCompile(
-	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*=\s*)[^\s,;}]+`,
+	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*=\s*)[^\s,;&}]+`,
 )
 var bareSecretColon = regexp.MustCompile(
-	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*:\s*)[^\s,;}]+`,
+	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*:\s*)[^\s,;&}]+`,
 )
 
 // RedactionEvidence records credential values recognized during a scrub. The
@@ -207,16 +207,51 @@ func buildSensitiveAssignmentKey() string {
 }
 
 func isSensitiveParam(key string) bool {
-	for depth := 0; depth <= 2; depth++ {
-		lowerKey := strings.ToLower(key)
-		if sensitiveParams[lowerKey] || sensitiveParams[strings.NewReplacer("-", "_").Replace(lowerKey)] {
+	if len(key) > maxCredentialKeyRunes*utf8.UTFMax {
+		// A key this large cannot be a normal bounded alias. Treat it as
+		// sensitive so callers that use this predicate for request policy do not
+		// forward a credential hidden in an attacker-sized encoding.
+		return true
+	}
+	for depth := 0; depth <= maxSensitiveParamDecodeDepth; depth++ {
+		if isCanonicalSensitiveParamKey(key) {
 			return true
 		}
 		decoded, err := url.QueryUnescape(key)
 		if err != nil || decoded == key {
-			break
+			return false
 		}
 		key = decoded
+	}
+	// A still-changing key has exceeded the bounded canonicalization budget.
+	// Keep request policy fail-closed rather than forwarding a value whose
+	// sensitive alias is hidden behind more decoding layers.
+	return true
+}
+
+const maxSensitiveParamDecodeDepth = maxCredentialDecodeDepth*2 + 2
+
+// isCanonicalSensitiveParamKey applies the same bounded JSON decoding and
+// Unicode format-character removal used by free-form assignment scrubbing.
+// URL query keys are attacker-controlled, so do not allocate decoded views for
+// keys larger than the assignment-key budget.
+func isCanonicalSensitiveParamKey(key string) bool {
+	if len(key) > maxCredentialKeyRunes*utf8.UTFMax {
+		return false
+	}
+	for depth := 0; depth <= maxCredentialDecodeDepth; depth++ {
+		canonical := canonicalCredentialKey(key)
+		if sensitiveParams[canonical] || sensitiveParams[strings.ReplaceAll(canonical, "-", "_")] {
+			return true
+		}
+		if !strings.Contains(key, `\`) {
+			return false
+		}
+		view := decodeEncodedViewLayer(rawEncodedView(key), false)
+		if !view.changed || len(view.text) > maxCredentialKeyRunes*utf8.UTFMax {
+			return false
+		}
+		key = view.text
 	}
 	return false
 }
@@ -281,7 +316,20 @@ func scrubRawWithEvidenceDepth(rawURL string, depth int) (string, RedactionEvide
 	evidence.values = append(evidence.values, userinfoEvidence.values...)
 	scrubbed, queryEvidence := scrubRawQueryWithEvidence(withoutUserinfo)
 	evidence.values = append(evidence.values, queryEvidence.values...)
+	// A decoded non-sensitive query value can still contain a bare assignment
+	// such as token=SECRET. Apply the same bounded assignment scrubber used by
+	// free-form diagnostics before returning a raw URL view.
+	if assigned, assignmentEvidence := scrubEncodedAssignmentsWithEvidence(scrubbed); assigned != scrubbed {
+		scrubbed = assigned
+		evidence.values = append(evidence.values, assignmentEvidence.values...)
+	}
 	if depth >= maxRawPercentDecodeDepth {
+		if _, stillEncoded := decodePercentEscapes(scrubbed); stillEncoded {
+			// A credential may still be hidden behind another percent-encoded
+			// layer. Do not return a partially decoded representation after the
+			// bounded work budget is exhausted.
+			return "REDACTED", evidence
+		}
 		return scrubbed, evidence
 	}
 	decoded, changed := decodePercentEscapes(scrubbed)
@@ -452,6 +500,9 @@ func ScrubCredentialURLs(s string) string {
 // opaque evidence for every credential value it recognized. The evidence is
 // intended only for in-process comparison between differently decoded views.
 func ScrubCredentialURLsWithEvidence(s string) (string, RedactionEvidence) {
+	if len(s) > maxScrubInputSize {
+		return "REDACTED", RedactionEvidence{}
+	}
 	return scrubCredentialURLsWithEvidenceDepth(s, 0)
 }
 
@@ -489,6 +540,9 @@ func scrubCredentialURLsWithEvidenceDepth(s string, depth int) (string, Redactio
 // too, since values are decoded before inspection. If rawURL cannot be parsed,
 // the raw string is scrubbed directly.
 func RedactURL(rawURL string) string {
+	if len(rawURL) > maxScrubInputSize {
+		return "REDACTED"
+	}
 	redacted, _, _ := redactURLWithEvidence(rawURL)
 	return redacted
 }
@@ -546,29 +600,34 @@ func replaceTokenVariants(value, token string) string {
 		return "REDACTED"
 	}
 	redacted := replaceTokenVariantsDirect(value, token)
-	if redacted != value {
-		return redacted
-	}
+	rawChanged := redacted != value
+	decodedChanged := false
 	// URL parsers and upstream diagnostics can percent-encode only selected
 	// bytes (for example, "a%62c"). Inspect a small, bounded number of decoded
 	// views so mixed encodings are covered without enumerating combinations.
-	candidate := value
+	candidate := redacted
 	for depth := 0; depth < maxRawPercentDecodeDepth; depth++ {
 		decoded, changed := decodePercentEscapes(candidate)
 		if !changed {
-			return value
+			break
 		}
 		decodedRedacted := replaceTokenVariantsDirect(decoded, token)
 		if decodedRedacted != decoded {
-			return decodedRedacted
+			decodedChanged = true
 		}
-		candidate = decoded
+		candidate = decodedRedacted
 	}
 	// A representation that is still changing after the decode budget is
 	// exhausted is intentionally opaque. Returning the original value here
 	// would make a deep percent-encoding an escape hatch around token removal.
 	if _, changed := decodePercentEscapes(candidate); changed {
 		return "REDACTED"
+	}
+	if decodedChanged {
+		return candidate
+	}
+	if rawChanged {
+		return redacted
 	}
 	return value
 }
@@ -1494,6 +1553,12 @@ func regexCredentialValueRanges(value string) ([]credentialValueRange, Redaction
 					prefixEnd = credentialStart
 				}
 			}
+			if isQuotedValueStart(value, prefixEnd) {
+				// The canonical scanner handles the complete quoted value, including
+				// spaces and escaped delimiters. A regex match would otherwise claim
+				// only the first word and leave the remainder visible.
+				continue
+			}
 			credential := value[prefixEnd:index[1]]
 			if shouldSkipCredentialRange(step.expression, credential) {
 				// The broad authorization fallback protects custom schemes. A
@@ -1590,14 +1655,15 @@ func canonicalCredentialRangeAt(value string, delimiter int) (credentialValueRan
 	if valueStart >= len(value) {
 		return credentialValueRange{}, false
 	}
-	valueEnd := assignmentValueEnd(value, valueStart, quoted)
-	if quoted && isQuotedValueStart(value, valueStart) {
+	valueQuoted := isQuotedValueStart(value, valueStart)
+	valueEnd := assignmentValueEnd(value, valueStart, valueQuoted)
+	if valueQuoted {
 		// Keep the string delimiters byte-for-byte; only the value inside
 		// them is a replacement candidate.
 		valueStart++
 	}
 	if isAuthorizationKey(key) {
-		valueStart, valueEnd = authorizationValueRange(value, valueStart, valueEnd, quoted)
+		valueStart, valueEnd = authorizationValueRange(value, valueStart, valueEnd, quoted || valueQuoted)
 	}
 	if valueEnd <= valueStart || value[valueStart:valueEnd] == "REDACTED" {
 		return credentialValueRange{}, false
@@ -1640,7 +1706,7 @@ func isAuthorizationKey(value string) bool {
 func authorizationValueRange(value string, start, end int, quoted bool) (int, int) {
 	if !quoted {
 		end = start
-		for end < len(value) && value[end] != '\r' && value[end] != '\n' {
+		for end < len(value) && value[end] != '\r' && value[end] != '\n' && value[end] != '&' {
 			end++
 		}
 	}
@@ -1774,7 +1840,7 @@ func assignmentValueEnd(value string, start int, quoted bool) int {
 	}
 	for index := start; index < len(value); index++ {
 		switch value[index] {
-		case ' ', '\t', '\r', '\n', ',', ';', '}':
+		case ' ', '\t', '\r', '\n', ',', ';', '&', '}':
 			return index
 		}
 	}

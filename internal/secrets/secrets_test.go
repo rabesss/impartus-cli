@@ -71,6 +71,101 @@ func TestRedactURL_RedactsAssignmentAliasesInQuery(t *testing.T) {
 	}
 }
 
+func TestRedactURL_CanonicalizesObfuscatedSensitiveQueryKeys(t *testing.T) {
+	t.Parallel()
+
+	for _, rawURL := range []string{
+		`https://host/path?to\u006ben=json-key-secret&keep=1`,
+		"https://host/path?to\u200bken=format-key-secret&keep=1",
+		`https://host/path?to%5Cu006ben=encoded-json-key-secret&keep=1`,
+	} {
+		got := RedactURL(rawURL)
+		for _, secret := range []string{"json-key-secret", "format-key-secret", "encoded-json-key-secret"} {
+			if strings.Contains(got, secret) {
+				t.Fatalf("RedactURL(%q) leaked obfuscated query credential %q: %q", rawURL, secret, got)
+			}
+		}
+		if !strings.Contains(got, "REDACTED") || !strings.Contains(got, "keep=1") {
+			t.Fatalf("RedactURL(%q) = %q, want redaction marker and safe context", rawURL, got)
+		}
+	}
+}
+
+func TestIsSensitiveQueryKeyUsesBoundedCanonicalization(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{
+		"token",
+		`to\u006ben`,
+		"to\u200bken",
+		fullyPercentEncode("token"),
+	} {
+		if !IsSensitiveQueryKey(key) {
+			t.Fatalf("IsSensitiveQueryKey(%q) = false, want sensitive", key)
+		}
+	}
+
+	deepTokenKey := "token"
+	for index := 0; index < 5; index++ {
+		deepTokenKey = fullyPercentEncode(deepTokenKey)
+	}
+	if !IsSensitiveQueryKey(deepTokenKey) {
+		t.Fatalf("IsSensitiveQueryKey() = false for deeply encoded token key")
+	}
+	rawQueryKey := "token"
+	for index := 0; index < 4; index++ {
+		rawQueryKey = fullyPercentEncode(rawQueryKey)
+	}
+	parsedQuery, err := url.ParseQuery(rawQueryKey + "=query-secret&course=1")
+	if err != nil {
+		t.Fatalf("url.ParseQuery() error = %v", err)
+	}
+	for key := range parsedQuery {
+		if key == "course" && IsSensitiveQueryKey(key) {
+			t.Fatal("IsSensitiveQueryKey() classified safe policy query key as sensitive")
+		}
+		if key != "course" && !IsSensitiveQueryKey(key) {
+			t.Fatalf("IsSensitiveQueryKey(%q) = false after raw query parsing", key)
+		}
+	}
+
+	for _, key := range []string{"course", `co\u0075rse`, "co\u200b urse"} {
+		if IsSensitiveQueryKey(key) {
+			t.Fatalf("IsSensitiveQueryKey(%q) = true, want ordinary key preserved", key)
+		}
+	}
+	deepSafeKey := "course"
+	for index := 0; index < 4; index++ {
+		deepSafeKey = fullyPercentEncode(deepSafeKey)
+	}
+	if IsSensitiveQueryKey(deepSafeKey) {
+		t.Fatalf("IsSensitiveQueryKey() = true for deeply encoded ordinary key")
+	}
+}
+
+func TestRedactURLWithToken_RedactsDirectUnknownCredential(t *testing.T) {
+	const token = "direct-url-token"
+	rawURL := "https://host/path?unknown=" + token + "&keep=1"
+	got := RedactURLWithToken(rawURL, token)
+	if strings.Contains(got, token) {
+		t.Fatalf("RedactURLWithToken(%q) leaked token: %q", rawURL, got)
+	}
+	if !strings.Contains(got, "REDACTED") || !strings.Contains(got, "keep=1") {
+		t.Fatalf("RedactURLWithToken(%q) = %q, want marker and safe context", rawURL, got)
+	}
+}
+
+func TestRedactURL_ScrubsDecodedNestedAssignmentInNonSensitiveValue(t *testing.T) {
+	rawURL := "https://host/path?next=token%3DSECRET%26done%3D1"
+	got := RedactURL(rawURL)
+	if strings.Contains(got, "SECRET") {
+		t.Fatalf("RedactURL(%q) leaked decoded nested credential: %q", rawURL, got)
+	}
+	if !strings.Contains(got, "REDACTED") || !strings.Contains(got, "done%3D1") {
+		t.Fatalf("RedactURL(%q) = %q, want nested marker and safe context", rawURL, got)
+	}
+}
+
 func TestRedactURL_MalformedFallbackStripsAllUserinfoForms(t *testing.T) {
 	for _, rawURL := range []string{
 		"https://username@host/%zz",
@@ -101,6 +196,43 @@ func TestRedactURL_MalformedFallbackRedactsNestedPercentEncodedCredential(t *tes
 	}
 	if !strings.Contains(got, "REDACTED") {
 		t.Fatalf("RedactURL(%q) = %q, want redaction marker", rawURL, got)
+	}
+}
+
+func TestRedactURL_MalformedFallbackFailsClosedAfterPercentDecodeBudget(t *testing.T) {
+	const secret = "too-deep-malformed-secret"
+	nested := "https://inner.example.test/cb?token=" + secret
+	for index := 0; index <= maxRawPercentDecodeDepth; index++ {
+		nested = url.QueryEscape(nested)
+	}
+	rawURL := "https://host/%zz?next=" + nested
+	if _, err := url.Parse(rawURL); err == nil {
+		t.Skip("precondition failed: url.Parse unexpectedly accepted malformed URL")
+	}
+	if got := RedactURL(rawURL); got != "REDACTED" {
+		t.Fatalf("RedactURL() = %q, want opaque marker after decode budget", got)
+	}
+}
+
+func TestScrubRedactsQuotedValuesForUnquotedSensitiveKeys(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		input  string
+		secret string
+	}{
+		{name: "double quoted", input: `password = "p@ss w0rd"`, secret: `p@ss w0rd`},
+		{name: "single quoted", input: "password='single quoted value'", secret: "single quoted value"},
+		{name: "quoted newline", input: "password = \"line one\nline two\"", secret: "line one\nline two"},
+		{name: "escaped quote", input: `password = "p\"ss w0rd"`, secret: `p\"ss w0rd`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := Scrub(test.input)
+			if strings.Contains(got, test.secret) || !strings.Contains(got, "REDACTED") {
+				t.Fatalf("Scrub(%q) = %q, want complete quoted value redaction", test.input, got)
+			}
+		})
 	}
 }
 
@@ -263,6 +395,24 @@ func TestRedactWithTokenFailsClosedBeforeLargeVariantScan(t *testing.T) {
 	got := RedactWithToken(value, "small-secret")
 	if got != "REDACTED" {
 		t.Fatalf("RedactWithToken() = %q, want fixed fail-safe marker", got)
+	}
+}
+
+func TestRedactWithTokenRedactsMixedDuplicateRepresentations(t *testing.T) {
+	t.Parallel()
+
+	const token = `mixed+"token`
+	encoded := url.QueryEscape(token)
+	jsonEncoded := jsonEscapeToken(token)
+	input := "first=" + token + " second=" + encoded + " third=" + jsonEncoded
+	got := RedactWithToken(input, token)
+	for _, secret := range []string{token, encoded, jsonEncoded} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("RedactWithToken() leaked representation %q: %q", secret, got)
+		}
+	}
+	if strings.Count(got, "REDACTED") < 3 {
+		t.Fatalf("RedactWithToken() = %q, want all mixed occurrences redacted", got)
 	}
 }
 
@@ -808,6 +958,28 @@ func TestScrubRejectsOversizedDiagnosticsBeforeScanning(t *testing.T) {
 	}
 	if got != "REDACTED" {
 		t.Fatalf("Scrub() = %q, want fixed fail-safe marker", got)
+	}
+}
+
+func TestURLRedactionRejectsOversizedInputBeforeScanning(t *testing.T) {
+	input := "https://host/path?token=oversized-secret&padding=" +
+		strings.Repeat("x", maxScrubInputSize)
+	started := time.Now()
+	if got := RedactURL(input); got != "REDACTED" {
+		t.Fatalf("RedactURL() = %q, want fixed fail-safe marker", got)
+	}
+	if got, evidence := ScrubCredentialURLsWithEvidence(input); got != "REDACTED" || evidence.Count() != 0 {
+		t.Fatalf("ScrubCredentialURLsWithEvidence() = (%q, %d), want fixed marker and no evidence", got, evidence.Count())
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("direct URL redaction took %v on oversized input", elapsed)
+	}
+	allocs := testing.AllocsPerRun(20, func() {
+		_ = RedactURL(input)
+		_, _ = ScrubCredentialURLsWithEvidence(input)
+	})
+	if allocs > 0 {
+		t.Fatalf("oversized URL redaction allocated %.0f times, want no scanning allocations", allocs)
 	}
 }
 
