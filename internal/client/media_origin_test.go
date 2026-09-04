@@ -155,6 +155,74 @@ func TestGetAuthorizedWithTokenDoesNotAttachTokenToUnconfiguredRemoteOrigin(t *t
 	}
 }
 
+func TestGetAuthorizedWithTokenRejectsBearerInUnconfiguredInitialURLFields(t *testing.T) {
+	const token = "initial-url-secret"
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{name: "path", raw: "https://media.example.test/" + token + "/segment.ts"},
+		{name: "encoded path", raw: "https://media.example.test/" + percentEncodeASCII(token) + "/segment.ts"},
+		{name: "host", raw: "https://" + token + ".media.example.test/segment.ts"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			transport := &mediaOriginCaptureTransport{}
+			c := New(&http.Client{Transport: transport}, nil)
+			resp, err := c.GetAuthorizedWithTokenForOrigins(context.Background(), tc.raw, token)
+			if resp != nil {
+				_ = resp.Body.Close() //nolint:errcheck
+			}
+			if err == nil || !errors.Is(err, ErrMediaOrigin) {
+				t.Fatalf("GetAuthorizedWithTokenForOrigins(%q) error = %v, want ErrMediaOrigin", tc.raw, err)
+			}
+			if transport.request != nil {
+				t.Fatal("unconfigured URL carrying the bearer was sent")
+			}
+		})
+	}
+}
+
+func TestGetAuthorizedWithTokenStripsTokenlessInitialCredentialAliases(t *testing.T) {
+	for _, key := range []string{"authorization", "AUTHORIZATION", "token", "x-api-key", "Cookie"} {
+		t.Run(key, func(t *testing.T) {
+			transport := &mediaOriginCaptureTransport{}
+			c := New(&http.Client{Transport: transport}, nil)
+			rawURL := "https://media.example.test/segment.ts?" + key + "=Bearer+query-only-secret&keep=1"
+			resp, err := c.GetAuthorizedWithTokenForOrigins(context.Background(), rawURL, "")
+			if err != nil {
+				t.Fatalf("GetAuthorizedWithTokenForOrigins() error = %v", err)
+			}
+			if resp != nil {
+				_ = resp.Body.Close() //nolint:errcheck
+			}
+			if transport.request == nil {
+				t.Fatal("request was not sent")
+			}
+			if got := transport.request.URL.RawQuery; got != "keep=1" {
+				t.Fatalf("request query = %q, want credential alias removed", got)
+			}
+		})
+	}
+}
+
+func TestGetAuthorizedWithTokenCanonicalizesInitialURLScheme(t *testing.T) {
+	transport := &mediaOriginCaptureTransport{}
+	c := New(&http.Client{Transport: transport}, nil)
+	resp, err := c.GetAuthorizedWithTokenForOrigins(context.Background(), "HtTp://media.example.test/segment.ts", "")
+	if err != nil {
+		t.Fatalf("GetAuthorizedWithTokenForOrigins() error = %v", err)
+	}
+	if resp != nil {
+		_ = resp.Body.Close() //nolint:errcheck
+	}
+	if transport.request == nil || transport.request.URL == nil {
+		t.Fatal("request was not sent")
+	}
+	if transport.request.URL.Scheme != "http" {
+		t.Fatalf("request scheme = %q, want lower-case http", transport.request.URL.Scheme)
+	}
+}
+
 func TestGetAuthorizedWithTokenAttachesTokenToExactCallerOrigin(t *testing.T) {
 	transport := &mediaOriginCaptureTransport{}
 	c := New(&http.Client{Transport: transport}, nil)
@@ -548,6 +616,93 @@ func TestGetAuthorizedWithTokenSanitizesRedirectHookViews(t *testing.T) {
 	}
 }
 
+func TestSanitizedRedirectRequestHidesHostAndRequestURI(t *testing.T) {
+	const token = "sanitized-request-secret"
+	request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "https://source.example.test/start?unknown="+token, nil)
+	request.Host = "Bearer " + token
+	request.RequestURI = "/start?unknown=" + token
+
+	safe := sanitizedRedirectRequest(request, token, false)
+	if requestViewContainsCredential(safe, token) {
+		t.Fatalf("sanitized redirect request leaked bearer material: host=%q requestURI=%q url=%q", safe.Host, safe.RequestURI, safe.URL)
+	}
+}
+
+func TestGetAuthorizedWithTokenRejectsCredentialReintroducedInRedirectRequestFields(t *testing.T) {
+	const token = "request-field-secret"
+	encodedToken := percentEncodeASCII(token)
+	for _, tc := range []struct {
+		name string
+		set  func(*http.Request)
+	}{
+		{name: "host", set: func(next *http.Request) { next.Host = "bEaReR " + token }},
+		{name: "encoded host", set: func(next *http.Request) { next.Host = "vhost-" + encodedToken }},
+		{name: "request URI", set: func(next *http.Request) { next.RequestURI = "/segment/" + encodedToken }},
+		{name: "request URI query", set: func(next *http.Request) {
+			next.RequestURI = "/segment.ts?authorization=Bearer+" + token
+		}},
+		{name: "method", set: func(next *http.Request) { next.Method = http.MethodPost }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var targetRequests int
+			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				targetRequests++
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer target.Close()
+			source := httptest.NewServer(http.RedirectHandler(target.URL+"/segment.ts", http.StatusFound))
+			defer source.Close()
+			httpClient := source.Client()
+			httpClient.CheckRedirect = func(next *http.Request, _ []*http.Request) error {
+				tc.set(next)
+				return nil
+			}
+
+			c := New(httpClient, nil)
+			resp, err := c.GetAuthorizedWithTokenForOrigins(context.Background(), source.URL+"/playlist.m3u8", token, source.URL, target.URL)
+			if resp != nil {
+				_ = resp.Body.Close() //nolint:errcheck
+			}
+			if err == nil || !errors.Is(err, ErrMediaOrigin) {
+				t.Fatalf("redirect %s error = %v, want ErrMediaOrigin", tc.name, err)
+			}
+			if targetRequests != 0 {
+				t.Fatalf("redirect %s target requests = %d, want 0", tc.name, targetRequests)
+			}
+		})
+	}
+}
+
+func TestGetAuthorizedWithTokenRejectsDoubleEncodedCredentialInRedirectHeader(t *testing.T) {
+	const token = "double-header-secret"
+	doubleEncoded := url.PathEscape(url.PathEscape(token))
+	var targetRequests int
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		targetRequests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+	source := httptest.NewServer(http.RedirectHandler(target.URL+"/segment.ts", http.StatusFound))
+	defer source.Close()
+	httpClient := source.Client()
+	httpClient.CheckRedirect = func(next *http.Request, _ []*http.Request) error {
+		next.Header["x-tRaCe"] = []string{"Bearer " + doubleEncoded}
+		return nil
+	}
+
+	c := New(httpClient, nil)
+	resp, err := c.GetAuthorizedWithTokenForOrigins(context.Background(), source.URL+"/playlist.m3u8", token, source.URL, target.URL)
+	if resp != nil {
+		_ = resp.Body.Close() //nolint:errcheck
+	}
+	if err == nil || !errors.Is(err, ErrMediaOrigin) {
+		t.Fatalf("double-encoded redirect header error = %v, want ErrMediaOrigin", err)
+	}
+	if targetRequests != 0 {
+		t.Fatalf("double-encoded redirect header target requests = %d, want 0", targetRequests)
+	}
+}
+
 func TestGetAuthorizedWithTokenRejectsCredentialReintroducedInRedirectURLFields(t *testing.T) {
 	const token = "url-field-secret"
 	encodedToken := percentEncodeASCII(token)
@@ -701,6 +856,11 @@ func TestSanitizedRedirectResponseRedactsStatusAndCookie2(t *testing.T) {
 func requestViewContainsCredential(request *http.Request, token string) bool {
 	if request == nil {
 		return false
+	}
+	for _, value := range []string{request.Host, request.RequestURI} {
+		if strings.Contains(value, token) {
+			return true
+		}
 	}
 	if request.URL != nil {
 		for _, part := range []string{

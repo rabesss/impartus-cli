@@ -113,23 +113,56 @@ func (c *Client) getAuthorizedWithToken(ctx context.Context, rawURL, token strin
 	if err != nil {
 		return nil, err
 	}
-	if err := validateMediaURL(parsedURL, token != ""); err != nil {
-		return nil, err
+	// Config and media-origin validation accept scheme casing, while
+	// transports dispatch on canonical lower-case schemes. Normalize before
+	// handing the URL to net/http.
+	rawURL = parsedURL.String()
+	if validateErr := validateMediaURL(parsedURL, token != ""); validateErr != nil {
+		return nil, validateErr
+	}
+
+	initialHasCredentialQuery := hasCredentialQuery(parsedURL)
+	if token == "" && initialHasCredentialQuery {
+		// A tokenless call must not forward a credential-bearing query alias
+		// supplied by an upstream playlist or caller. Keep the media redirect
+		// wrapper enabled below so aliases introduced by a redirect are stripped
+		// too.
+		strippedURL, stripErr := stripBearerTokenQuery(rawURL, "")
+		if stripErr != nil {
+			return nil, stripErr
+		}
+		rawURL = strippedURL
+		parsedURL, err = parseRequestURL(rawURL)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	requestClient := c.httpClient
-	if token != "" || hasCredentialQuery(parsedURL) {
-		requestClient = c.httpClientForMediaRequest(parsedURL, token, policy)
+	if token != "" || initialHasCredentialQuery {
 		if token != "" && !policy.allows(parsedURL) {
 			// A playlist or media endpoint may be public, but an unconfigured
-			// origin must never receive the Impartus bearer token.
-			var stripErr error
-			rawURL, stripErr = stripBearerTokenQuery(rawURL, token)
+			// origin must never receive the Impartus bearer token. Remove known
+			// and token-bearing query aliases, then fail closed if the token is
+			// still present in any other URL component (for example a path or
+			// hostname). There is no safe way to rewrite those components while
+			// preserving the requested destination.
+			strippedURL, stripErr := stripBearerTokenQuery(rawURL, token)
 			if stripErr != nil {
 				return nil, stripErr
 			}
+			parsedStrippedURL, parseErr := parseRequestURL(strippedURL)
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			if boundaryErr := validateRedirectCredentialBoundary(parsedStrippedURL, token, false); boundaryErr != nil {
+				return nil, boundaryErr
+			}
+			rawURL = parsedStrippedURL.String()
+			parsedURL = parsedStrippedURL
 			token = ""
 		}
+		requestClient = c.httpClientForMediaRequest(parsedURL, token, policy)
 	}
 	return c.doRequestWithTokenClient(ctx, http.MethodGet, rawURL, nil, token, requestClient, redactionToken)
 }

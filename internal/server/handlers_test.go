@@ -31,6 +31,8 @@ func TestEnsureScheme(t *testing.T) {
 	}{
 		{"https already", "https://example.com", "https://example.com"},
 		{"http already", "http://example.com", "http://example.com"},
+		{"uppercase HTTPS", "HTTPS://example.com", "https://example.com"},
+		{"mixed-case HTTP", "HtTp://example.com/api", "http://example.com/api"},
 		{"no scheme", "example.com", "https://example.com"},
 		{"no scheme with path", "example.com/api/v1", "https://example.com/api/v1"},
 	}

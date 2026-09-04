@@ -89,46 +89,56 @@ func (c *Client) httpClientForMediaRequest(initialURL *url.URL, token string, po
 	client.Jar = nil
 	previousCheckRedirect := client.CheckRedirect
 	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
-		if len(via) >= defaultMaxRedirects {
-			return errors.New("stopped after 10 redirects")
-		}
-		if err := validateMediaRedirect(initialURL, next.URL, policy); err != nil {
-			return err
-		}
-
-		// Strip bearer query credentials before invoking a caller-supplied hook,
-		// so the hook cannot accidentally log or persist them. An initial
-		// unconfigured origin never carries this token; a configured request may
-		// retain it on same-origin redirects because the upstream may require the
-		// query form in addition to the Authorization header.
-		initialAuthorized := policy.allows(initialURL)
-		sameOrigin := sameMediaOrigin(initialURL, next.URL)
-		if err := maybeStripRedirectURL(next.URL, token, !initialAuthorized || !sameOrigin); err != nil {
-			return err
-		}
-		removeAuth := !initialAuthorized || !sameOrigin
-		removeMediaRedirectHeaders(next.Header, removeAuth)
-		if previousCheckRedirect != nil {
-			if err := callMediaRedirectHook(previousCheckRedirect, next, via, token); err != nil {
-				return err
-			}
-		}
-		// A custom hook may rewrite the URL or add sensitive headers. Recheck
-		// the policy and enforce the cross-origin header boundary after it runs.
-		if err := validateMediaRedirect(initialURL, next.URL, policy); err != nil {
-			return err
-		}
-		sameOrigin = sameMediaOrigin(initialURL, next.URL)
-		if err := maybeStripRedirectURL(next.URL, token, !initialAuthorized || !sameOrigin); err != nil {
-			return err
-		}
-		removeMediaRedirectHeaders(next.Header, !initialAuthorized || !sameOrigin)
-		if err := validateRedirectCredentialBoundary(next.URL, token, initialAuthorized && sameOrigin); err != nil {
-			return err
-		}
-		return nil
+		return c.handleMediaRedirect(initialURL, token, policy, previousCheckRedirect, next, via)
 	}
 	return &client
+}
+
+func (c *Client) handleMediaRedirect(initialURL *url.URL, token string, policy mediaOriginPolicy, previousCheckRedirect func(*http.Request, []*http.Request) error, next *http.Request, via []*http.Request) error {
+	if len(via) >= defaultMaxRedirects {
+		return errors.New("stopped after 10 redirects")
+	}
+	canonicalizeMediaRedirectScheme(next)
+	if err := validateMediaRedirect(initialURL, next.URL, policy); err != nil {
+		return err
+	}
+
+	// Strip bearer query credentials before invoking a caller-supplied hook,
+	// so the hook cannot accidentally log or persist them. An initial
+	// unconfigured origin never carries this token; a configured request may
+	// retain it on same-origin redirects because the upstream may require the
+	// query form in addition to the Authorization header.
+	initialAuthorized := policy.allows(initialURL)
+	sameOrigin := sameMediaOrigin(initialURL, next.URL)
+	if err := maybeStripRedirectURL(next.URL, token, !initialAuthorized || !sameOrigin); err != nil {
+		return err
+	}
+	removeMediaRedirectHeaders(next.Header, !initialAuthorized || !sameOrigin)
+	if previousCheckRedirect != nil {
+		if err := callMediaRedirectHook(previousCheckRedirect, next, via, token); err != nil {
+			return err
+		}
+	}
+	// A custom hook may rewrite the URL or add sensitive headers. Recheck
+	// the policy and enforce the cross-origin header boundary after it runs.
+	if err := validateMediaRedirect(initialURL, next.URL, policy); err != nil {
+		return err
+	}
+	sameOrigin = sameMediaOrigin(initialURL, next.URL)
+	if err := maybeStripRedirectURL(next.URL, token, !initialAuthorized || !sameOrigin); err != nil {
+		return err
+	}
+	removeMediaRedirectHeaders(next.Header, !initialAuthorized || !sameOrigin)
+	return validateRedirectRequestCredentialBoundary(next, token, initialAuthorized && sameOrigin)
+}
+
+func canonicalizeMediaRedirectScheme(request *http.Request) {
+	if request == nil || request.URL == nil {
+		return
+	}
+	if strings.EqualFold(request.URL.Scheme, "http") || strings.EqualFold(request.URL.Scheme, "https") {
+		request.URL.Scheme = strings.ToLower(request.URL.Scheme)
+	}
 }
 
 func maybeStripRedirectURL(rawURL *url.URL, token string, strip bool) error {
@@ -170,6 +180,34 @@ func validateRedirectCredentialBoundary(rawURL *url.URL, token string, allowQuer
 		}
 	}
 	return nil
+}
+
+// validateRedirectRequestCredentialBoundary extends the URL credential
+// boundary to request fields that are not represented by URL: Host controls
+// the outgoing Host header and RequestURI can be inspected by a custom
+// RoundTripper even when URL itself is clean. Query credentials remain
+// allowed only for an explicitly configured same-origin request.
+func validateRedirectRequestCredentialBoundary(request *http.Request, token string, allowQuery bool) error {
+	if request == nil {
+		return newMediaOriginError(ErrInvalidMediaURL)
+	}
+	if err := validateRedirectCredentialBoundary(request.URL, token, allowQuery); err != nil {
+		return err
+	}
+	if containsTokenRepresentation(request.Host, token) {
+		return newMediaOriginError(ErrMediaOrigin)
+	}
+	if request.RequestURI == "" {
+		return nil
+	}
+	requestURI, err := url.ParseRequestURI(request.RequestURI)
+	if err != nil {
+		if containsTokenRepresentation(request.RequestURI, token) {
+			return newMediaOriginError(ErrMediaOrigin)
+		}
+		return nil
+	}
+	return validateRedirectCredentialBoundary(requestURI, token, allowQuery)
 }
 
 func containsTokenRepresentation(value, token string) bool {
@@ -220,8 +258,7 @@ func callMediaRedirectHook(hook func(*http.Request, []*http.Request) error, next
 	if err := hook(safeNext, safeVia); err != nil {
 		return err
 	}
-	applyRedirectHookChanges(next, baseline, safeNext, token)
-	return nil
+	return applyRedirectHookChanges(next, baseline, safeNext, token)
 }
 
 func sanitizedRedirectRequest(request *http.Request, token string, includeResponse bool) *http.Request {
@@ -235,6 +272,7 @@ func sanitizedRedirectRequest(request *http.Request, token string, includeRespon
 	} else {
 		safe.RequestURI = safe.URL.RequestURI()
 	}
+	safe.Host = sanitizeRedirectValue(request.Host, token)
 	safe.Header = sanitizedRedirectHeader(request.Header, token)
 	safe.Trailer = sanitizedRedirectHeader(request.Trailer, token)
 	safe.Body = nil
@@ -276,8 +314,15 @@ func sanitizedRedirectURL(rawURL *url.URL, token string) *url.URL {
 	if err != nil {
 		safe = &url.URL{Scheme: rawURL.Scheme, Host: rawURL.Host, Path: "/"}
 	}
+	safe.Scheme = sanitizeRedirectValue(safe.Scheme, token)
+	safe.Host = sanitizeRedirectValue(safe.Host, token)
+	safe.Path = sanitizeRedirectValue(safe.Path, token)
+	safe.RawPath = sanitizeRedirectValue(safe.RawPath, token)
+	safe.RawQuery = sanitizeRedirectValue(safe.RawQuery, token)
+	safe.Opaque = sanitizeRedirectValue(safe.Opaque, token)
 	safe.User = nil
-	safe.Fragment = secrets.RedactWithToken(safe.Fragment, token)
+	safe.Fragment = sanitizeRedirectValue(safe.Fragment, token)
+	safe.RawFragment = sanitizeRedirectValue(safe.RawFragment, token)
 	return safe
 }
 
@@ -289,7 +334,7 @@ func sanitizedRedirectHeader(header http.Header, token string) http.Header {
 		}
 		redacted := make([]string, len(values))
 		for index, value := range values {
-			redacted[index] = secrets.RedactWithToken(value, token)
+			redacted[index] = sanitizeRedirectValue(value, token)
 		}
 		safe[key] = redacted
 	}
@@ -310,20 +355,62 @@ func isSensitiveRedirectHeader(key string) bool {
 	}
 }
 
-func applyRedirectHookChanges(next, baseline, modified *http.Request, token string) {
+func applyRedirectHookChanges(next, baseline, modified *http.Request, token string) error {
+	if err := validateRedirectHeaderCredentialBoundary(modified.Header, token); err != nil {
+		return err
+	}
 	if !sameRedirectURL(baseline.URL, modified.URL) {
 		next.URL = cloneRedirectURL(modified.URL)
 	}
 	if baseline.RequestURI != modified.RequestURI {
-		next.RequestURI = secrets.RedactWithToken(modified.RequestURI, token)
+		if containsTokenRepresentation(modified.RequestURI, token) {
+			return newMediaOriginError(ErrMediaOrigin)
+		}
+		next.RequestURI = modified.RequestURI
 	}
 	if baseline.Method != modified.Method {
-		next.Method = modified.Method
+		// Authenticated media requests are GETs. A redirect hook cannot turn
+		// one into a mutating or body-bearing method.
+		return newMediaOriginError(ErrMediaOrigin)
 	}
 	if baseline.Host != modified.Host {
+		if containsTokenRepresentation(modified.Host, token) {
+			return newMediaOriginError(ErrMediaOrigin)
+		}
 		next.Host = modified.Host
 	}
 	applyRedirectHeaderChanges(next.Header, baseline.Header, modified.Header, token)
+	return nil
+}
+
+// validateRedirectHeaderCredentialBoundary prevents a custom redirect hook
+// from smuggling the bearer into an otherwise innocuous header name. Named
+// authentication/cookie headers are handled separately by the origin policy:
+// they are removed across origins and preserved only for an authorized
+// same-origin redirect.
+func validateRedirectHeaderCredentialBoundary(header http.Header, token string) error {
+	for key, values := range header {
+		if isSensitiveRedirectHeader(key) {
+			continue
+		}
+		for _, value := range values {
+			if containsTokenRepresentation(value, token) {
+				return newMediaOriginError(ErrMediaOrigin)
+			}
+		}
+	}
+	return nil
+}
+
+// sanitizeRedirectValue redacts the token and bounded recursive URL-encoded
+// representations. The fallback marker is intentionally opaque: a hook must
+// never receive a partially decoded bearer value through a copied field.
+func sanitizeRedirectValue(value, token string) string {
+	redacted := secrets.RedactWithToken(value, token)
+	if containsTokenRepresentation(redacted, token) {
+		return "REDACTED"
+	}
+	return redacted
 }
 
 func sameRedirectURL(left, right *url.URL) bool {
@@ -360,7 +447,7 @@ func applyRedirectHeaderChanges(actual, baseline, modified http.Header, token st
 		}
 		redacted := make([]string, len(values))
 		for index, value := range values {
-			redacted[index] = secrets.RedactWithToken(value, token)
+			redacted[index] = sanitizeRedirectValue(value, token)
 		}
 		actual[key] = redacted
 	}

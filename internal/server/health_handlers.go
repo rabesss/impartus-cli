@@ -213,7 +213,7 @@ func (s *APIServer) probeUpstreamTCP(parent context.Context) bool {
 	host := u.Host
 	if !strings.Contains(host, ":") {
 		port := "80"
-		if u.Scheme == "https" {
+		if strings.EqualFold(u.Scheme, "https") {
 			port = "443"
 		}
 		host = net.JoinHostPort(host, port)
@@ -233,7 +233,17 @@ func (s *APIServer) probeUpstreamTCP(parent context.Context) bool {
 }
 
 func (s *APIServer) ensureScheme(rawURL string) string {
-	if !strings.HasPrefix(rawURL, "http") {
+	rawURL = strings.TrimSpace(rawURL)
+	if parsed, err := url.Parse(rawURL); err == nil && parsed != nil {
+		switch {
+		case strings.EqualFold(parsed.Scheme, "http"), strings.EqualFold(parsed.Scheme, "https"):
+			parsed.Scheme = strings.ToLower(parsed.Scheme)
+			return parsed.String()
+		case parsed.Scheme == "":
+			return "https://" + rawURL
+		}
+	}
+	if !strings.Contains(rawURL, "://") {
 		return "https://" + rawURL
 	}
 	return rawURL

@@ -125,6 +125,10 @@ func parseRequestURL(rawURL string) (*url.URL, error) {
 	if err := validateMediaURL(parsed, false); err != nil {
 		return nil, err
 	}
+	// URL validation is deliberately case-insensitive for compatibility with
+	// config and playlist inputs, but net/http transports expect the canonical
+	// lower-case protocol name.
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
 	return parsed, nil
 }
 
