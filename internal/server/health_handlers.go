@@ -212,23 +212,18 @@ func (s *APIServer) probeUpstreamHTTP(parent context.Context) (reachable, probed
 }
 
 func (s *APIServer) probeUpstreamTCP(parent context.Context) bool {
+	if s == nil || s.cfg == nil {
+		return false
+	}
+
 	profileURL, err := client.BaseURLPath(s.cfg.BaseURL, "user/profile")
 	if err != nil {
 		return false
 	}
 
-	u, err := url.Parse(profileURL)
-	if err != nil {
+	host, ok := upstreamTCPHost(profileURL)
+	if !ok {
 		return false
-	}
-
-	host := u.Host
-	if !strings.Contains(host, ":") {
-		port := "80"
-		if strings.EqualFold(u.Scheme, "https") {
-			port = "443"
-		}
-		host = net.JoinHostPort(host, port)
 	}
 
 	ctx, cancel := context.WithTimeout(parent, upstreamProbeTimeout)
@@ -242,6 +237,31 @@ func (s *APIServer) probeUpstreamTCP(parent context.Context) bool {
 	//nolint:errcheck
 	_ = conn.Close()
 	return true
+}
+
+// upstreamTCPHost returns the dial address for a validated profile URL. URL's
+// Hostname and Port accessors keep brackets and IPv6 zones out of the host
+// value itself; JoinHostPort then applies the correct brackets exactly once.
+// The caller is responsible for validating the URL before invoking this
+// helper, but malformed or hostless values still fail closed here.
+func upstreamTCPHost(profileURL string) (string, bool) {
+	u, err := url.Parse(profileURL)
+	if err != nil || u == nil {
+		return "", false
+	}
+
+	hostname := u.Hostname()
+	if hostname == "" {
+		return "", false
+	}
+	port := u.Port()
+	if port == "" {
+		port = "80"
+		if strings.EqualFold(u.Scheme, "https") {
+			port = "443"
+		}
+	}
+	return net.JoinHostPort(hostname, port), true
 }
 
 func (s *APIServer) ensureScheme(rawURL string) string {

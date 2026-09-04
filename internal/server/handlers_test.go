@@ -334,6 +334,49 @@ func TestProbeUpstreamTCP_ReachableServer(t *testing.T) {
 	}
 }
 
+func TestUpstreamTCPHostUsesURLAuthority(t *testing.T) {
+	tests := []struct {
+		name     string
+		profile  string
+		wantHost string
+	}{
+		{name: "IPv4 implicit HTTPS port", profile: "HTTPS://192.0.2.1/user/profile", wantHost: "192.0.2.1:443"},
+		{name: "hostname implicit HTTP port", profile: "http://api.example.test/user/profile", wantHost: "api.example.test:80"},
+		{name: "hostname explicit port", profile: "HTTPS://api.example.test:8443/user/profile", wantHost: "api.example.test:8443"},
+		{name: "IPv4 explicit port", profile: "http://192.0.2.1:43123/user/profile", wantHost: "192.0.2.1:43123"},
+		{name: "IPv6 implicit HTTPS port", profile: "https://[2001:db8::1]/user/profile", wantHost: "[2001:db8::1]:443"},
+		{name: "IPv6 explicit port", profile: "https://[2001:db8::1]:8443/user/profile", wantHost: "[2001:db8::1]:8443"},
+		{name: "IPv6 zone implicit port", profile: "https://[fe80::1%25lo0]/user/profile", wantHost: "[fe80::1%lo0]:443"},
+		{name: "IPv6 zone explicit port", profile: "https://[fe80::1%25lo0]:8443/user/profile", wantHost: "[fe80::1%lo0]:8443"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := upstreamTCPHost(test.profile)
+			if !ok {
+				t.Fatalf("upstreamTCPHost(%q) rejected valid URL", test.profile)
+			}
+			if got != test.wantHost {
+				t.Fatalf("upstreamTCPHost(%q) = %q, want %q", test.profile, got, test.wantHost)
+			}
+		})
+	}
+}
+
+func TestUpstreamTCPHostRejectsHostlessURL(t *testing.T) {
+	for _, profile := range []string{
+		"://invalid",
+		"example.test/user/profile",
+		"https:///user/profile",
+	} {
+		t.Run(profile, func(t *testing.T) {
+			if got, ok := upstreamTCPHost(profile); ok {
+				t.Fatalf("upstreamTCPHost(%q) = (%q, true), want rejection", profile, got)
+			}
+		})
+	}
+}
+
 // ============================================================================
 // checkUpstreamStatus Tests
 // ============================================================================
