@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/rabesss/impartus-cli/internal/config"
+	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
 // Client is the HTTP client for interacting with the Impartus API.
@@ -27,6 +28,8 @@ const defaultUserAgent = "impartus-downloader"
 
 const maxCatalogResponseSize int64 = 10 * 1024 * 1024
 
+const maxUpstreamErrorBodySize int64 = 512
+
 var errResponseSizeLimit = errors.New("response exceeds max size")
 
 func readResponseBodyWithLimit(body io.Reader, limit int64) ([]byte, error) {
@@ -38,6 +41,14 @@ func readResponseBodyWithLimit(body io.Reader, limit int64) ([]byte, error) {
 		return nil, fmt.Errorf("%w %d bytes", errResponseSizeLimit, limit)
 	}
 	return contents, nil
+}
+
+func readSanitizedErrorBody(body io.Reader, token string) (string, error) {
+	contents, err := io.ReadAll(io.LimitReader(body, maxUpstreamErrorBodySize))
+	if err != nil {
+		return "", secrets.SanitizeErrorWithToken(err, token)
+	}
+	return secrets.RedactWithToken(strings.TrimSpace(string(contents)), token), nil
 }
 
 // New creates a new Impartus API client with the given HTTP client and user agent
@@ -99,11 +110,11 @@ func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, e
 		})
 	}
 	if resp.StatusCode != http.StatusOK {
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
+		body, readErr := readSanitizedErrorBody(resp.Body, token)
 		if readErr != nil {
 			return nil, fmt.Errorf("subjects request failed with status %d and unreadable body: %w", resp.StatusCode, readErr)
 		}
-		return nil, fmt.Errorf("subjects request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("subjects request failed with status %d: %s", resp.StatusCode, body)
 	}
 
 	body, err := readResponseBodyWithLimit(resp.Body, maxCatalogResponseSize)
@@ -151,11 +162,11 @@ func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Cou
 		})
 	}
 	if resp.StatusCode != http.StatusOK {
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
+		body, readErr := readSanitizedErrorBody(resp.Body, token)
 		if readErr != nil {
 			return nil, fmt.Errorf("lectures request failed with status %d and unreadable body: %w", resp.StatusCode, readErr)
 		}
-		return nil, fmt.Errorf("lectures request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("lectures request failed with status %d: %s", resp.StatusCode, body)
 	}
 
 	body, err := readResponseBodyWithLimit(resp.Body, maxCatalogResponseSize)
@@ -246,12 +257,12 @@ func (c *Client) getPlaylist(ctx context.Context, streamURL, token string, lectu
 		})
 	}
 	if resp.StatusCode != http.StatusOK {
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
+		body, readErr := readSanitizedErrorBody(resp.Body, token)
 		_ = resp.Body.Close() //nolint:errcheck
 		if readErr != nil {
 			return ParsedPlaylist{}, fmt.Errorf("playlist request failed with status %d and unreadable body: %w", resp.StatusCode, readErr)
 		}
-		return ParsedPlaylist{}, fmt.Errorf("playlist request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return ParsedPlaylist{}, fmt.Errorf("playlist request failed with status %d: %s", resp.StatusCode, body)
 	}
 
 	body, readErr := readResponseBodyWithLimit(resp.Body, maxPlaylistResponseSize)

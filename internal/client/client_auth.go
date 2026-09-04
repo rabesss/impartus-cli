@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rabesss/impartus-cli/internal/config"
+	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
 const maxLoginResponseSize int64 = 1 * 1024 * 1024
@@ -101,16 +102,7 @@ func (c *Client) readStoredTokenAt(path string) (string, bool) {
 
 func (c *Client) validateStoredToken(ctx context.Context, baseURL, token string) (bool, error) {
 	profileURL := fmt.Sprintf("%s/user/profile", baseURL)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, profileURL, nil)
-	if err != nil {
-		return false, err
-	}
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
-	req.Header.Set("Content-Type", "application/json;charset=UTF-8")
-	req.Header.Set("Accept", "application/json, text/plain, */*")
-	req.Header.Set("User-Agent", c.userAgent())
-
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.GetAuthorizedWithToken(ctx, profileURL, token)
 	if err != nil {
 		return false, err
 	}
@@ -149,13 +141,20 @@ func (c *Client) tryStoredToken(ctx context.Context, cfg *config.Config, baseURL
 }
 
 func (c *Client) login(ctx context.Context, cfg *config.Config, baseURL string) (string, error) {
+	c.initialize()
 	req, err := c.newLoginRequest(ctx, cfg, baseURL)
 	if err != nil {
 		return "", err
 	}
-	response, err := c.httpClient.Do(req)
+	requestClient := *c.httpClient
+	requestClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+		// Login requests carry the username and password in the body. Never
+		// replay that body to a redirected origin or across an HTTPS downgrade.
+		return http.ErrUseLastResponse
+	}
+	response, err := requestClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("login failed: %w", err)
+		return "", fmt.Errorf("login failed: %w", secrets.SanitizeError(err))
 	}
 	defer func() { _ = response.Body.Close() }() //nolint:errcheck
 	if err := validateLoginResponse(response); err != nil {
@@ -166,7 +165,7 @@ func (c *Client) login(ctx context.Context, cfg *config.Config, baseURL string) 
 		if errors.Is(readErr, errResponseSizeLimit) {
 			return "", fmt.Errorf("login response exceeds max size %d bytes", maxLoginResponseSize)
 		}
-		return "", fmt.Errorf("failed to read login response: %w", readErr)
+		return "", fmt.Errorf("failed to read login response: %w", secrets.SanitizeError(readErr))
 	}
 	var loginResponse LoginResponse
 	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&loginResponse); err != nil {

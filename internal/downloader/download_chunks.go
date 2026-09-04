@@ -47,11 +47,11 @@ func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, i
 
 	resp, err := d.client.GetAuthorizedWithToken(ctx, url, d.config.Token)
 	if err != nil {
-		return "", nil, 0, fmt.Errorf("chunk request failed for URL %s: %w", secrets.RedactURL(url), err)
+		return "", nil, 0, fmt.Errorf("chunk request failed for URL %s: %w", secrets.RedactURLWithToken(url, d.config.Token), secrets.SanitizeErrorWithToken(err, d.config.Token))
 	}
 	defer func() { closeErr := resp.Body.Close(); _ = closeErr }()
 
-	if statusErr := chunkResponseError(resp, url); statusErr != nil {
+	if statusErr := chunkResponseError(resp, url, d.config.Token); statusErr != nil {
 		return "", nil, 0, statusErr
 	}
 
@@ -99,9 +99,13 @@ func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, i
 	return outFilepath, nil, bytesWritten, nil
 }
 
-func chunkResponseError(resp *http.Response, url string) error {
+func chunkResponseError(resp *http.Response, url string, tokens ...string) error {
+	token := ""
+	if len(tokens) > 0 {
+		token = tokens[0]
+	}
 	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("chunk request failed with status %d for URL %s: %w", resp.StatusCode, secrets.RedactURL(url), &client.AuthenticationError{
+		return fmt.Errorf("chunk request failed with status %d for URL %s: %w", resp.StatusCode, secrets.RedactURLWithToken(url, token), &client.AuthenticationError{
 			Operation:  "chunk",
 			StatusCode: resp.StatusCode,
 		})
@@ -111,13 +115,13 @@ func chunkResponseError(resp *http.Response, url string) error {
 	}
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
 	if readErr != nil {
-		return fmt.Errorf("chunk request failed with status %d and unreadable error body: %w", resp.StatusCode, readErr)
+		return fmt.Errorf("chunk request failed with status %d and unreadable error body: %w", resp.StatusCode, secrets.SanitizeErrorWithToken(readErr, token))
 	}
-	message := secrets.Scrub(strings.TrimSpace(string(body)))
+	message := secrets.RedactWithToken(strings.TrimSpace(string(body)), token)
 	if message == "" {
-		return fmt.Errorf("chunk request failed with status %d for URL %s", resp.StatusCode, secrets.RedactURL(url))
+		return fmt.Errorf("chunk request failed with status %d for URL %s", resp.StatusCode, secrets.RedactURLWithToken(url, token))
 	}
-	return fmt.Errorf("chunk request failed with status %d for URL %s: %s", resp.StatusCode, secrets.RedactURL(url), message)
+	return fmt.Errorf("chunk request failed with status %d for URL %s: %s", resp.StatusCode, secrets.RedactURLWithToken(url, token), message)
 }
 
 func (d *Downloader) downloadURL(ctx context.Context, url string, id int, chunk int, view string) (string, int64, error) {

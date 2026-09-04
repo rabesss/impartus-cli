@@ -12,6 +12,7 @@ import (
 
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
+	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
 // sanitizeFilename strips path separators and applies filepath.Base to prevent
@@ -27,6 +28,16 @@ func sanitizeFilename(s string) string {
 const maxSlideSize int64 = 100 * 1024 * 1024
 
 var errSlideSizeLimit = errors.New("slide exceeds size limit")
+
+const maxSlideErrorBodySize int64 = 512
+
+func readSanitizedSlideErrorBody(body io.Reader, token string) (string, error) {
+	contents, err := io.ReadAll(io.LimitReader(body, maxSlideErrorBodySize))
+	if err != nil {
+		return "", secrets.SanitizeErrorWithToken(err, token)
+	}
+	return secrets.RedactWithToken(strings.TrimSpace(string(contents)), token), nil
+}
 
 func downloadLectureSlide(ctx context.Context, c *client.Client, cfg *config.Config, lecture client.Lecture) error {
 	return downloadLectureSlideWithLimit(ctx, c, cfg, lecture, maxSlideSize)
@@ -56,11 +67,11 @@ func downloadLectureSlideWithLimit(ctx context.Context, c *client.Client, cfg *c
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
+		body, readErr := readSanitizedSlideErrorBody(resp.Body, cfg.Token)
 		if readErr != nil {
 			return fmt.Errorf("slide download failed for lecture %d with status %d and unreadable body: %w", lecture.SeqNo, resp.StatusCode, readErr)
 		}
-		return fmt.Errorf("slide download failed for lecture %d with status %d: %s", lecture.SeqNo, resp.StatusCode, strings.TrimSpace(string(body)))
+		return fmt.Errorf("slide download failed for lecture %d with status %d: %s", lecture.SeqNo, resp.StatusCode, body)
 	}
 	if resp.ContentLength > limit {
 		return fmt.Errorf("slide download exceeds max size %d bytes: %w", limit, errSlideSizeLimit)

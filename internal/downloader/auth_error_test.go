@@ -43,6 +43,33 @@ func TestFetchDecryptionKeyUnauthorizedWrapsTypedAuthenticationError(t *testing.
 	assertDownloaderAuthenticationError(t, err, "decryption key", bodyMarker, "query-secret")
 }
 
+func TestDownloadChunkNonUnauthorizedBodySanitizesExplicitToken(t *testing.T) {
+	const token = "chunk-body-token+a&b"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		if _, err := w.Write([]byte("upstream detail: " + token)); err != nil {
+			t.Errorf("write chunk error body: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	d := testLimitDownloader(t.TempDir(), client.New(server.Client(), nil))
+	d.config.Token = token
+	path, data, written, err := d.doDownloadChunkWithLimit(t.Context(), server.URL+"/chunk.ts", 1, 0, "left", true, 8)
+	if path != "" || data != nil || written != 0 {
+		t.Fatalf("failed chunk returned path=%q data=%v written=%d", path, data, written)
+	}
+	if err == nil {
+		t.Fatal("chunk error = nil, want upstream failure")
+	}
+	if strings.Contains(err.Error(), token) || strings.Contains(err.Error(), strings.TrimPrefix(token, "Bearer ")) {
+		t.Fatalf("chunk error leaked explicit token: %v", err)
+	}
+	if !strings.Contains(err.Error(), "REDACTED") {
+		t.Fatalf("chunk error = %v, want sanitized body marker", err)
+	}
+}
+
 func assertDownloaderAuthenticationError(t *testing.T, err error, operation string, secretMarkers ...string) {
 	t.Helper()
 	if err == nil {

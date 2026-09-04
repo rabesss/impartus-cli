@@ -38,7 +38,7 @@ func (c *Client) doRequestWithToken(ctx context.Context, method, url string, bod
 	if err != nil {
 		// Redact the URL and sanitize the error: malformed/tokenized URLs can
 		// surface in the parse error, which may carry query tokens.
-		return nil, fmt.Errorf("failed to create http request for %s %s: %w", method, secrets.RedactURL(url), secrets.SanitizeError(err))
+		return nil, fmt.Errorf("failed to create http request for %s %s: %w", method, secrets.RedactURLWithToken(url, token), secrets.SanitizeErrorWithToken(err, token))
 	}
 
 	if token != "" {
@@ -55,7 +55,7 @@ func (c *Client) doRequestWithToken(ctx context.Context, method, url string, bod
 		// http.Client.Do returns a *url.Error whose Error() embeds the full
 		// request URL (including query tokens). Sanitize it before wrapping so
 		// the token can never reach logs via %w/%v on this error.
-		return nil, fmt.Errorf("request failed with error %w for %s %s", secrets.SanitizeError(err), method, secrets.RedactURL(url))
+		return nil, fmt.Errorf("request failed with error %w for %s %s", secrets.SanitizeErrorWithToken(err, token), method, secrets.RedactURLWithToken(url, token))
 	}
 
 	return response, nil

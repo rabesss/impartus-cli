@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/rabesss/impartus-cli/internal/client"
@@ -125,6 +126,40 @@ func TestDownloadLectureSlideNewFileUsesReadableMode(t *testing.T) {
 		}
 	}
 	assertNoSlideParts(t, downloadDir)
+}
+
+func TestDownloadLectureSlideSanitizesNonUnauthorizedResponseBody(t *testing.T) {
+	const body = "Authorization: Bearer slide-body-bearer-secret\n" +
+		"URL: https://media.example.test/chunk.ts?token=slide-body-query-secret\n" +
+		"URL: https://user:slide-body-userinfo-secret@media.example.test/chunk.ts\n" +
+		"Cookie: session=slide-body-cookie-secret\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, body) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	err := downloadLectureSlideWithLimit(context.Background(), client.New(server.Client(), nil), &config.Config{
+		BaseURL:          server.URL,
+		DownloadLocation: t.TempDir(),
+		Token:            "slide-token",
+	}, client.Lecture{VideoID: 10, SeqNo: 1, Topic: "Lecture"}, 8)
+	if err == nil {
+		t.Fatal("downloadLectureSlideWithLimit() error = nil, want upstream failure")
+	}
+	for _, secret := range []string{
+		"slide-body-bearer-secret",
+		"slide-body-query-secret",
+		"slide-body-userinfo-secret",
+		"slide-body-cookie-secret",
+	} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("slide error leaked %q: %v", secret, err)
+		}
+	}
+	if !strings.Contains(err.Error(), "REDACTED") {
+		t.Fatalf("slide error = %v, want sanitized body marker", err)
+	}
 }
 
 func TestDownloadLectureSlideInterruptedReadPreservesFinal(t *testing.T) {

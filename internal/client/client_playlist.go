@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -39,11 +38,11 @@ func (c *Client) getStreamInfos(ctx context.Context, baseURL, token string, lect
 		})
 	}
 	if resp.StatusCode != http.StatusOK {
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
+		body, readErr := readSanitizedErrorBody(resp.Body, token)
 		if readErr != nil {
 			return nil, fmt.Errorf("stream info request failed with status %d and unreadable body: %w", resp.StatusCode, readErr)
 		}
-		return nil, fmt.Errorf("stream info request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("stream info request failed with status %d: %s", resp.StatusCode, body)
 	}
 
 	body, err := readResponseBodyWithLimit(resp.Body, maxStreamInfoResponseSize)

@@ -20,14 +20,22 @@ import (
 // "REDACTED" before logging. The malformed-URL fallback regex is derived from
 // these keys (see sensitiveQueryRe) so the two redaction paths cannot drift.
 var sensitiveParams = map[string]bool{
-	"access_token": true,
-	"token":        true,
-	"sig":          true,
-	"signature":    true,
-	"secret":       true,
-	"key":          true,
-	"api_key":      true,
-	"auth":         true,
+	"access_token":  true,
+	"token":         true,
+	"sig":           true,
+	"signature":     true,
+	"secret":        true,
+	"key":           true,
+	"api_key":       true,
+	"auth":          true,
+	"authorization": true,
+	"cookie":        true,
+	"set-cookie":    true,
+	"x-api-key":     true,
+	"x_api_key":     true,
+	"refresh_token": true,
+	"client_secret": true,
+	"password":      true,
 }
 
 // urlTokenRe matches absolute http(s) URLs embedded in free-form text so they
@@ -62,7 +70,7 @@ var quotedKeyBareSecretValue = regexp.MustCompile(
 	`(?i)(\b` + sensitiveAssignmentKey + `\s*["']\s*[:=]\s*)[^\s"',;}][^\s,;}]*`,
 )
 var strongCredentialAssignment = regexp.MustCompile(
-	`(?i)(^|[^/\\a-z0-9_-])((?:authorization|proxy[-_]?authorization|auth|(?:x[-_])?api[-_]?key)\s*[:=]\s*)[^\r\n]+`,
+	`(?i)(^|[^/\\a-z0-9_-])((?:authorization|proxy[-_]?authorization|auth|(?:x[-_])?api[-_]?key|cookie|set[-_]?cookie)\s*[:=]\s*)[^\r\n]+`,
 )
 var schemeSecretAssignment = regexp.MustCompile(
 	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*[:=]\s*)(?:` + strings.Join(credentialSchemes, "|") + `)\s+[^\s,;}]+`,
@@ -145,18 +153,38 @@ func containsVisibleCredential(visible, credential string) bool {
 func buildSensitiveQueryRe() *regexp.Regexp {
 	keys := make([]string, 0, len(sensitiveParams))
 	for k := range sensitiveParams {
-		keys = append(keys, regexp.QuoteMeta(k))
+		keys = append(keys, encodedQueryKeyPattern(k))
 	}
 	sort.Strings(keys)
 	return regexp.MustCompile(`(?i)([?&])(` + strings.Join(keys, "|") + `)=[^&#\s]*`)
 }
 
+// encodedQueryKeyPattern matches a credential key whether its bytes are
+// written literally or percent-encoded. URL parsing handles this distinction
+// for well-formed URLs; the raw fallback uses this pattern when an unrelated
+// component (for example, a malformed path escape) prevents parsing.
+func encodedQueryKeyPattern(key string) string {
+	var pattern strings.Builder
+	pattern.WriteString("(?:")
+	for i := 0; i < len(key); i++ {
+		pattern.WriteString("(?:")
+		pattern.WriteString(regexp.QuoteMeta(string(key[i])))
+		pattern.WriteString("|%")
+		const hex = "0123456789ABCDEF"
+		pattern.WriteByte(hex[key[i]>>4])
+		pattern.WriteByte(hex[key[i]&0x0f])
+		pattern.WriteString(")")
+	}
+	pattern.WriteString(")")
+	return pattern.String()
+}
+
 func buildSensitiveAssignmentKey() string {
-	keys := make([]string, 0, len(sensitiveParams)+3)
+	keys := make([]string, 0, len(sensitiveParams)+5)
 	for key := range sensitiveParams {
 		keys = append(keys, regexp.QuoteMeta(key))
 	}
-	keys = append(keys, "authorization", "password", `(?:x[_-])?api[_-]?key`, `[a-z0-9_-]+(?:token|password|secret|signature)`)
+	keys = append(keys, "authorization", "password", "cookie", `set[-_]?cookie`, `(?:x[_-])?api[_-]?key`, `[a-z0-9_-]+(?:token|password|secret|signature)`)
 	sort.Strings(keys)
 	return `(?:` + strings.Join(keys, "|") + `)`
 }
@@ -275,6 +303,92 @@ func RedactURL(rawURL string) string {
 	return redacted
 }
 
+// RedactURLWithToken redacts URL credentials and the caller-provided token,
+// even when the token appears under an unknown query key. It never returns a
+// token-bearing representation to the caller.
+func RedactURLWithToken(rawURL, token string) string {
+	return replaceTokenVariants(RedactURL(rawURL), token)
+}
+
+// RedactWithToken scrubs free-form text and the caller-provided token. It is
+// intended for errors whose URL may have been rewritten by a redirect.
+func RedactWithToken(value, token string) string {
+	return replaceTokenVariants(Scrub(value), token)
+}
+
+// SanitizeErrorWithToken scrubs an error chain and then removes every known
+// representation of token from its presentation. If token material was found,
+// the returned error is intentionally opaque and does not unwrap to the leak.
+func SanitizeErrorWithToken(err error, token string) error {
+	if err == nil {
+		return nil
+	}
+	sanitized := SanitizeError(err)
+	if sanitized == nil {
+		return nil
+	}
+	redacted := RedactWithToken(sanitized.Error(), token)
+	if redacted == sanitized.Error() {
+		return sanitized
+	}
+	return errors.New(redacted)
+}
+
+func replaceTokenVariants(value, token string) string {
+	variants := tokenVariants(token)
+	for _, variant := range variants {
+		if variant == "" {
+			continue
+		}
+		value = replaceCaseInsensitive(value, variant, "REDACTED")
+	}
+	return value
+}
+
+func tokenVariants(token string) []string {
+	trimmed := strings.TrimSpace(token)
+	if trimmed == "" {
+		return nil
+	}
+	values := []string{trimmed}
+	fields := strings.Fields(trimmed)
+	if len(fields) >= 2 && strings.EqualFold(fields[0], "bearer") {
+		values = append(values, strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0])))
+	} else {
+		values = append(values, "Bearer "+trimmed)
+	}
+	variants := make([]string, 0, len(values)*3)
+	for _, value := range values {
+		variants = append(variants, value, url.QueryEscape(value), url.PathEscape(value))
+	}
+	return variants
+}
+
+func replaceCaseInsensitive(value, needle, replacement string) string {
+	lowerValue := strings.ToLower(value)
+	lowerNeedle := strings.ToLower(needle)
+	if lowerNeedle == "" {
+		return value
+	}
+	var scrubbed strings.Builder
+	searchFrom := 0
+	for searchFrom < len(lowerValue) {
+		index := strings.Index(lowerValue[searchFrom:], lowerNeedle)
+		if index < 0 {
+			break
+		}
+		index += searchFrom
+		scrubbed.WriteString(value[searchFrom:index])
+		scrubbed.WriteString(replacement)
+		searchFrom = index + len(needle)
+	}
+	if searchFrom == 0 {
+		return value
+	}
+	scrubbed.WriteString(value[searchFrom:])
+	return scrubbed.String()
+}
+
 func redactURLWithEvidence(rawURL string) (string, bool, RedactionEvidence) {
 	var evidence RedactionEvidence
 	if rawURL == "" {
@@ -292,7 +406,14 @@ func redactURLWithEvidence(rawURL string) (string, bool, RedactionEvidence) {
 	u.User = nil // strip embedded HTTP basic-auth credentials
 	// Scrub sensitive keys, and scrub any sensitive URL embedded in the decoded
 	// value of a non-sensitive parameter (covers percent-encoded nested tokens).
-	params := u.Query()
+	params, queryErr := url.ParseQuery(u.RawQuery)
+	if queryErr != nil {
+		// url.Parse accepts some malformed raw queries and URL.Query silently
+		// drops their values. Fall back to delimiter-preserving scrubbing so a
+		// malformed escape cannot either leak a credential or erase diagnostics.
+		redacted, rawEvidence := scrubRawWithEvidence(rawURL)
+		return redacted, redacted != rawURL, evidence.Combined(rawEvidence)
+	}
 	for key, vals := range params {
 		if isSensitiveParam(key) {
 			for _, value := range vals {

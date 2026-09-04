@@ -29,6 +29,66 @@ func TestRedactURL_RedactsKnownSensitiveParams(t *testing.T) {
 	}
 }
 
+func TestRedactURL_RedactsAuthorizationQueryAlias(t *testing.T) {
+	for _, rawURL := range []string{
+		"https://host/path?authorization=Bearer+secret-token",
+		"https://host/path?Authorization=secret-token",
+		"https://host/%zz?%61uthorization=Bearer%20secret-token&keep=a%2Fb",
+		"https://host/path?x-api-key=secret-token",
+		"https://host/path?refresh_token=secret-token",
+		"https://host/path?client_secret=secret-token",
+		"https://host/path?password=secret-token",
+	} {
+		got := RedactURL(rawURL)
+		if strings.Contains(got, "secret-token") {
+			t.Errorf("RedactURL(%q) leaked authorization query credential: %s", rawURL, got)
+		}
+		if !strings.Contains(got, "REDACTED") {
+			t.Errorf("RedactURL(%q) should contain REDACTED, got %q", rawURL, got)
+		}
+	}
+}
+
+func TestRedactURLWithTokenRedactsUnknownEncodedQueryCredential(t *testing.T) {
+	const token = "Bearer secret+a&b=c?/"
+	encodedQueryToken := url.QueryEscape(token)
+	encodedPathToken := url.PathEscape(token)
+	for _, rawURL := range []string{
+		"https://host/path?unknown=" + encodedQueryToken + "&keep=1",
+		"https://host/%zz?unknown=" + encodedPathToken + "&keep=1",
+	} {
+		t.Run(rawURL, func(t *testing.T) {
+			got := RedactURLWithToken(rawURL, token)
+			for _, secret := range []string{token, strings.TrimPrefix(token, "Bearer "), encodedQueryToken, encodedPathToken} {
+				if strings.Contains(got, secret) {
+					t.Fatalf("RedactURLWithToken(%q) leaked %q: %q", rawURL, secret, got)
+				}
+			}
+			if !strings.Contains(got, "REDACTED") {
+				t.Fatalf("RedactURLWithToken(%q) = %q, want redaction marker", rawURL, got)
+			}
+		})
+	}
+}
+
+func TestSanitizeErrorWithTokenRedactsUnknownRedirectCredential(t *testing.T) {
+	const token = "Bearer redirect-secret+a&b"
+	rawURL := "https://host/callback?unknown=" + url.QueryEscape(token)
+	raw := &url.Error{Op: "Get", URL: rawURL, Err: errors.New("redirect to " + rawURL)}
+	got := SanitizeErrorWithToken(raw, token)
+	if got == nil {
+		t.Fatal("SanitizeErrorWithToken() = nil, want sanitized error")
+	}
+	for _, secret := range []string{token, strings.TrimPrefix(token, "Bearer "), url.QueryEscape(token)} {
+		if strings.Contains(got.Error(), secret) {
+			t.Fatalf("SanitizeErrorWithToken() leaked %q: %q", secret, got)
+		}
+	}
+	if !strings.Contains(got.Error(), "REDACTED") {
+		t.Fatalf("SanitizeErrorWithToken() = %q, want redaction marker", got)
+	}
+}
+
 func TestRedactURL_Passthrough(t *testing.T) {
 	// Empty input is returned unchanged; a URL with no sensitive params keeps
 	// its (non-secret) query values intact.
@@ -313,6 +373,21 @@ func TestRedactURL_MalformedURLStillRedacts(t *testing.T) {
 	}
 	if !strings.Contains(got, "keep=1") {
 		t.Errorf("RedactURL should preserve non-sensitive params, got %q", got)
+	}
+}
+
+func TestRedactURL_MalformedQueryStillPreservesOtherParameters(t *testing.T) {
+	const secret = "malformed-query-secret"
+	raw := "https://host/path?authorization=Bearer%20" + secret + "&keep=1%2F2%zz"
+	got := RedactURL(raw)
+	if strings.Contains(got, secret) {
+		t.Errorf("RedactURL leaked malformed-query credential: %q", got)
+	}
+	if !strings.Contains(got, "authorization=REDACTED") {
+		t.Errorf("RedactURL should mark malformed-query credential, got %q", got)
+	}
+	if !strings.Contains(got, "keep=1%2F2%zz") {
+		t.Errorf("RedactURL should preserve unrelated malformed query data, got %q", got)
 	}
 }
 
