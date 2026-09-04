@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -49,6 +50,77 @@ func TestRedactURL_RedactsAuthorizationQueryAlias(t *testing.T) {
 	}
 }
 
+func TestRedactURL_RedactsAssignmentAliasesInQuery(t *testing.T) {
+	for _, key := range []string{
+		"api-key", "apikey", "xapikey", "proxy-authorization", "set_cookie",
+		"access-token", "refresh-token", "client-secret",
+	} {
+		rawURL := "https://host/path?" + key + "=alias-secret&keep=1"
+		got := RedactURL(rawURL)
+		if strings.Contains(got, "alias-secret") {
+			t.Fatalf("RedactURL(%q) leaked alias credential: %q", rawURL, got)
+		}
+		if !strings.Contains(got, "REDACTED") {
+			t.Fatalf("RedactURL(%q) = %q, want redaction marker", rawURL, got)
+		}
+	}
+}
+
+func TestRedactURL_MalformedFallbackStripsAllUserinfoForms(t *testing.T) {
+	for _, rawURL := range []string{
+		"https://username@host/%zz",
+		"https://:password@host/%zz",
+		"https://username:@host/%zz",
+		"https://username%3Apassword@host/%zz",
+		"https://%3Apassword@host/%zz",
+	} {
+		got := RedactURL(rawURL)
+		for _, secret := range []string{"username", "password", "%3A", "@"} {
+			if strings.Contains(strings.ToLower(got), strings.ToLower(secret)) {
+				t.Fatalf("RedactURL(%q) leaked userinfo %q: %q", rawURL, secret, got)
+			}
+		}
+		if !strings.Contains(got, "https://host/") {
+			t.Fatalf("RedactURL(%q) lost safe URL context: %q", rawURL, got)
+		}
+	}
+}
+
+func TestRedactURL_RedactsCredentialFragments(t *testing.T) {
+	for _, rawURL := range []string{
+		"https://host/path#token=fragsecret",
+		"https://host/path#access_token=fragsecret",
+		"https://host/path#%74%6f%6b%65%6e=fragsecret",
+		"https://host/path#token%3Dfragsecret",
+		"https://host/path#token%253Dfragsecret",
+		"https://host/%zz#token=fragsecret",
+		"https://host/%zz#token%3Dfragsecret",
+	} {
+		got := RedactURL(rawURL)
+		if strings.Contains(got, "fragsecret") {
+			t.Fatalf("RedactURL(%q) leaked fragment credential: %q", rawURL, got)
+		}
+		if !strings.Contains(got, "REDACTED") {
+			t.Fatalf("RedactURL(%q) = %q, want redaction marker", rawURL, got)
+		}
+	}
+	if got := RedactURL("https://host/path#token=fragsecret&keep=1"); got != "https://host/path#token=REDACTED&keep=1" {
+		t.Fatalf("RedactURL() lost safe fragment context: %q", got)
+	}
+}
+
+func TestSanitizeError_RedactsCredentialFragment(t *testing.T) {
+	rawURL := "https://host/%zz#token=fragment-error-secret"
+	raw := &url.Error{Op: "Get", URL: rawURL, Err: errors.New("redirect to " + rawURL)}
+	got := SanitizeError(raw).Error()
+	if strings.Contains(got, "fragment-error-secret") {
+		t.Fatalf("SanitizeError leaked fragment credential: %q", got)
+	}
+	if !strings.Contains(got, "REDACTED") {
+		t.Fatalf("SanitizeError(%q) = %q, want redaction marker", rawURL, got)
+	}
+}
+
 func TestRedactURLWithTokenRedactsUnknownEncodedQueryCredential(t *testing.T) {
 	const token = "Bearer secret+a&b=c?/"
 	encodedQueryToken := url.QueryEscape(token)
@@ -71,6 +143,74 @@ func TestRedactURLWithTokenRedactsUnknownEncodedQueryCredential(t *testing.T) {
 	}
 }
 
+func TestRedactURLWithTokenRedactsFullyAndDoublyEncodedUnknownCredential(t *testing.T) {
+	const token = "secret+a&b=c?/"
+	encodedToken := fullyPercentEncode(token)
+	doubleEncodedToken := fullyPercentEncode(encodedToken)
+	doubleQueryEncodedToken := url.QueryEscape(url.QueryEscape(token))
+	cases := []struct {
+		name  string
+		query string
+	}{
+		{name: "fully percent encoded", query: encodedToken},
+		{name: "double fully percent encoded", query: doubleEncodedToken},
+		{name: "double query encoded", query: doubleQueryEncodedToken},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, rawURL := range []string{
+				"https://host/path?unknown=" + tc.query + "&keep=1",
+				"https://host/%zz?unknown=" + tc.query + "&keep=1",
+				"https://host/path?unknown=" + tc.query + "&bad=x%zz",
+			} {
+				got := RedactURLWithToken(rawURL, token)
+				for _, secret := range []string{token, encodedToken, doubleEncodedToken, doubleQueryEncodedToken} {
+					if strings.Contains(got, secret) {
+						t.Fatalf("RedactURLWithToken(%q) leaked %q: %q", rawURL, secret, got)
+					}
+				}
+				if !strings.Contains(got, "REDACTED") {
+					t.Fatalf("RedactURLWithToken(%q) = %q, want redaction marker", rawURL, got)
+				}
+			}
+		})
+	}
+}
+
+func TestSanitizeErrorWithTokenRedactsFullyAndDoublyEncodedMalformedCredential(t *testing.T) {
+	const token = "secret+a&b=c?/"
+	encodedToken := fullyPercentEncode(token)
+	doubleEncodedToken := fullyPercentEncode(encodedToken)
+	for _, encoded := range []string{encodedToken, doubleEncodedToken} {
+		rawURL := "https://host/%zz?unknown=" + encoded + "&bad=x%zz"
+		raw := &url.Error{Op: "Get", URL: rawURL, Err: errors.New("redirect to " + rawURL)}
+		got := SanitizeErrorWithToken(raw, token)
+		if got == nil {
+			t.Fatal("SanitizeErrorWithToken() = nil, want sanitized error")
+		}
+		for _, secret := range []string{token, encodedToken, doubleEncodedToken} {
+			if strings.Contains(got.Error(), secret) {
+				t.Fatalf("SanitizeErrorWithToken(%q) leaked %q: %q", rawURL, secret, got)
+			}
+		}
+		if !strings.Contains(got.Error(), "REDACTED") {
+			t.Fatalf("SanitizeErrorWithToken(%q) = %q, want redaction marker", rawURL, got)
+		}
+	}
+}
+
+func fullyPercentEncode(value string) string {
+	const hex = "0123456789ABCDEF"
+	var encoded strings.Builder
+	encoded.Grow(len(value) * 3)
+	for index := 0; index < len(value); index++ {
+		encoded.WriteByte('%')
+		encoded.WriteByte(hex[value[index]>>4])
+		encoded.WriteByte(hex[value[index]&0x0f])
+	}
+	return encoded.String()
+}
+
 func TestSanitizeErrorWithTokenRedactsUnknownRedirectCredential(t *testing.T) {
 	const token = "Bearer redirect-secret+a&b"
 	rawURL := "https://host/callback?unknown=" + url.QueryEscape(token)
@@ -83,6 +223,21 @@ func TestSanitizeErrorWithTokenRedactsUnknownRedirectCredential(t *testing.T) {
 		if strings.Contains(got.Error(), secret) {
 			t.Fatalf("SanitizeErrorWithToken() leaked %q: %q", secret, got)
 		}
+	}
+	if !strings.Contains(got.Error(), "REDACTED") {
+		t.Fatalf("SanitizeErrorWithToken() = %q, want redaction marker", got)
+	}
+}
+
+func TestSanitizeErrorWithTokenRedactsJSONEscapedCredential(t *testing.T) {
+	const token = "json-token&part"
+	raw := errors.New(`upstream response: {"detail":"json-token\u0026part"}`)
+	got := SanitizeErrorWithToken(raw, token)
+	if got == nil {
+		t.Fatal("SanitizeErrorWithToken() = nil, want sanitized error")
+	}
+	if strings.Contains(got.Error(), token) || strings.Contains(got.Error(), `json-token\u0026part`) {
+		t.Fatalf("SanitizeErrorWithToken() leaked JSON-escaped token: %q", got)
 	}
 	if !strings.Contains(got.Error(), "REDACTED") {
 		t.Fatalf("SanitizeErrorWithToken() = %q, want redaction marker", got)
@@ -474,6 +629,75 @@ func TestSanitizeError_UnwrapDoesNotRecoverToken(t *testing.T) {
 		if strings.Contains(cur.Error(), secret) {
 			t.Errorf("token recovered via url.Error chain unwrapping: %q", cur.Error())
 		}
+	}
+}
+
+type hiddenCause struct {
+	inner error
+}
+
+func (cause hiddenCause) Error() string { return "opaque transport failure" }
+
+func (cause hiddenCause) Unwrap() error { return cause.inner }
+
+func TestSanitizeErrorWithTokenSeversHiddenCredentialChain(t *testing.T) {
+	const secret = "hidden-chain-secret"
+	classification := errors.New("safe classification")
+	raw := hiddenCause{inner: fmt.Errorf("request token=%s: %w", secret, classification)}
+	sanitized := SanitizeErrorWithToken(raw, secret)
+	if sanitized == nil {
+		t.Fatal("SanitizeErrorWithToken() = nil, want sanitized error")
+	}
+	if strings.Contains(sanitized.Error(), secret) {
+		t.Fatalf("SanitizeErrorWithToken() leaked hidden child credential: %q", sanitized)
+	}
+	if errors.Unwrap(sanitized) != nil {
+		t.Fatalf("SanitizeErrorWithToken() exposed hidden child through Unwrap: %v", errors.Unwrap(sanitized))
+	}
+	if !errors.Is(sanitized, classification) {
+		t.Fatal("SanitizeErrorWithToken() lost safe error classification")
+	}
+	var recovered hiddenCause
+	if errors.As(sanitized, &recovered) {
+		t.Fatalf("SanitizeErrorWithToken() exposed hidden cause through As: %v", recovered)
+	}
+}
+
+func TestSanitizeErrorWithTokenPreservesCancellationClassification(t *testing.T) {
+	const token = "cancel-token"
+	rawURL := "https://host/path?unknown=" + url.QueryEscape(token)
+	raw := fmt.Errorf("request failed: %w", &url.Error{Op: "Get", URL: rawURL, Err: context.Canceled})
+	sanitized := SanitizeErrorWithToken(raw, token)
+	if sanitized == nil {
+		t.Fatal("SanitizeErrorWithToken() = nil, want sanitized error")
+	}
+	if !errors.Is(sanitized, context.Canceled) {
+		t.Fatalf("SanitizeErrorWithToken() lost context.Canceled classification: %v", sanitized)
+	}
+	if errors.Unwrap(sanitized) != nil {
+		t.Fatalf("SanitizeErrorWithToken() exposed raw cancellation chain: %v", errors.Unwrap(sanitized))
+	}
+	if strings.Contains(sanitized.Error(), token) {
+		t.Fatalf("SanitizeErrorWithToken() leaked token: %q", sanitized)
+	}
+}
+
+func TestSanitizeErrorSeversHiddenCredentialChain(t *testing.T) {
+	const secret = "hidden-sanitize-secret"
+	classification := errors.New("safe classification")
+	raw := hiddenCause{inner: fmt.Errorf("request token=%s: %w", secret, classification)}
+	sanitized := SanitizeError(raw)
+	if sanitized == nil {
+		t.Fatal("SanitizeError() = nil, want sanitized error")
+	}
+	if strings.Contains(sanitized.Error(), secret) {
+		t.Fatalf("SanitizeError() leaked hidden child credential: %q", sanitized)
+	}
+	if errors.Unwrap(sanitized) != nil {
+		t.Fatalf("SanitizeError() exposed hidden child through Unwrap: %v", errors.Unwrap(sanitized))
+	}
+	if !errors.Is(sanitized, classification) {
+		t.Fatal("SanitizeError() lost safe error classification")
 	}
 }
 
