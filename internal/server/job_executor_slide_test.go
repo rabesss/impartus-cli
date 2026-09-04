@@ -129,6 +129,50 @@ func TestDownloadLectureSlideNewFileUsesReadableMode(t *testing.T) {
 	assertNoSlideParts(t, downloadDir)
 }
 
+func TestDownloadLectureSlideUsesExplicitOriginPolicy(t *testing.T) {
+	const token = "slide-origin-secret"
+	var configuredAuthorization string
+	configured := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		configuredAuthorization = r.Header.Get("Authorization")
+		_, _ = io.WriteString(w, "slide") //nolint:errcheck
+	}))
+	defer configured.Close()
+
+	configuredCfg := &config.Config{
+		BaseURL:          configured.URL,
+		DownloadLocation: t.TempDir(),
+		Token:            token,
+	}
+	if err := downloadLectureSlideWithLimit(context.Background(), client.New(configured.Client(), nil), configuredCfg, client.Lecture{VideoID: 10, SeqNo: 1, Topic: "Configured"}, 8); err != nil {
+		t.Fatalf("configured slide download error = %v", err)
+	}
+	if configuredAuthorization != "Bearer "+token {
+		t.Fatalf("configured-origin Authorization = %q, want bearer token", configuredAuthorization)
+	}
+
+	var unconfiguredRequests int
+	unconfigured := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		unconfiguredRequests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer unconfigured.Close()
+	redirectSource := httptest.NewServer(http.RedirectHandler(unconfigured.URL+"/slide.pdf", http.StatusFound))
+	defer redirectSource.Close()
+
+	redirectCfg := &config.Config{
+		BaseURL:          redirectSource.URL,
+		DownloadLocation: t.TempDir(),
+		Token:            token,
+	}
+	err := downloadLectureSlideWithLimit(context.Background(), client.New(redirectSource.Client(), nil), redirectCfg, client.Lecture{VideoID: 11, SeqNo: 1, Topic: "Redirected"}, 8)
+	if err == nil || !errors.Is(err, client.ErrMediaOrigin) {
+		t.Fatalf("unconfigured redirect error = %v, want media-origin rejection", err)
+	}
+	if unconfiguredRequests != 0 {
+		t.Fatalf("unconfigured-origin requests = %d, want 0", unconfiguredRequests)
+	}
+}
+
 func TestDownloadLectureSlideSanitizesNonUnauthorizedResponseBody(t *testing.T) {
 	const body = "Authorization: Bearer slide-body-bearer-secret\n" +
 		"URL: https://media.example.test/chunk.ts?token=slide-body-query-secret\n" +

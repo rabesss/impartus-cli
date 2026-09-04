@@ -101,13 +101,15 @@ var (
 
 // Downloader orchestrates chunk downloading, decryption, and FFmpeg joining.
 type Downloader struct {
-	config        *config.Config
-	client        *client.Client
-	diagnostics   *log.Logger
-	rateLimiter   *RateLimiter
-	maxRetries    int
-	ffmpegPath    string
-	playlistSlots chan struct{}
+	config         *config.Config
+	client         *client.Client
+	diagnostics    *log.Logger
+	rateLimiter    *RateLimiter
+	maxRetries     int
+	ffmpegPath     string
+	playlistSlots  chan struct{}
+	mediaOriginErr error
+	mediaOrigins   []string
 
 	// pipelineObserver is a package-private lifecycle hook used by tests.
 	pipelineObserver func(*LecturePipeline)
@@ -137,15 +139,19 @@ func newDownloader(cfg *config.Config, apiClient *client.Client, diagnostics *lo
 	if apiClient == nil {
 		apiClient = client.New(nil, nil)
 	}
+	origins := append([]string{cfg.BaseURL}, cfg.MediaOrigins...)
+	mediaOriginErr := client.ValidateMediaOrigins(origins...)
 	playlistSlots := make(chan struct{}, safeConcurrentPlaylists(cfg))
 	return &Downloader{
-		config:        cfg,
-		client:        apiClient,
-		diagnostics:   diagnostics,
-		rateLimiter:   NewRateLimiterFromConfig(cfg),
-		maxRetries:    3,
-		playlistSlots: playlistSlots,
-		ffmpegPath:    "ffmpeg",
+		config:         cfg,
+		client:         apiClient,
+		diagnostics:    diagnostics,
+		rateLimiter:    NewRateLimiterFromConfig(cfg),
+		maxRetries:     3,
+		playlistSlots:  playlistSlots,
+		ffmpegPath:     "ffmpeg",
+		mediaOriginErr: mediaOriginErr,
+		mediaOrigins:   append([]string(nil), origins...),
 	}
 }
 
@@ -186,6 +192,9 @@ func (d *Downloader) acquirePlaylistSlot(ctx context.Context) (func(), error) {
 
 // FetchLecturePlaylists delegates to client.GetPlaylists.
 func (d *Downloader) FetchLecturePlaylists(ctx context.Context, lectures []client.Lecture) ([]client.ParsedPlaylist, error) {
+	if d.mediaOriginErr != nil {
+		return nil, d.mediaOriginErr
+	}
 	return d.client.GetPlaylists(ctx, d.config, lectures)
 }
 
@@ -394,10 +403,13 @@ func (d *Downloader) JoinLectureOutput(ctx context.Context, file M3U8File) (Join
 }
 
 func (d *Downloader) fetchDecryptionKey(ctx context.Context, keyURL string) ([]byte, error) {
+	if d.mediaOriginErr != nil {
+		return nil, d.mediaOriginErr
+	}
 	if err := d.rateLimiter.WaitForAPI(ctx); err != nil {
 		return nil, err
 	}
-	resp, err := d.client.GetAuthorizedWithToken(ctx, keyURL, d.config.Token)
+	resp, err := d.client.GetAuthorizedWithTokenForOrigins(ctx, keyURL, d.config.Token, d.mediaOrigins...)
 	if err != nil {
 		return nil, err
 	}

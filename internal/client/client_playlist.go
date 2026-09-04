@@ -25,9 +25,21 @@ const (
 )
 
 // getStreamInfos fetches stream information for a given lecture.
-func (c *Client) getStreamInfos(ctx context.Context, baseURL, token string, lecture Lecture) ([]StreamInfo, error) {
-	uri := fmt.Sprintf("%s/fetchvideo?ttid=%d&token=%s&type=index.m3u8", baseURL, lecture.TTID, token)
-	resp, err := c.GetAuthorizedWithToken(ctx, uri, token)
+func (c *Client) getStreamInfos(ctx context.Context, baseURL, token string, lecture Lecture) ([]StreamInfo, error) { //nolint:unparam // retained compatibility helper for direct stream-info callers
+	policy, err := newMediaOriginPolicy(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	return c.getStreamInfosWithPolicy(ctx, baseURL, token, lecture, policy)
+}
+
+func (c *Client) getStreamInfosWithPolicy(ctx context.Context, baseURL, token string, lecture Lecture, policy mediaOriginPolicy) ([]StreamInfo, error) {
+	query := url.Values{}
+	query.Set("ttid", strconv.Itoa(lecture.TTID))
+	query.Set("token", normalizeBearerToken(token))
+	query.Set("type", "index.m3u8")
+	uri := fmt.Sprintf("%s/fetchvideo?%s", baseURL, query.Encode())
+	resp, err := c.getAuthorizedWithToken(ctx, uri, token, policy)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +56,7 @@ func (c *Client) getStreamInfos(ctx context.Context, baseURL, token string, lect
 		if readErr != nil {
 			return nil, fmt.Errorf("stream info request failed with status %d and unreadable body: %w", resp.StatusCode, readErr)
 		}
-		return nil, fmt.Errorf("stream info request failed with status %d: %s", resp.StatusCode, body)
+		return nil, fmt.Errorf("stream info request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	body, err := readResponseBodyWithLimit(resp.Body, maxStreamInfoResponseSize)
@@ -64,8 +76,11 @@ func ParsePlaylist(scanner *bufio.Scanner, id int, title string, seqNo int) (Par
 
 func parsePlaylist(scanner *bufio.Scanner, playlistURL string, id int, title string, seqNo int) (ParsedPlaylist, error) {
 	baseURL, err := url.Parse(playlistURL)
-	if err != nil || !validHTTPURL(baseURL) {
+	if err != nil {
 		return ParsedPlaylist{}, errors.New("invalid playlist base URL")
+	}
+	if err := validateMediaURL(baseURL, false); err != nil {
+		return ParsedPlaylist{}, fmt.Errorf("invalid playlist base URL: %w", err)
 	}
 	return parsePlaylistWithBase(scanner, baseURL, id, title, seqNo)
 }
@@ -147,21 +162,43 @@ func resolveMediaReference(baseURL *url.URL, rawReference string) (string, error
 	if err != nil {
 		return "", errors.New("malformed URI")
 	}
+	if parsedReference.User != nil {
+		return "", ErrMediaURLUserinfo
+	}
 	if baseURL == nil {
-		if parsedReference.IsAbs() && !validHTTPURL(parsedReference) {
-			return "", errors.New("URI must use HTTP or HTTPS")
+		if parsedReference.IsAbs() {
+			if err := validateMediaURL(parsedReference, false); err != nil {
+				return "", err
+			}
 		}
 		return reference, nil
 	}
 	resolved := baseURL.ResolveReference(parsedReference)
-	if !validHTTPURL(resolved) {
-		return "", errors.New("resolved URI must use HTTP or HTTPS with a host")
+	if err := validateMediaURL(resolved, false); err != nil {
+		return "", fmt.Errorf("resolved URI must use HTTP or HTTPS with a host: %w", err)
 	}
 	return resolved.String(), nil
 }
 
 func validHTTPURL(parsedURL *url.URL) bool {
-	return parsedURL != nil && (parsedURL.Scheme == "http" || parsedURL.Scheme == "https") && parsedURL.Host != ""
+	if parsedURL == nil || parsedURL.Opaque != "" || parsedURL.User != nil || parsedURL.Host == "" {
+		return false
+	}
+	if !strings.EqualFold(parsedURL.Scheme, "http") && !strings.EqualFold(parsedURL.Scheme, "https") {
+		return false
+	}
+	hostname := parsedURL.Hostname()
+	if hostname == "" || strings.Contains(hostname, "%") || strings.HasSuffix(parsedURL.Host, ":") {
+		return false
+	}
+	if port := parsedURL.Port(); port != "" {
+		portNumber, err := strconv.Atoi(port)
+		if err != nil || portNumber < 0 || portNumber > 65535 {
+			return false
+		}
+	}
+	_, err := url.ParseQuery(parsedURL.RawQuery)
+	return err == nil
 }
 
 func parseEXTINFDuration(line string) float64 {

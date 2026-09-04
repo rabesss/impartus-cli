@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/rabesss/impartus-cli/internal/config"
 	"github.com/rabesss/impartus-cli/internal/secrets"
@@ -19,6 +20,7 @@ import (
 
 // Client is the HTTP client for interacting with the Impartus API.
 type Client struct {
+	initOnce          sync.Once
 	httpClient        *http.Client
 	UserAgentProvider func() string
 	token             string
@@ -62,12 +64,14 @@ func New(httpClient *http.Client, userAgentProvider func() string) *Client {
 // initialize fills in default dependencies for any nil fields so that a
 // zero-value Client (e.g. &Client{}) is still safe to use.
 func (c *Client) initialize() {
-	if c.httpClient == nil {
-		c.httpClient = NewHTTPClient(0)
-	}
-	if c.UserAgentProvider == nil {
-		c.UserAgentProvider = func() string { return defaultUserAgent }
-	}
+	c.initOnce.Do(func() {
+		if c.httpClient == nil {
+			c.httpClient = NewHTTPClient(0)
+		}
+		if c.UserAgentProvider == nil {
+			c.UserAgentProvider = func() string { return defaultUserAgent }
+		}
+	})
 }
 
 func (c *Client) userAgent() string {
@@ -75,10 +79,59 @@ func (c *Client) userAgent() string {
 	return c.UserAgentProvider()
 }
 
-// GetAuthorizedWithToken performs an authenticated GET request with the given token.
-func (c *Client) GetAuthorizedWithToken(ctx context.Context, url, token string) (*http.Response, error) {
+// GetAuthorizedWithToken performs an authenticated GET request with the given
+// token. For compatibility, the caller-provided URL's exact origin is the
+// trusted initial origin; cross-origin redirects remain blocked. Internal
+// media paths must use GetAuthorizedWithTokenForOrigins with their explicit
+// allowlist instead of this compatibility method.
+func (c *Client) GetAuthorizedWithToken(ctx context.Context, rawURL, token string) (*http.Response, error) {
+	if token == "" {
+		return c.getAuthorizedWithToken(ctx, rawURL, token, mediaOriginPolicy{})
+	}
+	policy, err := newMediaOriginPolicy(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	return c.getAuthorizedWithToken(ctx, rawURL, token, policy)
+}
+
+// GetAuthorizedWithTokenForOrigins performs an authenticated GET request with
+// an immutable, request-scoped exact-origin policy. The policy is rebuilt for
+// every call so concurrent clients cannot overwrite one another's allowlist.
+func (c *Client) GetAuthorizedWithTokenForOrigins(ctx context.Context, rawURL, token string, origins ...string) (*http.Response, error) {
+	policy, err := newMediaOriginPolicy(origins...)
+	if err != nil {
+		return nil, err
+	}
+	return c.getAuthorizedWithToken(ctx, rawURL, token, policy)
+}
+
+func (c *Client) getAuthorizedWithToken(ctx context.Context, rawURL, token string, policy mediaOriginPolicy) (*http.Response, error) {
 	c.initialize()
-	return c.doRequestWithToken(ctx, http.MethodGet, url, nil, token)
+	redactionToken := token
+	parsedURL, err := parseRequestURL(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateMediaURL(parsedURL, token != ""); err != nil {
+		return nil, err
+	}
+
+	requestClient := c.httpClient
+	if token != "" || hasCredentialQuery(parsedURL) {
+		requestClient = c.httpClientForMediaRequest(parsedURL, token, policy)
+		if token != "" && !policy.allows(parsedURL) {
+			// A playlist or media endpoint may be public, but an unconfigured
+			// origin must never receive the Impartus bearer token.
+			var stripErr error
+			rawURL, stripErr = stripBearerTokenQuery(rawURL, token)
+			if stripErr != nil {
+				return nil, stripErr
+			}
+			token = ""
+		}
+	}
+	return c.doRequestWithTokenClient(ctx, http.MethodGet, rawURL, nil, token, requestClient, redactionToken)
 }
 
 // GetCourses fetches the list of courses for the authenticated user.
@@ -90,6 +143,10 @@ func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, e
 	if cfg.BaseURL == "" {
 		return nil, errors.New("baseUrl is required")
 	}
+	policy, err := newMediaOriginPolicy(cfg.BaseURL)
+	if err != nil {
+		return nil, err
+	}
 
 	token, err := c.resolveToken(cfg)
 	if err != nil {
@@ -97,7 +154,7 @@ func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, e
 	}
 
 	url := fmt.Sprintf("%s/subjects", cfg.BaseURL)
-	resp, err := c.GetAuthorizedWithToken(ctx, url, token)
+	resp, err := c.getAuthorizedWithToken(ctx, url, token, policy)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +171,7 @@ func (c *Client) GetCourses(ctx context.Context, cfg *config.Config) (Courses, e
 		if readErr != nil {
 			return nil, fmt.Errorf("subjects request failed with status %d and unreadable body: %w", resp.StatusCode, readErr)
 		}
-		return nil, fmt.Errorf("subjects request failed with status %d: %s", resp.StatusCode, body)
+		return nil, fmt.Errorf("subjects request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	body, err := readResponseBodyWithLimit(resp.Body, maxCatalogResponseSize)
@@ -142,6 +199,10 @@ func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Cou
 	if cfg.BaseURL == "" {
 		return nil, errors.New("baseUrl is required")
 	}
+	policy, err := newMediaOriginPolicy(cfg.BaseURL)
+	if err != nil {
+		return nil, err
+	}
 
 	token, err := c.resolveToken(cfg)
 	if err != nil {
@@ -149,7 +210,7 @@ func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Cou
 	}
 
 	url := fmt.Sprintf("%s/subjects/%d/lectures/%d", cfg.BaseURL, course.SubjectID, course.SessionID)
-	resp, err := c.GetAuthorizedWithToken(ctx, url, token)
+	resp, err := c.getAuthorizedWithToken(ctx, url, token, policy)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +227,7 @@ func (c *Client) GetLectures(ctx context.Context, cfg *config.Config, course Cou
 		if readErr != nil {
 			return nil, fmt.Errorf("lectures request failed with status %d and unreadable body: %w", resp.StatusCode, readErr)
 		}
-		return nil, fmt.Errorf("lectures request failed with status %d: %s", resp.StatusCode, body)
+		return nil, fmt.Errorf("lectures request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	body, err := readResponseBodyWithLimit(resp.Body, maxCatalogResponseSize)
@@ -204,6 +265,11 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 	if cfg.BaseURL == "" {
 		return nil, errors.New("baseUrl is required")
 	}
+	origins := append([]string{cfg.BaseURL}, cfg.MediaOrigins...)
+	policy, err := newMediaOriginPolicy(origins...)
+	if err != nil {
+		return nil, err
+	}
 
 	token, err := c.resolveToken(cfg)
 	if err != nil {
@@ -213,7 +279,7 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 	parsedPlaylists := make([]ParsedPlaylist, 0, len(lectures))
 	unavailableQualities := make(map[string]struct{})
 	for _, lecture := range lectures {
-		streamInfos, err := c.getStreamInfos(ctx, cfg.BaseURL, token, lecture)
+		streamInfos, err := c.getStreamInfosWithPolicy(ctx, cfg.BaseURL, token, lecture, policy)
 		if err != nil {
 			return parsedPlaylists, err
 		}
@@ -226,7 +292,7 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 			continue
 		}
 
-		parsed, err := c.getPlaylist(ctx, streamURL, token, lecture)
+		parsed, err := c.getPlaylistWithPolicy(ctx, streamURL, token, lecture, policy)
 		if err != nil {
 			return parsedPlaylists, err
 		}
@@ -245,7 +311,15 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 }
 
 func (c *Client) getPlaylist(ctx context.Context, streamURL, token string, lecture Lecture) (ParsedPlaylist, error) {
-	resp, err := c.GetAuthorizedWithToken(ctx, streamURL, token)
+	policy, err := newMediaOriginPolicy(streamURL)
+	if err != nil {
+		return ParsedPlaylist{}, err
+	}
+	return c.getPlaylistWithPolicy(ctx, streamURL, token, lecture, policy)
+}
+
+func (c *Client) getPlaylistWithPolicy(ctx context.Context, streamURL, token string, lecture Lecture, policy mediaOriginPolicy) (ParsedPlaylist, error) {
+	resp, err := c.getAuthorizedWithToken(ctx, streamURL, token, policy)
 	if err != nil {
 		return ParsedPlaylist{}, err
 	}
@@ -262,7 +336,7 @@ func (c *Client) getPlaylist(ctx context.Context, streamURL, token string, lectu
 		if readErr != nil {
 			return ParsedPlaylist{}, fmt.Errorf("playlist request failed with status %d and unreadable body: %w", resp.StatusCode, readErr)
 		}
-		return ParsedPlaylist{}, fmt.Errorf("playlist request failed with status %d: %s", resp.StatusCode, body)
+		return ParsedPlaylist{}, fmt.Errorf("playlist request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	body, readErr := readResponseBodyWithLimit(resp.Body, maxPlaylistResponseSize)
@@ -277,7 +351,11 @@ func (c *Client) getPlaylist(ctx context.Context, streamURL, token string, lectu
 	// Scanner's maximum token size includes the line delimiter. Keep the
 	// public payload limit at 1 MiB while allowing its terminating newline.
 	scanner.Buffer(make([]byte, 64*1024), maxPlaylistLineSize+1)
-	parsed, parseErr := parsePlaylist(scanner, streamURL, lecture.TTID, lecture.Topic, lecture.SeqNo)
+	playlistBaseURL := streamURL
+	if resp.Request != nil && resp.Request.URL != nil {
+		playlistBaseURL = resp.Request.URL.String()
+	}
+	parsed, parseErr := parsePlaylist(scanner, playlistBaseURL, lecture.TTID, lecture.Topic, lecture.SeqNo)
 	_ = resp.Body.Close() //nolint:errcheck
 	if parseErr != nil {
 		return ParsedPlaylist{}, fmt.Errorf("parse playlist for lecture %d (%s): %w", lecture.TTID, lecture.Topic, parseErr)

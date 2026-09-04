@@ -2,6 +2,7 @@ package client
 
 import (
 	"bufio"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -145,5 +146,76 @@ func TestParsePlaylistRejectsInvalidMediaReferences(t *testing.T) {
 				t.Fatalf("parsePlaylist() error = %v, want contextual %q error", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestParsePlaylistRejectsUserinfoMediaReferences(t *testing.T) {
+	tests := []struct {
+		name         string
+		playlistURL  string
+		playlistBody string
+		want         string
+	}{
+		{
+			name:         "userinfo in playlist base",
+			playlistURL:  "https://user:password@media.placeholder.test/course/index.m3u8",
+			playlistBody: "#EXTM3U\nsegment.ts\n",
+			want:         "userinfo",
+		},
+		{
+			name:         "userinfo in key",
+			playlistURL:  "https://media.placeholder.test/course/index.m3u8",
+			playlistBody: "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"https://user:password@keys.placeholder.test/key\"\nsegment.ts\n",
+			want:         "userinfo",
+		},
+		{
+			name:         "userinfo in segment",
+			playlistURL:  "https://media.placeholder.test/course/index.m3u8",
+			playlistBody: "#EXTM3U\nhttps://user:password@cdn.placeholder.test/segment.ts\n",
+			want:         "userinfo",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scanner := bufio.NewScanner(strings.NewReader(tt.playlistBody))
+			_, err := parsePlaylist(scanner, tt.playlistURL, 1, "Lecture", 1)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("parsePlaylist() error = %v, want error containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestParsePlaylistAllowsHTTPReferencesForCompatibility(t *testing.T) {
+	playlist := "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"keys/key.bin\"\n#EXTINF:1,\nsegment.ts\nhttp://cdn.placeholder.test/absolute.ts\n"
+	scanner := bufio.NewScanner(strings.NewReader(playlist))
+	got, err := parsePlaylist(scanner, "http://media.placeholder.test/course/index.m3u8", 1, "Lecture", 1)
+	if err != nil {
+		t.Fatalf("parsePlaylist() error = %v, want HTTP URL-resolution compatibility", err)
+	}
+	if got.KeyURL != "http://media.placeholder.test/course/keys/key.bin" {
+		t.Fatalf("KeyURL = %q, want HTTP-resolved key", got.KeyURL)
+	}
+	want := []string{
+		"http://media.placeholder.test/course/segment.ts",
+		"http://cdn.placeholder.test/absolute.ts",
+	}
+	if !reflect.DeepEqual(got.FirstViewURLs, want) {
+		t.Fatalf("FirstViewURLs = %#v, want %#v", got.FirstViewURLs, want)
+	}
+}
+
+func TestParsePlaylistRejectsExcessiveSegmentCount(t *testing.T) {
+	var playlist strings.Builder
+	playlist.WriteString("#EXTM3U\n")
+	for i := 0; i < 10001; i++ {
+		playlist.WriteString("segment.ts\n")
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(playlist.String()))
+	_, err := parsePlaylist(scanner, "https://media.placeholder.test/course/index.m3u8", 1, "Lecture", 1)
+	if err == nil || !strings.Contains(err.Error(), "too many media segments") {
+		t.Fatalf("parsePlaylist() error = %v, want segment-count limit", err)
 	}
 }

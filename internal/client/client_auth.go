@@ -102,7 +102,7 @@ func (c *Client) readStoredTokenAt(path string) (string, bool) {
 
 func (c *Client) validateStoredToken(ctx context.Context, baseURL, token string) (bool, error) {
 	profileURL := fmt.Sprintf("%s/user/profile", baseURL)
-	resp, err := c.GetAuthorizedWithToken(ctx, profileURL, token)
+	resp, err := c.GetAuthorizedWithTokenForOrigins(ctx, profileURL, token, baseURL)
 	if err != nil {
 		return false, err
 	}
@@ -122,6 +122,9 @@ func (c *Client) prepareLogin(cfg *config.Config) (*Client, string, error) {
 	cli.initialize()
 	if cfg.BaseURL == "" {
 		return nil, "", errors.New("baseUrl is required")
+	}
+	if _, err := newMediaOriginPolicy(append([]string{cfg.BaseURL}, cfg.MediaOrigins...)...); err != nil {
+		return nil, "", err
 	}
 	return cli, cfg.BaseURL, nil
 }
@@ -158,8 +161,8 @@ func (c *Client) login(ctx context.Context, cfg *config.Config, baseURL string) 
 		return "", fmt.Errorf("login failed: %w", secrets.SanitizeError(err))
 	}
 	defer func() { _ = response.Body.Close() }() //nolint:errcheck
-	if err := validateLoginResponse(response); err != nil {
-		return "", err
+	if responseErr := validateLoginResponse(response); responseErr != nil {
+		return "", responseErr
 	}
 	body, readErr := readResponseBodyWithLimit(response.Body, maxLoginResponseSize)
 	if readErr != nil {

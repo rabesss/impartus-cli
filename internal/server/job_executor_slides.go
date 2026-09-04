@@ -55,7 +55,8 @@ func downloadLectureSlideWithLimit(ctx context.Context, c *client.Client, cfg *c
 	}
 
 	url := fmt.Sprintf("%s/videos/%d/auto-generated-pdf", cfg.BaseURL, lecture.VideoID)
-	resp, err := c.GetAuthorizedWithToken(ctx, url, cfg.Token)
+	origins := append([]string{cfg.BaseURL}, cfg.MediaOrigins...)
+	resp, err := c.GetAuthorizedWithTokenForOrigins(ctx, url, cfg.Token, origins...)
 	if err != nil {
 		return err
 	}
@@ -71,7 +72,7 @@ func downloadLectureSlideWithLimit(ctx context.Context, c *client.Client, cfg *c
 		if readErr != nil {
 			return fmt.Errorf("slide download failed for lecture %d with status %d and unreadable body: %w", lecture.SeqNo, resp.StatusCode, readErr)
 		}
-		return fmt.Errorf("slide download failed for lecture %d with status %d: %s", lecture.SeqNo, resp.StatusCode, body)
+		return fmt.Errorf("slide download failed for lecture %d with status %d: %s", lecture.SeqNo, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	if resp.ContentLength > limit {
 		return fmt.Errorf("slide download exceeds max size %d bytes: %w", limit, errSlideSizeLimit)

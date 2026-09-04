@@ -41,13 +41,16 @@ func (d *Downloader) doDownloadChunk(ctx context.Context, url string, id int, ch
 }
 
 func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, id int, chunk int, view string, toMemory bool, limit int64) (string, []byte, int64, error) {
+	if d.mediaOriginErr != nil {
+		return "", nil, 0, d.mediaOriginErr
+	}
 	if err := d.rateLimiter.WaitForDownload(ctx); err != nil {
 		return "", nil, 0, err
 	}
 
-	resp, err := d.client.GetAuthorizedWithToken(ctx, url, d.config.Token)
+	resp, err := d.client.GetAuthorizedWithTokenForOrigins(ctx, url, d.config.Token, d.mediaOrigins...)
 	if err != nil {
-		return "", nil, 0, fmt.Errorf("chunk request failed for URL %s: %w", secrets.RedactURLWithToken(url, d.config.Token), secrets.SanitizeErrorWithToken(err, d.config.Token))
+		return "", nil, 0, fmt.Errorf("chunk request failed for URL %s: %w", secrets.RedactURLWithToken(url, d.config.Token), err)
 	}
 	defer func() { closeErr := resp.Body.Close(); _ = closeErr }()
 
@@ -99,11 +102,7 @@ func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, i
 	return outFilepath, nil, bytesWritten, nil
 }
 
-func chunkResponseError(resp *http.Response, url string, tokens ...string) error {
-	token := ""
-	if len(tokens) > 0 {
-		token = tokens[0]
-	}
+func chunkResponseError(resp *http.Response, url, token string) error {
 	if resp.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("chunk request failed with status %d for URL %s: %w", resp.StatusCode, secrets.RedactURLWithToken(url, token), &client.AuthenticationError{
 			Operation:  "chunk",

@@ -133,6 +133,62 @@ func TestProbeUpstreamHTTP_SuccessfulProbe(t *testing.T) {
 	}
 }
 
+func TestProbeUpstreamHTTPRejectsCredentialRedirects(t *testing.T) {
+	const token = "health-probe-secret"
+	for _, test := range []struct {
+		name   string
+		useTLS bool
+	}{
+		{name: "cross origin", useTLS: false},
+		{name: "https downgrade", useTLS: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var targetRequests int
+			var targetAuthorization string
+			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				targetRequests++
+				targetAuthorization = r.Header.Get("Authorization")
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer target.Close()
+
+			redirectHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, target.URL+"/user/profile", http.StatusTemporaryRedirect)
+			})
+			var source *httptest.Server
+			if test.useTLS {
+				source = httptest.NewTLSServer(redirectHandler)
+			} else {
+				source = httptest.NewServer(redirectHandler)
+			}
+			defer source.Close()
+
+			s := newAPIServer(&config.Config{
+				Username:         "user",
+				Password:         "pass",
+				BaseURL:          source.URL,
+				DownloadLocation: "./downloads",
+			})
+			upstreamClient := source.Client()
+			s.upstreamCacheMu.Lock()
+			s.upstreamCache = &upstreamCacheEntry{
+				client:    client.New(upstreamClient, nil),
+				token:     token,
+				expiresAt: time.Now().Add(time.Hour),
+			}
+			s.upstreamCacheMu.Unlock()
+
+			reachable, probed := s.probeUpstreamHTTP(context.Background())
+			if !probed || reachable {
+				t.Fatalf("probe result = (reachable=%v, probed=%v), want (false, true)", reachable, probed)
+			}
+			if targetRequests != 0 || targetAuthorization != "" {
+				t.Fatalf("redirect target received requests=%d Authorization=%q, want zero/no bearer", targetRequests, targetAuthorization)
+			}
+		})
+	}
+}
+
 func TestProbeUpstreamHTTP_ServerReturnsError(t *testing.T) {
 	// Create a server that immediately closes connections
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

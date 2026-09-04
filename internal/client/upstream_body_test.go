@@ -91,12 +91,12 @@ func TestGetAuthorizedWithTokenRedactsUnknownQueryTokenFromNetworkError(t *testi
 	transportError := errors.New("dial failed for " + rawURL)
 	c := New(&http.Client{Transport: &errorTransport{err: transportError}}, nil)
 
-	resp, err := c.GetAuthorizedWithToken(context.Background(), rawURL, token)
+	resp, err := c.GetAuthorizedWithTokenForOrigins(context.Background(), rawURL, token, "https://api.example.test")
 	if resp != nil {
 		_ = resp.Body.Close() //nolint:errcheck
 	}
 	if err == nil {
-		t.Fatal("GetAuthorizedWithToken() error = nil, want network failure")
+		t.Fatal("GetAuthorizedWithTokenForOrigins() error = nil, want network failure")
 	}
 	for _, secret := range []string{token, strings.TrimPrefix(token, "Bearer "), url.QueryEscape(token), url.QueryEscape("Bearer " + token)} {
 		if strings.Contains(err.Error(), secret) {

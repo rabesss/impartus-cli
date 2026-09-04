@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -84,6 +85,36 @@ func TestLoadResolvedTokenCachePathDefaultsToLegacyToken(t *testing.T) {
 	}
 }
 
+func TestLoadResolvedMediaOriginsUsesEnvironmentOverride(t *testing.T) {
+	t.Setenv("IMPARTUS_MEDIA_ORIGINS", " https://cdn-one.example.com,https://cdn-two.example.com ")
+	path := writeTempConfig(t, `{
+		"username": "u", "password": "p", "baseUrl": "https://api.example.com",
+		"quality": "450", "views": "both"
+	}`)
+
+	cfg, err := LoadResolved(path)
+	if err != nil {
+		t.Fatalf("LoadResolved: %v", err)
+	}
+	want := []string{"https://cdn-one.example.com", "https://cdn-two.example.com"}
+	if !reflect.DeepEqual(cfg.MediaOrigins, want) {
+		t.Fatalf("MediaOrigins = %#v, want %#v", cfg.MediaOrigins, want)
+	}
+}
+
+func TestLoadResolvedRejectsInvalidMediaOriginsEnvironment(t *testing.T) {
+	t.Setenv("IMPARTUS_MEDIA_ORIGINS", "http://cdn.example.com")
+	path := writeTempConfig(t, `{
+		"username": "u", "password": "p", "baseUrl": "https://api.example.com",
+		"quality": "450", "views": "both"
+	}`)
+
+	_, err := LoadResolved(path)
+	if err == nil || !strings.Contains(err.Error(), "mediaOrigins must use HTTPS") {
+		t.Fatalf("LoadResolved error = %v, want invalid media origin validation", err)
+	}
+}
+
 func TestValidateRejectsInvalidViewsQualityAndMissingCredentials(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -140,6 +171,70 @@ func TestValidateRejectsInvalidViewsQualityAndMissingCredentials(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestValidateMediaOriginsRequiresSecureExactOrigins(t *testing.T) {
+	tests := []struct {
+		name      string
+		origins   []string
+		wantError string
+	}{
+		{name: "valid HTTPS CDN origin", origins: []string{"https://cdn.example.com"}},
+		{name: "valid loopback HTTP test origin", origins: []string{"http://127.0.0.1:43123"}},
+		{name: "remote HTTP origin", origins: []string{"http://cdn.example.com"}, wantError: "mediaOrigins must use HTTPS"},
+		{name: "origin with userinfo", origins: []string{"https://user:password@cdn.example.com"}, wantError: "valid HTTP(S) origins"},
+		{name: "origin with path", origins: []string{"https://cdn.example.com/media"}, wantError: "valid HTTP(S) origins"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := minimalValidConfig()
+			cfg.ApplyDefaults()
+			cfg.MediaOrigins = tt.origins
+			err := cfg.Validate()
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatalf("Validate() error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("Validate() error = %v, want error containing %q", err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestValidateBaseURLRequiresHTTPSForRemoteOrigin(t *testing.T) {
+	tests := []struct {
+		name      string
+		baseURL   string
+		wantError string
+	}{
+		{name: "remote HTTP", baseURL: "http://api.example.com", wantError: "baseUrl must use HTTPS"},
+		{name: "malformed query", baseURL: "https://api.example.com?token=%zz", wantError: "baseUrl must be a valid HTTP(S) URL"},
+		{name: "query component", baseURL: "https://api.example.com/api?tenant=one", wantError: "baseUrl must be a valid HTTP(S) URL"},
+		{name: "fragment component", baseURL: "https://api.example.com/api#fragment", wantError: "baseUrl must be a valid HTTP(S) URL"},
+		{name: "loopback HTTP", baseURL: "http://127.0.0.1:43123"},
+		{name: "IPv6 loopback HTTP", baseURL: "http://[0:0:0:0:0:0:0:1]:43123"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := minimalValidConfig()
+			cfg.BaseURL = tt.baseURL
+			cfg.ApplyDefaults()
+			err := cfg.Validate()
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatalf("Validate() error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("Validate() error = %v, want error containing %q", err, tt.wantError)
 			}
 		})
 	}
@@ -628,6 +723,7 @@ func unsetAllConfigEnv(t *testing.T) {
 		"IMPARTUS_ENABLE_PIPELINE",
 		"IMPARTUS_HTTP_TIMEOUT",
 		"IMPARTUS_LISTEN_ADDR",
+		"IMPARTUS_MEDIA_ORIGINS",
 		"IMPARTUS_NUM_WORKERS",
 		"IMPARTUS_PASSWORD",
 		"IMPARTUS_PROGRESS_TRACKING_ENABLED",

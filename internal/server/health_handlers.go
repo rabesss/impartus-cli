@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/rabesss/impartus-cli/internal/client"
 )
 
 const (
@@ -183,14 +185,12 @@ func (s *APIServer) probeUpstreamHTTP(parent context.Context) (reachable, probed
 	ctx, cancel := context.WithTimeout(parent, upstreamProbeTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, profileURL, nil)
-	if err != nil {
-		return false, true
+	upstreamClient := cached.client
+	if upstreamClient == nil {
+		upstreamClient = client.New(&http.Client{Timeout: upstreamProbeTimeout}, nil)
 	}
-	req.Header.Set("Authorization", "Bearer "+cached.token)
-
-	httpClient := &http.Client{Timeout: upstreamProbeTimeout}
-	resp, err := httpClient.Do(req)
+	origins := append([]string{baseURL}, s.cfg.MediaOrigins...)
+	resp, err := upstreamClient.GetAuthorizedWithTokenForOrigins(ctx, profileURL, cached.token, origins...)
 	if err != nil {
 		return false, true
 	}

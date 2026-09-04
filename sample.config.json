@@ -2,6 +2,7 @@
   "username": "your_impartus_email@example.com",
   "password": "your_impartus_password",
   "baseUrl": "https://a.impartus.com/api",
+  "mediaOrigins": [],
   "quality": "720",
   "views": "both",
   "downloadLocation": "./downloads",

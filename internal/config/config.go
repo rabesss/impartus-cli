@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -37,9 +38,13 @@ type ProgressConfig struct {
 
 // Config holds all application configuration values.
 type Config struct {
-	Username         string      `json:"username"`
-	Password         string      `json:"password"`
-	BaseURL          string      `json:"baseUrl"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	BaseURL  string `json:"baseUrl"`
+	// MediaOrigins lists additional exact origins (typically a CDN) that may
+	// receive the upstream bearer token for playlist and media requests. The
+	// API base URL is always authorized separately.
+	MediaOrigins     []string    `json:"mediaOrigins,omitempty"`
 	Quality          string      `json:"quality"`
 	Views            string      `json:"views"`
 	DownloadLocation string      `json:"downloadLocation"`
@@ -196,6 +201,9 @@ func (c *Config) validateCore() error {
 	if err := c.validateBaseURL(); err != nil {
 		return err
 	}
+	if err := c.validateMediaOrigins(); err != nil {
+		return err
+	}
 	if c.NumWorkers < 1 || c.NumWorkers > 50 {
 		return fmt.Errorf("numWorkers must be between 1 and 50, got %d", c.NumWorkers)
 	}
@@ -210,10 +218,60 @@ func (c *Config) validateBaseURL() error {
 		return fmt.Errorf("baseUrl is required")
 	}
 	u, err := url.Parse(c.BaseURL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	if err != nil || !validConfigHTTPURL(u) {
 		return fmt.Errorf("baseUrl must be a valid HTTP(S) URL")
 	}
+	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return fmt.Errorf("baseUrl must be a valid HTTP(S) URL")
+	}
+	if strings.EqualFold(u.Scheme, "http") && !isLoopbackHost(u.Hostname()) {
+		return fmt.Errorf("baseUrl must use HTTPS for remote origins")
+	}
 	return nil
+}
+
+func (c *Config) validateMediaOrigins() error {
+	for _, rawOrigin := range c.MediaOrigins {
+		u, err := url.Parse(strings.TrimSpace(rawOrigin))
+		if err != nil || !validConfigHTTPURL(u) || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+			return fmt.Errorf("mediaOrigins must contain valid HTTP(S) origins")
+		}
+		if strings.EqualFold(u.Scheme, "http") && !isLoopbackHost(u.Hostname()) {
+			return fmt.Errorf("mediaOrigins must use HTTPS for remote origins")
+		}
+	}
+	return nil
+}
+
+func validConfigHTTPURL(u *url.URL) bool {
+	if u == nil || u.Opaque != "" || u.User != nil || u.Host == "" || u.Hostname() == "" || strings.Contains(u.Hostname(), "%") || strings.HasSuffix(u.Host, ":") {
+		return false
+	}
+	if !strings.EqualFold(u.Scheme, "http") && !strings.EqualFold(u.Scheme, "https") {
+		return false
+	}
+	if !validConfigPort(u.Port()) {
+		return false
+	}
+	_, err := url.ParseQuery(u.RawQuery)
+	return err == nil
+}
+
+func validConfigPort(port string) bool {
+	if port == "" {
+		return true
+	}
+	portNumber, err := strconv.Atoi(port)
+	return err == nil && portNumber >= 0 && portNumber <= 65535
+}
+
+func isLoopbackHost(hostname string) bool {
+	hostname = strings.TrimSuffix(strings.TrimSpace(hostname), ".")
+	if strings.EqualFold(hostname, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(hostname)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (c *Config) validateMediaSettings() error {
@@ -378,6 +436,7 @@ func applyEnvOverrides(cfg *Config) error {
 	applyStringEnv("IMPARTUS_USERNAME", &cfg.Username)
 	applyStringEnv("IMPARTUS_PASSWORD", &cfg.Password)
 	applyStringEnv("IMPARTUS_BASE_URL", &cfg.BaseURL)
+	applyStringSliceEnv("IMPARTUS_MEDIA_ORIGINS", &cfg.MediaOrigins)
 	applyStringEnv("IMPARTUS_QUALITY", &cfg.Quality)
 	applyStringEnv("IMPARTUS_VIEWS", &cfg.Views)
 	applyStringEnv("IMPARTUS_DOWNLOAD_LOCATION", &cfg.DownloadLocation)
@@ -438,6 +497,20 @@ func applyStringEnv(key string, target *string) {
 	if value, ok := os.LookupEnv(key); ok {
 		*target = value
 	}
+}
+
+func applyStringSliceEnv(key string, target *[]string) {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return
+	}
+	values := make([]string, 0)
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			values = append(values, item)
+		}
+	}
+	*target = values
 }
 
 func applyBoolEnv(key string, target *bool) error {

@@ -157,6 +157,7 @@ protection manually with `chmod 600 config.json`.
   "username": "your_impartus_email@example.com",
   "password": "your_impartus_password",
   "baseUrl": "https://a.impartus.com/api",
+  "mediaOrigins": [],
   "quality": "720",
   "views": "both",
   "downloadLocation": "./downloads"
@@ -170,6 +171,7 @@ protection manually with `chmod 600 config.json`.
 | `username` | string | Yes | - | Impartus username (email) |
 | `password` | string | Yes | - | Impartus password |
 | `baseUrl` | string | Yes | - | Impartus API base URL |
+| `mediaOrigins` | array of strings | No | `[]` | Additional exact HTTPS origins allowed for authenticated playlist/media requests; loopback HTTP is allowed for local testing |
 | `quality` | string | No | `"720"` | Video quality: `144`, `450`, `720` |
 | `views` | string | No | `"both"` | Views: `left`, `right`, `both`, `first`, `second` |
 | `downloadLocation` | string | No | `"./downloads"` | Output directory |
@@ -264,6 +266,7 @@ Only the settings listed below have environment-variable overrides. Settings abs
 | `IMPARTUS_USERNAME` | `username` | Required unless supplied in JSON |
 | `IMPARTUS_PASSWORD` | `password` | Required unless supplied in JSON |
 | `IMPARTUS_BASE_URL` | `baseUrl` | Required unless supplied in JSON |
+| `IMPARTUS_MEDIA_ORIGINS` | `mediaOrigins` | Comma-separated exact origins; remote origins must use HTTPS |
 | `IMPARTUS_QUALITY` | `quality` | `144`, `450`, or `720` |
 | `IMPARTUS_VIEWS` | `views` | `left`, `right`, `both`, `first`, or `second` |
 | `IMPARTUS_DOWNLOAD_LOCATION` | `downloadLocation` | Output directory |
@@ -294,7 +297,8 @@ Only the settings listed below have environment-variable overrides. Settings abs
 #### Validation Rules
 
 - `username` and `password` are required
-- `baseUrl` must be a valid URL
+- `baseUrl` must be an absolute HTTP(S) URL without query or fragment; remote HTTP is rejected (loopback HTTP is allowed for local testing)
+- `mediaOrigins` entries must be exact HTTP(S) origins without paths, query, or fragments; remote entries must use HTTPS
 - `quality` must be one of: `144`, `450`, `720`
 - `views` must be one of: `left`, `right`, `both`, `first`, `second`
 - `numWorkers` must be between 1-50
