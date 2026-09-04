@@ -6,7 +6,6 @@
 package secrets
 
 import (
-	"bytes"
 	"encoding/json"
 	"net"
 	"net/url"
@@ -308,6 +307,12 @@ func scrubEmbeddedURLsWithEvidence(value string, depth int) (string, RedactionEv
 	indices := httpsSchemeRe.FindAllStringIndex(value, -1)
 	if len(indices) == 0 {
 		return value, RedactionEvidence{}
+	}
+	if len(indices) > maxEmbeddedURLCandidates {
+		// A diagnostic with an unbounded number of nested URL candidates is not a
+		// useful presentation. Do not leave candidates after a fixed work budget
+		// where one of them could still carry a credential.
+		return "REDACTED", RedactionEvidence{}
 	}
 	// When the decoded value is itself one complete URL, handing it back to
 	// redactURLWithEvidenceDepth would recurse on the same candidate. Let the
@@ -689,42 +694,148 @@ func jsonEscapeToken(value string) string {
 }
 
 // replaceJSONEscapedToken removes token occurrences represented by any valid
-// JSON escape spelling. It keeps a mapping from decoded bytes back to their
-// original byte spans, so replacements never split a UTF-8 sequence or leave
-// the escaped spelling behind. The caller caps the diagnostic size before
-// entering this helper.
+// JSON escape spelling. It decodes once into a contiguous view and keeps one
+// source span per decoded byte, so matching is linear in the diagnostic and a
+// replacement never splits a UTF-8 sequence or leaves the escaped spelling
+// behind. The caller caps the diagnostic size before entering this helper.
 func replaceJSONEscapedToken(value, token string) string {
 	if value == "" || token == "" || !strings.Contains(value, "\\") {
 		return value
 	}
-	tokenBytes := []byte(token)
-	units := decodeJSONUnits(value)
-	if len(units) == 0 {
+	view := decodeEncodedViewLayer(rawEncodedView(value), false)
+	if !view.changed {
 		return value
 	}
+	return replaceEncodedViewMatches(value, view, []string{token}, "REDACTED")
+}
 
-	var scrubbed strings.Builder
-	lastRaw := 0
+type rawSpan struct {
+	start int
+	end   int
+}
+
+type encodedView struct {
+	text    string
+	spans   []rawSpan
+	changed bool
+}
+
+func rawEncodedView(value string) encodedView {
+	spans := make([]rawSpan, len(value))
+	for index := range spans {
+		spans[index] = rawSpan{start: index, end: index + 1}
+	}
+	return encodedView{text: value, spans: spans}
+}
+
+// decodeEncodedViewLayer decodes one bounded layer of percent and JSON
+// escapes. Percent decoding is intentionally byte-oriented, matching URL
+// escaping even when the resulting free-form value is not valid UTF-8. JSON
+// escapes can expand to several UTF-8 bytes; all of those bytes share the
+// source span of the original escape.
+func decodeEncodedViewLayer(source encodedView, decodePercent bool) encodedView {
+	if source.text == "" || len(source.spans) != len(source.text) {
+		return source
+	}
+	decoded := make([]byte, 0, len(source.text))
+	spans := make([]rawSpan, 0, len(source.text))
 	changed := false
-	for start := 0; start < len(units); {
-		end, ok := matchJSONToken(units, start, tokenBytes)
-		if !ok {
-			start++
+	for index := 0; index < len(source.text); {
+		if decodePercent && source.text[index] == '%' && index+2 < len(source.text) {
+			high, highOK := percentNibble(source.text[index+1])
+			low, lowOK := percentNibble(source.text[index+2])
+			if highOK && lowOK {
+				decoded = append(decoded, high<<4|low)
+				spans = append(spans, combineRawSpans(source.spans[index], source.spans[index+2]))
+				index += 3
+				changed = true
+				continue
+			}
+		}
+		before := len(decoded)
+		var width int
+		var ok bool
+		decoded, width, ok = appendJSONEscape(decoded, source.text, index)
+		if ok {
+			span := combineRawSpans(source.spans[index], source.spans[index+width-1])
+			for range decoded[before:] {
+				spans = append(spans, span)
+			}
+			index += width
+			changed = true
 			continue
 		}
-		rawStart := units[start].rawStart
-		rawEnd := units[end-1].rawEnd
-		if rawStart < lastRaw || rawEnd <= rawStart {
-			// Units are generated in source order; this is defensive only, but
-			// refusing an invalid span keeps this boundary fail-closed.
-			start++
+		decoded = append(decoded, source.text[index])
+		spans = append(spans, source.spans[index])
+		index++
+	}
+	if !changed {
+		return encodedView{text: source.text, spans: source.spans, changed: false}
+	}
+	return encodedView{text: string(decoded), spans: spans, changed: true}
+}
+
+func combineRawSpans(first, last rawSpan) rawSpan {
+	return rawSpan{start: first.start, end: last.end}
+}
+
+func replaceEncodedViewMatches(value string, view encodedView, needles []string, replacement string) string {
+	if value == "" || view.text == "" || len(view.spans) != len(view.text) {
+		return value
+	}
+	matches := findEncodedViewMatches(view.text, needles)
+	if len(matches) == 0 {
+		return value
+	}
+	sort.Slice(matches, func(left, right int) bool {
+		if matches[left].start != matches[right].start {
+			return matches[left].start < matches[right].start
+		}
+		return matches[left].end > matches[right].end
+	})
+	return replaceEncodedViewRanges(value, view, matches, replacement)
+}
+
+type encodedMatch struct{ start, end int }
+
+func findEncodedViewMatches(value string, needles []string) []encodedMatch {
+	matches := make([]encodedMatch, 0, len(needles))
+	for _, needle := range needles {
+		if needle == "" {
+			continue
+		}
+		for searchFrom := 0; searchFrom <= len(value)-len(needle); {
+			index := strings.Index(value[searchFrom:], needle)
+			if index < 0 {
+				break
+			}
+			index += searchFrom
+			matches = append(matches, encodedMatch{start: index, end: index + len(needle)})
+			searchFrom = index + len(needle)
+		}
+	}
+	return matches
+}
+
+func replaceEncodedViewRanges(value string, view encodedView, matches []encodedMatch, replacement string) string {
+	var scrubbed strings.Builder
+	scrubbed.Grow(len(value))
+	lastRaw := 0
+	changed := false
+	lastDecodedEnd := 0
+	for _, candidate := range matches {
+		if candidate.start < lastDecodedEnd || candidate.start < 0 || candidate.end > len(view.spans) {
+			continue
+		}
+		rawStart, rawEnd, ok := rawRangeForDecoded(view, candidate.start, candidate.end)
+		if !ok || rawStart < lastRaw || rawEnd <= rawStart || rawStart < 0 || rawEnd > len(value) {
 			continue
 		}
 		scrubbed.WriteString(value[lastRaw:rawStart])
-		scrubbed.WriteString("REDACTED")
+		scrubbed.WriteString(replacement)
 		lastRaw = rawEnd
+		lastDecodedEnd = candidate.end
 		changed = true
-		start = end
 	}
 	if !changed {
 		return value
@@ -733,93 +844,72 @@ func replaceJSONEscapedToken(value, token string) string {
 	return scrubbed.String()
 }
 
-type jsonDecodedUnit struct {
-	rawStart int
-	rawEnd   int
-	decoded  []byte
+func rawRangeForDecoded(view encodedView, start, end int) (int, int, bool) {
+	if start < 0 || end <= start || end > len(view.spans) {
+		return 0, 0, false
+	}
+	first := view.spans[start]
+	last := view.spans[end-1]
+	if first.start < 0 || last.end <= first.start {
+		return 0, 0, false
+	}
+	return first.start, last.end, true
 }
 
-func decodeJSONUnits(value string) []jsonDecodedUnit {
-	units := make([]jsonDecodedUnit, 0, len(value))
-	for index := 0; index < len(value); {
-		if decoded, width, ok := decodeJSONEscapeAt(value, index); ok {
-			units = append(units, jsonDecodedUnit{
-				rawStart: index,
-				rawEnd:   index + width,
-				decoded:  decoded,
-			})
-			index += width
-			continue
-		}
-		units = append(units, jsonDecodedUnit{
-			rawStart: index,
-			rawEnd:   index + 1,
-			decoded:  []byte{value[index]},
-		})
-		index++
-	}
-	return units
-}
-
-func matchJSONToken(units []jsonDecodedUnit, start int, token []byte) (int, bool) {
-	if len(token) == 0 || start >= len(units) {
-		return 0, false
-	}
-	matched := 0
-	for end := start; end < len(units) && matched < len(token); end++ {
-		decoded := units[end].decoded
-		if len(decoded) > len(token)-matched || !bytes.Equal(decoded, token[matched:matched+len(decoded)]) {
-			return 0, false
-		}
-		matched += len(decoded)
-		if matched == len(token) {
-			return end + 1, true
-		}
-	}
-	return 0, false
-}
-
-func decodeJSONEscapeAt(value string, index int) ([]byte, int, bool) {
+func appendJSONEscape(dst []byte, value string, index int) ([]byte, int, bool) {
 	if index < 0 || index+1 >= len(value) || value[index] != '\\' {
-		return nil, 0, false
+		return dst, 0, false
 	}
+	escapeWidth := 2
 	switch value[index+1] {
 	case '"':
-		return []byte{'"'}, 2, true
+		dst = append(dst, '"')
 	case '\\':
-		return []byte{'\\'}, 2, true
+		dst = append(dst, '\\')
 	case '/':
-		return []byte{'/'}, 2, true
+		dst = append(dst, '/')
 	case 'b':
-		return []byte{'\b'}, 2, true
+		dst = append(dst, '\b')
 	case 'f':
-		return []byte{'\f'}, 2, true
+		dst = append(dst, '\f')
 	case 'n':
-		return []byte{'\n'}, 2, true
+		dst = append(dst, '\n')
 	case 'r':
-		return []byte{'\r'}, 2, true
+		dst = append(dst, '\r')
 	case 't':
-		return []byte{'\t'}, 2, true
+		dst = append(dst, '\t')
 	case 'u':
-		return decodeJSONUnicodeEscape(value, index)
+		code, width, ok := decodeJSONCodePoint(value, index)
+		if !ok {
+			return dst, 0, false
+		}
+		escapeWidth = width
+		decodedRune := utf8.RuneError
+		if code <= utf8.MaxRune {
+			decodedRune = rune(code)
+		}
+		var encoded [utf8.UTFMax]byte
+		count := utf8.EncodeRune(encoded[:], decodedRune)
+		dst = append(dst, encoded[:count]...)
 	default:
-		return nil, 0, false
+		return dst, 0, false
 	}
+	return dst, escapeWidth, true
 }
 
-func decodeJSONUnicodeEscape(value string, index int) ([]byte, int, bool) {
+func decodeJSONCodePoint(value string, index int) (uint32, int, bool) {
 	if index+6 > len(value) {
-		return nil, 0, false
+		return 0, 0, false
 	}
 	code, ok := parseJSONHex4(value[index+2 : index+6])
 	if !ok {
-		return nil, 0, false
+		return 0, 0, false
 	}
 	if isJSONHighSurrogate(code) && index+12 <= len(value) && value[index+6] == '\\' && value[index+7] == 'u' {
 		low, lowOK := parseJSONHex4(value[index+8 : index+12])
 		if lowOK && isJSONLowSurrogate(low) {
 			combined := uint32(0x10000) + (uint32(code-0xd800)<<10 | uint32(low-0xdc00))
-			return encodeJSONCodePoint(combined), 12, true
+			return combined, 12, true
 		}
 	}
 	if isJSONSurrogate(code) {
@@ -827,16 +917,7 @@ func decodeJSONUnicodeEscape(value string, index int) ([]byte, int, bool) {
 		// that behavior instead of emitting invalid UTF-8.
 		code = 0xfffd
 	}
-	return encodeJSONCodePoint(uint32(code)), 6, true
-}
-
-func encodeJSONCodePoint(code uint32) []byte {
-	if code > utf8.MaxRune {
-		code = utf8.RuneError
-	}
-	var encoded [utf8.UTFMax]byte
-	count := utf8.EncodeRune(encoded[:], rune(code))
-	return encoded[:count]
+	return uint32(code), 6, true
 }
 
 func parseJSONHex4(value string) (uint16, bool) {
@@ -865,6 +946,7 @@ func redactURLWithEvidence(rawURL string) (string, bool, RedactionEvidence) {
 const (
 	maxURLRedactionDepth     = 16
 	maxFragmentRedactionSize = 64 * 1024
+	maxEmbeddedURLCandidates = 64
 )
 
 func redactURLWithEvidenceDepth(rawURL string, depth int) (string, bool, RedactionEvidence) {
@@ -1087,7 +1169,7 @@ func (collector *classificationCollector) addClassification(candidate error) {
 		return
 	}
 	for _, existing := range collector.classifications {
-		if existing == candidate {
+		if sameClassification(existing, candidate) {
 			return
 		}
 	}
@@ -1105,6 +1187,21 @@ func isSafeClassification(err error) bool {
 		return !value.IsNil()
 	}
 	return value.Type().Comparable()
+}
+
+// sameClassification compares only exact identities/values while containing
+// the one remaining panic surface in interface equality: a struct can report
+// Comparable when one of its interface fields holds a slice or map.
+func sameClassification(left, right error) (equal bool) {
+	if !isSafeClassification(left) || !isSafeClassification(right) {
+		return false
+	}
+	defer func() {
+		if recover() != nil {
+			equal = false
+		}
+	}()
+	return left == right
 }
 
 type networkMetadata struct {
@@ -1193,10 +1290,11 @@ func (err *sanitizedError) Is(target error) bool {
 		return false
 	}
 	for _, candidate := range err.classification {
-		// Both dynamic values are comparable, so interface equality cannot panic.
 		// Do not invoke target.Is: custom classifiers may inspect or expose
-		// credential-bearing state.
-		if candidate == target {
+		// credential-bearing state. sameClassification contains the interface
+		// equality panic for comparable structs with an uncomparable dynamic
+		// interface field.
+		if sameClassification(candidate, target) {
 			return true
 		}
 	}
@@ -1258,6 +1356,12 @@ func Scrub(s string) string {
 // credential value it recognized. Callers must use the evidence only for
 // in-process comparison and must never persist or present it.
 func ScrubWithEvidence(s string) (string, RedactionEvidence) {
+	// Diagnostics are untrusted input. Refuse oversized values before URL
+	// matching, regular-expression passes, or span allocation can turn them
+	// into attacker-controlled work. Callers still get a fixed safe marker.
+	if len(s) > maxScrubInputSize {
+		return "REDACTED", RedactionEvidence{}
+	}
 	return scrubWithEvidenceDepth(s, 0)
 }
 
@@ -1266,20 +1370,7 @@ func scrubWithEvidenceDepth(s string, depth int) (string, RedactionEvidence) {
 		return s, RedactionEvidence{}
 	}
 	scrubbed, evidence := scrubCredentialURLsWithEvidenceDepth(s, depth)
-	for _, step := range []struct {
-		expression  *regexp.Regexp
-		prefixGroup int
-		replacement string
-	}{
-		{quotedSecretValue, 1, "${1}REDACTED"},
-		{singleQuotedSecretValue, 1, "${1}REDACTED"},
-		{quotedKeySchemeSecretValue, 1, "${1}REDACTED"},
-		{quotedKeyBareSecretValue, 1, "${1}REDACTED"},
-		{strongCredentialAssignment, 2, "${1}${2}REDACTED"},
-		{schemeSecretAssignment, 2, "${1}${2}REDACTED"},
-		{bareSecretEquals, 2, "${1}${2}REDACTED"},
-		{bareSecretColon, 2, "${1}${2}REDACTED"},
-	} {
+	for _, step := range credentialAssignmentSteps() {
 		var stepEvidence RedactionEvidence
 		scrubbed, stepEvidence = replaceCredentialValues(
 			scrubbed,
@@ -1289,7 +1380,405 @@ func scrubWithEvidenceDepth(s string, depth int) (string, RedactionEvidence) {
 		)
 		evidence.values = append(evidence.values, stepEvidence.values...)
 	}
+	encoded, encodedEvidence := scrubEncodedAssignmentsWithEvidence(scrubbed)
+	if encoded != scrubbed {
+		scrubbed = encoded
+	}
+	evidence.values = append(evidence.values, encodedEvidence.values...)
 	return scrubbed, evidence
+}
+
+type credentialAssignmentStep struct {
+	expression  *regexp.Regexp
+	prefixGroup int
+	replacement string
+}
+
+func credentialAssignmentSteps() []credentialAssignmentStep {
+	return []credentialAssignmentStep{
+		{quotedSecretValue, 1, "${1}REDACTED"},
+		{singleQuotedSecretValue, 1, "${1}REDACTED"},
+		{quotedKeySchemeSecretValue, 1, "${1}REDACTED"},
+		{quotedKeyBareSecretValue, 1, "${1}REDACTED"},
+		{strongCredentialAssignment, 2, "${1}${2}REDACTED"},
+		{schemeSecretAssignment, 2, "${1}${2}REDACTED"},
+		{bareSecretEquals, 2, "${1}${2}REDACTED"},
+		{bareSecretColon, 2, "${1}${2}REDACTED"},
+	}
+}
+
+const (
+	maxScrubInputSize        = 64 * 1024
+	maxCredentialDecodeDepth = 3
+	maxCredentialKeyRunes    = 128
+)
+
+type credentialValueRange struct {
+	start int
+	end   int
+}
+
+// scrubEncodedAssignmentsWithEvidence applies the free-form assignment rules
+// to a bounded sequence of decoded views. Every decoded byte carries a span
+// into the current source, so only the credential value is replaced and safe
+// percent/JSON spelling around it remains intact.
+func scrubEncodedAssignmentsWithEvidence(value string) (string, RedactionEvidence) {
+	if value == "" {
+		return value, RedactionEvidence{}
+	}
+	if len(value) > maxScrubInputSize {
+		return "REDACTED", RedactionEvidence{}
+	}
+	var evidence RedactionEvidence
+	view := rawEncodedView(value)
+	rawRanges := make([]rawSpan, 0, 8)
+	for depth := 0; depth <= maxCredentialDecodeDepth; depth++ {
+		if depth > 0 {
+			view = decodeEncodedViewLayer(view, true)
+			if !view.changed {
+				break
+			}
+		}
+		valueRanges, viewEvidence := credentialValueRangesForView(view)
+		evidence.values = append(evidence.values, viewEvidence.values...)
+		for _, candidate := range valueRanges {
+			start, end, ok := rawRangeForDecoded(view, candidate.start, candidate.end)
+			if !ok || start < 0 || end > len(value) || end <= start {
+				continue
+			}
+			rawRanges = append(rawRanges, rawSpan{start: start, end: end})
+		}
+		if depth != maxCredentialDecodeDepth {
+			continue
+		}
+
+		// Inspect one additional decoded view only to distinguish a safe
+		// redacted assignment whose delimiter is still encoded from an
+		// assignment that is deeper than the supported budget. A value that
+		// remains hidden behind another encoding layer is opaque by design.
+		probe := decodeEncodedViewLayer(view, true)
+		if !probe.changed {
+			break
+		}
+		if probe.changed {
+			return "REDACTED", evidence
+		}
+	}
+	return replaceRawCredentialRanges(value, rawRanges), evidence
+}
+
+func credentialValueRangesForView(view encodedView) ([]credentialValueRange, RedactionEvidence) {
+	ranges, evidence := regexCredentialValueRanges(view.text)
+	canonicalRanges := canonicalCredentialValueRanges(view.text)
+	ranges = append(ranges, canonicalRanges...)
+	for _, candidate := range canonicalRanges {
+		if candidate.start >= 0 && candidate.end <= len(view.text) && candidate.end > candidate.start {
+			evidence.values = append(evidence.values, view.text[candidate.start:candidate.end])
+		}
+	}
+	return ranges, evidence
+}
+
+func regexCredentialValueRanges(value string) ([]credentialValueRange, RedactionEvidence) {
+	ranges := make([]credentialValueRange, 0, 8)
+	var evidence RedactionEvidence
+	for _, step := range credentialAssignmentSteps() {
+		indices := step.expression.FindAllStringSubmatchIndex(value, -1)
+		for _, index := range indices {
+			prefixEnd, ok := credentialPrefixEnd(index, step.prefixGroup, len(value))
+			if !ok {
+				continue
+			}
+			if step.expression == schemeSecretAssignment || step.expression == quotedKeySchemeSecretValue {
+				if credentialStart, _, ok := recognizedSchemeCredentialRange(value, prefixEnd, index[1]); ok {
+					prefixEnd = credentialStart
+				}
+			}
+			credential := value[prefixEnd:index[1]]
+			if shouldSkipCredentialRange(step.expression, credential) {
+				// The broad authorization fallback protects custom schemes. A
+				// standard scheme has a precise matcher below, so keep its safe
+				// suffix/context instead of discarding the rest of the line.
+				continue
+			}
+			if (step.expression == bareSecretEquals || step.expression == bareSecretColon) && IsCredentialScheme(strings.TrimSpace(credential)) {
+				// The scheme-specific matcher redacts the following credential;
+				// treating the scheme word itself as the credential would lose
+				// useful diagnostic context.
+				continue
+			}
+			if credential != "REDACTED" {
+				ranges = append(ranges, credentialValueRange{start: prefixEnd, end: index[1]})
+				evidence.values = append(evidence.values, credential)
+			}
+		}
+	}
+	return ranges, evidence
+}
+
+func credentialPrefixEnd(index []int, group, valueLength int) (int, bool) {
+	position := group * 2
+	if position < 0 || position+1 >= len(index) || len(index) < 2 || index[1] < 0 || index[position] < 0 || index[position+1] < 0 {
+		return 0, false
+	}
+	prefixEnd := index[position+1]
+	return prefixEnd, prefixEnd < valueLength && prefixEnd < index[1]
+}
+
+func shouldSkipCredentialRange(expression *regexp.Regexp, credential string) bool {
+	if expression == strongCredentialAssignment {
+		return hasRecognizedCredentialScheme(credential)
+	}
+	return (expression == bareSecretEquals || expression == bareSecretColon) &&
+		IsCredentialScheme(strings.TrimSpace(credential))
+}
+
+func replaceRawCredentialRanges(value string, rawRanges []rawSpan) string {
+	if len(rawRanges) == 0 {
+		return value
+	}
+	sort.Slice(rawRanges, func(left, right int) bool {
+		if rawRanges[left].start != rawRanges[right].start {
+			return rawRanges[left].start < rawRanges[right].start
+		}
+		return rawRanges[left].end > rawRanges[right].end
+	})
+	var scrubbed strings.Builder
+	scrubbed.Grow(len(value))
+	last := 0
+	changed := false
+	for _, candidate := range rawRanges {
+		if candidate.start < last {
+			continue
+		}
+		scrubbed.WriteString(value[last:candidate.start])
+		scrubbed.WriteString("REDACTED")
+		last = candidate.end
+		changed = true
+	}
+	if !changed {
+		return value
+	}
+	scrubbed.WriteString(value[last:])
+	return scrubbed.String()
+}
+
+// canonicalCredentialValueRanges catches bounded key obfuscation such as
+// "to\u200bken=..." after a decoded view has been built. Format/default-
+// ignorable runes are removed only while comparing the key; the source text
+// and all unrelated prose remain byte-for-byte untouched.
+func canonicalCredentialValueRanges(value string) []credentialValueRange {
+	ranges := make([]credentialValueRange, 0, 2)
+	for delimiter := 0; delimiter < len(value); delimiter++ {
+		if value[delimiter] != '=' && value[delimiter] != ':' {
+			continue
+		}
+		if candidate, ok := canonicalCredentialRangeAt(value, delimiter); ok {
+			ranges = append(ranges, candidate)
+		}
+	}
+	return ranges
+}
+
+func canonicalCredentialRangeAt(value string, delimiter int) (credentialValueRange, bool) {
+	keyStart, keyEnd, quoted := assignmentKeyBounds(value, delimiter)
+	if !validCanonicalAssignmentKey(value, keyStart, keyEnd, quoted) {
+		return credentialValueRange{}, false
+	}
+	key := canonicalCredentialKey(value[keyStart:keyEnd])
+	valueStart := skipCredentialSpace(value, delimiter+1)
+	if valueStart >= len(value) {
+		return credentialValueRange{}, false
+	}
+	valueEnd := assignmentValueEnd(value, valueStart, quoted)
+	if quoted && isQuotedValueStart(value, valueStart) {
+		// Keep the string delimiters byte-for-byte; only the value inside
+		// them is a replacement candidate.
+		valueStart++
+	}
+	if isAuthorizationKey(key) {
+		valueStart, valueEnd = authorizationValueRange(value, valueStart, valueEnd, quoted)
+	}
+	if valueEnd <= valueStart || value[valueStart:valueEnd] == "REDACTED" {
+		return credentialValueRange{}, false
+	}
+	return credentialValueRange{start: valueStart, end: valueEnd}, true
+}
+
+func validCanonicalAssignmentKey(value string, start, end int, quoted bool) bool {
+	if start < 0 || end <= start || end > len(value) {
+		return false
+	}
+	if !quoted && start > 0 {
+		previous, _ := utf8.DecodeLastRuneInString(value[:start])
+		if isCredentialKeyRune(previous) || previous == '/' || previous == '\\' {
+			return false
+		}
+	}
+	return isCanonicalCredentialKey(canonicalCredentialKey(value[start:end]))
+}
+
+func skipCredentialSpace(value string, start int) int {
+	for start < len(value) {
+		runeValue, width := utf8.DecodeRuneInString(value[start:])
+		if !unicode.IsSpace(runeValue) {
+			break
+		}
+		start += width
+	}
+	return start
+}
+
+func isQuotedValueStart(value string, start int) bool {
+	return start < len(value) && (value[start] == '"' || value[start] == '\'')
+}
+
+func isAuthorizationKey(value string) bool {
+	return value == "authorization" || value == "proxy-authorization" || value == "auth"
+}
+
+func authorizationValueRange(value string, start, end int, quoted bool) (int, int) {
+	if !quoted {
+		end = start
+		for end < len(value) && value[end] != '\r' && value[end] != '\n' {
+			end++
+		}
+	}
+	if schemeStart, schemeEnd, ok := recognizedSchemeCredentialRange(value, start, end); ok {
+		return schemeStart, schemeEnd
+	}
+	if quoted {
+		return start, assignmentValueEnd(value, start-1, true)
+	}
+	return start, end
+}
+
+func hasRecognizedCredentialScheme(value string) bool {
+	start := skipCredentialSpace(value, 0)
+	end := credentialWordEnd(value, start, len(value))
+	return end > start && IsCredentialScheme(value[start:end])
+}
+
+func recognizedSchemeCredentialRange(value string, start, end int) (int, int, bool) {
+	if start < 0 || end <= start || end > len(value) {
+		return 0, 0, false
+	}
+	schemeStart := skipCredentialSpace(value[:end], start)
+	schemeEnd := credentialWordEnd(value, schemeStart, end)
+	if schemeEnd == schemeStart || !IsCredentialScheme(value[schemeStart:schemeEnd]) {
+		return 0, 0, false
+	}
+	credentialStart := skipCredentialSpace(value[:end], schemeEnd)
+	if credentialStart >= end {
+		return 0, 0, false
+	}
+	credentialEnd := assignmentValueEnd(value, credentialStart, false)
+	if credentialEnd > end {
+		credentialEnd = end
+	}
+	if credentialEnd <= credentialStart {
+		return 0, 0, false
+	}
+	return credentialStart, credentialEnd, true
+}
+
+func credentialWordEnd(value string, start, limit int) int {
+	end := start
+	for end < limit {
+		runeValue, width := utf8.DecodeRuneInString(value[end:limit])
+		if unicode.IsSpace(runeValue) || runeValue == ',' || runeValue == ';' || runeValue == '}' {
+			break
+		}
+		end += width
+	}
+	return end
+}
+
+func assignmentKeyBounds(value string, delimiter int) (int, int, bool) {
+	end := delimiter
+	for end > 0 {
+		runeValue, width := utf8.DecodeLastRuneInString(value[:end])
+		if !unicode.IsSpace(runeValue) {
+			break
+		}
+		end -= width
+	}
+	if end <= 0 {
+		return 0, 0, false
+	}
+	if value[end-1] == '"' || value[end-1] == '\'' {
+		quote := value[end-1]
+		for start := end - 2; start >= 0; {
+			if value[start] == quote && !isEscapedByte(value, start) {
+				return start + 1, end - 1, true
+			}
+			_, width := utf8.DecodeLastRuneInString(value[:start+1])
+			start -= width
+		}
+		return 0, 0, false
+	}
+	start := end
+	for start > 0 {
+		runeValue, width := utf8.DecodeLastRuneInString(value[:start])
+		if !isCredentialKeyRune(runeValue) {
+			break
+		}
+		start -= width
+		if delimiter-start > maxCredentialKeyRunes*utf8.UTFMax {
+			return 0, 0, false
+		}
+	}
+	return start, end, false
+}
+
+func isEscapedByte(value string, index int) bool {
+	backslashes := 0
+	for index > 0 && value[index-1] == '\\' {
+		backslashes++
+		index--
+	}
+	return backslashes%2 == 1
+}
+
+func isCredentialKeyRune(value rune) bool {
+	return unicode.IsLetter(value) || unicode.IsNumber(value) || unicode.Is(unicode.Cf, value) || value == '_' || value == '-'
+}
+
+func canonicalCredentialKey(value string) string {
+	value = strings.TrimSpace(value)
+	var canonical strings.Builder
+	for _, runeValue := range value {
+		if unicode.Is(unicode.Cf, runeValue) {
+			continue
+		}
+		canonical.WriteRune(unicode.ToLower(runeValue))
+	}
+	return canonical.String()
+}
+
+var canonicalCredentialSuffix = regexp.MustCompile(`^[a-z0-9_-]+(?:token|password|secret|signature)$`)
+
+func isCanonicalCredentialKey(value string) bool {
+	return isSensitiveParam(value) || canonicalCredentialSuffix.MatchString(value)
+}
+
+func assignmentValueEnd(value string, start int, quoted bool) int {
+	if quoted && start < len(value) && (value[start] == '"' || value[start] == '\'') {
+		quote := value[start]
+		for index := start + 1; index < len(value); index++ {
+			if value[index] == quote && !isEscapedByte(value, index) {
+				return index
+			}
+		}
+		return len(value)
+	}
+	for index := start; index < len(value); index++ {
+		switch value[index] {
+		case ' ', '\t', '\r', '\n', ',', ';', '}':
+			return index
+		}
+	}
+	return len(value)
 }
 
 func replaceCredentialValues(
