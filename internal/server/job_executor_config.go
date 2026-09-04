@@ -53,6 +53,12 @@ func cloneConfig(cfg *config.Config) *config.Config {
 		return nil
 	}
 	clone := *cfg
+	// MediaOrigins is caller-owned mutable state. Keep each runtime/job clone
+	// independent so an override or concurrent request cannot mutate the
+	// server's base configuration through a shared backing array.
+	if cfg.MediaOrigins != nil {
+		clone.MediaOrigins = append([]string(nil), cfg.MediaOrigins...)
+	}
 	return &clone
 }
 

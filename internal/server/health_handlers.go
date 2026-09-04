@@ -179,8 +179,15 @@ func (s *APIServer) probeUpstreamHTTP(parent context.Context) (reachable, probed
 		return false, false
 	}
 
-	baseURL := s.ensureScheme(s.cfg.BaseURL)
-	profileURL := strings.TrimSuffix(baseURL, "/") + "/user/profile"
+	// Construct the probe path through the same strict base-URL boundary as
+	// authenticated catalog/login requests. String concatenation would turn a
+	// trailing slash or API path prefix into the wrong endpoint and could leave
+	// query/fragment credential material in the request. An invalid direct
+	// config must fail closed and remain an HTTP probe (no TCP fallback).
+	profileURL, err := client.BaseURLPath(s.cfg.BaseURL, "user/profile")
+	if err != nil {
+		return false, true
+	}
 
 	ctx, cancel := context.WithTimeout(parent, upstreamProbeTimeout)
 	defer cancel()
@@ -189,7 +196,7 @@ func (s *APIServer) probeUpstreamHTTP(parent context.Context) (reachable, probed
 	if upstreamClient == nil {
 		upstreamClient = client.New(&http.Client{Timeout: upstreamProbeTimeout}, nil)
 	}
-	origins := append([]string{baseURL}, s.cfg.MediaOrigins...)
+	origins := append([]string{profileURL}, s.cfg.MediaOrigins...)
 	resp, err := upstreamClient.GetAuthorizedWithTokenForOrigins(ctx, profileURL, cached.token, origins...)
 	if err != nil {
 		return false, true
@@ -203,9 +210,12 @@ func (s *APIServer) probeUpstreamHTTP(parent context.Context) (reachable, probed
 }
 
 func (s *APIServer) probeUpstreamTCP(parent context.Context) bool {
-	baseURL := s.ensureScheme(s.cfg.BaseURL)
+	profileURL, err := client.BaseURLPath(s.cfg.BaseURL, "user/profile")
+	if err != nil {
+		return false
+	}
 
-	u, err := url.Parse(baseURL)
+	u, err := url.Parse(profileURL)
 	if err != nil {
 		return false
 	}

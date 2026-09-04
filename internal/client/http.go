@@ -84,17 +84,17 @@ func (c *Client) doRequestWithTokenClient(ctx context.Context, method, rawURL st
 	return response, nil
 }
 
-func (c *Client) httpClientForMediaRequest(initialURL *url.URL, token string, policy mediaOriginPolicy) *http.Client {
+func (c *Client) httpClientForMediaRequest(initialURL *url.URL, redactionToken string, policy mediaOriginPolicy) *http.Client {
 	client := *c.httpClient
 	client.Jar = nil
 	previousCheckRedirect := client.CheckRedirect
 	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
-		return c.handleMediaRedirect(initialURL, token, policy, previousCheckRedirect, next, via)
+		return c.handleMediaRedirect(initialURL, redactionToken, policy, previousCheckRedirect, next, via)
 	}
 	return &client
 }
 
-func (c *Client) handleMediaRedirect(initialURL *url.URL, token string, policy mediaOriginPolicy, previousCheckRedirect func(*http.Request, []*http.Request) error, next *http.Request, via []*http.Request) error {
+func (c *Client) handleMediaRedirect(initialURL *url.URL, redactionToken string, policy mediaOriginPolicy, previousCheckRedirect func(*http.Request, []*http.Request) error, next *http.Request, via []*http.Request) error {
 	if len(via) >= defaultMaxRedirects {
 		return errors.New("stopped after 10 redirects")
 	}
@@ -110,12 +110,12 @@ func (c *Client) handleMediaRedirect(initialURL *url.URL, token string, policy m
 	// query form in addition to the Authorization header.
 	initialAuthorized := policy.allows(initialURL)
 	sameOrigin := sameMediaOrigin(initialURL, next.URL)
-	if err := maybeStripRedirectURL(next.URL, token, !initialAuthorized || !sameOrigin); err != nil {
+	if err := maybeStripRedirectURL(next.URL, redactionToken, !initialAuthorized || !sameOrigin); err != nil {
 		return err
 	}
 	removeMediaRedirectHeaders(next.Header, !initialAuthorized || !sameOrigin)
 	if previousCheckRedirect != nil {
-		if err := callMediaRedirectHook(previousCheckRedirect, next, via, token); err != nil {
+		if err := callMediaRedirectHook(previousCheckRedirect, next, via, redactionToken); err != nil {
 			return err
 		}
 	}
@@ -126,11 +126,11 @@ func (c *Client) handleMediaRedirect(initialURL *url.URL, token string, policy m
 		return err
 	}
 	sameOrigin = sameMediaOrigin(initialURL, next.URL)
-	if err := maybeStripRedirectURL(next.URL, token, !initialAuthorized || !sameOrigin); err != nil {
+	if err := maybeStripRedirectURL(next.URL, redactionToken, !initialAuthorized || !sameOrigin); err != nil {
 		return err
 	}
 	removeMediaRedirectHeaders(next.Header, !initialAuthorized || !sameOrigin)
-	return validateRedirectRequestCredentialBoundary(next, token, initialAuthorized && sameOrigin)
+	return validateRedirectRequestCredentialBoundary(next, redactionToken, initialAuthorized && sameOrigin)
 }
 
 func canonicalizeMediaRedirectScheme(request *http.Request) {
@@ -336,7 +336,10 @@ func sanitizedRedirectURL(rawURL *url.URL, token string) *url.URL {
 func sanitizedRedirectHeader(header http.Header, token string) http.Header {
 	safe := make(http.Header, len(header))
 	for key, values := range header {
-		if isSensitiveRedirectHeader(key) {
+		// Header names are observable metadata too. Do not expose a raw or
+		// bounded URL-encoded bearer through a custom redirect hook even when
+		// the value itself is absent or innocuous.
+		if isSensitiveRedirectHeader(key) || containsTokenRepresentation(key, token) {
 			continue
 		}
 		redacted := make([]string, len(values))

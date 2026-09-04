@@ -177,7 +177,11 @@ func (c *Client) getAuthorizedWithToken(ctx context.Context, rawURL, token strin
 	// tokenless URLs. The compatibility entry point still permits its exact
 	// initial origin and loopback HTTP; the wrapper only broadens the policy
 	// for an explicitly configured origin.
-	requestClient := c.httpClientForMediaRequest(parsedURL, token, policy)
+	// Keep the original bearer as redirect redaction/boundary context even
+	// when the request token was cleared for an unconfigured media origin.
+	// The request client never uses this value to attach Authorization; it is
+	// only used to sanitize hook views and reject credential reintroduction.
+	requestClient := c.httpClientForMediaRequest(parsedURL, redactionToken, policy)
 	return c.doRequestWithTokenClient(ctx, http.MethodGet, rawURL, nil, token, requestClient, redactionToken)
 }
 

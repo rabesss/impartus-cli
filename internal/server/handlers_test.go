@@ -135,6 +135,72 @@ func TestProbeUpstreamHTTP_SuccessfulProbe(t *testing.T) {
 	}
 }
 
+func TestProbeUpstreamHTTPUsesCanonicalBaseURLPath(t *testing.T) {
+	var requestPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestPath = r.URL.Path
+		if r.URL.Path != "/api/v1/user/profile" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	s := newAPIServer(&config.Config{
+		Username:         "user",
+		Password:         "pass",
+		BaseURL:          ts.URL + "/api/v1/",
+		DownloadLocation: "./downloads",
+	})
+	s.upstreamCacheMu.Lock()
+	s.upstreamCache = &upstreamCacheEntry{
+		client:    client.New(ts.Client(), nil),
+		token:     "valid-token",
+		expiresAt: time.Now().Add(time.Hour),
+	}
+	s.upstreamCacheMu.Unlock()
+
+	reachable, probed := s.probeUpstreamHTTP(context.Background())
+	if !probed || !reachable {
+		t.Fatalf("probe result = (reachable=%v, probed=%v), want (true, true)", reachable, probed)
+	}
+	if requestPath != "/api/v1/user/profile" {
+		t.Fatalf("profile request path = %q, want canonical API prefix path", requestPath)
+	}
+}
+
+func TestProbeUpstreamHTTPRejectsInvalidBaseURLBeforeRequest(t *testing.T) {
+	const secret = "health-base-url-secret"
+	var requests int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	s := newAPIServer(&config.Config{
+		Username:         "user",
+		Password:         "pass",
+		BaseURL:          ts.URL + "?token=" + secret,
+		DownloadLocation: "./downloads",
+	})
+	s.upstreamCacheMu.Lock()
+	s.upstreamCache = &upstreamCacheEntry{
+		client: client.New(ts.Client(), nil),
+		token:  "valid-token",
+	}
+	s.upstreamCacheMu.Unlock()
+
+	reachable, probed := s.probeUpstreamHTTP(context.Background())
+	if probed != true || reachable {
+		t.Fatalf("invalid-base probe result = (reachable=%v, probed=%v), want (false, true)", reachable, probed)
+	}
+	if requests != 0 {
+		t.Fatalf("invalid base URL issued %d upstream requests, want none", requests)
+	}
+}
+
 func TestProbeUpstreamHTTPRejectsCredentialRedirects(t *testing.T) {
 	const token = "health-probe-secret"
 	for _, test := range []struct {

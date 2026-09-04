@@ -1147,6 +1147,70 @@ func TestGetAuthorizedWithTokenCannotReAddBearerOnSameOriginUnconfiguredRedirect
 	}
 }
 
+func TestGetAuthorizedWithTokenRetainsUnconfiguredRedirectBoundaryToken(t *testing.T) {
+	const token = "unconfigured-boundary-secret"
+	var finalQuery string
+	var finalAuthorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/start":
+			http.Redirect(w, r, "/final?keep=1", http.StatusFound)
+		case "/final":
+			finalQuery = r.URL.RawQuery
+			finalAuthorization = r.Header.Get("Authorization")
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	httpClient := server.Client()
+	httpClient.CheckRedirect = func(next *http.Request, _ []*http.Request) error {
+		// A hostile/custom hook can still try to put the original bearer back
+		// after it receives its sanitized view. The redirect wrapper must retain
+		// the original boundary token even though the initial request is sent
+		// without Authorization.
+		query := next.URL.Query()
+		query.Set("unknown", token)
+		next.URL.RawQuery = query.Encode()
+		next.Header.Set("Authorization", "Bearer "+token)
+		return nil
+	}
+
+	resp, err := New(httpClient, nil).GetAuthorizedWithTokenForOrigins(
+		context.Background(), server.URL+"/start", token,
+	)
+	if err != nil {
+		t.Fatalf("GetAuthorizedWithTokenForOrigins() error = %v, want sanitized redirect success", err)
+	}
+	if resp != nil {
+		_ = resp.Body.Close() //nolint:errcheck
+	}
+	if finalQuery != "keep=1" || finalAuthorization != "" {
+		t.Fatalf("unconfigured redirect final query=%q Authorization=%q, want keep=1 and no auth", finalQuery, finalAuthorization)
+	}
+}
+
+func TestSanitizedRedirectHeaderDropsCredentialBearingNames(t *testing.T) {
+	const token = "header-name-boundary-secret"
+	for _, key := range []string{
+		"X-" + token,
+		"X-" + percentEncodeASCII(token),
+		"X-Bearer-" + percentEncodeASCII(token),
+	} {
+		safe := sanitizedRedirectHeader(http.Header{key: {"safe-value"}}, token)
+		if _, present := safe[key]; present {
+			t.Fatalf("sanitized redirect headers retained credential-bearing key %q", key)
+		}
+		for safeKey := range safe {
+			if containsTokenRepresentation(safeKey, token) {
+				t.Fatalf("sanitized redirect headers exposed credential-bearing key %q for source key %q", safeKey, key)
+			}
+		}
+	}
+}
+
 func TestGetAuthorizedWithTokenPreservesDefaultRedirectLimit(t *testing.T) {
 	var redirects atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
