@@ -57,7 +57,12 @@ func cloneConfig(cfg *config.Config) *config.Config {
 	// independent so an override or concurrent request cannot mutate the
 	// server's base configuration through a shared backing array.
 	if cfg.MediaOrigins != nil {
-		clone.MediaOrigins = append([]string(nil), cfg.MediaOrigins...)
+		clone.MediaOrigins = make([]string, len(cfg.MediaOrigins))
+		copy(clone.MediaOrigins, cfg.MediaOrigins)
+	}
+	if cfg.Watch.Targets != nil {
+		clone.Watch.Targets = make([]config.WatchTarget, len(cfg.Watch.Targets))
+		copy(clone.Watch.Targets, cfg.Watch.Targets)
 	}
 	return &clone
 }
