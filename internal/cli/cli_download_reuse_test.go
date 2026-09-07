@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -263,6 +264,117 @@ func TestReuseVerifiedDownloadsWhenLockIsBusy(t *testing.T) {
 	}
 }
 
+func TestReuseVerifiedReportsDownloadFailedWhenMissingFallbackFails(t *testing.T) {
+	fixture := setupReuseVerifiedFixture(t)
+	emptyPath := reuseLibraryPath(t)
+	store, openErr := library.Open(context.Background(), library.Options{Path: emptyPath})
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	if closeErr := store.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	fixture.openLibrary = func(ctx context.Context) (*library.Store, error) {
+		return library.Open(ctx, library.Options{Path: emptyPath})
+	}
+
+	deps := reuseVerifiedDeps(t, fixture, func(context.Context, *config.Config, *client.Client, client.Lectures, downloadPresentationOptions) (downloadResult, error) {
+		return downloadResult{Status: "failed"}, errors.New("upstream failed")
+	})
+	deps.ensureFFmpeg = func() error { return nil }
+	result, err := executeDownloadWithDependenciesContext(
+		context.Background(),
+		[]string{"-s", "67", "-S", "8", "--ttid", "42", "--reuse-verified"},
+		quietDownloadPresentation(),
+		deps,
+	)
+	if err == nil || !strings.Contains(err.Error(), "upstream failed") {
+		t.Fatalf("error = %v, want fallback failure", err)
+	}
+	if len(result.Outcomes) != 1 || result.Outcomes[0].Outcome != lectureOutcomeDownloadFailed || result.Outcomes[0].Reason != reuseReasonNotFound {
+		t.Fatalf("outcome = %+v", result.Outcomes)
+	}
+}
+
+func TestReuseVerifiedMixesHitAndDownload(t *testing.T) {
+	stored := client.Lecture{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 42, SeqNo: 1, Topic: "Stored"}
+	missing := client.Lecture{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 43, SeqNo: 2, Topic: "Missing"}
+	fixture := setupReuseVerifiedCatalog(t, client.Lectures{missing, stored}, client.Lectures{stored})
+
+	var downloaded client.Lectures
+	deps := reuseVerifiedDeps(t, fixture, func(_ context.Context, _ *config.Config, _ *client.Client, lectures client.Lectures, _ downloadPresentationOptions) (downloadResult, error) {
+		downloaded = append(client.Lectures(nil), lectures...)
+		return fallbackDownloadResult(missing), nil
+	})
+	deps.ensureFFmpeg = func() error { return nil }
+	result, err := executeDownloadWithDependenciesContext(
+		context.Background(),
+		[]string{"-s", "67", "-S", "8", "--start", "1", "--end", "2", "--reuse-verified"},
+		quietDownloadPresentation(),
+		deps,
+	)
+	if err != nil {
+		t.Fatalf("executeDownloadWithDependenciesContext() error = %v", err)
+	}
+	if len(downloaded) != 1 || downloaded[0].TTID != missing.TTID {
+		t.Fatalf("downloaded = %+v", downloaded)
+	}
+	if result.LectureCount != 2 || len(result.Outcomes) != 2 {
+		t.Fatalf("result = %+v", result)
+	}
+	if result.Outcomes[0].Outcome != lectureOutcomeReused || result.Outcomes[0].TTID != stored.TTID {
+		t.Fatalf("stored outcome = %+v", result.Outcomes[0])
+	}
+	if result.Outcomes[1].Outcome != lectureOutcomeDownloaded || result.Outcomes[1].TTID != missing.TTID || result.Outcomes[1].Reason != reuseReasonNotFound {
+		t.Fatalf("missing outcome = %+v", result.Outcomes[1])
+	}
+}
+
+func TestReuseVerifiedMarksUnproducedFallbackAsDownloadFailed(t *testing.T) {
+	first := client.Lecture{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 42, SeqNo: 1, Topic: "First"}
+	second := client.Lecture{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 43, SeqNo: 2, Topic: "Second"}
+	fixture := setupReuseVerifiedCatalog(t, client.Lectures{second, first}, nil)
+
+	deps := reuseVerifiedDeps(t, fixture, func(_ context.Context, _ *config.Config, _ *client.Client, lectures client.Lectures, _ downloadPresentationOptions) (downloadResult, error) {
+		return fallbackDownloadResult(first), nil
+	})
+	deps.ensureFFmpeg = func() error { return nil }
+	result, err := executeDownloadWithDependenciesContext(
+		context.Background(),
+		[]string{"-s", "67", "-S", "8", "--start", "1", "--end", "2", "--reuse-verified"},
+		quietDownloadPresentation(),
+		deps,
+	)
+	if err != nil {
+		t.Fatalf("executeDownloadWithDependenciesContext() error = %v", err)
+	}
+	if len(result.Outcomes) != 2 {
+		t.Fatalf("outcomes = %+v", result.Outcomes)
+	}
+	if result.Outcomes[0].Outcome != lectureOutcomeDownloaded || result.Outcomes[0].TTID != first.TTID {
+		t.Fatalf("produced outcome = %+v", result.Outcomes[0])
+	}
+	if result.Outcomes[1].Outcome != lectureOutcomeDownloadFailed || result.Outcomes[1].TTID != second.TTID {
+		t.Fatalf("omitted outcome = %+v", result.Outcomes[1])
+	}
+}
+
+func TestReuseVerifiedRejectsDuplicateScopedLectures(t *testing.T) {
+	lecture := client.Lecture{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 42, SeqNo: 1, Topic: "Dup"}
+	fixture := setupReuseVerifiedCatalog(t, client.Lectures{lecture, lecture}, nil)
+	_, err := executeDownloadWithDependenciesContext(
+		context.Background(),
+		[]string{"-s", "67", "-S", "8", "--start", "1", "--end", "2", "--reuse-verified"},
+		quietDownloadPresentation(),
+		reuseVerifiedDeps(t, fixture, func(context.Context, *config.Config, *client.Client, client.Lectures, downloadPresentationOptions) (downloadResult, error) {
+			return downloadResult{}, errors.New("download should not run")
+		}),
+	)
+	if err == nil || !strings.Contains(err.Error(), "duplicate scoped lecture identity") {
+		t.Fatalf("error = %v, want duplicate identity rejection", err)
+	}
+}
+
 func TestReuseVerifiedEventsSkipProgressAndKeepSchema(t *testing.T) {
 	fixture := setupReuseVerifiedFixture(t)
 	var output bytes.Buffer
@@ -320,13 +432,21 @@ type reuseVerifiedFixture struct {
 func setupReuseVerifiedFixture(t *testing.T) reuseVerifiedFixture {
 	t.Helper()
 	lecture := client.Lecture{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 42, SeqNo: 99, Topic: "Requested exact row"}
+	return setupReuseVerifiedCatalog(t, client.Lectures{lecture}, client.Lectures{lecture})
+}
+
+func setupReuseVerifiedCatalog(t *testing.T, catalog, recorded client.Lectures) reuseVerifiedFixture {
+	t.Helper()
+	if len(catalog) == 0 {
+		t.Fatal("catalog is required")
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/subjects/67/lectures/8" {
 			http.NotFound(writer, request)
 			return
 		}
 		writer.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(writer).Encode(client.Lectures{lecture}); err != nil {
+		if err := json.NewEncoder(writer).Encode(catalog); err != nil {
 			t.Errorf("encode lecture response: %v", err)
 		}
 	}))
@@ -345,15 +465,24 @@ func setupReuseVerifiedFixture(t *testing.T) reuseVerifiedFixture {
 		t.Fatal(err)
 	}
 	mediaPath := filepath.Join(t.TempDir(), "lecture.mp4")
-	manifest := buildCLIReuseManifest(t, lecture, cfg, mediaPath)
-	if err := store.RecordManifest(context.Background(), manifest); err != nil {
-		t.Fatal(err)
+	for index, lecture := range recorded {
+		path := mediaPath
+		if index > 0 {
+			path = filepath.Join(t.TempDir(), fmt.Sprintf("lecture-%d.mp4", lecture.TTID))
+		}
+		manifest := buildCLIReuseManifest(t, lecture, cfg, path)
+		if err := store.RecordManifest(context.Background(), manifest); err != nil {
+			t.Fatal(err)
+		}
+		if index == 0 {
+			mediaPath = path
+		}
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
 	return reuseVerifiedFixture{
-		lecture:   lecture,
+		lecture:   catalog[len(catalog)-1],
 		cfg:       cfg,
 		apiClient: client.New(server.Client(), func() string { return "reuse-test" }),
 		openLibrary: func(ctx context.Context) (*library.Store, error) {

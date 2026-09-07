@@ -478,7 +478,7 @@ the selection alone.
 | `--output` | `-o` | Output directory | Download Only |
 | `--json` | | JSON output (non-blocking) | Download Only |
 | `--events` | | NDJSON lifecycle stream; mutually exclusive with `--json` | Download Only |
-| `--reuse-verified` | | Reuse a verified local artifact after digest and container checks. Requires `--ttid`, or both `--start` and `--end` spanning at most two lectures. Missing or corrupt files fall back to a normal download. | Download Only |
+| `--reuse-verified` | | Reuse a verified local artifact after digest and container checks. Requires `--ttid`, or both `--start` and `--end` spanning at most two lectures. Missing or corrupt files fall back to a normal download. `--output` applies only to lectures that still download. Reused lectures keep their stored paths. | Download Only |
 
 **Examples:**
 

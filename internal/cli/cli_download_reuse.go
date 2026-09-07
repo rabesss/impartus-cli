@@ -19,6 +19,7 @@ const (
 	lectureOutcomeReused             = "reused"
 	lectureOutcomeDownloaded         = "downloaded"
 	lectureOutcomeVerificationFailed = "verification_failed"
+	lectureOutcomeDownloadFailed     = "download_failed"
 	reuseReasonNotFound              = "not_found"
 	reuseReasonLockBusy              = "lock_busy"
 )
@@ -93,7 +94,7 @@ func executeReuseVerifiedDownload(
 	}
 
 	downloaded, downloadErr := deps.downloadLectures(ctx, cfg, apiClient, partition.download, presentation)
-	result.Outcomes = finalizeDownloadOutcomes(partition.planned, downloaded.Artifacts, downloadErr)
+	result.Outcomes = finalizeDownloadOutcomes(partition.planned, downloaded.Artifacts)
 	result.OutputPaths = append(reusedOutputPaths(partition.hits), downloaded.OutputPaths...)
 	result.Artifacts = append(reusedManifests(partition.hits), downloaded.Artifacts...)
 	result.LectureCount = len(partition.hits) + downloaded.LectureCount
@@ -129,6 +130,9 @@ func partitionReuseVerifiedLectures(
 	lockDir, err := reuseLockDirectory(deps)
 	if err != nil {
 		return partition, err
+	}
+	if _, indexErr := indexLecturesForArtifacts(selected, cfg); indexErr != nil {
+		return partition, indexErr
 	}
 
 	for _, lecture := range selected {
@@ -174,7 +178,7 @@ func decideReusableLecture(
 	if identityErr != nil {
 		return reuseDecision{}, fmt.Errorf("invalid artifact identity for lecture %d: %w", lecture.TTID, identityErr)
 	}
-	lock, lockErr := lockfile.Acquire(lockfile.Path(lockDir, artifactID), wait)
+	lock, lockErr := lockfile.Acquire(ctx, lockfile.Path(lockDir, artifactID), wait)
 	if errors.Is(lockErr, lockfile.ErrLocked) {
 		return downloadReuseDecision(lecture, artifactID, reuseReasonLockBusy, nil), nil
 	}
@@ -191,7 +195,7 @@ func verifyReusableLecture(
 	store *library.Store,
 	lock *lockfile.Lock,
 ) (reuseDecision, error) {
-	record, getErr := store.GetArtifact(ctx, artifactID)
+	_, getErr := store.GetArtifact(ctx, artifactID)
 	if errors.Is(getErr, library.ErrArtifactNotFound) {
 		return downloadReuseDecision(lecture, artifactID, reuseReasonNotFound, lock), nil
 	}
@@ -209,9 +213,9 @@ func verifyReusableLecture(
 			return reuseDecision{}, closeErr
 		}
 		return reuseDecision{
-			hit: &reuseHit{lecture: lecture, artifactID: artifactID, manifest: record.Manifest},
+			hit: &reuseHit{lecture: lecture, artifactID: artifactID, manifest: verified.Manifest},
 			outcome: lectureOutcome{
-				TTID: lecture.TTID, ArtifactID: artifactID, Outcome: lectureOutcomeReused, Paths: manifestOutputPaths(record.Manifest),
+				TTID: lecture.TTID, ArtifactID: artifactID, Outcome: lectureOutcomeReused, Paths: manifestOutputPaths(verified.Manifest),
 			},
 		}, nil
 	}
@@ -302,7 +306,7 @@ func emitReusedLectureEvents(stream *downloadEventStream, hits []reuseHit) error
 	return nil
 }
 
-func finalizeDownloadOutcomes(planned []lectureOutcome, downloaded []artifact.Manifest, downloadErr error) []lectureOutcome {
+func finalizeDownloadOutcomes(planned []lectureOutcome, downloaded []artifact.Manifest) []lectureOutcome {
 	completed := make(map[int]artifact.Manifest, len(downloaded))
 	for _, manifest := range downloaded {
 		completed[manifest.Lecture.TTID] = manifest
@@ -317,9 +321,11 @@ func finalizeDownloadOutcomes(planned []lectureOutcome, downloaded []artifact.Ma
 			out[index].Paths = manifestOutputPaths(manifest)
 			continue
 		}
-		if downloadErr != nil && isVerificationFailureReason(outcome.Reason) {
+		if isVerificationFailureReason(outcome.Reason) {
 			out[index].Outcome = lectureOutcomeVerificationFailed
+			continue
 		}
+		out[index].Outcome = lectureOutcomeDownloadFailed
 	}
 	return out
 }

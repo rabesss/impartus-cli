@@ -1,6 +1,7 @@
 package lockfile
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -74,7 +75,7 @@ func TestAcquireFallsBackAfterDeadline(t *testing.T) {
 	})
 
 	started := time.Now()
-	lock, err := Acquire(path, 80*time.Millisecond)
+	lock, err := Acquire(context.Background(), path, 80*time.Millisecond)
 	elapsed := time.Since(started)
 	if lock != nil {
 		if closeErr := lock.Close(); closeErr != nil {
@@ -104,7 +105,7 @@ func TestAcquireZeroWaitTriesOnce(t *testing.T) {
 	})
 
 	started := time.Now()
-	lock, err := Acquire(path, 0)
+	lock, err := Acquire(context.Background(), path, 0)
 	if lock != nil {
 		if closeErr := lock.Close(); closeErr != nil {
 			t.Errorf("Close(unexpected waiter) error = %v", closeErr)
@@ -115,5 +116,36 @@ func TestAcquireZeroWaitTriesOnce(t *testing.T) {
 	}
 	if time.Since(started) > 50*time.Millisecond {
 		t.Fatalf("Acquire(0) waited %s", time.Since(started))
+	}
+}
+
+func TestAcquireReturnsWhenContextIsCanceled(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "cancel.lock")
+	held, err := TryAcquire(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if closeErr := held.Close(); closeErr != nil {
+			t.Errorf("Close(held) error = %v", closeErr)
+		}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(20*time.Millisecond, cancel)
+	started := time.Now()
+	lock, err := Acquire(ctx, path, time.Second)
+	if lock != nil {
+		if closeErr := lock.Close(); closeErr != nil {
+			t.Errorf("Close(unexpected waiter) error = %v", closeErr)
+		}
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Acquire() error = %v, want context.Canceled", err)
+	}
+	if time.Since(started) > 200*time.Millisecond {
+		t.Fatalf("Acquire ignored cancellation for %s", time.Since(started))
 	}
 }

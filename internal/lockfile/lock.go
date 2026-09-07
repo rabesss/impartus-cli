@@ -2,6 +2,7 @@
 package lockfile
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -66,9 +67,16 @@ func TryAcquire(path string) (*Lock, error) {
 }
 
 // Acquire retries TryAcquire until wait elapses. wait <= 0 tries once.
-func Acquire(path string, wait time.Duration) (*Lock, error) {
+// A canceled ctx returns ctx.Err() instead of waiting out the deadline.
+func Acquire(ctx context.Context, path string, wait time.Duration) (*Lock, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	deadline := time.Now().Add(wait)
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		lock, err := TryAcquire(path)
 		if err == nil || !errors.Is(err, ErrLocked) {
 			return lock, err
@@ -76,7 +84,13 @@ func Acquire(path string, wait time.Duration) (*Lock, error) {
 		if wait <= 0 || !time.Now().Before(deadline) {
 			return nil, ErrLocked
 		}
-		time.Sleep(20 * time.Millisecond)
+		timer := time.NewTimer(20 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
 }
 

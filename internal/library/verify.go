@@ -57,6 +57,7 @@ type Verification struct {
 	OK         bool               `json:"ok"`
 	CheckedAt  time.Time          `json:"checkedAt"`
 	Files      []FileVerification `json:"files"`
+	Manifest   artifact.Manifest  `json:"-"`
 }
 
 // VerifyArtifact checks persisted paths and updates presence/hash metadata.
@@ -74,6 +75,7 @@ func (store *Store) VerifyArtifact(ctx context.Context, artifactID string, optio
 		OK:         true,
 		CheckedAt:  checkedAt,
 		Files:      make([]FileVerification, 0, len(files)),
+		Manifest:   record.Manifest,
 	}
 	recorded := Verification{
 		ArtifactID: record.Manifest.ArtifactID,
