@@ -90,6 +90,8 @@ func executeReuseVerifiedDownload(
 		return result, nil
 	}
 	if ffmpegErr := deps.ensureFFmpeg(); ffmpegErr != nil {
+		result.Status = "failed"
+		result.Outcomes = finalizeDownloadOutcomes(partition.planned, nil)
 		return result, ffmpegErr
 	}
 
@@ -230,7 +232,7 @@ func downloadReuseDecision(lecture client.Lecture, artifactID, reason string, lo
 		download: true,
 		lock:     lock,
 		outcome: lectureOutcome{
-			TTID: lecture.TTID, ArtifactID: artifactID, Outcome: lectureOutcomeDownloaded, Reason: reason,
+			TTID: lecture.TTID, ArtifactID: artifactID, Reason: reason,
 		},
 	}
 }

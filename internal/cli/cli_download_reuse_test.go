@@ -296,6 +296,42 @@ func TestReuseVerifiedReportsDownloadFailedWhenMissingFallbackFails(t *testing.T
 	}
 }
 
+func TestReuseVerifiedReportsDownloadFailedWhenFFmpegIsMissing(t *testing.T) {
+	fixture := setupReuseVerifiedFixture(t)
+	emptyPath := reuseLibraryPath(t)
+	store, openErr := library.Open(context.Background(), library.Options{Path: emptyPath})
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	if closeErr := store.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	fixture.openLibrary = func(ctx context.Context) (*library.Store, error) {
+		return library.Open(ctx, library.Options{Path: emptyPath})
+	}
+
+	deps := reuseVerifiedDeps(t, fixture, func(context.Context, *config.Config, *client.Client, client.Lectures, downloadPresentationOptions) (downloadResult, error) {
+		t.Fatal("ffmpeg failure reached the downloader")
+		return downloadResult{}, errors.New("download should not run")
+	})
+	deps.ensureFFmpeg = func() error { return errors.New("ffmpeg not found") }
+	result, err := executeDownloadWithDependenciesContext(
+		context.Background(),
+		[]string{"-s", "67", "-S", "8", "--ttid", "42", "--reuse-verified"},
+		quietDownloadPresentation(),
+		deps,
+	)
+	if err == nil || !strings.Contains(err.Error(), "ffmpeg not found") {
+		t.Fatalf("error = %v, want ffmpeg failure", err)
+	}
+	if result.Status != "failed" {
+		t.Fatalf("status = %q, want failed", result.Status)
+	}
+	if len(result.Outcomes) != 1 || result.Outcomes[0].Outcome != lectureOutcomeDownloadFailed || result.Outcomes[0].Reason != reuseReasonNotFound {
+		t.Fatalf("outcome = %+v", result.Outcomes)
+	}
+}
+
 func TestReuseVerifiedMixesHitAndDownload(t *testing.T) {
 	stored := client.Lecture{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 42, SeqNo: 1, Topic: "Stored"}
 	missing := client.Lecture{InstituteID: 4, SubjectID: 67, SessionID: 8, TTID: 43, SeqNo: 2, Topic: "Missing"}
