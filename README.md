@@ -478,6 +478,7 @@ the selection alone.
 | `--output` | `-o` | Output directory | Download Only |
 | `--json` | | JSON output (non-blocking) | Download Only |
 | `--events` | | NDJSON lifecycle stream; mutually exclusive with `--json` | Download Only |
+| `--reuse-verified` | | Reuse a verified local artifact after digest and container checks. Requires `--ttid`, or both `--start` and `--end` spanning at most two lectures. Missing or corrupt files fall back to a normal download. | Download Only |
 
 **Examples:**
 
@@ -487,6 +488,9 @@ the selection alone.
 
 # Download exactly one lecture by upstream TTID
 ./impartus download -s 123 -S 456 --ttid 10913022
+
+# Reuse a verified local copy of that lecture, or download if verification fails
+./impartus download -s 123 -S 456 --ttid 10913022 --reuse-verified
 
 # Download in 720p quality
 ./impartus download -s 123 -S 456 --quality 720
@@ -870,6 +874,7 @@ impartus/
 │   ├── tuisession/          # Authenticated loopback projections, operations, and events
 │   ├── player/              # Supervised mpv process and bounded JSON IPC
 │   ├── library/             # Pure-Go SQLite artifacts, playback, and local jobs
+│   ├── lockfile/            # Non-blocking, kernel-released advisory locks
 │   ├── events/              # Shared synchronous CLI NDJSON lifecycle contract
 │   ├── watch/               # Generic polling, advisory lock, and durable downloads
 │   └── server/              # HTTP API, auth middleware, jobs, WebSocket
@@ -891,6 +896,7 @@ impartus/
 - **`ui`** - OpenTUI rendering, responsive routing, filtering, command help, and session-client validation
 - **`internal/player`** - Private mpv runtime, process-group supervision, bounded JSON IPC, events, and typed controls
 - **`internal/library`** - Private SQLite migrations, artifact paths, verification, resume history, and recoverable local jobs
+- **`internal/lockfile`** - Cross-process advisory locks used by watch and `download --reuse-verified`
 - **`internal/events`** - Single-terminal NDJSON lifecycle events for automation
 - **`internal/watch`** - Provider-neutral polling and durable artifact completion
 - **`internal/server`** - HTTP API server with bearer-token auth, background jobs, and WebSocket broadcasting

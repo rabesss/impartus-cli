@@ -27,6 +27,7 @@ var downloadCommandHelpFlags = []string{
 	"--skip-no-audio      Skip lectures with no audio track",
 	"--include-noaudio    Include lectures with no audio track",
 	"--events             Emit newline-delimited JSON lifecycle events",
+	"--reuse-verified     Reuse a verified local artifact; requires --ttid or a 1-2 lecture --start/--end range",
 	"--json               Emit one JSON result envelope",
 	"--help,-h            Show command help",
 }

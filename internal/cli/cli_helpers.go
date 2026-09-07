@@ -143,6 +143,7 @@ func showHelpTo(output io.Writer, version, date string) error {
 		"  --skip-no-audio     Skip lectures with no audio track", "  --include-noaudio   Include noaudio lectures (overrides --skip-no-audio)",
 		"  --mpv-mode          Playback mode: ipc by default, legacy on Windows (play only)",
 		"  --events            NDJSON lifecycle stream (download/watch; exclusive with --json)",
+		"  --reuse-verified    Reuse a verified local artifact (download only; requires --ttid or a 1-2 lecture range)",
 	} {
 		if _, err := fmt.Fprintln(output, line); err != nil {
 			return err

@@ -31,7 +31,16 @@ type downloadResult struct {
 	TotalLectures   int                 `json:"totalLectures,omitempty"`
 	Artifacts       []artifact.Manifest `json:"artifacts"`
 	LibraryRecorded bool                `json:"libraryRecorded"`
+	Outcomes        []lectureOutcome    `json:"outcomes,omitempty"`
 	Warnings        []string            `json:"-"`
+}
+
+type lectureOutcome struct {
+	TTID       int      `json:"ttid"`
+	ArtifactID string   `json:"artifactId"`
+	Outcome    string   `json:"outcome"`
+	Paths      []string `json:"paths,omitempty"`
+	Reason     string   `json:"reason,omitempty"`
 }
 
 // downloadPresentationOptions keeps user-facing output policy at the CLI
@@ -63,6 +72,9 @@ type downloadExecutionDependencies struct {
 	login            func(context.Context, *config.Config) (*client.Client, error)
 	downloadLectures func(context.Context, *config.Config, *client.Client, client.Lectures, downloadPresentationOptions) (downloadResult, error)
 	recordArtifacts  func(context.Context, []artifact.Manifest) error
+	openLibrary      func(context.Context) (*library.Store, error)
+	artifactLockDir  string
+	artifactLockWait time.Duration
 }
 
 var errDownloadEventDelivery = errors.New("download event delivery failed")
@@ -73,6 +85,8 @@ type lectureDownloadRunner interface {
 	DownloadAndJoinPlaylist(context.Context, client.ParsedPlaylist, *mpb.Progress, *downloader.ProgressTracker) (downloader.JoinResult, error)
 }
 
+const defaultArtifactLockWait = 60 * time.Second
+
 func defaultDownloadExecutionDependencies() downloadExecutionDependencies {
 	return downloadExecutionDependencies{
 		ensureFFmpeg:     ensureFFmpeg,
@@ -80,6 +94,7 @@ func defaultDownloadExecutionDependencies() downloadExecutionDependencies {
 		login:            newLoggedInFn,
 		downloadLectures: downloadLectures,
 		recordArtifacts:  recordDownloadedArtifacts,
+		artifactLockWait: defaultArtifactLockWait,
 	}
 }
 
@@ -162,7 +177,7 @@ func executeDownloadWithDependenciesContext(ctx context.Context, args []string, 
 		cfg.SkipNoAudio = false
 	}
 
-	if ffmpegErr := deps.ensureFFmpeg(); ffmpegErr != nil {
+	if ffmpegErr := ensureDownloadFFmpeg(f.reuseVerified, deps.ensureFFmpeg); ffmpegErr != nil {
 		return downloadResult{}, ffmpegErr
 	}
 
@@ -194,6 +209,31 @@ func executeDownloadWithDependenciesContext(ctx context.Context, args []string, 
 	totalLectures := len(selected) + filteredCount
 	warnNoAudioLectures(presentation.warningOutput, selected, cfg.SkipNoAudio)
 
+	result, err := completeSelectedDownload(ctx, cfg, apiClient, selected, presentation, deps, f.reuseVerified)
+	result.FilteredCount = filteredCount
+	result.TotalLectures = totalLectures
+	return result, err
+}
+
+func ensureDownloadFFmpeg(reuseVerified bool, ensure func() error) error {
+	if reuseVerified {
+		return nil
+	}
+	return ensure()
+}
+
+func completeSelectedDownload(
+	ctx context.Context,
+	cfg *config.Config,
+	apiClient *client.Client,
+	selected client.Lectures,
+	presentation downloadPresentationOptions,
+	deps downloadExecutionDependencies,
+	reuseVerified bool,
+) (downloadResult, error) {
+	if reuseVerified {
+		return executeReuseVerifiedDownload(ctx, cfg, apiClient, selected, presentation, deps)
+	}
 	result, err := deps.downloadLectures(ctx, cfg, apiClient, selected, presentation)
 	// Once media has been published, finish the durable library commit even if
 	// a signal races with this short post-download transition. The event stream
@@ -202,8 +242,6 @@ func executeDownloadWithDependenciesContext(ctx context.Context, args []string, 
 	if err == nil || len(result.Artifacts) > 0 {
 		result = applyLibraryRecording(context.WithoutCancel(ctx), result, presentation, deps.recordArtifacts)
 	}
-	result.FilteredCount = filteredCount
-	result.TotalLectures = totalLectures
 	return result, err
 }
 

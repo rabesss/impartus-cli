@@ -225,7 +225,7 @@ func TestExecuteDownloadHelpFormsMatchAndListFlags(t *testing.T) {
 		if err != nil || stderr != "" {
 			t.Fatalf("Execute(%v) stdout/stderr/error = %q/%q/%v", args, stdout, stderr, err)
 		}
-		for _, want := range []string{"Flags:", "--subject,-s", "--session,-S", "--start", "--quality", "--json"} {
+		for _, want := range []string{"Flags:", "--subject,-s", "--session,-S", "--start", "--quality", "--reuse-verified", "--json"} {
 			if !strings.Contains(stdout, want) {
 				t.Fatalf("Execute(%v) output omitted %q: %q", args, want, stdout)
 			}
