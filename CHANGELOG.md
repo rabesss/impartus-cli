@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.1.30](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.29...impartus-cli-v0.1.30) (2026-09-11)
+
+
+### Features
+
+* **cli:** add download --reuse-verified ([#226](https://github.com/rabesss/impartus-cli/issues/226)) ([dd60d50](https://github.com/rabesss/impartus-cli/commit/dd60d50676631096ef80050b360b6d3a56483108))
+
+
+### Build System
+
+* **deps:** bump golang from 1.27.0-bookworm to 1.27.1-bookworm ([#225](https://github.com/rabesss/impartus-cli/issues/225)) ([5e5f3b9](https://github.com/rabesss/impartus-cli/commit/5e5f3b97a36de27cbdd259d39a02d9e0e08c0bd3))
+
+
+### CI/CD
+
+* allow Dependabot to run Factory Droid review ([#228](https://github.com/rabesss/impartus-cli/issues/228)) ([96e0c00](https://github.com/rabesss/impartus-cli/commit/96e0c005d925b22de9cf0150b89dd2c4911e9a34))
+* **deps:** bump Factory-AI/droid-action ([#222](https://github.com/rabesss/impartus-cli/issues/222)) ([095e6d3](https://github.com/rabesss/impartus-cli/commit/095e6d3cdb04bf89eea6f5c04118a6602d0d278b))
+* **deps:** bump github/codeql-action/upload-sarif from 4.37.7 to 4.37.9 ([#220](https://github.com/rabesss/impartus-cli/issues/220)) ([6954e1f](https://github.com/rabesss/impartus-cli/commit/6954e1f1fc579bb5c98f87690ee2823431705ef8))
+* **deps:** bump softprops/action-gh-release from 3.0.2 to 3.0.3 ([#224](https://github.com/rabesss/impartus-cli/issues/224)) ([3f383a7](https://github.com/rabesss/impartus-cli/commit/3f383a7b277595bc2f7d1d203d85a8623da9c0bc))
+* **security:** pin govulncheck to v1.8.0 ([#231](https://github.com/rabesss/impartus-cli/issues/231)) ([569eb99](https://github.com/rabesss/impartus-cli/commit/569eb9992a05c7a7bbdab3d2d4b419468559ae87))
+
 ## [0.1.29](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.28...impartus-cli-v0.1.29) (2026-08-29)
 
 
