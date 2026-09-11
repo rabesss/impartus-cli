@@ -8,6 +8,12 @@ import (
 	"os"
 )
 
+// VerifyContainerSignature checks that file starts with a seek-safe signature
+// for container, then rewinds to the start.
+func VerifyContainerSignature(file *os.File, path, container string) error {
+	return verifyContainerSignature(file, path, container)
+}
+
 func verifyContainerSignature(file *os.File, path, container string) error {
 	header := make([]byte, 12)
 	n, err := io.ReadFull(file, header)

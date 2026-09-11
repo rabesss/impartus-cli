@@ -30,11 +30,15 @@ const (
 	FileHashMismatch FileStatus = "hash_mismatch"
 	// FileUnreadable could not be inspected or hashed.
 	FileUnreadable FileStatus = "unreadable"
+	// FileContainerMismatch exists but does not match its recorded container.
+	FileContainerMismatch FileStatus = "container_mismatch"
 )
 
 // VerifyOptions controls expensive verification work.
 type VerifyOptions struct {
-	Hash bool
+	Hash                  bool
+	Container             bool
+	LatestMaterialization bool
 }
 
 // FileVerification is the result for one persisted materialization.
@@ -53,33 +57,79 @@ type Verification struct {
 	OK         bool               `json:"ok"`
 	CheckedAt  time.Time          `json:"checkedAt"`
 	Files      []FileVerification `json:"files"`
+	Manifest   artifact.Manifest  `json:"-"`
 }
 
-// VerifyArtifact checks every known path and updates presence/hash metadata.
+// VerifyArtifact checks persisted paths and updates presence/hash metadata.
+// LatestMaterialization limits the check to files named in the current manifest.
 // It never deletes an artifact or file row.
 func (store *Store) VerifyArtifact(ctx context.Context, artifactID string, options VerifyOptions) (Verification, error) {
 	record, err := store.GetArtifact(ctx, artifactID)
 	if err != nil {
 		return Verification{}, err
 	}
+	files, persisted := filesForVerification(record, options)
 	checkedAt := time.Now().UTC()
 	result := Verification{
 		ArtifactID: record.Manifest.ArtifactID,
 		OK:         true,
 		CheckedAt:  checkedAt,
-		Files:      make([]FileVerification, 0, len(record.Files)),
+		Files:      make([]FileVerification, 0, len(files)),
+		Manifest:   record.Manifest,
 	}
-	for _, file := range record.Files {
+	recorded := Verification{
+		ArtifactID: record.Manifest.ArtifactID,
+		CheckedAt:  checkedAt,
+		Files:      make([]FileVerification, 0, len(persisted)),
+	}
+	for index, file := range files {
 		verification := verifyArtifactFile(file, options)
 		if verification.Status != FilePresent {
 			result.OK = false
 		}
 		result.Files = append(result.Files, verification)
+		if persisted[index] {
+			recorded.Files = append(recorded.Files, verification)
+		}
 	}
-	if err := store.recordVerification(ctx, result); err != nil {
+	if err := store.recordVerification(ctx, recorded); err != nil {
 		return Verification{}, err
 	}
 	return result, nil
+}
+
+func filesForVerification(record ArtifactRecord, options VerifyOptions) ([]ArtifactFile, []bool) {
+	if !options.LatestMaterialization {
+		persisted := make([]bool, len(record.Files))
+		for index := range persisted {
+			persisted[index] = true
+		}
+		return record.Files, persisted
+	}
+	byPath := make(map[string]ArtifactFile, len(record.Files))
+	for _, file := range record.Files {
+		byPath[file.Path] = file
+	}
+	files := make([]ArtifactFile, 0, len(record.Manifest.Files))
+	persisted := make([]bool, 0, len(record.Manifest.Files))
+	for _, spec := range record.Manifest.Files {
+		file, ok := byPath[spec.Path]
+		if !ok {
+			files = append(files, ArtifactFile{
+				Path:      spec.Path,
+				Role:      spec.Role,
+				View:      spec.View,
+				Container: spec.Container,
+				Bytes:     spec.Bytes,
+				SHA256:    spec.SHA256,
+			})
+			persisted = append(persisted, false)
+			continue
+		}
+		files = append(files, file)
+		persisted = append(persisted, true)
+	}
+	return files, persisted
 }
 
 // VerifyAll checks every artifact without deleting missing materializations.
@@ -137,6 +187,17 @@ func verifyArtifactFile(file ArtifactFile, options VerifyOptions) FileVerificati
 	if openedInfo.Size() != file.Bytes {
 		result.Status = FileSizeMismatch
 		return result
+	}
+	return finishArtifactFileVerification(result, file, opened, pathInfo, options)
+}
+
+func finishArtifactFileVerification(result FileVerification, file ArtifactFile, opened *os.File, pathInfo os.FileInfo, options VerifyOptions) FileVerification {
+	if options.Container {
+		if containerErr := artifact.VerifyContainerSignature(opened, file.Path, file.Container); containerErr != nil {
+			result.Status = FileContainerMismatch
+			result.Error = containerErr.Error()
+			return result
+		}
 	}
 	if options.Hash {
 		actual, hashErr := hashFile(opened)

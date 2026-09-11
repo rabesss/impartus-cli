@@ -180,6 +180,95 @@ func TestVerifyArtifactCanonicalizesWhitespaceIDBeforeMetadataUpdate(t *testing.
 	}
 }
 
+func TestVerifyArtifactReportsContainerMismatch(t *testing.T) {
+	store := openTestStore(t)
+	path := filepath.Join(t.TempDir(), "lecture.mp4")
+	manifest := buildTestManifest(t, path, "container-mismatch")
+	if err := store.RecordManifest(context.Background(), manifest); err != nil {
+		t.Fatal(err)
+	}
+	invalid := make([]byte, manifest.Files[0].Bytes)
+	copy(invalid, []byte("not-a-container"))
+	if err := os.WriteFile(path, invalid, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	verified, err := store.VerifyArtifact(context.Background(), manifest.ArtifactID, library.VerifyOptions{Container: true, Hash: true})
+	if err != nil {
+		t.Fatalf("VerifyArtifact() error = %v", err)
+	}
+	if verified.OK || len(verified.Files) != 1 || verified.Files[0].Status != library.FileContainerMismatch {
+		t.Fatalf("container verification = %+v, want container_mismatch", verified)
+	}
+}
+
+func TestVerifyArtifactHashMismatchWithContainerCheck(t *testing.T) {
+	store := openTestStore(t)
+	path := filepath.Join(t.TempDir(), "lecture.mp4")
+	manifest := buildTestManifest(t, path, "hash-mismatch")
+	if err := store.RecordManifest(context.Background(), manifest); err != nil {
+		t.Fatal(err)
+	}
+	verified, err := store.VerifyArtifact(context.Background(), manifest.ArtifactID, library.VerifyOptions{Hash: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !verified.OK || verified.Files[0].SHA256 == "" {
+		t.Fatalf("initial hash fill = %+v", verified)
+	}
+
+	changed := []byte{0, 0, 0, 24, 'f', 't', 'y', 'p', 'm', 'p', '4', 'x'}
+	if writeErr := os.WriteFile(path, changed, 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	mismatched, err := store.VerifyArtifact(context.Background(), manifest.ArtifactID, library.VerifyOptions{Hash: true, Container: true})
+	if err != nil {
+		t.Fatalf("VerifyArtifact() error = %v", err)
+	}
+	if mismatched.OK || mismatched.Files[0].Status != library.FileHashMismatch {
+		t.Fatalf("hash verification = %+v, want hash_mismatch", mismatched)
+	}
+}
+
+func TestVerifyLatestMaterializationIgnoresHistoricalPaths(t *testing.T) {
+	store := openTestStore(t)
+	first := buildTestManifest(t, filepath.Join(t.TempDir(), "first.mp4"), "first")
+	second := buildTestManifest(t, filepath.Join(t.TempDir(), "second.mp4"), "second")
+	if first.ArtifactID != second.ArtifactID {
+		t.Fatalf("same lecture produced IDs %q and %q", first.ArtifactID, second.ArtifactID)
+	}
+	if err := store.RecordManifest(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordManifest(context.Background(), second); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(first.Files[0].Path); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := store.VerifyArtifact(context.Background(), first.ArtifactID, library.VerifyOptions{Hash: true, Container: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all.OK {
+		t.Fatalf("full verification = %+v, want failure on historical missing path", all)
+	}
+
+	latest, err := store.VerifyArtifact(context.Background(), first.ArtifactID, library.VerifyOptions{
+		Hash: true, Container: true, LatestMaterialization: true,
+	})
+	if err != nil {
+		t.Fatalf("VerifyArtifact(latest) error = %v", err)
+	}
+	if !latest.OK || len(latest.Files) != 1 || latest.Files[0].Path != second.Files[0].Path || latest.Files[0].Status != library.FilePresent {
+		t.Fatalf("latest verification = %+v, want only current path", latest)
+	}
+	if latest.Files[0].SHA256 == "" {
+		t.Fatal("latest verification did not persist a digest")
+	}
+}
+
 func TestRecordManifestsRejectsInvalidBatchAtomically(t *testing.T) {
 	store := openTestStore(t)
 	valid := buildTestManifest(t, filepath.Join(t.TempDir(), "valid.mp4"), "valid")

@@ -1,6 +1,6 @@
 //go:build windows
 
-package watch
+package lockfile
 
 import (
 	"errors"
@@ -13,7 +13,7 @@ import (
 func openAndTryLock(path string) (*os.File, error) {
 	name, err := windows.UTF16PtrFromString(path)
 	if err != nil {
-		return nil, fmt.Errorf("encode watch lock path: %w", err)
+		return nil, fmt.Errorf("encode lock path: %w", err)
 	}
 	handle, err := windows.CreateFile(
 		name,
@@ -25,18 +25,18 @@ func openAndTryLock(path string) (*os.File, error) {
 		0,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("open watch lock: %w", err)
+		return nil, fmt.Errorf("open lockfile: %w", err)
 	}
 	var information windows.ByHandleFileInformation
 	if infoErr := windows.GetFileInformationByHandle(handle, &information); infoErr != nil {
-		return nil, errors.Join(fmt.Errorf("inspect opened watch lock: %w", infoErr), windows.CloseHandle(handle))
+		return nil, errors.Join(fmt.Errorf("inspect opened lockfile: %w", infoErr), windows.CloseHandle(handle))
 	}
 	if information.FileAttributes&(windows.FILE_ATTRIBUTE_REPARSE_POINT|windows.FILE_ATTRIBUTE_DIRECTORY) != 0 {
-		return nil, errors.Join(errors.New("watch lock path must be a regular non-reparse file"), windows.CloseHandle(handle))
+		return nil, errors.Join(errors.New("lock path must be a regular non-reparse file"), windows.CloseHandle(handle))
 	}
 	file := os.NewFile(uintptr(handle), path)
 	if file == nil {
-		return nil, errors.Join(errors.New("wrap watch lock handle"), windows.CloseHandle(handle))
+		return nil, errors.Join(errors.New("wrap lock handle"), windows.CloseHandle(handle))
 	}
 	overlapped := new(windows.Overlapped)
 	err = windows.LockFileEx(
@@ -47,16 +47,16 @@ func openAndTryLock(path string) (*os.File, error) {
 	if err != nil {
 		closeErr := file.Close()
 		if errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
-			return nil, errors.Join(ErrWatcherRunning, closeErr)
+			return nil, errors.Join(ErrLocked, closeErr)
 		}
-		return nil, errors.Join(fmt.Errorf("acquire watch lock: %w", err), closeErr)
+		return nil, errors.Join(fmt.Errorf("acquire lockfile: %w", err), closeErr)
 	}
 	return file, nil
 }
 
 func unlockFile(file *os.File) error {
 	if err := windows.UnlockFileEx(windows.Handle(file.Fd()), 0, 1, 0, new(windows.Overlapped)); err != nil {
-		return fmt.Errorf("release watch lock: %w", err)
+		return fmt.Errorf("release lockfile: %w", err)
 	}
 	return nil
 }

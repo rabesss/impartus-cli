@@ -24,6 +24,7 @@ type downloadFlags struct {
 	skipNoAudio    bool
 	includeNoAudio bool
 	events         bool
+	reuseVerified  bool
 }
 
 func parseDownloadFlags(args []string) (downloadFlags, error) {
@@ -46,6 +47,7 @@ func parseDownloadFlags(args []string) (downloadFlags, error) {
 	fs.BoolVar(&f.skipNoAudio, "skip-no-audio", false, "Skip lectures with no audio track")
 	fs.BoolVar(&f.includeNoAudio, "include-noaudio", false, "Include lectures with no audio track (overrides --skip-no-audio)")
 	fs.BoolVar(&f.events, "events", false, "Emit newline-delimited JSON lifecycle events")
+	fs.BoolVar(&f.reuseVerified, "reuse-verified", false, "Reuse a verified local artifact")
 
 	if err := fs.Parse(args); err != nil {
 		return downloadFlags{}, err
@@ -86,6 +88,27 @@ func validateDownloadSelectionFlags(f downloadFlags) error {
 	}
 	if f.endSet && f.end <= 0 {
 		return errors.New("download --end must be a positive 1-based index")
+	}
+	if f.reuseVerified {
+		return validateReuseVerifiedSelection(f)
+	}
+	return nil
+}
+
+const maxReuseVerifiedLectures = 2
+
+func validateReuseVerifiedSelection(f downloadFlags) error {
+	if f.ttidSet {
+		return nil
+	}
+	if !f.startSet || !f.endSet {
+		return errors.New("download --reuse-verified requires --ttid or both --start and --end")
+	}
+	if f.end < f.start {
+		return errors.New("download --reuse-verified --end must be greater than or equal to --start")
+	}
+	if f.end-f.start+1 > maxReuseVerifiedLectures {
+		return errors.New("download --reuse-verified accepts at most 2 lectures")
 	}
 	return nil
 }

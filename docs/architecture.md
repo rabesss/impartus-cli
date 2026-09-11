@@ -177,14 +177,18 @@ fails before journal mode or tables are changed.
 `artifact_files` retains every distinct materialized path and its presence/hash
 state; `playback` holds coalesced resume checkpoints; and `jobs` holds expected
 outputs and lifecycle state. Default verification checks type and size; only
-`--hash` fills or rechecks SHA-256. Verification updates rows but never deletes
-media or history. One-shot CLI downloads record completed manifests best-effort
-without creating local job rows. The generic watcher creates and starts a local
-`watch` job before media publication, then commits its manifest and completed job
-atomically only after every expected final file validates. Startup recovery runs
-while the watcher owns its OS advisory lock and before login or other network
-work. The HTTP API server's existing `.jobs.json` store remains a separate
-compatibility surface.
+`--hash` fills or rechecks SHA-256. `download --reuse-verified` also checks the
+container signature and ignores historical `artifact_files` rows that are not
+in the latest manifest. Verification updates rows but never deletes media or
+history. One-shot CLI downloads record completed manifests best-effort
+without creating local job rows. Reuse takes a per-artifact advisory lock under
+`$XDG_STATE_HOME/impartus/locks/` for the verify-or-download decision; the
+generic watcher keeps its separate `watch.lock` in the same state directory.
+The generic watcher creates and starts a local `watch` job before media
+publication, then commits its manifest and completed job atomically only after
+every expected final file validates. Startup recovery runs while the watcher
+owns its OS advisory lock and before login or other network work. The HTTP API
+server's existing `.jobs.json` store remains a separate compatibility surface.
 
 ## Generic watcher flow
 
@@ -259,7 +263,8 @@ Core boundaries keep command parsing in `internal/cli`, child lifecycle in
 catalog/playback orchestration in `internal/app`, mpv ownership and JSON IPC in
 `internal/player`, network access in `internal/client`, the media pipeline and
 loopback HLS proxy in `internal/downloader`, stable local media contracts in
-`internal/artifact`, and HTTP orchestration in `internal/server`.
+`internal/artifact`, advisory locks in `internal/lockfile`, and HTTP orchestration
+in `internal/server`.
 
 ```mermaid
 flowchart LR
@@ -280,6 +285,7 @@ flowchart LR
     APP[internal/app]
     PLR[internal/player]
     LIB[internal/library]
+    LOCK[internal/lockfile]
     EVT[internal/events]
     WATCH[internal/watch]
     SRV[internal/server]
@@ -302,6 +308,7 @@ flowchart LR
   CLI --> TUIHOST
   CLI --> TUISESSION
   CLI --> LIB
+  CLI --> LOCK
   CLI --> EVT
   CLI --> WATCH
   CLI --> SRV
@@ -320,6 +327,7 @@ flowchart LR
   WATCH --> ART
   WATCH --> EVT
   WATCH --> LIB
+  WATCH --> LOCK
   SRV --> CFG
   SRV --> CLT
   SRV --> DL

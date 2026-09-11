@@ -44,9 +44,14 @@ Every lecture event carries its canonical top-level `artifactId`. One-shot
 download emits `lecture.started`, `lecture.progress`, and `lecture.completed`
 while producing each lecture, then includes the complete validated manifest
 batch in `job.completed` only after it has been recorded in the local library.
-If media was published but that commit did not complete, events mode fails
-closed with `job.failed`; the existing human and single-envelope JSON
-compatibility modes retain their warning behavior.
+`download --reuse-verified` is the exception: a lecture whose latest library
+materialization already passes digest and container checks emits
+`lecture.started` then `lecture.completed` with `"stage": "artifact_reused"`
+and does not emit `lecture.progress`. Reused lectures emit that pair first,
+in selection order, before any lecture that still downloads. If media was
+published but that commit did not complete, events mode fails closed with
+`job.failed`; the existing human and single-envelope JSON compatibility
+modes retain their warning behavior.
 
 Watcher startup recovery emits `lecture.completed` with `"recovered": true`
 and the durable `libraryJobId` before the first lecture cycle. Consumers receive
