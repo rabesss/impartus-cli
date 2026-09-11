@@ -161,7 +161,7 @@ jobs:
       - name: Run Go vulnerability check
         id: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           # Run govulncheck and capture output; do not mask exit code
           set +e
           govulncheck ./... 2>&1 | tee govulncheck-results.txt
