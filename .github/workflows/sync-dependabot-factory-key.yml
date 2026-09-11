@@ -1,0 +1,48 @@
+name: Sync Dependabot Factory key
+
+# Copies FACTORY_API_KEY from this repo's Actions secrets into Dependabot secrets
+# on every rabesss repository that already has an Actions FACTORY_API_KEY.
+# Dependabot-triggered workflows cannot read Actions secrets.
+# Requires repository secret GH_PAT with repo scope.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Write FACTORY_API_KEY to Dependabot secrets
+        env:
+          FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${FACTORY_API_KEY}" ]; then
+            echo "FACTORY_API_KEY is empty in Actions secrets"
+            exit 1
+          fi
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "GH_PAT repository secret is missing"
+            exit 1
+          fi
+          mapfile -t repos < <(gh repo list rabesss --limit 200 --json name --jq '.[].name')
+          copied=0
+          skipped=0
+          for name in "${repos[@]}"; do
+            repo="rabesss/${name}"
+            if ! gh secret list --repo "${repo}" --json name --jq '.[].name' | grep -qx 'FACTORY_API_KEY'; then
+              echo "skip ${repo} (no Actions FACTORY_API_KEY)"
+              skipped=$((skipped + 1))
+              continue
+            fi
+            printf '%s' "${FACTORY_API_KEY}" | gh secret set FACTORY_API_KEY --app dependabot --repo "${repo}"
+            echo "copied ${repo}"
+            copied=$((copied + 1))
+          done
+          echo "copied=${copied} skipped=${skipped}"
+          if [ "${copied}" -lt 1 ]; then
+            exit 1
+          fi
