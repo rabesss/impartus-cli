@@ -51,7 +51,10 @@ func (store *Store) RecordManifests(ctx context.Context, manifests []artifact.Ma
 		if err != nil {
 			return fmt.Errorf("validate artifact %d: %w", index+1, err)
 		}
-		validated[index] = rebuilt
+		validated[index], err = digestManifestFiles(rebuilt)
+		if err != nil {
+			return err
+		}
 	}
 	if len(validated) == 0 {
 		return nil
@@ -106,10 +109,6 @@ func validateCompletedManifest(manifest artifact.Manifest) (artifact.Manifest, e
 }
 
 func recordManifestTx(ctx context.Context, tx *sql.Tx, manifest artifact.Manifest) error {
-	manifest, err := digestManifestFiles(manifest)
-	if err != nil {
-		return err
-	}
 	encoded, err := json.Marshal(manifest)
 	if err != nil {
 		return fmt.Errorf("encode artifact manifest: %w", err)

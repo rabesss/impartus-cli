@@ -225,9 +225,13 @@ func (store *Store) CompleteJob(ctx context.Context, jobID string, manifest arti
 
 // completeValidatedJob atomically records a manifest that was built and
 // validated against the current file descriptors by the immediate caller.
-// Keeping this separate prevents startup recovery from reopening the same
-// paths between validation and the durable transaction.
+// Keeping this separate prevents startup recovery from validating the same
+// outputs twice before the durable transaction.
 func (store *Store) completeValidatedJob(ctx context.Context, jobID string, validated artifact.Manifest) error {
+	digested, digestErr := digestManifestFiles(validated)
+	if digestErr != nil {
+		return digestErr
+	}
 	tx, beginErr := store.database.BeginTx(ctx, nil)
 	if beginErr != nil {
 		return fmt.Errorf("begin job completion: %w", beginErr)
@@ -238,6 +242,9 @@ func (store *Store) completeValidatedJob(ctx context.Context, jobID string, vali
 	if loadErr != nil {
 		return loadErr
 	}
+	// The expectation is matched against the caller's manifest rather than the
+	// digested copy. A digest the job pinned must come from the caller, not be
+	// filled from disk.
 	alreadyCompleted, expectationErr := expectation.validateCompletion(validated)
 	if expectationErr != nil {
 		return expectationErr
@@ -249,7 +256,7 @@ func (store *Store) completeValidatedJob(ctx context.Context, jobID string, vali
 		committed = true
 		return nil
 	}
-	if recordErr := recordManifestTx(ctx, tx, validated); recordErr != nil {
+	if recordErr := recordManifestTx(ctx, tx, digested); recordErr != nil {
 		return recordErr
 	}
 	now := formatDatabaseTime(time.Now())
