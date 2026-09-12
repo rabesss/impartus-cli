@@ -67,6 +67,9 @@ func TestRecordManifestPersistsSHA256(t *testing.T) {
 	if len(record.Files) != 1 || record.Files[0].SHA256 != expectedSHA256 {
 		t.Fatalf("recorded sha256 = %+v, want %q", record.Files, expectedSHA256)
 	}
+	if len(record.Manifest.Files) != 1 || record.Manifest.Files[0].SHA256 != expectedSHA256 {
+		t.Fatalf("stored manifest files = %+v, want sha256 %q", record.Manifest.Files, expectedSHA256)
+	}
 }
 
 func TestVerifyArtifactRefreshesHashAndMarksMissingWithoutDeleting(t *testing.T) {
