@@ -179,11 +179,11 @@ state; `playback` holds coalesced resume checkpoints; and `jobs` holds expected
 outputs and lifecycle state. Default verification checks type and size.
 Recording a completed manifest stores each file's SHA-256. `--hash` rechecks
 that digest and still fills empty rows from older libraries.
-`download --reuse-verified` also checks the
-container signature and ignores historical `artifact_files` rows that are not
-in the latest manifest. Verification updates rows but never deletes media or
-history. One-shot CLI downloads record completed manifests best-effort
-without creating local job rows. Reuse takes a per-artifact advisory lock under
+`download --reuse-verified` also checks the container signature and ignores
+historical `artifact_files` rows that are not in the latest manifest.
+Verification updates rows but never deletes media or history. One-shot CLI
+downloads record completed manifests best-effort without creating local job
+rows. Reuse takes a per-artifact advisory lock under
 `$XDG_STATE_HOME/impartus/locks/` for the verify-or-download decision; the
 generic watcher keeps its separate `watch.lock` in the same state directory.
 The generic watcher creates and starts a local `watch` job before media
