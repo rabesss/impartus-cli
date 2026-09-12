@@ -52,6 +52,23 @@ func TestRecordManifestIsIdempotentAndKeepsEveryMaterializedPath(t *testing.T) {
 	}
 }
 
+func TestRecordManifestPersistsSHA256(t *testing.T) {
+	store := openTestStore(t)
+	path := filepath.Join(t.TempDir(), "lecture.mp4")
+	manifest := buildTestManifest(t, path, "digest")
+	if err := store.RecordManifest(context.Background(), manifest); err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.GetArtifact(context.Background(), manifest.ArtifactID)
+	if err != nil {
+		t.Fatalf("GetArtifact() error = %v", err)
+	}
+	const expectedSHA256 = "c43403fe022af967a0b859d3e14ea12d6633f4c8ad475816b0c55d85896e8e35"
+	if len(record.Files) != 1 || record.Files[0].SHA256 != expectedSHA256 {
+		t.Fatalf("recorded sha256 = %+v, want %q", record.Files, expectedSHA256)
+	}
+}
+
 func TestVerifyArtifactRefreshesHashAndMarksMissingWithoutDeleting(t *testing.T) {
 	store := openTestStore(t)
 	path := filepath.Join(t.TempDir(), "lecture.mp4")

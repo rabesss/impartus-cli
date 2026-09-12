@@ -161,6 +161,43 @@ func TestReuseVerifiedFallsBackAfterTruncation(t *testing.T) {
 	}
 }
 
+func TestReuseVerifiedFallsBackAfterSameSizeHashMismatch(t *testing.T) {
+	fixture := setupReuseVerifiedFixture(t)
+	changed := []byte{0, 0, 0, 24, 'f', 't', 'y', 'p', 'm', 'p', '4', '2'}
+	if err := os.WriteFile(fixture.mediaPath, changed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var downloaded client.Lectures
+	ffmpegCalled := false
+	deps := reuseVerifiedDeps(t, fixture, func(_ context.Context, _ *config.Config, _ *client.Client, lectures client.Lectures, _ downloadPresentationOptions) (downloadResult, error) {
+		downloaded = append(client.Lectures(nil), lectures...)
+		return fallbackDownloadResult(fixture.lecture), nil
+	})
+	deps.ensureFFmpeg = func() error {
+		ffmpegCalled = true
+		return nil
+	}
+	result, err := executeDownloadWithDependenciesContext(
+		context.Background(),
+		[]string{"-s", "67", "-S", "8", "--ttid", "42", "--reuse-verified"},
+		quietDownloadPresentation(),
+		deps,
+	)
+	if err != nil {
+		t.Fatalf("executeDownloadWithDependenciesContext() error = %v", err)
+	}
+	if len(result.Outcomes) != 1 || result.Outcomes[0].Outcome != lectureOutcomeDownloaded || result.Outcomes[0].Reason != string(library.FileHashMismatch) {
+		t.Fatalf("outcome = %+v", result.Outcomes)
+	}
+	if !ffmpegCalled {
+		t.Fatal("fallback download skipped FFmpeg")
+	}
+	if len(downloaded) != 1 || downloaded[0].TTID != fixture.lecture.TTID {
+		t.Fatalf("downloaded = %+v", downloaded)
+	}
+}
+
 func TestReuseVerifiedReportsVerificationFailedWhenFallbackFails(t *testing.T) {
 	fixture := setupReuseVerifiedFixture(t)
 	if err := os.WriteFile(fixture.mediaPath, []byte("short"), 0o600); err != nil {
