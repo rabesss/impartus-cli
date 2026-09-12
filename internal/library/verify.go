@@ -231,6 +231,31 @@ func hashFile(file io.Reader) (string, error) {
 	return fmt.Sprintf("%x", hasher.Sum(nil)), nil
 }
 
+func digestManifestFiles(manifest artifact.Manifest) (artifact.Manifest, error) {
+	files := append([]artifact.File(nil), manifest.Files...)
+	for index, file := range files {
+		if file.SHA256 != "" {
+			continue
+		}
+		digest, err := hashStoredFile(file.Path)
+		if err != nil {
+			return artifact.Manifest{}, fmt.Errorf("hash artifact file %q: %w", file.Path, err)
+		}
+		files[index].SHA256 = digest
+	}
+	manifest.Files = files
+	return manifest, nil
+}
+
+func hashStoredFile(path string) (string, error) {
+	opened, err := artifact.OpenCompletedFileDescriptor(path)
+	if err != nil {
+		return "", err
+	}
+	defer closeFile(opened)
+	return hashFile(opened)
+}
+
 func (store *Store) recordVerification(ctx context.Context, result Verification) error {
 	tx, err := store.database.BeginTx(ctx, nil)
 	if err != nil {

@@ -583,8 +583,9 @@ transactional forward-only migrations, so CGO is not required.
 Logical artifacts are keyed by the stable manifest identity rather than by a
 filename. Re-downloading the same selection elsewhere adds another file row;
 it does not discard the older path. `library verify` checks regular-file type
-and size and updates presence metadata without deleting user data. Hashing is
-deliberately opt-in: `library verify --hash` fills or rechecks SHA-256 metadata.
+and size and updates presence metadata without deleting user data. Recording
+stores SHA-256. `library verify --hash` rechecks it and still fills empty rows
+from older libraries.
 Playback checkpoints reject far-future timestamps, merge equal-time updates,
 and keep completion sticky so out-of-order delivery cannot regress resume.
 

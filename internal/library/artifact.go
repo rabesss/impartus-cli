@@ -106,6 +106,10 @@ func validateCompletedManifest(manifest artifact.Manifest) (artifact.Manifest, e
 }
 
 func recordManifestTx(ctx context.Context, tx *sql.Tx, manifest artifact.Manifest) error {
+	manifest, err := digestManifestFiles(manifest)
+	if err != nil {
+		return err
+	}
 	encoded, err := json.Marshal(manifest)
 	if err != nil {
 		return fmt.Errorf("encode artifact manifest: %w", err)

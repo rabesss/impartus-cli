@@ -176,8 +176,10 @@ fails before journal mode or tables are changed.
 `artifacts` holds immutable logical identity plus the latest manifest;
 `artifact_files` retains every distinct materialized path and its presence/hash
 state; `playback` holds coalesced resume checkpoints; and `jobs` holds expected
-outputs and lifecycle state. Default verification checks type and size; only
-`--hash` fills or rechecks SHA-256. `download --reuse-verified` also checks the
+outputs and lifecycle state. Default verification checks type and size.
+Recording a completed manifest stores each file's SHA-256. `--hash` rechecks
+that digest and still fills empty rows from older libraries.
+`download --reuse-verified` also checks the
 container signature and ignores historical `artifact_files` rows that are not
 in the latest manifest. Verification updates rows but never deletes media or
 history. One-shot CLI downloads record completed manifests best-effort
