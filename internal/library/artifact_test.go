@@ -52,6 +52,26 @@ func TestRecordManifestIsIdempotentAndKeepsEveryMaterializedPath(t *testing.T) {
 	}
 }
 
+func TestRecordManifestPersistsSHA256(t *testing.T) {
+	store := openTestStore(t)
+	path := filepath.Join(t.TempDir(), "lecture.mp4")
+	manifest := buildTestManifest(t, path, "digest")
+	if err := store.RecordManifest(context.Background(), manifest); err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.GetArtifact(context.Background(), manifest.ArtifactID)
+	if err != nil {
+		t.Fatalf("GetArtifact() error = %v", err)
+	}
+	const expectedSHA256 = "c43403fe022af967a0b859d3e14ea12d6633f4c8ad475816b0c55d85896e8e35"
+	if len(record.Files) != 1 || record.Files[0].SHA256 != expectedSHA256 {
+		t.Fatalf("recorded sha256 = %+v, want %q", record.Files, expectedSHA256)
+	}
+	if len(record.Manifest.Files) != 1 || record.Manifest.Files[0].SHA256 != expectedSHA256 {
+		t.Fatalf("stored manifest files = %+v, want sha256 %q", record.Manifest.Files, expectedSHA256)
+	}
+}
+
 func TestVerifyArtifactRefreshesHashAndMarksMissingWithoutDeleting(t *testing.T) {
 	store := openTestStore(t)
 	path := filepath.Join(t.TempDir(), "lecture.mp4")
@@ -69,7 +89,7 @@ func TestVerifyArtifactRefreshesHashAndMarksMissingWithoutDeleting(t *testing.T)
 	}
 	const expectedSHA256 = "c43403fe022af967a0b859d3e14ea12d6633f4c8ad475816b0c55d85896e8e35"
 	if verified.Files[0].SHA256 != expectedSHA256 {
-		t.Fatalf("filled sha256 = %q, want %q", verified.Files[0].SHA256, expectedSHA256)
+		t.Fatalf("recorded sha256 = %q, want %q", verified.Files[0].SHA256, expectedSHA256)
 	}
 	changedMedia := []byte{0, 0, 0, 24, 'f', 't', 'y', 'p', 'm', 'p', '4', '2'}
 	if writeErr := os.WriteFile(path, changedMedia, 0o600); writeErr != nil {
@@ -82,14 +102,14 @@ func TestVerifyArtifactRefreshesHashAndMarksMissingWithoutDeleting(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(recordedAgain.Files) != 1 || recordedAgain.Files[0].SHA256 != "" {
-		t.Fatalf("hashless re-record retained a stale verified hash: %+v", recordedAgain.Files)
+	wantChangedSHA := fmt.Sprintf("%x", sha256.Sum256(changedMedia))
+	if len(recordedAgain.Files) != 1 || recordedAgain.Files[0].SHA256 != wantChangedSHA {
+		t.Fatalf("re-record sha256 = %+v, want %q", recordedAgain.Files, wantChangedSHA)
 	}
 	refreshed, err := store.VerifyArtifact(context.Background(), manifest.ArtifactID, library.VerifyOptions{Hash: true})
 	if err != nil {
 		t.Fatalf("VerifyArtifact() after replacement error = %v", err)
 	}
-	wantChangedSHA := fmt.Sprintf("%x", sha256.Sum256(changedMedia))
 	if !refreshed.OK || len(refreshed.Files) != 1 || refreshed.Files[0].SHA256 != wantChangedSHA || refreshed.Files[0].SHA256 == expectedSHA256 {
 		t.Fatalf("replacement verification = %+v, want refreshed hash %q", refreshed, wantChangedSHA)
 	}

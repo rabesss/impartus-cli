@@ -225,9 +225,11 @@ func (store *Store) CompleteJob(ctx context.Context, jobID string, manifest arti
 
 // completeValidatedJob atomically records a manifest that was built and
 // validated against the current file descriptors by the immediate caller.
-// Keeping this separate prevents startup recovery from reopening the same
-// paths between validation and the durable transaction.
 func (store *Store) completeValidatedJob(ctx context.Context, jobID string, validated artifact.Manifest) error {
+	digested, digestErr := digestManifestFiles(validated)
+	if digestErr != nil {
+		return digestErr
+	}
 	tx, beginErr := store.database.BeginTx(ctx, nil)
 	if beginErr != nil {
 		return fmt.Errorf("begin job completion: %w", beginErr)
@@ -249,7 +251,7 @@ func (store *Store) completeValidatedJob(ctx context.Context, jobID string, vali
 		committed = true
 		return nil
 	}
-	if recordErr := recordManifestTx(ctx, tx, validated); recordErr != nil {
+	if recordErr := recordManifestTx(ctx, tx, digested); recordErr != nil {
 		return recordErr
 	}
 	now := formatDatabaseTime(time.Now())

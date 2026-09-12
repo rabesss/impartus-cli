@@ -51,7 +51,10 @@ func (store *Store) RecordManifests(ctx context.Context, manifests []artifact.Ma
 		if err != nil {
 			return fmt.Errorf("validate artifact %d: %w", index+1, err)
 		}
-		validated[index] = rebuilt
+		validated[index], err = digestManifestFiles(rebuilt)
+		if err != nil {
+			return err
+		}
 	}
 	if len(validated) == 0 {
 		return nil
