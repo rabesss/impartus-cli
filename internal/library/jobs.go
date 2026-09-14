@@ -225,6 +225,9 @@ func (store *Store) CompleteJob(ctx context.Context, jobID string, manifest arti
 
 // completeValidatedJob atomically records a manifest that was built and
 // validated against the current file descriptors by the immediate caller.
+// Empty digests are filled from a stability-checked read before the write
+// transaction begins, so the full-file read never holds the library write
+// lock; a job that turns out to be already completed pays that read anyway.
 func (store *Store) completeValidatedJob(ctx context.Context, jobID string, validated artifact.Manifest) error {
 	digested, digestErr := digestManifestFiles(validated)
 	if digestErr != nil {

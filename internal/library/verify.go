@@ -231,13 +231,17 @@ func hashFile(file io.Reader) (string, error) {
 	return fmt.Sprintf("%x", hasher.Sum(nil)), nil
 }
 
+// digestManifestFiles fills each file's empty SHA-256 from the bytes on disk
+// so the recorded manifest carries a reference digest from creation. Digests
+// the caller already pinned were verified by artifact.Build and are left
+// untouched.
 func digestManifestFiles(manifest artifact.Manifest) (artifact.Manifest, error) {
 	files := append([]artifact.File(nil), manifest.Files...)
 	for index, file := range files {
 		if file.SHA256 != "" {
 			continue
 		}
-		digest, err := hashStoredFile(file.Path)
+		digest, err := hashStoredFile(file.Path, file.Bytes)
 		if err != nil {
 			return artifact.Manifest{}, fmt.Errorf("hash artifact file %q: %w", file.Path, err)
 		}
@@ -247,13 +251,39 @@ func digestManifestFiles(manifest artifact.Manifest) (artifact.Manifest, error) 
 	return manifest, nil
 }
 
-func hashStoredFile(path string) (string, error) {
+// hashStoredFile hashes one completed file under the same rules verification
+// applies: the path must still name the same regular file, the size must
+// match what the validated manifest recorded, and the file must stay stable
+// across the read. A swapped or growing file fails the record instead of
+// persisting a digest that never described a durable state.
+func hashStoredFile(path string, expectedBytes int64) (string, error) {
+	pathInfo, err := os.Lstat(path)
+	if err != nil {
+		return "", err
+	}
 	opened, err := artifact.OpenCompletedFileDescriptor(path)
 	if err != nil {
 		return "", err
 	}
 	defer closeFile(opened)
-	return hashFile(opened)
+	openedInfo, err := opened.Stat()
+	if err != nil {
+		return "", err
+	}
+	if !openedInfo.Mode().IsRegular() || !os.SameFile(pathInfo, openedInfo) {
+		return "", errors.New("path changed during validation or is not a regular file")
+	}
+	if openedInfo.Size() != expectedBytes {
+		return "", fmt.Errorf("size changed between validation and recording: got %d bytes, want %d", openedInfo.Size(), expectedBytes)
+	}
+	digest, err := hashFile(opened)
+	if err != nil {
+		return "", err
+	}
+	if err := validateStableArtifactFile(path, opened, pathInfo); err != nil {
+		return "", err
+	}
+	return digest, nil
 }
 
 func (store *Store) recordVerification(ctx context.Context, result Verification) error {
