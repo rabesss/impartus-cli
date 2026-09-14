@@ -10,6 +10,34 @@ import (
 	"github.com/rabesss/impartus-cli/internal/artifact"
 )
 
+func TestFinishArtifactFileVerificationRejectsSizeDriftDuringHash(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lecture.mp4")
+	media := []byte{0, 0, 0, 24, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm'}
+	if err := os.WriteFile(path, media, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pathInfo, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := artifact.OpenCompletedFileDescriptor(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeFile(opened)
+
+	// The recorded size predates an append the pre-hash size check never saw:
+	// the digest covers more bytes than the record and must not be published.
+	file := ArtifactFile{Path: path, Bytes: int64(len(media) - 1)}
+	result := finishArtifactFileVerification(FileVerification{Path: path, ExpectedBytes: file.Bytes}, file, opened, pathInfo, VerifyOptions{Hash: true})
+	if result.Status != FileNotRegular {
+		t.Fatalf("finishArtifactFileVerification() = %+v, want mid-read growth rejection", result)
+	}
+	if result.SHA256 != "" {
+		t.Fatalf("SHA256 = %q, want no published digest after mid-read growth", result.SHA256)
+	}
+}
+
 func TestVerifyArtifactFillsLegacyEmptySHA256(t *testing.T) {
 	parent := filepath.Join(t.TempDir(), "state")
 	if err := os.Mkdir(parent, 0o700); err != nil {

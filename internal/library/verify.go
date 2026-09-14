@@ -200,10 +200,17 @@ func finishArtifactFileVerification(result FileVerification, file ArtifactFile, 
 		}
 	}
 	if options.Hash {
-		actual, _, hashErr := hashFile(opened)
+		actual, read, hashErr := hashFile(opened)
 		if hashErr != nil {
 			result.Status = FileUnreadable
 			result.Error = hashErr.Error()
+			return result
+		}
+		if read != file.Bytes {
+			// The file changed size mid-read; the digest never described a
+			// stable state, so it must not be published or filled.
+			result.Status = FileNotRegular
+			result.Error = fmt.Sprintf("hashed %d bytes, want %d: size changed while hashing", read, file.Bytes)
 			return result
 		}
 		if file.SHA256 != "" && actual != file.SHA256 {
