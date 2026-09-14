@@ -30,8 +30,8 @@ func TestFinishArtifactFileVerificationRejectsSizeDriftDuringHash(t *testing.T) 
 	// the digest covers more bytes than the record and must not be published.
 	file := ArtifactFile{Path: path, Bytes: int64(len(media) - 1)}
 	result := finishArtifactFileVerification(FileVerification{Path: path, ExpectedBytes: file.Bytes}, file, opened, pathInfo, VerifyOptions{Hash: true})
-	if result.Status != FileNotRegular {
-		t.Fatalf("finishArtifactFileVerification() = %+v, want mid-read growth rejection", result)
+	if result.Status != FileSizeMismatch {
+		t.Fatalf("finishArtifactFileVerification() = %+v, want mid-read growth reported as size mismatch", result)
 	}
 	if result.SHA256 != "" {
 		t.Fatalf("SHA256 = %q, want no published digest after mid-read growth", result.SHA256)

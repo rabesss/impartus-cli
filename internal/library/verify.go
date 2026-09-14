@@ -209,7 +209,7 @@ func finishArtifactFileVerification(result FileVerification, file ArtifactFile, 
 		if read != file.Bytes {
 			// The file changed size mid-read; the digest never described a
 			// stable state, so it must not be published or filled.
-			result.Status = FileNotRegular
+			result.Status = FileSizeMismatch
 			result.Error = fmt.Sprintf("hashed %d bytes, want %d: size changed while hashing", read, file.Bytes)
 			return result
 		}
