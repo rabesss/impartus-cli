@@ -254,9 +254,15 @@ for every completed lecture download:
 canonical binary encoding of the positive institute, subject, session, and
 lecture IDs plus the normalized view, quality, and audio choices. Paths,
 display text, timestamps, producer version, and file bytes do not affect it.
-The optional lowercase `files[].sha256` field is omitted until an explicit
-verification pass calculates it. When supplied to the manifest builder, it is
-checked against the complete file before being published.
+The optional lowercase `files[].sha256` field is the SHA-256 of the completed
+file. For newly downloaded lectures, `download --json` emits the manifest the
+downloader built, which omits the field; lectures reused by
+`--reuse-verified` appear with the manifest read back from the library, which
+carries it. The library computes the digest when it records a manifest. When
+the manifest builder is given a digest, it checks the complete file before
+publishing. Rows recorded by older releases may still have an empty digest.
+`library verify --hash` fills any empty row from the bytes on disk; the first
+`download --reuse-verified` fills empty rows named in the latest manifest.
 
 A command fails instead of emitting a completed manifest when a selected
 playlist cannot be associated with a unique scoped lecture or when any reported

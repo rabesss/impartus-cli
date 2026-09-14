@@ -200,10 +200,17 @@ func finishArtifactFileVerification(result FileVerification, file ArtifactFile, 
 		}
 	}
 	if options.Hash {
-		actual, hashErr := hashFile(opened)
+		actual, read, hashErr := hashFile(opened)
 		if hashErr != nil {
 			result.Status = FileUnreadable
 			result.Error = hashErr.Error()
+			return result
+		}
+		if read != file.Bytes {
+			// The file changed size mid-read; the digest never described a
+			// stable state, so it must not be published or filled.
+			result.Status = FileSizeMismatch
+			result.Error = fmt.Sprintf("hashed %d bytes, want %d: size changed while hashing", read, file.Bytes)
 			return result
 		}
 		if file.SHA256 != "" && actual != file.SHA256 {
@@ -223,12 +230,72 @@ func finishArtifactFileVerification(result FileVerification, file ArtifactFile, 
 	return result
 }
 
-func hashFile(file io.Reader) (string, error) {
+// hashFile digests the stream and reports how many bytes the digest covers.
+func hashFile(file io.Reader) (string, int64, error) {
 	hasher := sha256.New()
-	if _, err := io.Copy(hasher, file); err != nil {
+	read, err := io.Copy(hasher, file)
+	if err != nil {
+		return "", 0, err
+	}
+	return fmt.Sprintf("%x", hasher.Sum(nil)), read, nil
+}
+
+// digestManifestFiles fills each file's empty SHA-256 from the bytes on disk
+// so the recorded manifest carries a reference digest from creation. Digests
+// the caller already pinned were verified by artifact.Build and are left
+// untouched.
+func digestManifestFiles(manifest artifact.Manifest) (artifact.Manifest, error) {
+	files := append([]artifact.File(nil), manifest.Files...)
+	for index, file := range files {
+		if file.SHA256 != "" {
+			continue
+		}
+		digest, err := hashStoredFile(file.Path, file.Bytes)
+		if err != nil {
+			return artifact.Manifest{}, fmt.Errorf("hash artifact file %q: %w", file.Path, err)
+		}
+		files[index].SHA256 = digest
+	}
+	manifest.Files = files
+	return manifest, nil
+}
+
+// hashStoredFile hashes one completed file under the same rules verification
+// applies: the path must still name the same regular file, the size must
+// match what the validated manifest recorded, and the file must stay stable
+// across the read. A swapped or growing file fails the record instead of
+// persisting a digest that never described a durable state.
+func hashStoredFile(path string, expectedBytes int64) (string, error) {
+	pathInfo, err := os.Lstat(path)
+	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%x", hasher.Sum(nil)), nil
+	opened, err := artifact.OpenCompletedFileDescriptor(path)
+	if err != nil {
+		return "", err
+	}
+	defer closeFile(opened)
+	openedInfo, err := opened.Stat()
+	if err != nil {
+		return "", err
+	}
+	if !openedInfo.Mode().IsRegular() || !os.SameFile(pathInfo, openedInfo) {
+		return "", errors.New("path changed during validation or is not a regular file")
+	}
+	if openedInfo.Size() != expectedBytes {
+		return "", fmt.Errorf("size changed between validation and recording: got %d bytes, want %d", openedInfo.Size(), expectedBytes)
+	}
+	digest, read, err := hashFile(opened)
+	if err != nil {
+		return "", err
+	}
+	if read != expectedBytes {
+		return "", fmt.Errorf("hashed %d bytes, want %d: size changed while hashing", read, expectedBytes)
+	}
+	if err := validateStableArtifactFile(path, opened, pathInfo); err != nil {
+		return "", err
+	}
+	return digest, nil
 }
 
 func (store *Store) recordVerification(ctx context.Context, result Verification) error {

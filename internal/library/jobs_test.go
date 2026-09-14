@@ -264,6 +264,52 @@ func TestCompleteJobEnforcesExpectedSHA256(t *testing.T) {
 	}
 }
 
+func TestCompleteJobPersistsSHA256(t *testing.T) {
+	store := openTestStore(t)
+	outputPath := filepath.Join(t.TempDir(), "recorded.mp4")
+	if err := os.WriteFile(outputPath, validMP4Fixture, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expected := library.ExpectedArtifact{
+		Lecture:    artifact.Lecture{TTID: 52, InstituteID: 1, SubjectID: 2, SessionID: 3},
+		Selection:  artifact.Selection{Views: "left", Quality: "720"},
+		Files:      []library.ExpectedFile{{Path: outputPath, Role: "video", View: "left", Container: "mp4"}},
+		ProducedAt: time.Date(2026, time.August, 9, 10, 0, 0, 0, time.UTC),
+		Producer:   artifact.Producer{Name: "impartus", Version: "test"},
+	}
+	jobID := uuid.NewString()
+	if err := store.CreateJob(context.Background(), library.JobSpec{ID: jobID, Kind: "download", Expected: expected}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StartJob(context.Background(), jobID); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := artifact.Build(artifact.BuildInput{
+		Lecture:    expected.Lecture,
+		Selection:  expected.Selection,
+		Files:      []artifact.FileSpec{{Path: outputPath, Role: "video", View: "left", Container: "mp4"}},
+		ProducedAt: expected.ProducedAt,
+		Producer:   expected.Producer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completeErr := store.CompleteJob(context.Background(), jobID, manifest); completeErr != nil {
+		t.Fatalf("CompleteJob() error = %v", completeErr)
+	}
+	record, err := store.GetArtifact(context.Background(), manifest.ArtifactID)
+	if err != nil {
+		t.Fatalf("GetArtifact() error = %v", err)
+	}
+	const expectedSHA256 = "c43403fe022af967a0b859d3e14ea12d6633f4c8ad475816b0c55d85896e8e35"
+	if len(record.Files) != 1 || record.Files[0].SHA256 != expectedSHA256 {
+		t.Fatalf("recorded sha256 = %+v, want %q", record.Files, expectedSHA256)
+	}
+	if len(record.Manifest.Files) != 1 || record.Manifest.Files[0].SHA256 != expectedSHA256 {
+		t.Fatalf("stored manifest files = %+v, want sha256 %q", record.Manifest.Files, expectedSHA256)
+	}
+}
+
 func TestCompleteJobCanonicalizesIrrelevantVideoAudioFormat(t *testing.T) {
 	store := openTestStore(t)
 	outputPath := filepath.Join(t.TempDir(), "expected.mp4")
