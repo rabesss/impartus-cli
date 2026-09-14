@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.31](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.30...impartus-cli-v0.1.31) (2026-09-14)
+
+
+### Bug Fixes
+
+* **cli:** persist SHA-256 when recording artifacts ([#236](https://github.com/rabesss/impartus-cli/issues/236)) ([827d2c8](https://github.com/rabesss/impartus-cli/commit/827d2c830bd1d2c7500ecc128da05c530e10f07f))
+
 ## [0.1.30](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.29...impartus-cli-v0.1.30) (2026-09-11)
 
 
