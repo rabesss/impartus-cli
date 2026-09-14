@@ -200,7 +200,7 @@ func finishArtifactFileVerification(result FileVerification, file ArtifactFile, 
 		}
 	}
 	if options.Hash {
-		actual, hashErr := hashFile(opened)
+		actual, _, hashErr := hashFile(opened)
 		if hashErr != nil {
 			result.Status = FileUnreadable
 			result.Error = hashErr.Error()
@@ -223,12 +223,14 @@ func finishArtifactFileVerification(result FileVerification, file ArtifactFile, 
 	return result
 }
 
-func hashFile(file io.Reader) (string, error) {
+// hashFile digests the stream and reports how many bytes the digest covers.
+func hashFile(file io.Reader) (string, int64, error) {
 	hasher := sha256.New()
-	if _, err := io.Copy(hasher, file); err != nil {
-		return "", err
+	read, err := io.Copy(hasher, file)
+	if err != nil {
+		return "", 0, err
 	}
-	return fmt.Sprintf("%x", hasher.Sum(nil)), nil
+	return fmt.Sprintf("%x", hasher.Sum(nil)), read, nil
 }
 
 // digestManifestFiles fills each file's empty SHA-256 from the bytes on disk
@@ -276,9 +278,12 @@ func hashStoredFile(path string, expectedBytes int64) (string, error) {
 	if openedInfo.Size() != expectedBytes {
 		return "", fmt.Errorf("size changed between validation and recording: got %d bytes, want %d", openedInfo.Size(), expectedBytes)
 	}
-	digest, err := hashFile(opened)
+	digest, read, err := hashFile(opened)
 	if err != nil {
 		return "", err
+	}
+	if read != expectedBytes {
+		return "", fmt.Errorf("hashed %d bytes, want %d: size changed while hashing", read, expectedBytes)
 	}
 	if err := validateStableArtifactFile(path, opened, pathInfo); err != nil {
 		return "", err

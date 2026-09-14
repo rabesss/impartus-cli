@@ -50,6 +50,9 @@ var (
 	ErrJobTerminal = errors.New("library job is already terminal")
 	// ErrJobTransition reports a lifecycle operation invalid for the current state.
 	ErrJobTransition = errors.New("invalid library job transition")
+	// ErrJobOutputUnstable reports completed outputs that changed or became
+	// unreadable between validation and the record-time digest.
+	ErrJobOutputUnstable = errors.New("library job output changed before recording")
 )
 
 // ExpectedFile records a final output before media creation starts. Partial
@@ -231,7 +234,7 @@ func (store *Store) CompleteJob(ctx context.Context, jobID string, manifest arti
 func (store *Store) completeValidatedJob(ctx context.Context, jobID string, validated artifact.Manifest) error {
 	digested, digestErr := digestManifestFiles(validated)
 	if digestErr != nil {
-		return digestErr
+		return fmt.Errorf("%w: %w", ErrJobOutputUnstable, digestErr)
 	}
 	tx, beginErr := store.database.BeginTx(ctx, nil)
 	if beginErr != nil {
@@ -390,16 +393,33 @@ func (store *Store) RecoverInterruptedJobs(ctx context.Context, kind string) (Re
 			continue
 		}
 		if err := store.completeValidatedJob(ctx, job.ID, manifest); err != nil {
-			if errors.Is(err, ErrJobTerminal) || errors.Is(err, ErrJobTransition) || errors.Is(err, ErrJobNotFound) {
-				result.Skipped = append(result.Skipped, job.ID)
-				continue
+			if containErr := store.containRecoveryError(ctx, &result, job.ID, err); containErr != nil {
+				return RecoveryResult{}, containErr
 			}
-			return RecoveryResult{}, err
+			continue
 		}
 		result.Recovered = append(result.Recovered, job.ID)
 		result.Artifacts = append(result.Artifacts, RecoveredArtifact{JobID: job.ID, Manifest: manifest})
 	}
 	return result, nil
+}
+
+// containRecoveryError sorts one job's completion failure into the recovery
+// result and returns nil when recovery can move on to the next job. Job-state
+// failures skip the job; unstable outputs park it recoverable with a summary,
+// the same containment the buildErr path above applies, so one unreadable
+// output cannot wedge watch startup. Anything else is a durable-store failure
+// the caller must abort on.
+func (store *Store) containRecoveryError(ctx context.Context, result *RecoveryResult, jobID string, err error) error {
+	if errors.Is(err, ErrJobTerminal) || errors.Is(err, ErrJobTransition) || errors.Is(err, ErrJobNotFound) {
+		result.Skipped = append(result.Skipped, jobID)
+		return nil
+	}
+	if errors.Is(err, ErrJobOutputUnstable) {
+		result.Pending = append(result.Pending, jobID)
+		return store.setRecoverableSummary(ctx, jobID, "completed outputs changed or became unreadable before recording")
+	}
+	return err
 }
 
 // Job returns one durable job.
