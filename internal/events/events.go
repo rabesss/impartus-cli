@@ -105,8 +105,10 @@ func (writer *Writer) Emit(event Event) error {
 		event.SchemaVersion = SchemaVersion
 	}
 	// Event is public and callers can construct it without going through
-	// Failure/Cancellation. Keep the writer itself as the final serialization
-	// boundary so a raw credential-bearing Error cannot reach NDJSON output.
+	// Failure/Cancellation, so the writer scrubs Error itself and a raw
+	// credential-bearing Error cannot reach NDJSON output. Only Error is
+	// scrubbed here: the other fields, including Details, must carry no
+	// upstream text, which holds for the current callers.
 	event.Error = secrets.Scrub(event.Error)
 	if err := validate(event); err != nil {
 		return err
