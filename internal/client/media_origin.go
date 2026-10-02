@@ -343,6 +343,9 @@ func withholdBearerFromURL(rawURL, token string) (*url.URL, error) {
 // unconfiguredOriginRefusal turns a 401 or 403 to a request sent without the
 // bearer, because its origin is not in mediaOrigins, into an
 // UnconfiguredMediaOriginError so callers do not report it as a login failure.
+// The error names the origin the request started at, since that is the one
+// to configure, and also the origin that refused it when a redirect ended
+// elsewhere.
 func unconfiguredOriginRefusal(resp *http.Response, requestURL *url.URL) (*http.Response, error) {
 	if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden {
 		return resp, nil
@@ -352,7 +355,13 @@ func unconfiguredOriginRefusal(resp *http.Response, requestURL *url.URL) (*http.
 	if err != nil {
 		return nil, err
 	}
-	return nil, &UnconfiguredMediaOriginError{Origin: origin, StatusCode: resp.StatusCode}
+	refusal := &UnconfiguredMediaOriginError{Origin: origin, StatusCode: resp.StatusCode}
+	if resp.Request != nil && resp.Request.URL != nil {
+		if responding, err := requestOriginKey(resp.Request.URL); err == nil && responding != origin {
+			refusal.RespondingOrigin = responding
+		}
+	}
+	return nil, refusal
 }
 
 // stripBearerTokenFromURL removes the query parameters carrying the bearer

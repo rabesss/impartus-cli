@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -167,6 +168,63 @@ func TestMediaRefusalFromUnconfiguredOriginIsNotAuthentication(t *testing.T) {
 				mediaOriginPolicy{},
 			)
 			assertUnconfiguredOriginRefusal(t, err, server.URL, status, "/cdn-path", "Signature", bodyMarker)
+		})
+	}
+}
+
+func TestMediaRefusalAfterRedirectNamesTheRespondingOrigin(t *testing.T) {
+	const bodyMarker = "redirect-refusal-body-marker"
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(status)
+				writeAuthTestResponse(t, w, bodyMarker)
+			}))
+			defer cdn.Close()
+			start := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/same-origin" {
+					http.Redirect(w, r, "/cdn-path/refused.ts?Signature=fake-signature", http.StatusFound)
+					return
+				}
+				if r.URL.Path == "/cdn-path/refused.ts" {
+					w.WriteHeader(status)
+					writeAuthTestResponse(t, w, bodyMarker)
+					return
+				}
+				http.Redirect(w, r, cdn.URL+"/cdn-path/refused.ts?Signature=fake-signature", http.StatusFound)
+			}))
+			defer start.Close()
+			apiClient := New(start.Client(), nil)
+
+			// The chain starts at an unconfigured origin, so the bearer is withheld
+			// even though the redirect ends at a configured one.
+			resp, err := apiClient.GetAuthorizedWithTokenForOrigins(
+				context.Background(), start.URL+"/start/master.m3u8?Expires=1", "request-token", cdn.URL,
+			)
+			if resp != nil {
+				_ = resp.Body.Close() //nolint:errcheck
+			}
+			assertUnconfiguredOriginRefusal(t, err, start.URL, status, "/start", "/cdn-path", "Expires", "Signature", bodyMarker)
+			var originErr *UnconfiguredMediaOriginError
+			if !errors.As(err, &originErr) || originErr.RespondingOrigin != cdn.URL {
+				t.Fatalf("refusal = %#v, want responding origin %q", originErr, cdn.URL)
+			}
+			want := fmt.Sprintf("it ended in HTTP %d from %s", status, cdn.URL)
+			if !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), start.URL+" returned") {
+				t.Fatalf("error = %q, want it to name %s as the responder (%q), not %s", err, cdn.URL, want, start.URL)
+			}
+
+			// A same-origin redirect names a single origin.
+			resp, err = apiClient.GetAuthorizedWithTokenForOrigins(
+				context.Background(), start.URL+"/same-origin", "request-token", cdn.URL,
+			)
+			if resp != nil {
+				_ = resp.Body.Close() //nolint:errcheck
+			}
+			assertUnconfiguredOriginRefusal(t, err, start.URL, status, "/same-origin", "/cdn-path", "Signature", bodyMarker)
+			if !errors.As(err, &originErr) || originErr.RespondingOrigin != "" || strings.Contains(err.Error(), cdn.URL) {
+				t.Fatalf("same-origin refusal = %q (%#v), want no responding origin", err, originErr)
+			}
 		})
 	}
 }
