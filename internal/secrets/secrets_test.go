@@ -1003,14 +1003,17 @@ func TestScrubRejectsOversizedDiagnosticsBeforeScanning(t *testing.T) {
 func TestCanonicalCredentialScanStaysLinearOnOverlappingValues(t *testing.T) {
 	// Adjacent obfuscated assignments can share one unbroken value, and each
 	// delimiter used to rescan it to the end of the input. Compare each hostile
-	// input with a benign one of similar size and delimiter count: a linear scan
-	// keeps them close, while the quadratic scan was tens of times slower. The
-	// bound is deliberately loose so scheduler noise and -race cannot trip it.
+	// input with a benign one of similar size and delimiter count: the quadratic
+	// scan was a hundred to a few thousand times slower. The linear scan stays
+	// within a few times, except escaped quoted keys, which look back for their
+	// opening quote as far as the key budget at every delimiter and so run a few
+	// tens of times slower. The bound sits between the two, with room for
+	// scheduler noise on a loaded machine and for -race.
 	for _, test := range overlappingAssignmentInputs(8000) {
 		t.Run(test.name, func(t *testing.T) {
 			hostile := fastestCanonicalScan(test.hostile)
 			benign := fastestCanonicalScan(test.benign)
-			if limit := 10*benign + 20*time.Millisecond; hostile > limit {
+			if limit := 20*benign + 150*time.Millisecond; hostile > limit {
 				t.Fatalf("canonical scan took %v on hostile input, want at most %v (benign input took %v)", hostile, limit, benign)
 			}
 		})
@@ -1041,7 +1044,7 @@ func overlappingAssignmentInputs(repeats int) []overlappingAssignmentInput {
 
 func fastestCanonicalScan(value string) time.Duration {
 	fastest := time.Duration(1<<63 - 1)
-	for range 3 {
+	for range 5 {
 		started := time.Now()
 		canonicalCredentialValueRanges(value)
 		fastest = min(fastest, time.Since(started))
