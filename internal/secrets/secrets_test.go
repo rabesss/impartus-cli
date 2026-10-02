@@ -221,16 +221,38 @@ func TestScrubRedactsQuotedValuesForUnquotedSensitiveKeys(t *testing.T) {
 		name   string
 		input  string
 		secret string
+		keep   string
 	}{
 		{name: "double quoted", input: `password = "p@ss w0rd"`, secret: `p@ss w0rd`},
 		{name: "single quoted", input: "password='single quoted value'", secret: "single quoted value"},
 		{name: "quoted newline", input: "password = \"line one\nline two\"", secret: "line one\nline two"},
 		{name: "escaped quote", input: `password = "p\"ss w0rd"`, secret: `p\"ss w0rd`},
+		{name: "colon with context", input: `token: "tok-one tok-two" failed`, secret: "tok-one tok-two", keep: "failed"},
+		{name: "unterminated", input: `password = "open-one open-two`, secret: "open-one open-two"},
+		{name: "authorization delimiter", input: `authorization = "custom-one & custom-two"`, secret: "custom-one custom-two"},
+		{name: "nested assignment", input: `password = "pw-one token=pw-two" next=1`, secret: "pw-one pw-two", keep: "next=1"},
+		{
+			name:   "two assignments",
+			input:  `password="pw-one pw-two" client_secret='cs-one cs-two' next=1`,
+			secret: "pw-one pw-two cs-one cs-two",
+			keep:   "next=1",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got := Scrub(test.input)
-			if strings.Contains(got, test.secret) || !strings.Contains(got, "REDACTED") {
-				t.Fatalf("Scrub(%q) = %q, want complete quoted value redaction", test.input, got)
+			for _, got := range []string{
+				Scrub(test.input),
+				SanitizeError(errors.New("login failed: " + test.input)).Error(),
+			} {
+				// Check each word: a pass that redacts only the first word of a
+				// quoted value still hides the complete value.
+				for _, fragment := range strings.Fields(test.secret) {
+					if strings.Contains(got, fragment) {
+						t.Fatalf("Scrub(%q) = %q, leaked quoted value fragment %q", test.input, got, fragment)
+					}
+				}
+				if !strings.Contains(got, "REDACTED") || !strings.Contains(got, test.keep) {
+					t.Fatalf("Scrub(%q) = %q, want redaction that keeps %q", test.input, got, test.keep)
+				}
 			}
 		})
 	}

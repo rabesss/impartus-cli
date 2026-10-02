@@ -1431,12 +1431,7 @@ func scrubWithEvidenceDepth(s string, depth int) (string, RedactionEvidence) {
 	scrubbed, evidence := scrubCredentialURLsWithEvidenceDepth(s, depth)
 	for _, step := range credentialAssignmentSteps() {
 		var stepEvidence RedactionEvidence
-		scrubbed, stepEvidence = replaceCredentialValues(
-			scrubbed,
-			step.expression,
-			step.prefixGroup,
-			step.replacement,
-		)
+		scrubbed, stepEvidence = replaceCredentialValues(scrubbed, step)
 		evidence.values = append(evidence.values, stepEvidence.values...)
 	}
 	encoded, encodedEvidence := scrubEncodedAssignmentsWithEvidence(scrubbed)
@@ -1451,18 +1446,21 @@ type credentialAssignmentStep struct {
 	expression  *regexp.Regexp
 	prefixGroup int
 	replacement string
+	// openValue marks expressions whose value pattern can begin with a quote
+	// but stops at the first space or delimiter inside it.
+	openValue bool
 }
 
 func credentialAssignmentSteps() []credentialAssignmentStep {
 	return []credentialAssignmentStep{
-		{quotedSecretValue, 1, "${1}REDACTED"},
-		{singleQuotedSecretValue, 1, "${1}REDACTED"},
-		{quotedKeySchemeSecretValue, 1, "${1}REDACTED"},
-		{quotedKeyBareSecretValue, 1, "${1}REDACTED"},
-		{strongCredentialAssignment, 2, "${1}${2}REDACTED"},
-		{schemeSecretAssignment, 2, "${1}${2}REDACTED"},
-		{bareSecretEquals, 2, "${1}${2}REDACTED"},
-		{bareSecretColon, 2, "${1}${2}REDACTED"},
+		{quotedSecretValue, 1, "${1}REDACTED", false},
+		{singleQuotedSecretValue, 1, "${1}REDACTED", false},
+		{quotedKeySchemeSecretValue, 1, "${1}REDACTED", false},
+		{quotedKeyBareSecretValue, 1, "${1}REDACTED", false},
+		{strongCredentialAssignment, 2, "${1}${2}REDACTED", true},
+		{schemeSecretAssignment, 2, "${1}${2}REDACTED", false},
+		{bareSecretEquals, 2, "${1}${2}REDACTED", true},
+		{bareSecretColon, 2, "${1}${2}REDACTED", true},
 	}
 }
 
@@ -1847,31 +1845,48 @@ func assignmentValueEnd(value string, start int, quoted bool) int {
 	return len(value)
 }
 
-func replaceCredentialValues(
-	value string,
-	expression *regexp.Regexp,
-	prefixGroup int,
-	replacement string,
-) (string, RedactionEvidence) {
+func replaceCredentialValues(value string, step credentialAssignmentStep) (string, RedactionEvidence) {
 	var evidence RedactionEvidence
-	indices := expression.FindAllStringSubmatchIndex(value, -1)
+	indices := step.expression.FindAllStringSubmatchIndex(value, -1)
 	if len(indices) == 0 {
 		return value, evidence
 	}
 	var scrubbed strings.Builder
 	last := 0
 	for _, index := range indices {
+		if index[0] < last {
+			// The match begins inside a quoted value that an earlier match
+			// already replaced through its closing quote.
+			continue
+		}
 		scrubbed.WriteString(value[last:index[0]])
-		scrubbed.Write(expression.ExpandString(nil, replacement, value, index))
-		prefixEnd := index[prefixGroup*2+1]
-		credential := value[prefixEnd:index[1]]
+		scrubbed.Write(step.expression.ExpandString(nil, step.replacement, value, index))
+		prefixEnd := index[step.prefixGroup*2+1]
+		end := quotedCredentialEnd(value, step, prefixEnd, index[1])
+		credential := value[prefixEnd:end]
 		if credential != "REDACTED" {
 			evidence.values = append(evidence.values, credential)
 		}
-		last = index[1]
+		last = end
 	}
 	scrubbed.WriteString(value[last:])
 	return scrubbed.String(), evidence
+}
+
+// quotedCredentialEnd extends an open-value match through the closing quote
+// when the value is quoted. Such a match stops at the first space or delimiter
+// inside the quotes, so replacing only the match would consume the opening
+// quote and leave the rest of the value visible to every later pass. An
+// unterminated quote extends to the end of the text.
+func quotedCredentialEnd(value string, step credentialAssignmentStep, prefixEnd, matchEnd int) int {
+	if !step.openValue || !isQuotedValueStart(value, prefixEnd) {
+		return matchEnd
+	}
+	end := assignmentValueEnd(value, prefixEnd, true)
+	if end < len(value) {
+		end++ // the closing quote
+	}
+	return max(matchEnd, end)
 }
 
 // ScrubError returns the error's message with embedded credentials scrubbed.
