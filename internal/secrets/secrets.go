@@ -1582,7 +1582,9 @@ func regexCredentialValueRanges(value string) ([]credentialValueRange, Redaction
 				continue
 			}
 			if step.expression == schemeSecretAssignment || step.expression == quotedKeySchemeSecretValue {
-				if credentialStart, _, ok := recognizedSchemeCredentialRange(value, prefixEnd, index[1]); ok {
+				// Only the start is used here, so keep the credential end lookup
+				// inside this match rather than scanning on to the next break.
+				if credentialStart, _, ok := recognizedSchemeCredentialRange(value[:index[1]], prefixEnd, index[1], newBreakCursor(valueBreaks)); ok {
 					prefixEnd = credentialStart
 				}
 			}
@@ -1667,36 +1669,95 @@ func replaceRawCredentialRanges(value string, rawRanges []rawSpan) string {
 // and all unrelated prose remain byte-for-byte untouched.
 func canonicalCredentialValueRanges(value string) []credentialValueRange {
 	ranges := make([]credentialValueRange, 0, 2)
+	ends := assignmentEnds{value: newBreakCursor(valueBreaks), authorization: newBreakCursor(authorizationBreaks)}
 	for delimiter := 0; delimiter < len(value); delimiter++ {
 		if value[delimiter] != '=' && value[delimiter] != ':' {
 			continue
 		}
-		if candidate, ok := canonicalCredentialRangeAt(value, delimiter); ok {
+		if candidate, ok := canonicalCredentialRangeAt(value, delimiter, ends); ok {
 			ranges = append(ranges, candidate)
 		}
 	}
 	return ranges
 }
 
-func canonicalCredentialRangeAt(value string, delimiter int) (credentialValueRange, bool) {
+const (
+	// valueBreaks end an unquoted assignment value. Authorization values keep
+	// their spaces and run to the end of the line or query parameter.
+	valueBreaks         = " \t\r\n,;&}"
+	authorizationBreaks = "\r\n&"
+)
+
+// assignmentEnds holds the cursors one canonical scan uses to find where
+// unquoted values end.
+type assignmentEnds struct {
+	value         *breakCursor
+	authorization *breakCursor
+}
+
+// breakCursor returns the first break byte at or after a position.
+// Adjacent assignments can share one unbroken value, and rescanning it for
+// every delimiter made the canonical scan quadratic. That scan never asks for
+// a position more than one byte before the furthest it has asked for, so
+// remembering the break-free span found last keeps the total work linear.
+type breakCursor struct {
+	breaks string
+	from   int // value[from:at] holds no break byte
+	at     int // the first break at or after from, or len(value)
+}
+
+func newBreakCursor(breaks string) *breakCursor {
+	return &breakCursor{breaks: breaks, at: -1}
+}
+
+func (cursor *breakCursor) next(value string, start int) int {
+	switch {
+	case start > cursor.at:
+		cursor.from, cursor.at = start, len(value)
+		if index := strings.IndexAny(value[start:], cursor.breaks); index >= 0 {
+			cursor.at = start + index
+		}
+	case start < cursor.from:
+		if index := strings.IndexAny(value[start:cursor.from], cursor.breaks); index >= 0 {
+			return start + index
+		}
+		cursor.from = start
+	}
+	return cursor.at
+}
+
+// valueEnd matches assignmentValueEnd for a cursor over valueBreaks. A quoted
+// scan stops at the next unescaped quote of its kind, and every quoted value
+// opens with one, so quoted scans of different delimiters do not overlap.
+func (cursor *breakCursor) valueEnd(value string, start int, quoted bool) int {
+	if quoted && isQuotedValueStart(value, start) {
+		return assignmentValueEnd(value, start, true)
+	}
+	return cursor.next(value, start)
+}
+
+func canonicalCredentialRangeAt(value string, delimiter int, ends assignmentEnds) (credentialValueRange, bool) {
 	keyStart, keyEnd, quoted := assignmentKeyBounds(value, delimiter)
 	if !validCanonicalAssignmentKey(value, keyStart, keyEnd, quoted) {
 		return credentialValueRange{}, false
 	}
-	key := canonicalCredentialKey(value[keyStart:keyEnd])
+	key := ""
+	if !isOversizedAssignmentKey(keyStart, keyEnd) {
+		key = canonicalCredentialKey(value[keyStart:keyEnd])
+	}
 	valueStart := skipCredentialSpace(value, delimiter+1)
 	if valueStart >= len(value) {
 		return credentialValueRange{}, false
 	}
 	valueQuoted := isQuotedValueStart(value, valueStart)
-	valueEnd := assignmentValueEnd(value, valueStart, valueQuoted)
+	valueEnd := ends.value.valueEnd(value, valueStart, valueQuoted)
 	if valueQuoted {
 		// Keep the string delimiters byte-for-byte; only the value inside
 		// them is a replacement candidate.
 		valueStart++
 	}
 	if isAuthorizationKey(key) {
-		valueStart, valueEnd = authorizationValueRange(value, valueStart, valueEnd, quoted || valueQuoted)
+		valueStart, valueEnd = authorizationValueRange(value, valueStart, valueEnd, quoted || valueQuoted, ends)
 	}
 	if valueEnd <= valueStart || value[valueStart:valueEnd] == "REDACTED" {
 		return credentialValueRange{}, false
@@ -1707,6 +1768,11 @@ func canonicalCredentialRangeAt(value string, delimiter int) (credentialValueRan
 func validCanonicalAssignmentKey(value string, start, end int, quoted bool) bool {
 	if start < 0 || end <= start || end > len(value) {
 		return false
+	}
+	if quoted && isOversizedAssignmentKey(start, end) {
+		// assignmentKeyBounds stopped looking for the opening quote. Treat the
+		// key as sensitive, as isSensitiveParam does for keys this large.
+		return true
 	}
 	if !quoted && start > 0 {
 		previous, _ := utf8.DecodeLastRuneInString(value[:start])
@@ -1736,18 +1802,15 @@ func isAuthorizationKey(value string) bool {
 	return value == "authorization" || value == "proxy-authorization" || value == "auth"
 }
 
-func authorizationValueRange(value string, start, end int, quoted bool) (int, int) {
+func authorizationValueRange(value string, start, end int, quoted bool, ends assignmentEnds) (int, int) {
 	if !quoted {
-		end = start
-		for end < len(value) && value[end] != '\r' && value[end] != '\n' && value[end] != '&' {
-			end++
-		}
+		end = ends.authorization.next(value, start)
 	}
-	if schemeStart, schemeEnd, ok := recognizedSchemeCredentialRange(value, start, end); ok {
+	if schemeStart, schemeEnd, ok := recognizedSchemeCredentialRange(value, start, end, ends.value); ok {
 		return schemeStart, schemeEnd
 	}
 	if quoted {
-		return start, assignmentValueEnd(value, start-1, true)
+		return start, ends.value.valueEnd(value, start-1, true)
 	}
 	return start, end
 }
@@ -1758,12 +1821,23 @@ func hasRecognizedCredentialScheme(value string) bool {
 	return end > start && IsCredentialScheme(value[start:end])
 }
 
-func recognizedSchemeCredentialRange(value string, start, end int) (int, int, bool) {
+// maxCredentialSchemeBytes bounds the scheme word scan. strings.EqualFold
+// matches only words with as many runes as a scheme, so once a word has more
+// runes than the longest scheme it cannot be one.
+var maxCredentialSchemeBytes = func() int {
+	longest := 0
+	for _, scheme := range credentialSchemes {
+		longest = max(longest, utf8.RuneCountInString(scheme))
+	}
+	return (longest + 1) * utf8.UTFMax
+}()
+
+func recognizedSchemeCredentialRange(value string, start, end int, valueEnds *breakCursor) (int, int, bool) {
 	if start < 0 || end <= start || end > len(value) {
 		return 0, 0, false
 	}
 	schemeStart := skipCredentialSpace(value[:end], start)
-	schemeEnd := credentialWordEnd(value, schemeStart, end)
+	schemeEnd := credentialWordEnd(value, schemeStart, min(end, schemeStart+maxCredentialSchemeBytes))
 	if schemeEnd == schemeStart || !IsCredentialScheme(value[schemeStart:schemeEnd]) {
 		return 0, 0, false
 	}
@@ -1771,10 +1845,7 @@ func recognizedSchemeCredentialRange(value string, start, end int) (int, int, bo
 	if credentialStart >= end {
 		return 0, 0, false
 	}
-	credentialEnd := assignmentValueEnd(value, credentialStart, false)
-	if credentialEnd > end {
-		credentialEnd = end
-	}
+	credentialEnd := min(valueEnds.next(value, credentialStart), end)
 	if credentialEnd <= credentialStart {
 		return 0, 0, false
 	}
@@ -1806,15 +1877,7 @@ func assignmentKeyBounds(value string, delimiter int) (int, int, bool) {
 		return 0, 0, false
 	}
 	if value[end-1] == '"' || value[end-1] == '\'' {
-		quote := value[end-1]
-		for start := end - 2; start >= 0; {
-			if value[start] == quote && !isEscapedByte(value, start) {
-				return start + 1, end - 1, true
-			}
-			_, width := utf8.DecodeLastRuneInString(value[:start+1])
-			start -= width
-		}
-		return 0, 0, false
+		return quotedAssignmentKeyBounds(value, end-1)
 	}
 	start := end
 	for start > 0 {
@@ -1828,6 +1891,34 @@ func assignmentKeyBounds(value string, delimiter int) (int, int, bool) {
 		}
 	}
 	return start, end, false
+}
+
+// quotedAssignmentKeyBounds finds the opening quote of a key whose closing
+// quote is value[closing]. It looks back only as far as the longest key the
+// scan canonicalizes; a key that would be longer comes back as a span just
+// over that budget, which callers treat as sensitive. An unbounded search
+// would rescan the text for every delimiter after an escaped quote.
+func quotedAssignmentKeyBounds(value string, closing int) (int, int, bool) {
+	floor := max(0, closing-maxCredentialKeyRunes*utf8.UTFMax-1)
+	for search := closing; search > floor; {
+		start := strings.LastIndexByte(value[floor:search], value[closing])
+		if start < 0 {
+			break
+		}
+		start += floor
+		if !isEscapedByte(value, start) {
+			return start + 1, closing, true
+		}
+		search = start
+	}
+	if floor > 0 {
+		return floor, closing, true
+	}
+	return 0, 0, false
+}
+
+func isOversizedAssignmentKey(start, end int) bool {
+	return end-start > maxCredentialKeyRunes*utf8.UTFMax
 }
 
 func isEscapedByte(value string, index int) bool {

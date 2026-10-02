@@ -1000,6 +1000,55 @@ func TestScrubRejectsOversizedDiagnosticsBeforeScanning(t *testing.T) {
 	}
 }
 
+func TestCanonicalCredentialScanStaysLinearOnOverlappingValues(t *testing.T) {
+	// Adjacent obfuscated assignments can share one unbroken value, and each
+	// delimiter used to rescan it to the end of the input. Compare each hostile
+	// input with a benign one of similar size and delimiter count: a linear scan
+	// keeps them close, while the quadratic scan was tens of times slower. The
+	// bound is deliberately loose so scheduler noise and -race cannot trip it.
+	for _, test := range overlappingAssignmentInputs(8000) {
+		t.Run(test.name, func(t *testing.T) {
+			hostile := fastestCanonicalScan(test.hostile)
+			benign := fastestCanonicalScan(test.benign)
+			if limit := 10*benign + 20*time.Millisecond; hostile > limit {
+				t.Fatalf("canonical scan took %v on hostile input, want at most %v (benign input took %v)", hostile, limit, benign)
+			}
+		})
+	}
+	// Bounding the scan must not change what is redacted. Shorter inputs of the
+	// same shape keep the full Scrub quick under -race.
+	for _, test := range overlappingAssignmentInputs(400) {
+		if got := Scrub(test.hostile); strings.Contains(got, "X") {
+			t.Errorf("%s: Scrub() left the trailing credential visible: %q", test.name, got[max(0, len(got)-32):])
+		}
+	}
+}
+
+type overlappingAssignmentInput struct {
+	name    string
+	hostile string
+	benign  string
+}
+
+func overlappingAssignmentInputs(repeats int) []overlappingAssignmentInput {
+	return []overlappingAssignmentInput{
+		{"unbroken values", strings.Repeat("s\u200big=", repeats) + "X", strings.Repeat("s\u200big=X ", repeats)},
+		{"authorization values", strings.Repeat("a\u200buth=", repeats) + "X", strings.Repeat("a\u200buth=X&", repeats)},
+		{"authorization credentials", strings.Repeat("a\u200buth=Basic\u00a0", repeats/2) + "X", strings.Repeat("a\u200buth=Basic X&", repeats/2)},
+		{"quoted keys", `"` + strings.Repeat(`x\"=`, repeats/2) + "X", strings.Repeat(`"x"=X `, repeats/2)},
+	}
+}
+
+func fastestCanonicalScan(value string) time.Duration {
+	fastest := time.Duration(1<<63 - 1)
+	for range 3 {
+		started := time.Now()
+		canonicalCredentialValueRanges(value)
+		fastest = min(fastest, time.Since(started))
+	}
+	return fastest
+}
+
 func TestURLRedactionRejectsOversizedInputBeforeScanning(t *testing.T) {
 	input := "https://host/path?token=oversized-secret&padding=" +
 		strings.Repeat("x", maxScrubInputSize)
