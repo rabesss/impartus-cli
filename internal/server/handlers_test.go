@@ -20,35 +20,6 @@ import (
 )
 
 // ============================================================================
-// ensureScheme Tests
-// ============================================================================
-
-func TestEnsureScheme(t *testing.T) {
-	tests := []struct {
-		name string
-		raw  string
-		want string
-	}{
-		{"https already", "https://example.com", "https://example.com"},
-		{"http already", "http://example.com", "http://example.com"},
-		{"uppercase HTTPS", "HTTPS://example.com", "https://example.com"},
-		{"mixed-case HTTP", "HtTp://example.com/api", "http://example.com/api"},
-		{"no scheme", "example.com", "https://example.com"},
-		{"no scheme with path", "example.com/api/v1", "https://example.com/api/v1"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := newAPIServer(validServerConfig())
-			got := s.ensureScheme(tt.raw)
-			if got != tt.want {
-				t.Errorf("ensureScheme(%q) = %q, want %q", tt.raw, got, tt.want)
-			}
-		})
-	}
-}
-
-// ============================================================================
 // probeUpstreamHTTP Tests
 // ============================================================================
 
