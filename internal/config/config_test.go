@@ -219,6 +219,8 @@ func TestValidateBaseURLRequiresHTTPSForRemoteOrigin(t *testing.T) {
 		{name: "malformed query", baseURL: "https://api.example.com?token=%zz", wantError: "baseUrl must be a valid HTTP(S) URL"},
 		{name: "query component", baseURL: "https://api.example.com/api?tenant=one", wantError: "baseUrl must be a valid HTTP(S) URL"},
 		{name: "fragment component", baseURL: "https://api.example.com/api#fragment", wantError: "baseUrl must be a valid HTTP(S) URL"},
+		{name: "dot path segment", baseURL: "https://api.example.com/./api", wantError: "baseUrl must be a valid HTTP(S) URL"},
+		{name: "dot-dot path segment", baseURL: "https://api.example.com/api/..", wantError: "baseUrl must be a valid HTTP(S) URL"},
 		{name: "loopback HTTP", baseURL: "http://127.0.0.1:43123"},
 		{name: "mixed-case HTTPS", baseURL: "HtTpS://api.example.com"},
 		{name: "IPv6 loopback HTTP", baseURL: "http://[0:0:0:0:0:0:0:1]:43123"},

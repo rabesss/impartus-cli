@@ -228,6 +228,13 @@ func (c *Config) validateBaseURL() error {
 	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return fmt.Errorf("baseUrl must be a valid HTTP(S) URL")
 	}
+	// The client rejects dot segments in the API prefix; reject them here too
+	// so the error appears when the config is checked, not at login.
+	for _, segment := range strings.Split(u.Path, "/") {
+		if segment == "." || segment == ".." {
+			return fmt.Errorf("baseUrl must be a valid HTTP(S) URL")
+		}
+	}
 	if strings.EqualFold(u.Scheme, "http") && !isLoopbackHost(u.Hostname()) {
 		return fmt.Errorf("baseUrl must use HTTPS for remote origins")
 	}
