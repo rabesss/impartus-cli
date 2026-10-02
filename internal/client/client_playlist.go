@@ -18,9 +18,12 @@ var invalidFileNameRe = regexp.MustCompile(`[<>:"/\\|?*\n\r]`)
 var uriValueRe = regexp.MustCompile(`URI="([^"]+)"`)
 
 const (
-	maxPlaylistResponseSize   int64 = 10 * 1024 * 1024
-	maxPlaylistLineSize       int   = 1 * 1024 * 1024
-	maxPlaylistSegments             = 10000
+	maxPlaylistResponseSize int64 = 10 * 1024 * 1024
+	maxPlaylistLineSize     int   = 1 * 1024 * 1024
+	// maxPlaylistSegments counts the segments of both views of a dual-view
+	// lecture together. The response size limit already bounds the playlist,
+	// so this only needs to stop a flood of tiny segment lines.
+	maxPlaylistSegments             = 50000
 	maxStreamInfoResponseSize int64 = 1 * 1024 * 1024
 )
 

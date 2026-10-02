@@ -1,7 +1,6 @@
 package client
 
 import (
-	"bufio"
 	"context"
 	"io"
 	"net/http"
@@ -192,34 +191,56 @@ func TestPlaylistLineLimitCountsPayloadBytes(t *testing.T) {
 	}
 }
 
-func TestPlaylistParserRejectsExcessiveSegmentCount(t *testing.T) {
-	var body strings.Builder
-	body.WriteString("#EXTM3U\n")
-	for i := 0; i < 10001; i++ {
-		body.WriteString("segment.ts\n")
-	}
+func TestGetPlaylistRejectsExcessiveSegmentCount(t *testing.T) {
+	c := New(&http.Client{Transport: &limitResponseTransport{body: segmentPlaylist(maxPlaylistSegments + 1)}}, nil)
 
-	scanner := bufio.NewScanner(strings.NewReader(body.String()))
-	_, err := parsePlaylist(scanner, "https://media.example.test/playlist.m3u8", 1, "Lecture", 1)
+	_, err := c.getPlaylist(context.Background(), "https://media.example.test/playlist.m3u8", "playlist-token", Lecture{TTID: 42})
 	if err == nil || !strings.Contains(err.Error(), "too many media segments") {
-		t.Fatalf("parsePlaylist() error = %v, want segment-count limit", err)
+		t.Fatalf("getPlaylist() error = %v, want segment-count limit", err)
 	}
 }
 
-func TestPlaylistParserAcceptsExactSegmentCount(t *testing.T) {
-	var body strings.Builder
-	for i := 0; i < maxPlaylistSegments; i++ {
-		body.WriteString("segment.ts\n")
-	}
+func TestGetPlaylistAcceptsExactSegmentCount(t *testing.T) {
+	firstView := maxPlaylistSegments / 2
+	c := New(&http.Client{Transport: &limitResponseTransport{body: segmentPlaylist(firstView, maxPlaylistSegments-firstView)}}, nil)
 
-	scanner := bufio.NewScanner(strings.NewReader(body.String()))
-	playlist, err := parsePlaylist(scanner, "https://media.example.test/playlist.m3u8", 1, "Lecture", 1)
+	playlist, err := c.getPlaylist(context.Background(), "https://media.example.test/playlist.m3u8", "playlist-token", Lecture{TTID: 42})
 	if err != nil {
-		t.Fatalf("parsePlaylist() error = %v, want exact segment-count limit to succeed", err)
+		t.Fatalf("getPlaylist() error = %v, want exact segment-count limit to succeed", err)
 	}
-	if len(playlist.FirstViewURLs) != maxPlaylistSegments {
-		t.Fatalf("playlist segment count = %d, want %d", len(playlist.FirstViewURLs), maxPlaylistSegments)
+	if got := len(playlist.FirstViewURLs) + len(playlist.SecondViewURLs); got != maxPlaylistSegments {
+		t.Fatalf("playlist segment count = %d, want %d", got, maxPlaylistSegments)
 	}
+}
+
+func TestGetPlaylistAcceptsDualViewLectureAboveSingleViewCap(t *testing.T) {
+	// The cap counts the segments of both views together, so a dual-view
+	// lecture needs room for two full-length views.
+	c := New(&http.Client{Transport: &limitResponseTransport{body: segmentPlaylist(6000, 6000)}}, nil)
+
+	playlist, err := c.getPlaylist(context.Background(), "https://media.example.test/playlist.m3u8", "playlist-token", Lecture{TTID: 42})
+	if err != nil {
+		t.Fatalf("getPlaylist() error = %v, want a 12000-segment dual-view playlist to succeed", err)
+	}
+	if !playlist.HasMultipleViews || len(playlist.FirstViewURLs) != 6000 || len(playlist.SecondViewURLs) != 6000 {
+		t.Fatalf("playlist views = %t with %d and %d segments, want two views of 6000", playlist.HasMultipleViews, len(playlist.FirstViewURLs), len(playlist.SecondViewURLs))
+	}
+}
+
+// segmentPlaylist returns a playlist with the given number of segments in
+// each view, separated by discontinuities.
+func segmentPlaylist(views ...int) string {
+	var body strings.Builder
+	body.WriteString("#EXTM3U\n")
+	for view, segments := range views {
+		if view > 0 {
+			body.WriteString("#EXT-X-DISCONTINUITY\n")
+		}
+		for range segments {
+			body.WriteString("segment.ts\n")
+		}
+	}
+	return body.String()
 }
 
 type limitResponseTransport struct {

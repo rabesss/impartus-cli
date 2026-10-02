@@ -209,7 +209,7 @@ func TestParsePlaylistAllowsHTTPReferencesForCompatibility(t *testing.T) {
 func TestParsePlaylistRejectsExcessiveSegmentCount(t *testing.T) {
 	var playlist strings.Builder
 	playlist.WriteString("#EXTM3U\n")
-	for i := 0; i < 10001; i++ {
+	for i := 0; i <= maxPlaylistSegments; i++ {
 		playlist.WriteString("segment.ts\n")
 	}
 
