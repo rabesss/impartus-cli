@@ -258,6 +258,55 @@ func TestScrubRedactsQuotedValuesForUnquotedSensitiveKeys(t *testing.T) {
 	}
 }
 
+func TestScrubRedactsAdjacentQuotedAssignmentsWithoutSeparator(t *testing.T) {
+	t.Parallel()
+
+	// The closing quote of the first value is the only boundary before the
+	// second key, and replacing the first value consumes it.
+	for _, test := range []struct {
+		name   string
+		input  string
+		secret string
+	}{
+		{name: "double quoted", input: `password="pw-one pw-two"sig="sig-one sig-two" next=1`, secret: "pw-one pw-two sig-one sig-two"},
+		{name: "single quoted", input: `password='pw-one pw-two'sig='sig-one sig-two' next=1`, secret: "pw-one pw-two sig-one sig-two"},
+		{name: "colon", input: `password: "pw-one pw-two"sig: "sig-one sig-two" next=1`, secret: "pw-one pw-two sig-one sig-two"},
+		{
+			name:   "three values",
+			input:  `password="pw-one pw-two"sig="sig-one sig-two"token='tok-one tok-two' next=1`,
+			secret: "pw-one pw-two sig-one sig-two tok-one tok-two",
+		},
+		{name: "authorization", input: `authorization="Custom au-one au-two"cookie="ck-one ck-two"&next=1`, secret: "au-one au-two ck-one ck-two"},
+		{name: "unquoted second", input: `password="pw-one pw-two"sig=sig-one next=1`, secret: "pw-one pw-two sig-one"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := test.input
+			for _, view := range []struct{ name, got string }{
+				{"Scrub", Scrub(input)},
+				{"SanitizeError", SanitizeError(errors.New("login failed: " + input)).Error()},
+				{"SanitizeErrorWithCredentials", SanitizeErrorWithCredentials(errors.New("login failed: "+input), "unrelated-credential").Error()},
+				{"query encoded", Scrub("next=" + url.QueryEscape(input))},
+				{"path encoded", Scrub("next=" + url.PathEscape(input))},
+			} {
+				for _, fragment := range strings.Fields(test.secret) {
+					if strings.Contains(view.got, fragment) {
+						t.Fatalf("%s(%q) = %q, leaked quoted value fragment %q", view.name, input, view.got, fragment)
+					}
+				}
+				if !strings.Contains(view.got, "REDACTED") || !strings.Contains(view.got, "next") {
+					t.Fatalf("%s(%q) = %q, want redaction that keeps the context", view.name, input, view.got)
+				}
+			}
+		})
+	}
+
+	// A key inside a quoted value is part of that value, not a new assignment.
+	const nested = `password="pw-one sig=pw-two" next=1`
+	if got, want := Scrub(nested), "password=REDACTED next=1"; got != want {
+		t.Fatalf("Scrub(%q) = %q, want %q", nested, got, want)
+	}
+}
+
 func TestRedactURL_ScrubsAllEmbeddedURLCandidatesIncludingFirst(t *testing.T) {
 	t.Parallel()
 

@@ -1973,17 +1973,23 @@ func assignmentValueEnd(value string, start int, quoted bool) int {
 
 func replaceCredentialValues(value string, step credentialAssignmentStep) (string, RedactionEvidence) {
 	var evidence RedactionEvidence
-	indices := step.expression.FindAllStringSubmatchIndex(value, -1)
-	if len(indices) == 0 {
-		return value, evidence
-	}
 	var scrubbed strings.Builder
 	last := 0
-	for _, index := range indices {
-		if index[0] < last {
-			// The match begins inside a quoted value that an earlier match
-			// already replaced through its closing quote.
-			continue
+	// Search again from the end of each replacement rather than from the end of
+	// each match. A quoted value is replaced through its closing quote, so a
+	// key inside it is never seen, and a key right after that quote is found
+	// with the start of the remaining text standing in for the quote as its
+	// boundary. Any other match ends before a byte that cannot start a key, so
+	// resuming there finds the same matches as one search over the whole text.
+	for last < len(value) {
+		index := step.expression.FindStringSubmatchIndex(value[last:])
+		if index == nil {
+			break
+		}
+		for position := range index {
+			if index[position] >= 0 {
+				index[position] += last
+			}
 		}
 		scrubbed.WriteString(value[last:index[0]])
 		scrubbed.Write(step.expression.ExpandString(nil, step.replacement, value, index))
