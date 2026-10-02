@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.32](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.31...impartus-cli-v0.1.32) (2026-10-02)
+
+
+### Bug Fixes
+
+* **security:** bound upstream responses, scrub credentials and pin media origins ([#245](https://github.com/rabesss/impartus-cli/issues/245)) ([5469971](https://github.com/rabesss/impartus-cli/commit/54699716dd1f978fa53c96f3797add8d50885ba3))
+
 ## [0.1.31](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.30...impartus-cli-v0.1.31) (2026-09-14)
 
 
