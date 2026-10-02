@@ -83,6 +83,9 @@ type ChunkFailure struct {
 	Detail         string
 	Canceled       bool
 	Authentication bool
+	// UnconfiguredOrigin is set when a media origin outside mediaOrigins
+	// refused the chunk, which was sent without the login.
+	UnconfiguredOrigin *client.UnconfiguredMediaOriginError
 }
 
 // LecturePipeline manages concurrent download and decrypt workers for a single lecture.
@@ -307,11 +310,14 @@ func (p *LecturePipeline) FinishSubmission(totalChunks int) {
 func (p *LecturePipeline) Collect() PipelineResult {
 	for decrypted := range p.decryptedChunks {
 		if decrypted.Err != nil {
+			var originErr *client.UnconfiguredMediaOriginError
+			errors.As(decrypted.Err, &originErr)
 			p.failures = append(p.failures, ChunkFailure{
-				ChunkID:        decrypted.ChunkID,
-				View:           decrypted.View,
-				Detail:         secrets.ScrubError(decrypted.Err),
-				Authentication: errors.Is(decrypted.Err, client.ErrAuthentication),
+				ChunkID:            decrypted.ChunkID,
+				View:               decrypted.View,
+				Detail:             secrets.ScrubError(decrypted.Err),
+				Authentication:     errors.Is(decrypted.Err, client.ErrAuthentication),
+				UnconfiguredOrigin: originErr,
 				Canceled: errors.Is(decrypted.Err, context.Canceled) ||
 					errors.Is(decrypted.Err, context.DeadlineExceeded),
 			})

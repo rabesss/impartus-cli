@@ -82,6 +82,30 @@ func TestValidateLoginResponseNonUnauthorizedErrorsAreStatusOnly(t *testing.T) {
 	}
 }
 
+func TestLoginRejectsOversizedResponseWithoutExposingBody(t *testing.T) {
+	const secretMarker = "oversized-login-response-secret"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, strings.Repeat(secretMarker, int(maxLoginResponseSize)/len(secretMarker)+1)) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	apiClient := New(server.Client(), nil)
+	token, err := apiClient.login(context.Background(), &config.Config{
+		Username: "user",
+		Password: "password",
+	}, server.URL)
+	if token != "" {
+		t.Fatalf("login token = %q, want empty on oversized response", token)
+	}
+	if err == nil || !strings.Contains(err.Error(), "login response exceeds max size") {
+		t.Fatalf("login error = %v, want bounded response error", err)
+	}
+	if strings.Contains(err.Error(), secretMarker) {
+		t.Fatalf("login error leaked oversized response body: %v", err)
+	}
+}
+
 func TestNewLoggedInTreatsCachedProfileUnauthorizedAsMissAndReplacesToken(t *testing.T) {
 	const (
 		staleToken = "stale-cache-token"

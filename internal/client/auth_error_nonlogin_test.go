@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -144,4 +145,113 @@ func TestGetPlaylistsUnauthorizedWrapsTypedAuthenticationError(t *testing.T) {
 		"playlist request failed with status 401: wrong credentials please retry",
 		secretMarker,
 	)
+}
+
+func TestMediaRefusalFromUnconfiguredOriginIsNotAuthentication(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			const bodyMarker = "refusal-body-marker"
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(status)
+				writeAuthTestResponse(t, w, bodyMarker)
+			}))
+			defer server.Close()
+
+			// No origin is configured, so the request is sent without the bearer
+			// and signing in again cannot fix the refusal.
+			apiClient := New(server.Client(), nil)
+			_, err := apiClient.getPlaylistWithPolicy(
+				context.Background(),
+				server.URL+"/cdn-path/master.m3u8?Signature=fake-signature",
+				"request-token",
+				Lecture{TTID: 42},
+				mediaOriginPolicy{},
+			)
+			assertUnconfiguredOriginRefusal(t, err, server.URL, status, "/cdn-path", "Signature", bodyMarker)
+		})
+	}
+}
+
+func TestMediaRefusalAfterRedirectNamesTheRespondingOrigin(t *testing.T) {
+	const bodyMarker = "redirect-refusal-body-marker"
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(status)
+				writeAuthTestResponse(t, w, bodyMarker)
+			}))
+			defer cdn.Close()
+			start := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/same-origin" {
+					http.Redirect(w, r, "/cdn-path/refused.ts?Signature=fake-signature", http.StatusFound)
+					return
+				}
+				if r.URL.Path == "/cdn-path/refused.ts" {
+					w.WriteHeader(status)
+					writeAuthTestResponse(t, w, bodyMarker)
+					return
+				}
+				http.Redirect(w, r, cdn.URL+"/cdn-path/refused.ts?Signature=fake-signature", http.StatusFound)
+			}))
+			defer start.Close()
+			apiClient := New(start.Client(), nil)
+
+			// The chain starts at an unconfigured origin, so the bearer is withheld
+			// even though the redirect ends at a configured one.
+			resp, err := apiClient.GetAuthorizedWithTokenForOrigins(
+				context.Background(), start.URL+"/start/master.m3u8?Expires=1", "request-token", cdn.URL,
+			)
+			if resp != nil {
+				_ = resp.Body.Close() //nolint:errcheck
+			}
+			assertUnconfiguredOriginRefusal(t, err, start.URL, status, "/start", "/cdn-path", "Expires", "Signature", bodyMarker)
+			var originErr *UnconfiguredMediaOriginError
+			if !errors.As(err, &originErr) || originErr.RespondingOrigin != cdn.URL {
+				t.Fatalf("refusal = %#v, want responding origin %q", originErr, cdn.URL)
+			}
+			want := fmt.Sprintf("it ended in HTTP %d from %s", status, cdn.URL)
+			if !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), start.URL+" returned") {
+				t.Fatalf("error = %q, want it to name %s as the responder (%q), not %s", err, cdn.URL, want, start.URL)
+			}
+
+			// A same-origin redirect names a single origin.
+			resp, err = apiClient.GetAuthorizedWithTokenForOrigins(
+				context.Background(), start.URL+"/same-origin", "request-token", cdn.URL,
+			)
+			if resp != nil {
+				_ = resp.Body.Close() //nolint:errcheck
+			}
+			assertUnconfiguredOriginRefusal(t, err, start.URL, status, "/same-origin", "/cdn-path", "Signature", bodyMarker)
+			if !errors.As(err, &originErr) || originErr.RespondingOrigin != "" || strings.Contains(err.Error(), cdn.URL) {
+				t.Fatalf("same-origin refusal = %q (%#v), want no responding origin", err, originErr)
+			}
+		})
+	}
+}
+
+func assertUnconfiguredOriginRefusal(t *testing.T, err error, origin string, status int, absentMarkers ...string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("error = nil, want unconfigured media origin refusal")
+	}
+	if errors.Is(err, ErrAuthentication) {
+		t.Fatalf("error = %q, want a non-authentication error", err)
+	}
+	var originErr *UnconfiguredMediaOriginError
+	if !errors.As(err, &originErr) || !errors.Is(err, ErrUnconfiguredMediaOrigin) {
+		t.Fatalf("error = %T %q, want *UnconfiguredMediaOriginError", err, err)
+	}
+	if originErr.Origin != origin || originErr.StatusCode != status {
+		t.Fatalf("refusal metadata = (%q, %d), want (%q, %d)", originErr.Origin, originErr.StatusCode, origin, status)
+	}
+	for _, want := range []string{origin, "mediaOrigins", "IMPARTUS_MEDIA_ORIGINS", "without the login"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want it to mention %q", err, want)
+		}
+	}
+	for _, marker := range absentMarkers {
+		if strings.Contains(err.Error(), marker) {
+			t.Fatalf("error = %q, want no %q", err, marker)
+		}
+	}
 }

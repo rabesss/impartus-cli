@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -117,6 +118,36 @@ func TestDownloadURLWithLimitRemovesInterruptedPartial(t *testing.T) {
 	assertNoChunkPartial(t, tempDir)
 }
 
+func TestDownloadChunkReadErrorsSanitizeToken(t *testing.T) {
+	const token = "chunk-read-secret"
+	httpClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			ContentLength: -1,
+			Body:          io.NopCloser(tokenErrorChunkReader{token: token}),
+			Header:        make(http.Header),
+			Request:       req,
+		}, nil
+	})}
+	d := testLimitDownloader(t.TempDir(), client.New(httpClient, nil))
+	d.config.Token = token
+
+	for _, toMemory := range []bool{true, false} {
+		t.Run(fmt.Sprintf("toMemory=%t", toMemory), func(t *testing.T) {
+			path, data, written, err := d.doDownloadChunkWithLimit(t.Context(), "https://media.example.test/chunk.ts", 1, 0, "left", toMemory, 8)
+			if err == nil {
+				t.Fatal("doDownloadChunkWithLimit() error = nil, want read failure")
+			}
+			if path != "" || data != nil || written != 0 {
+				t.Fatalf("failed download returned path=%q data=%v written=%d", path, data, written)
+			}
+			if strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), "REDACTED") {
+				t.Fatalf("doDownloadChunkWithLimit() leaked token: %v", err)
+			}
+		})
+	}
+}
+
 func TestDownloadChunkScrubsUpstreamErrorBodyAtSource(t *testing.T) {
 	t.Parallel()
 
@@ -137,6 +168,59 @@ func TestDownloadChunkScrubsUpstreamErrorBodyAtSource(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), digestSecret) || strings.Contains(err.Error(), apiSecret) || !strings.Contains(err.Error(), "REDACTED") {
 		t.Fatalf("doDownloadChunkWithLimit() leaked upstream credential: %v", err)
+	}
+}
+
+func TestDownloadChunkOmitsOversizedErrorBodyBeforeRedaction(t *testing.T) {
+	t.Parallel()
+
+	const token = "chunk-oversized-unknown-token"
+	body := strings.Repeat("prefix ", 70) + "unknown=" + token + " trailing diagnostic"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, body) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	d := testLimitDownloader(t.TempDir(), client.New(server.Client(), nil))
+	d.config.Token = token
+	path, data, written, err := d.doDownloadChunkWithLimit(t.Context(), server.URL+"/chunk.ts", 1, 0, "left", true, 8)
+	if err == nil {
+		t.Fatal("doDownloadChunkWithLimit() error = nil, want upstream failure")
+	}
+	if path != "" || data != nil || written != 0 {
+		t.Fatalf("failed download returned path=%q data=%v written=%d", path, data, written)
+	}
+	if strings.Contains(err.Error(), "unknown=") || strings.Contains(err.Error(), token[:12]) {
+		t.Fatalf("chunk error exposed an oversized body prefix: %v", err)
+	}
+	if !strings.Contains(err.Error(), chunkErrorBodyOmitted) {
+		t.Fatalf("chunk error = %v, want bounded omission", err)
+	}
+}
+
+func TestDownloadChunkOmitsTokenPrefixWithinBodyCap(t *testing.T) {
+	t.Parallel()
+
+	token := strings.Repeat("long-token-", 60)
+	prefix := token[:chunkErrorBodyLimit-1]
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, prefix) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	d := testLimitDownloader(t.TempDir(), client.New(server.Client(), nil))
+	d.config.Token = token
+	path, data, written, err := d.doDownloadChunkWithLimit(t.Context(), server.URL+"/chunk.ts", 1, 0, "left", true, 8)
+	if err == nil {
+		t.Fatal("doDownloadChunkWithLimit() error = nil, want upstream failure")
+	}
+	if path != "" || data != nil || written != 0 {
+		t.Fatalf("failed download returned path=%q data=%v written=%d", path, data, written)
+	}
+	if strings.Contains(err.Error(), prefix) || !strings.Contains(err.Error(), chunkErrorBodyOmitted) {
+		t.Fatalf("chunk error exposed token prefix: %v", err)
 	}
 }
 
@@ -167,6 +251,14 @@ func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 
 type failingChunkReader struct {
 	read bool
+}
+
+type tokenErrorChunkReader struct {
+	token string
+}
+
+func (r tokenErrorChunkReader) Read([]byte) (int, error) {
+	return 0, fmt.Errorf("chunk read failed unknown=%s", r.token)
 }
 
 func (r *failingChunkReader) Read(p []byte) (int, error) {

@@ -215,6 +215,59 @@ func TestFailureEventScrubsSecrets(t *testing.T) {
 	}
 }
 
+func TestWriterScrubsPublicRawErrorField(t *testing.T) {
+	t.Parallel()
+
+	const querySecret = "writer-query-secret"
+	const userinfoSecret = "writer-userinfo-secret"
+	rawError := "upstream HTTPS://user:" + userinfoSecret + "@host/path?token=" + querySecret
+	var output bytes.Buffer
+	event := Event{
+		Type:      JobFailed,
+		JobID:     "job-raw-error",
+		Command:   "watch",
+		Timestamp: time.Unix(5, 0).UTC(),
+		Error:     rawError,
+	}
+	if err := NewWriter(&output).Emit(event); err != nil {
+		t.Fatalf("Emit() error = %v", err)
+	}
+	if strings.Contains(output.String(), querySecret) || strings.Contains(output.String(), userinfoSecret) {
+		t.Fatalf("writer serialized raw credential-bearing Error: %q", output.String())
+	}
+	if !strings.Contains(output.String(), "REDACTED") {
+		t.Fatalf("writer output = %q, want redaction marker", output.String())
+	}
+
+	var decoded Event
+	if err := json.Unmarshal(output.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode writer output: %v", err)
+	}
+	if decoded.Error != RedactError(errors.New(rawError)) {
+		t.Fatalf("writer Error = %q, want idempotent scrubbed value %q", decoded.Error, RedactError(errors.New(rawError)))
+	}
+}
+
+func TestWriterScrubsEncodedUnknownCredentialAssignments(t *testing.T) {
+	t.Parallel()
+
+	const secret = "encoded-writer-secret"
+	var output bytes.Buffer
+	event := Event{
+		Type:      JobFailed,
+		JobID:     "job-encoded-error",
+		Command:   "watch",
+		Timestamp: time.Unix(6, 0).UTC(),
+		Error:     "upstream token%3D" + secret,
+	}
+	if err := NewWriter(&output).Emit(event); err != nil {
+		t.Fatalf("Emit() error = %v", err)
+	}
+	if strings.Contains(output.String(), secret) || !strings.Contains(output.String(), "REDACTED") {
+		t.Fatalf("writer serialized encoded credential: %q", output.String())
+	}
+}
+
 func TestRedactErrorCoversAnyAuthorizationScheme(t *testing.T) {
 	t.Parallel()
 
@@ -263,5 +316,46 @@ func TestRedactedErrorPreservesClassificationWithoutExposingRawCause(t *testing.
 	var recovered *url.Error
 	if errors.As(got, &recovered) {
 		t.Fatalf("RedactedError() exposed raw cause through errors.As: %v", recovered)
+	}
+}
+
+type panicIsEventError struct{}
+
+func (panicIsEventError) Error() string { return "event failure" }
+
+func (panicIsEventError) Is(error) bool {
+	panic("source custom Is must not be invoked by RedactedError")
+}
+
+func TestRedactedErrorDoesNotInvokeSourceCustomIs(t *testing.T) {
+	got := RedactedError(panicIsEventError{})
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("RedactedError() invoked source custom Is: %v", recovered)
+		}
+	}()
+	if errors.Is(got, errors.New("unrelated")) {
+		t.Fatal("RedactedError() matched unrelated classification")
+	}
+}
+
+type cyclicEventError struct{}
+
+func (cause *cyclicEventError) Error() string { return "cyclic event failure" }
+
+func (cause *cyclicEventError) Unwrap() error { return cause }
+
+func TestRedactedErrorBoundsCyclicClassification(t *testing.T) {
+	raw := &cyclicEventError{}
+	started := time.Now()
+	got := RedactedError(raw)
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("RedactedError() took %v on cyclic error", elapsed)
+	}
+	if !errors.Is(got, raw) {
+		t.Fatal("RedactedError() lost exact cyclic classification")
+	}
+	if errors.Unwrap(got) != nil {
+		t.Fatalf("RedactedError() exposed raw cause: %v", errors.Unwrap(got))
 	}
 }

@@ -224,14 +224,24 @@ func (d *Downloader) handleSegment(playlist client.ParsedPlaylist, keyStore *pla
 			http.Error(w, message, status)
 			return
 		}
+		if d.mediaOriginErr != nil {
+			http.Error(w, "media origin policy is invalid", http.StatusBadGateway)
+			return
+		}
 
 		if waitErr := d.rateLimiter.WaitForDownload(r.Context()); waitErr != nil {
 			http.Error(w, fmt.Sprintf("rate limit wait failed: %v", waitErr), http.StatusInternalServerError)
 			return
 		}
 
-		resp, err := d.client.GetAuthorizedWithToken(r.Context(), realURL, d.config.Token)
+		resp, err := d.client.GetAuthorizedWithTokenForOrigins(r.Context(), realURL, d.config.Token, d.mediaOrigins...)
 		if err != nil {
+			// A refusal by an origin outside mediaOrigins is not an
+			// authorization failure: the segment was sent without the login.
+			var originErr *client.UnconfiguredMediaOriginError
+			if errors.As(err, &originErr) {
+				failures.report(originErr)
+			}
 			http.Error(w, "failed to fetch upstream segment", http.StatusBadGateway)
 			return
 		}

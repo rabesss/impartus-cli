@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/rabesss/impartus-cli/internal/client"
 )
 
 const (
@@ -177,20 +179,27 @@ func (s *APIServer) probeUpstreamHTTP(parent context.Context) (reachable, probed
 		return false, false
 	}
 
-	baseURL := s.ensureScheme(s.cfg.BaseURL)
-	profileURL := strings.TrimSuffix(baseURL, "/") + "/user/profile"
+	// Construct the probe path through the same strict base-URL boundary as
+	// authenticated catalog/login requests. String concatenation would turn a
+	// trailing slash or API path prefix into the wrong endpoint and could leave
+	// query/fragment credential material in the request. An invalid direct
+	// config must fail closed and remain an HTTP probe (no TCP fallback).
+	profileURL, err := client.BaseURLPath(s.cfg.BaseURL, "user/profile")
+	if err != nil {
+		return false, true
+	}
 
 	ctx, cancel := context.WithTimeout(parent, upstreamProbeTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, profileURL, nil)
-	if err != nil {
-		return false, true
+	upstreamClient := cached.client
+	if upstreamClient == nil {
+		upstreamClient = client.New(&http.Client{Timeout: upstreamProbeTimeout}, nil)
 	}
-	req.Header.Set("Authorization", "Bearer "+cached.token)
-
-	httpClient := &http.Client{Timeout: upstreamProbeTimeout}
-	resp, err := httpClient.Do(req)
+	// Health is an API-origin probe, not a media probe. Keep the redirect
+	// allowlist scoped to the canonical API origin so a profile endpoint that
+	// redirects to a configured CDN cannot make an unhealthy API look healthy.
+	resp, err := upstreamClient.GetAuthorizedWithTokenForOrigins(ctx, profileURL, cached.token, profileURL)
 	if err != nil {
 		return false, true
 	}
@@ -203,20 +212,18 @@ func (s *APIServer) probeUpstreamHTTP(parent context.Context) (reachable, probed
 }
 
 func (s *APIServer) probeUpstreamTCP(parent context.Context) bool {
-	baseURL := s.ensureScheme(s.cfg.BaseURL)
+	if s == nil || s.cfg == nil {
+		return false
+	}
 
-	u, err := url.Parse(baseURL)
+	profileURL, err := client.BaseURLPath(s.cfg.BaseURL, "user/profile")
 	if err != nil {
 		return false
 	}
 
-	host := u.Host
-	if !strings.Contains(host, ":") {
-		port := "80"
-		if u.Scheme == "https" {
-			port = "443"
-		}
-		host = net.JoinHostPort(host, port)
+	host, ok := upstreamTCPHost(profileURL)
+	if !ok {
+		return false
 	}
 
 	ctx, cancel := context.WithTimeout(parent, upstreamProbeTimeout)
@@ -232,11 +239,29 @@ func (s *APIServer) probeUpstreamTCP(parent context.Context) bool {
 	return true
 }
 
-func (s *APIServer) ensureScheme(rawURL string) string {
-	if !strings.HasPrefix(rawURL, "http") {
-		return "https://" + rawURL
+// upstreamTCPHost returns the dial address for a validated profile URL. URL's
+// Hostname and Port accessors keep brackets and IPv6 zones out of the host
+// value itself; JoinHostPort then applies the correct brackets exactly once.
+// The caller is responsible for validating the URL before invoking this
+// helper, but malformed or hostless values still fail closed here.
+func upstreamTCPHost(profileURL string) (string, bool) {
+	u, err := url.Parse(profileURL)
+	if err != nil || u == nil {
+		return "", false
 	}
-	return rawURL
+
+	hostname := u.Hostname()
+	if hostname == "" {
+		return "", false
+	}
+	port := u.Port()
+	if port == "" {
+		port = "80"
+		if strings.EqualFold(u.Scheme, "https") {
+			port = "443"
+		}
+	}
+	return net.JoinHostPort(hostname, port), true
 }
 
 func (s *APIServer) checkFFmpegStatus() statusCheckResult {

@@ -7,11 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/rabesss/impartus-cli/internal/config"
+	"github.com/rabesss/impartus-cli/internal/secrets"
 )
+
+const maxLoginResponseSize int64 = 1 * 1024 * 1024
 
 // NewLoggedIn creates a Client and authenticates it against the Impartus API
 // using the provided config. It is the shared bootstrap for the CLI's
@@ -46,14 +50,27 @@ func newClientFromConfig(cfg *config.Config) (*Client, error) {
 }
 
 func (c *Client) tokenValue() string {
+	if c == nil {
+		return ""
+	}
+	c.tokenMu.RLock()
+	defer c.tokenMu.RUnlock()
 	return c.token
 }
 
 func (c *Client) setToken(token string) {
+	if c == nil {
+		return
+	}
+	c.tokenMu.Lock()
+	defer c.tokenMu.Unlock()
 	c.token = token
 }
 
-// LoginAndSetToken authenticates with the Impartus API and stores the resulting token.
+// LoginAndSetToken authenticates with the Impartus API and stores the resulting
+// token. It also updates cfg.Token for compatibility; cfg remains caller-owned
+// and must not be read or mutated concurrently by code that bypasses Client's
+// synchronized token access.
 func (c *Client) LoginAndSetToken(ctx context.Context, cfg *config.Config) error {
 	cli, baseURL, err := c.prepareLogin(cfg)
 	if err != nil {
@@ -69,16 +86,32 @@ func (c *Client) LoginAndSetToken(ctx context.Context, cfg *config.Config) error
 	return cli.storeToken(cfg, token)
 }
 
-// resolveToken returns the token from config, falling back to the client's stored token.
+// resolveToken returns the token from config, falling back to the client's
+// synchronized stored token. A config token is treated as an immutable caller
+// value while requests are in flight.
 func (c *Client) resolveToken(cfg *config.Config) (string, error) {
+	c.tokenMu.RLock()
 	token := cfg.Token
 	if token == "" {
-		token = c.tokenValue()
+		token = c.token
 	}
+	c.tokenMu.RUnlock()
 	if token == "" {
 		return "", errors.New("token is not set")
 	}
 	return token, nil
+}
+
+func (c *Client) setActiveToken(cfg *config.Config, token string) {
+	if c == nil {
+		return
+	}
+	c.tokenMu.Lock()
+	c.token = token
+	if cfg != nil {
+		cfg.Token = token
+	}
+	c.tokenMu.Unlock()
 }
 
 func (c *Client) readStoredToken() (string, bool) {
@@ -98,17 +131,21 @@ func (c *Client) readStoredTokenAt(path string) (string, bool) {
 }
 
 func (c *Client) validateStoredToken(ctx context.Context, baseURL, token string) (bool, error) {
-	profileURL := fmt.Sprintf("%s/user/profile", baseURL)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, profileURL, nil)
+	profileURL, err := baseURLPath(baseURL, "user/profile")
 	if err != nil {
 		return false, err
 	}
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
-	req.Header.Set("Content-Type", "application/json;charset=UTF-8")
-	req.Header.Set("Accept", "application/json, text/plain, */*")
-	req.Header.Set("User-Agent", c.userAgent())
-
-	resp, err := c.httpClient.Do(req)
+	// Stored credentials are bearer credentials. Validate them with a private
+	// client copy that cannot follow a redirect (or carry the caller's cookie
+	// jar). A 3xx is therefore a failed validation, and the bearer is never sent
+	// to a redirect target.
+	c.initialize()
+	requestClient := *c.httpClient
+	requestClient.Jar = nil
+	requestClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	resp, err := c.doRequestWithTokenClient(ctx, http.MethodGet, profileURL, nil, token, &requestClient)
 	if err != nil {
 		return false, err
 	}
@@ -129,7 +166,52 @@ func (c *Client) prepareLogin(cfg *config.Config) (*Client, string, error) {
 	if cfg.BaseURL == "" {
 		return nil, "", errors.New("baseUrl is required")
 	}
-	return cli, cfg.BaseURL, nil
+	baseURL, err := validateAndCanonicalizeBaseURL(cfg.BaseURL)
+	if err != nil {
+		return nil, "", err
+	}
+	if _, err := newMediaOriginPolicy(append([]string{baseURL}, cfg.MediaOrigins...)...); err != nil {
+		return nil, "", err
+	}
+	return cli, baseURL, nil
+}
+
+// validateAndCanonicalizeBaseURL applies the strict authenticated URL boundary
+// before a login or API request is constructed. canonicalBaseURL supplies the
+// shared path, authority, query, fragment, and scheme canonicalization; the
+// media validator retains typed userinfo/HTTPS errors for callers and tests.
+func validateAndCanonicalizeBaseURL(rawBaseURL string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(rawBaseURL))
+	if err != nil {
+		return "", newMediaOriginError(ErrInvalidMediaURL)
+	}
+	if validateErr := validateMediaURL(parsed, true); validateErr != nil {
+		return "", validateErr
+	}
+	if parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.RawFragment != "" {
+		return "", newMediaOriginError(ErrInvalidMediaURL)
+	}
+	canonical, err := canonicalBaseURL(rawBaseURL)
+	if err != nil {
+		return "", newMediaOriginError(ErrInvalidMediaURL)
+	}
+	return canonical, nil
+}
+
+func newBaseURLPolicy(rawBaseURL string, additionalOrigins ...string) (string, mediaOriginPolicy, error) {
+	if rawBaseURL == "" {
+		return "", mediaOriginPolicy{}, errors.New("baseUrl is required")
+	}
+	baseURL, err := validateAndCanonicalizeBaseURL(rawBaseURL)
+	if err != nil {
+		return "", mediaOriginPolicy{}, err
+	}
+	origins := append([]string{baseURL}, additionalOrigins...)
+	policy, err := newMediaOriginPolicy(origins...)
+	if err != nil {
+		return "", mediaOriginPolicy{}, err
+	}
+	return baseURL, policy, nil
 }
 
 func (c *Client) tryStoredToken(ctx context.Context, cfg *config.Config, baseURL string) bool {
@@ -141,27 +223,41 @@ func (c *Client) tryStoredToken(ctx context.Context, cfg *config.Config, baseURL
 	if err != nil || !valid {
 		return false
 	}
-	cfg.Token = token
-	c.setToken(token)
+	c.setActiveToken(cfg, token)
 	return true
 }
 
 func (c *Client) login(ctx context.Context, cfg *config.Config, baseURL string) (string, error) {
+	c.initialize()
 	req, err := c.newLoginRequest(ctx, cfg, baseURL)
 	if err != nil {
 		return "", err
 	}
-	response, err := c.httpClient.Do(req)
+	requestClient := *c.httpClient
+	requestClient.Jar = nil
+	requestClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+		// Login requests carry the username and password in the body. Never
+		// replay that body to a redirected origin or across an HTTPS downgrade.
+		return http.ErrUseLastResponse
+	}
+	response, err := requestClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("login failed: %w", err)
+		return "", fmt.Errorf("login failed: %w", sanitizeLoginError(err, cfg))
 	}
 	defer func() { _ = response.Body.Close() }() //nolint:errcheck
-	if err := validateLoginResponse(response); err != nil {
-		return "", err
+	if responseErr := validateLoginResponse(response); responseErr != nil {
+		return "", responseErr
+	}
+	body, readErr := readResponseBodyWithLimit(response.Body, maxLoginResponseSize)
+	if readErr != nil {
+		if errors.Is(readErr, errResponseSizeLimit) {
+			return "", fmt.Errorf("login response exceeds max size %d bytes", maxLoginResponseSize)
+		}
+		return "", fmt.Errorf("failed to read login response: %w", sanitizeLoginError(readErr, cfg))
 	}
 	var loginResponse LoginResponse
-	if err := json.NewDecoder(response.Body).Decode(&loginResponse); err != nil {
-		return "", fmt.Errorf("failed to decode login response: %w", err)
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&loginResponse); err != nil {
+		return "", fmt.Errorf("failed to decode login response: %w", sanitizeLoginError(err, cfg))
 	}
 	if loginResponse.Token == "" {
 		return "", errors.New("empty token in login response")
@@ -169,15 +265,28 @@ func (c *Client) login(ctx context.Context, cfg *config.Config, baseURL string) 
 	return loginResponse.Token, nil
 }
 
+// sanitizeLoginError scrubs an upstream login failure. A broken upstream can
+// echo the submitted body (for example in a malformed status line), so every
+// representation of the submitted username and password is removed as well.
+func sanitizeLoginError(err error, cfg *config.Config) error {
+	return secrets.SanitizeErrorWithCredentials(err, cfg.Username, cfg.Password)
+}
+
 func (c *Client) newLoginRequest(ctx context.Context, cfg *config.Config, baseURL string) (*http.Request, error) {
+	if cfg == nil {
+		return nil, errors.New("config is required")
+	}
 	requestBody, err := json.Marshal(map[string]string{"username": cfg.Username, "password": cfg.Password})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal login body: %w", err)
 	}
-	loginURL := fmt.Sprintf("%s/auth/signin", baseURL)
+	loginURL, err := baseURLPath(baseURL, "auth/signin")
+	if err != nil {
+		return nil, fmt.Errorf("failed to construct login URL: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, bytes.NewBuffer(requestBody))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create login request: %w", err)
+		return nil, fmt.Errorf("failed to create login request: %w", secrets.SanitizeError(err))
 	}
 	req.Header.Set("Content-Type", "application/json;charset=UTF-8")
 	req.Header.Set("Accept", "application/json, text/plain, */*")
@@ -197,8 +306,7 @@ func validateLoginResponse(response *http.Response) error {
 }
 
 func (c *Client) storeToken(cfg *config.Config, token string) error {
-	cfg.Token = token
-	c.setToken(token)
+	c.setActiveToken(cfg, token)
 	path := resolvedTokenCachePath(cfg)
 	if err := writeTokenCache(path, []byte(token)); err != nil {
 		return fmt.Errorf("failed to persist token cache: %w", err)

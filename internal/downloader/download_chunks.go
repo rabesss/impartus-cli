@@ -22,6 +22,10 @@ const maxChunkSize = 50 * 1024 * 1024 // 50 MB
 
 var errDownloadSizeLimit = errors.New("download exceeds size limit")
 
+const chunkErrorBodyLimit int64 = 512
+
+const chunkErrorBodyOmitted = "upstream response body omitted"
+
 func copyWithLimit(dst io.Writer, src io.Reader, limit int64) (int64, error) {
 	written, err := io.Copy(dst, io.LimitReader(src, limit+1))
 	if err != nil {
@@ -41,17 +45,20 @@ func (d *Downloader) doDownloadChunk(ctx context.Context, url string, id int, ch
 }
 
 func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, id int, chunk int, view string, toMemory bool, limit int64) (string, []byte, int64, error) {
+	if d.mediaOriginErr != nil {
+		return "", nil, 0, d.mediaOriginErr
+	}
 	if err := d.rateLimiter.WaitForDownload(ctx); err != nil {
 		return "", nil, 0, err
 	}
 
-	resp, err := d.client.GetAuthorizedWithToken(ctx, url, d.config.Token)
+	resp, err := d.client.GetAuthorizedWithTokenForOrigins(ctx, url, d.config.Token, d.mediaOrigins...)
 	if err != nil {
-		return "", nil, 0, fmt.Errorf("chunk request failed for URL %s: %w", secrets.RedactURL(url), err)
+		return "", nil, 0, fmt.Errorf("chunk request failed for URL %s: %w", secrets.RedactURLWithToken(url, d.config.Token), err)
 	}
 	defer func() { closeErr := resp.Body.Close(); _ = closeErr }()
 
-	if statusErr := chunkResponseError(resp, url); statusErr != nil {
+	if statusErr := chunkResponseError(resp, url, d.config.Token); statusErr != nil {
 		return "", nil, 0, statusErr
 	}
 
@@ -63,7 +70,7 @@ func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, i
 	if toMemory {
 		data, readErr := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 		if readErr != nil {
-			return "", nil, 0, fmt.Errorf("could not read chunk %d: %w", chunk, readErr)
+			return "", nil, 0, fmt.Errorf("could not read chunk %d: %w", chunk, secrets.SanitizeErrorWithToken(readErr, d.config.Token))
 		}
 		if int64(len(data)) > limit {
 			return "", nil, 0, fmt.Errorf("chunk %d exceeds max size %d bytes: %w", chunk, limit, errDownloadSizeLimit)
@@ -89,7 +96,7 @@ func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, i
 		if errors.Is(copyErr, errDownloadSizeLimit) {
 			return "", nil, 0, fmt.Errorf("chunk %d exceeds max size %d bytes: %w", chunk, limit, copyErr)
 		}
-		return "", nil, 0, fmt.Errorf("could not write chunk %d: %w", chunk, copyErr)
+		return "", nil, 0, fmt.Errorf("could not write chunk %d: %w", chunk, secrets.SanitizeErrorWithToken(copyErr, d.config.Token))
 	}
 	if closeErr := outFile.Close(); closeErr != nil {
 		return "", nil, 0, fmt.Errorf("could not close chunk %d: %w", chunk, closeErr)
@@ -99,9 +106,9 @@ func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, i
 	return outFilepath, nil, bytesWritten, nil
 }
 
-func chunkResponseError(resp *http.Response, url string) error {
+func chunkResponseError(resp *http.Response, url, token string) error {
 	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("chunk request failed with status %d for URL %s: %w", resp.StatusCode, secrets.RedactURL(url), &client.AuthenticationError{
+		return fmt.Errorf("chunk request failed with status %d for URL %s: %w", resp.StatusCode, secrets.RedactURLWithToken(url, token), &client.AuthenticationError{
 			Operation:  "chunk",
 			StatusCode: resp.StatusCode,
 		})
@@ -109,15 +116,21 @@ func chunkResponseError(resp *http.Response, url string) error {
 	if resp.StatusCode == http.StatusOK {
 		return nil
 	}
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 512))
+	if int64(len(strings.TrimSpace(token))) > chunkErrorBodyLimit {
+		return fmt.Errorf("chunk request failed with status %d for URL %s: %s", resp.StatusCode, secrets.RedactURLWithToken(url, token), chunkErrorBodyOmitted)
+	}
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, chunkErrorBodyLimit+1))
 	if readErr != nil {
-		return fmt.Errorf("chunk request failed with status %d and unreadable error body: %w", resp.StatusCode, readErr)
+		return fmt.Errorf("chunk request failed with status %d and unreadable error body: %w", resp.StatusCode, secrets.SanitizeErrorWithToken(readErr, token))
 	}
-	message := secrets.Scrub(strings.TrimSpace(string(body)))
+	if int64(len(body)) > chunkErrorBodyLimit {
+		return fmt.Errorf("chunk request failed with status %d for URL %s: %s", resp.StatusCode, secrets.RedactURLWithToken(url, token), chunkErrorBodyOmitted)
+	}
+	message := secrets.RedactWithToken(strings.TrimSpace(string(body)), token)
 	if message == "" {
-		return fmt.Errorf("chunk request failed with status %d for URL %s", resp.StatusCode, secrets.RedactURL(url))
+		return fmt.Errorf("chunk request failed with status %d for URL %s", resp.StatusCode, secrets.RedactURLWithToken(url, token))
 	}
-	return fmt.Errorf("chunk request failed with status %d for URL %s: %s", resp.StatusCode, secrets.RedactURL(url), message)
+	return fmt.Errorf("chunk request failed with status %d for URL %s: %s", resp.StatusCode, secrets.RedactURLWithToken(url, token), message)
 }
 
 func (d *Downloader) downloadURL(ctx context.Context, url string, id int, chunk int, view string) (string, int64, error) {

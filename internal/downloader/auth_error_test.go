@@ -21,11 +21,28 @@ func TestDownloadChunkUnauthorizedWrapsTypedAuthenticationError(t *testing.T) {
 	defer server.Close()
 
 	d := testLimitDownloader(t.TempDir(), client.New(server.Client(), nil))
+	d.mediaOrigins = []string{server.URL}
 	path, data, written, err := d.doDownloadChunkWithLimit(t.Context(), server.URL+"/chunk.ts?token=query-secret", 1, 0, "left", true, 8)
 	if path != "" || data != nil || written != 0 {
 		t.Fatalf("failed chunk returned path=%q data=%v written=%d", path, data, written)
 	}
 	assertDownloaderAuthenticationError(t, err, "chunk", bodyMarker, "query-secret")
+}
+
+func TestDownloadChunkRefusedByUnconfiguredOriginIsNotAuthentication(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	// The chunk origin is not in mediaOrigins, so the chunk is sent without
+	// the bearer.
+	d := testLimitDownloader(t.TempDir(), client.New(server.Client(), nil))
+	path, data, written, err := d.doDownloadChunkWithLimit(t.Context(), server.URL+"/chunk.ts", 1, 0, "left", true, 8)
+	if path != "" || data != nil || written != 0 {
+		t.Fatalf("failed chunk returned path=%q data=%v written=%d", path, data, written)
+	}
+	assertDownloaderOriginRefusal(t, err, server.URL)
 }
 
 func TestFetchDecryptionKeyUnauthorizedWrapsTypedAuthenticationError(t *testing.T) {
@@ -39,8 +56,36 @@ func TestFetchDecryptionKeyUnauthorizedWrapsTypedAuthenticationError(t *testing.
 	defer server.Close()
 
 	d := testLimitDownloader(t.TempDir(), client.New(server.Client(), nil))
+	d.mediaOrigins = []string{server.URL}
 	_, err := d.fetchDecryptionKey(t.Context(), server.URL+"/key?token=query-secret")
 	assertDownloaderAuthenticationError(t, err, "decryption key", bodyMarker, "query-secret")
+}
+
+func TestDownloadChunkNonUnauthorizedBodySanitizesExplicitToken(t *testing.T) {
+	const token = "chunk-body-token+a&b"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		if _, err := w.Write([]byte("upstream detail: " + token)); err != nil {
+			t.Errorf("write chunk error body: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	d := testLimitDownloader(t.TempDir(), client.New(server.Client(), nil))
+	d.config.Token = token
+	path, data, written, err := d.doDownloadChunkWithLimit(t.Context(), server.URL+"/chunk.ts", 1, 0, "left", true, 8)
+	if path != "" || data != nil || written != 0 {
+		t.Fatalf("failed chunk returned path=%q data=%v written=%d", path, data, written)
+	}
+	if err == nil {
+		t.Fatal("chunk error = nil, want upstream failure")
+	}
+	if strings.Contains(err.Error(), token) || strings.Contains(err.Error(), strings.TrimPrefix(token, "Bearer ")) {
+		t.Fatalf("chunk error leaked explicit token: %v", err)
+	}
+	if !strings.Contains(err.Error(), "REDACTED") {
+		t.Fatalf("chunk error = %v, want sanitized body marker", err)
+	}
 }
 
 func assertDownloaderAuthenticationError(t *testing.T, err error, operation string, secretMarkers ...string) {
@@ -61,6 +106,25 @@ func assertDownloaderAuthenticationError(t *testing.T, err error, operation stri
 	for _, marker := range secretMarkers {
 		if strings.Contains(err.Error(), marker) {
 			t.Fatalf("typed authentication error leaked %q: %v", marker, err)
+		}
+	}
+}
+
+func assertDownloaderOriginRefusal(t *testing.T, err error, origin string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("error = nil, want unconfigured media origin refusal")
+	}
+	if errors.Is(err, client.ErrAuthentication) {
+		t.Fatalf("error = %q, want a non-authentication error", err)
+	}
+	var originErr *client.UnconfiguredMediaOriginError
+	if !errors.As(err, &originErr) || originErr.Origin != origin {
+		t.Fatalf("error = %T %q, want *UnconfiguredMediaOriginError for %s", err, err, origin)
+	}
+	for _, want := range []string{origin, "IMPARTUS_MEDIA_ORIGINS"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want it to mention %q", err, want)
 		}
 	}
 }

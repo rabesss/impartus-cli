@@ -84,6 +84,7 @@ func TestSanitizeUpstreamErrPreservesAggregatedChunkAuthenticationFailure(t *tes
 	defer upstream.Close()
 
 	cfg := &config.Config{
+		BaseURL:                   upstream.URL,
 		Token:                     "request-token",
 		TempDirLocation:           t.TempDir(),
 		Views:                     "left",
@@ -111,6 +112,50 @@ func TestSanitizeUpstreamErrPreservesAggregatedChunkAuthenticationFailure(t *tes
 	}
 }
 
+func TestSanitizeUpstreamErrExplainsUnconfiguredOriginRefusal(t *testing.T) {
+	const urlMarker = "unconfigured-chunk-path-marker"
+	keyResponse := append([]byte{0, 0}, []byte("fedcba9876543210")...)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/key" {
+			if _, err := w.Write(keyResponse); err != nil {
+				t.Errorf("write key response: %v", err)
+			}
+			return
+		}
+		http.Error(w, "cdn refusal", http.StatusUnauthorized)
+	}))
+	defer upstream.Close()
+
+	// The upstream is outside mediaOrigins, so its chunks are sent without the
+	// login and their 401 must not ask the user to sign in again.
+	cfg := &config.Config{
+		Token:                     "request-token",
+		TempDirLocation:           t.TempDir(),
+		Views:                     "left",
+		EnablePipeline:            true,
+		DownloadWorkersPerLecture: 1,
+		DecryptWorkersPerLecture:  1,
+		RateLimit:                 100,
+		APIRateLimit:              100,
+	}
+	d := downloader.NewWithDiagnosticWriter(cfg, client.New(upstream.Client(), nil), io.Discard)
+	_, err := d.DownloadPlaylist(t.Context(), client.ParsedPlaylist{
+		ID:            42,
+		SeqNo:         1,
+		KeyURL:        upstream.URL + "/key",
+		FirstViewURLs: []string{upstream.URL + "/" + urlMarker},
+	}, nil, nil)
+	got := sanitizeUpstreamErr(err)
+	for _, want := range []string{upstream.URL, "IMPARTUS_MEDIA_ORIGINS", "without the login"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("sanitizeUpstreamErr(unconfigured origin 401) = %q, want it to mention %q", got, want)
+		}
+	}
+	if strings.Contains(got, urlMarker) || strings.Contains(got, "authentication failed") {
+		t.Fatalf("sanitizeUpstreamErr(unconfigured origin 401) = %q, want only the origin and no authentication failure", got)
+	}
+}
+
 type timeoutErr struct{}
 
 func (timeoutErr) Error() string   { return "i/o timeout" }
@@ -122,6 +167,72 @@ func TestSanitizeUpstreamErrNetworkTimeout(t *testing.T) {
 	if got := sanitizeUpstreamErr(err); got != "upstream connection failed" {
 		t.Errorf("sanitizeUpstreamErr(timeout) = %q, want %q", got, "upstream connection failed")
 	}
+}
+
+func TestSanitizeUpstreamErrPreservesClientSanitizedNetworkMetadata(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		failure       error
+		assertNetwork func(*testing.T, error)
+	}{
+		{
+			name:    "timeout",
+			failure: &net.OpError{Op: "dial", Net: "tcp", Err: timeoutErr{}},
+			assertNetwork: func(t *testing.T, err error) {
+				var networkErr net.Error
+				if !errors.As(err, &networkErr) || !networkErr.Timeout() {
+					t.Fatalf("sanitized error = %v, want timeout net.Error", err)
+				}
+			},
+		},
+		{
+			name: "dns",
+			failure: &net.OpError{
+				Op:  "dial",
+				Net: "tcp",
+				Err: &net.DNSError{Err: "no such host", Name: "token=dns-secret.example"},
+			},
+			assertNetwork: func(t *testing.T, err error) {
+				var dnsErr *net.DNSError
+				if !errors.As(err, &dnsErr) {
+					t.Fatalf("sanitized error = %v, want DNS metadata", err)
+				}
+				if dnsErr.Name != "" || dnsErr.Server != "" || dnsErr.Err != "upstream DNS failure" {
+					t.Fatalf("sanitized DNS metadata = %#v, want fixed fields", dnsErr)
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			apiClient := client.New(&http.Client{Transport: networkFailureRoundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, test.failure
+			})}, nil)
+			response, err := apiClient.GetAuthorizedWithToken(t.Context(), "https://api.example.test/subjects", "request-token")
+			if response != nil {
+				_ = response.Body.Close() //nolint:errcheck
+			}
+			if err == nil {
+				t.Fatal("GetAuthorizedWithToken() error = nil, want network failure")
+			}
+			if got := sanitizeUpstreamErr(err); got != "upstream connection failed" {
+				t.Fatalf("sanitizeUpstreamErr() = %q, want upstream connection failed", got)
+			}
+			test.assertNetwork(t, err)
+			if strings.Contains(err.Error(), "dns-secret.example") {
+				t.Fatalf("sanitized network error exposed DNS name: %v", err)
+			}
+		})
+	}
+}
+
+type networkFailureRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn networkFailureRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
 }
 
 func TestContainsAny(t *testing.T) {

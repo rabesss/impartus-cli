@@ -104,6 +104,12 @@ func (writer *Writer) Emit(event Event) error {
 	if event.SchemaVersion == 0 {
 		event.SchemaVersion = SchemaVersion
 	}
+	// Event is public and callers can construct it without going through
+	// Failure/Cancellation, so the writer scrubs Error itself and a raw
+	// credential-bearing Error cannot reach NDJSON output. Only Error is
+	// scrubbed here: the other fields, including Details, must carry no
+	// upstream text, which holds for the current callers.
+	event.Error = secrets.Scrub(event.Error)
 	if err := validate(event); err != nil {
 		return err
 	}
@@ -231,24 +237,12 @@ func RedactError(cause error) string {
 	return scrubFailure(cause)
 }
 
-// RedactedError returns an error whose rendered message and reachable chain are
-// safe for CLI and automation output. It preserves errors.Is classification
-// without exposing the original cause through errors.Unwrap or errors.As.
+// RedactedError returns the shared opaque secrets boundary for CLI and
+// automation output. It preserves exact classifications and safe network
+// metadata without exposing the original cause through errors.Unwrap or an
+// arbitrary errors.As traversal.
 func RedactedError(cause error) error {
-	if cause == nil {
-		return nil
-	}
-	if _, ok := cause.(redactedError); ok {
-		return cause
-	}
-	return redactedError{cause: cause}
-}
-
-type redactedError struct{ cause error }
-
-func (err redactedError) Error() string { return RedactError(err.cause) }
-func (err redactedError) Is(target error) bool {
-	return errors.Is(err.cause, target)
+	return secrets.SanitizeError(cause)
 }
 
 func scrubFailure(cause error) string {

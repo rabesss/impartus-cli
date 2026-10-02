@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -104,6 +105,102 @@ func TestCloneConfigWithBaseURL(t *testing.T) {
 
 	if clone.BaseURL != cfg.BaseURL {
 		t.Errorf("expected baseURL %s, got %s", cfg.BaseURL, clone.BaseURL)
+	}
+}
+
+func TestCloneConfigCopiesMediaOrigins(t *testing.T) {
+	cfg := &config.Config{MediaOrigins: []string{
+		"https://cdn-one.example.test",
+		"https://cdn-two.example.test",
+	}}
+
+	clone := cloneConfig(cfg)
+	if clone == nil {
+		t.Fatal("cloneConfig returned nil")
+	}
+	if &clone.MediaOrigins[0] == &cfg.MediaOrigins[0] {
+		t.Fatal("clone MediaOrigins shares backing array with original")
+	}
+
+	clone.MediaOrigins[0] = "https://replacement.example.test"
+	clone.MediaOrigins = append(clone.MediaOrigins, "https://cdn-three.example.test")
+	if got := cfg.MediaOrigins[0]; got != "https://cdn-one.example.test" {
+		t.Fatalf("original MediaOrigins[0] = %q after clone mutation, want unchanged", got)
+	}
+	if len(cfg.MediaOrigins) != 2 {
+		t.Fatalf("original MediaOrigins length = %d after clone append, want 2", len(cfg.MediaOrigins))
+	}
+}
+
+func TestCloneConfigMediaOriginsAreSafeForConcurrentMutation(t *testing.T) {
+	cfg := &config.Config{MediaOrigins: []string{"https://cdn.example.test"}}
+	clones := make([]*config.Config, 32)
+	for index := range clones {
+		clones[index] = cloneConfig(cfg)
+	}
+
+	var wait sync.WaitGroup
+	wait.Add(len(clones))
+	for index, clone := range clones {
+		go func(index int, clone *config.Config) {
+			defer wait.Done()
+			clone.MediaOrigins[0] = "https://cdn.example.test/" + strings.Repeat("x", index+1)
+		}(index, clone)
+	}
+	wait.Wait()
+
+	if got := cfg.MediaOrigins[0]; got != "https://cdn.example.test" {
+		t.Fatalf("original MediaOrigins[0] = %q after concurrent clone mutations, want unchanged", got)
+	}
+}
+
+func TestCloneConfigCopiesWatchTargets(t *testing.T) {
+	cfg := &config.Config{Watch: config.WatchConfig{
+		Targets: []config.WatchTarget{
+			{SubjectID: 67, SessionID: 8, Label: "Algorithms"},
+			{SubjectID: 68, SessionID: 9, Label: "Systems"},
+		},
+	}}
+
+	clone := cloneConfig(cfg)
+	if clone == nil {
+		t.Fatal("cloneConfig returned nil")
+	}
+	if &clone.Watch.Targets[0] == &cfg.Watch.Targets[0] {
+		t.Fatal("clone Watch.Targets shares backing array with original")
+	}
+
+	clone.Watch.Targets[0].Label = "replacement"
+	clone.Watch.Targets = append(clone.Watch.Targets, config.WatchTarget{SubjectID: 69, SessionID: 10})
+	if got := cfg.Watch.Targets[0].Label; got != "Algorithms" {
+		t.Fatalf("original Watch.Targets[0].Label = %q after clone mutation, want unchanged", got)
+	}
+	if len(cfg.Watch.Targets) != 2 {
+		t.Fatalf("original Watch.Targets length = %d after clone append, want 2", len(cfg.Watch.Targets))
+	}
+}
+
+func TestCloneConfigWatchTargetsAreSafeForConcurrentMutation(t *testing.T) {
+	cfg := &config.Config{Watch: config.WatchConfig{
+		Targets: []config.WatchTarget{{SubjectID: 67, SessionID: 8, Label: "Algorithms"}},
+	}}
+	clones := make([]*config.Config, 32)
+	for index := range clones {
+		clones[index] = cloneConfig(cfg)
+	}
+
+	var wait sync.WaitGroup
+	wait.Add(len(clones))
+	for index, clone := range clones {
+		go func(index int, clone *config.Config) {
+			defer wait.Done()
+			clone.Watch.Targets[0].Label = "clone-" + strings.Repeat("x", index+1)
+		}(index, clone)
+	}
+	wait.Wait()
+
+	if got := cfg.Watch.Targets[0].Label; got != "Algorithms" {
+		t.Fatalf("original Watch.Targets[0].Label = %q after concurrent clone mutations, want unchanged", got)
 	}
 }
 

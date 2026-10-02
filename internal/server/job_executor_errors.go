@@ -41,6 +41,12 @@ func sanitizeUpstreamErr(err error) string {
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return "upstream connection failed"
 	}
+	// A refusal by a media origin outside mediaOrigins is reported with its
+	// origin only, so the user is not asked to sign in again for nothing.
+	var originErr *client.UnconfiguredMediaOriginError
+	if errors.As(err, &originErr) && !errors.Is(err, client.ErrAuthentication) {
+		return originErr.Error()
+	}
 	if errors.Is(err, client.ErrAuthentication) {
 		return "upstream authentication failed"
 	}
