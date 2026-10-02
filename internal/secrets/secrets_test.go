@@ -820,18 +820,6 @@ func TestScrub_RedactsFreeFormCredentialAssignments(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got := Scrub(test.input)
-			if test.name == "encoded authorization" {
-				view := decodeEncodedViewLayer(rawEncodedView(test.input), true)
-				ranges, _ := credentialValueRangesForView(view)
-				t.Logf("view=%q ranges=%+v", view.text, ranges)
-				for _, step := range credentialAssignmentSteps() {
-					for _, index := range step.expression.FindAllStringSubmatchIndex(view.text, -1) {
-						prefixEnd := index[step.prefixGroup*2+1]
-						t.Logf("step=%p match=%q value=%q", step.expression, view.text[index[0]:index[1]], view.text[prefixEnd:index[1]])
-					}
-				}
-				t.Logf("canonical=%+v", canonicalCredentialValueRanges(view.text))
-			}
 			if strings.Contains(got, test.secret) || !strings.Contains(got, "REDACTED") {
 				t.Fatalf("Scrub(%q) = %q", test.input, got)
 			}
