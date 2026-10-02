@@ -596,6 +596,23 @@ func TestSanitizeErrorWithTokenRedactsJSONEscapedCredential(t *testing.T) {
 	}
 }
 
+func TestSanitizeErrorWithCredentialsRemovesLongerValueFirst(t *testing.T) {
+	const username = "fixture-user"
+	const password = "fixture-user-pw99"
+	sentinel := errors.New("sentinel")
+	raw := fmt.Errorf("upstream echoed %s: %w", password, sentinel)
+	got := SanitizeErrorWithCredentials(raw, username, password)
+	if strings.Contains(got.Error(), "fixture") || strings.Contains(got.Error(), "pw99") {
+		t.Fatalf("SanitizeErrorWithCredentials() leaked a credential fragment: %q", got)
+	}
+	if !strings.Contains(got.Error(), "upstream echoed REDACTED") {
+		t.Fatalf("SanitizeErrorWithCredentials() = %q, want redacted context", got)
+	}
+	if !errors.Is(got, sentinel) {
+		t.Fatal("SanitizeErrorWithCredentials() lost the error classification")
+	}
+}
+
 func TestRedactURL_Passthrough(t *testing.T) {
 	// Empty input is returned unchanged; a URL with no sensitive params keeps
 	// its (non-secret) query values intact.

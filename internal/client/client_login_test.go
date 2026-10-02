@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -245,6 +246,49 @@ func TestLoginNeverFollowsCredentialBearingRedirect(t *testing.T) {
 			}
 			if targetRequests != 0 || targetBody != "" {
 				t.Fatalf("redirect target received requests=%d body=%q, want zero requests/body", targetRequests, targetBody)
+			}
+		})
+	}
+}
+
+func TestLoginErrorRedactsEchoedSubmittedCredentials(t *testing.T) {
+	const username = "fixture-student-42"
+	// The password contains a credential-shaped assignment, so a generic scrub
+	// that runs first would split it and leave fragments behind.
+	const password = "fixture-secret:pass word@99"
+	requestBody, err := json.Marshal(map[string]string{"username": username, "password": password})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	for _, test := range []struct {
+		name string
+		echo string
+	}{
+		{name: "raw password", echo: password},
+		{name: "query escaped password", echo: url.QueryEscape(password)},
+		{name: "raw username", echo: username},
+		{name: "request body", echo: string(requestBody)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			// A broken upstream can echo the submitted body into a malformed status
+			// line, which the transport reports verbatim.
+			transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, fmt.Errorf("malformed HTTP status code %q", test.echo)
+			})
+			_, err := New(&http.Client{Transport: transport}, nil).login(context.Background(), &config.Config{
+				Username: username,
+				Password: password,
+			}, "https://api.example.test")
+			if err == nil {
+				t.Fatal("login() error = nil, want transport failure")
+			}
+			for _, leaked := range []string{username, password, url.QueryEscape(password), "fixture", "word@99"} {
+				if strings.Contains(err.Error(), leaked) {
+					t.Fatalf("login() error leaked submitted credential %q: %v", leaked, err)
+				}
+			}
+			if !strings.Contains(err.Error(), "malformed HTTP status code") {
+				t.Fatalf("login() error = %v, want transport diagnostic context", err)
 			}
 		})
 	}

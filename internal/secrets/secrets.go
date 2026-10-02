@@ -579,6 +579,30 @@ func SanitizeErrorWithToken(err error, token string) error {
 	return newSanitizedError(redacted, safe.classifications(), safe.network)
 }
 
+// SanitizeErrorWithCredentials scrubs an error chain after removing every
+// known representation of the caller-provided credentials, for example a
+// submitted username and password that a broken upstream echoed back. The
+// values are removed before the generic scrub so a partial assignment match
+// inside one of them cannot split it and leave a fragment visible.
+func SanitizeErrorWithCredentials(err error, credentials ...string) error {
+	if err == nil {
+		return nil
+	}
+	ordered := append([]string(nil), credentials...)
+	// Remove longer values first so a shorter credential that is a substring of
+	// a longer one cannot leave the rest of the longer value behind.
+	sort.SliceStable(ordered, func(left, right int) bool {
+		return len(ordered[left]) > len(ordered[right])
+	})
+	message := safeErrorMessage(err)
+	for _, credential := range ordered {
+		message = replaceTokenVariants(message, credential)
+	}
+	collector := classificationCollector{}
+	collector.collect(err, 0)
+	return newSanitizedError(Scrub(message), collector.classifications, collector.network)
+}
+
 func replaceTokenVariants(value, token string) string {
 	if len(strings.TrimSpace(token)) > maxTokenVariantInputSize {
 		if value == "" {

@@ -242,7 +242,7 @@ func (c *Client) login(ctx context.Context, cfg *config.Config, baseURL string) 
 	}
 	response, err := requestClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("login failed: %w", secrets.SanitizeError(err))
+		return "", fmt.Errorf("login failed: %w", sanitizeLoginError(err, cfg))
 	}
 	defer func() { _ = response.Body.Close() }() //nolint:errcheck
 	if responseErr := validateLoginResponse(response); responseErr != nil {
@@ -253,16 +253,23 @@ func (c *Client) login(ctx context.Context, cfg *config.Config, baseURL string) 
 		if errors.Is(readErr, errResponseSizeLimit) {
 			return "", fmt.Errorf("login response exceeds max size %d bytes", maxLoginResponseSize)
 		}
-		return "", fmt.Errorf("failed to read login response: %w", secrets.SanitizeError(readErr))
+		return "", fmt.Errorf("failed to read login response: %w", sanitizeLoginError(readErr, cfg))
 	}
 	var loginResponse LoginResponse
 	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&loginResponse); err != nil {
-		return "", fmt.Errorf("failed to decode login response: %w", err)
+		return "", fmt.Errorf("failed to decode login response: %w", sanitizeLoginError(err, cfg))
 	}
 	if loginResponse.Token == "" {
 		return "", errors.New("empty token in login response")
 	}
 	return loginResponse.Token, nil
+}
+
+// sanitizeLoginError scrubs an upstream login failure. A broken upstream can
+// echo the submitted body (for example in a malformed status line), so every
+// representation of the submitted username and password is removed as well.
+func sanitizeLoginError(err error, cfg *config.Config) error {
+	return secrets.SanitizeErrorWithCredentials(err, cfg.Username, cfg.Password)
 }
 
 func (c *Client) newLoginRequest(ctx context.Context, cfg *config.Config, baseURL string) (*http.Request, error) {
