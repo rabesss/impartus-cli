@@ -109,6 +109,9 @@ func (c *Client) GetAuthorizedWithToken(ctx context.Context, rawURL, token strin
 // GetAuthorizedWithTokenForOrigins performs an authenticated GET request with
 // an immutable, request-scoped exact-origin policy. The policy is rebuilt for
 // every call so concurrent clients cannot overwrite one another's allowlist.
+// A URL outside the allowlist is requested without the token; a 401 or 403
+// from it is returned as an *UnconfiguredMediaOriginError instead of a
+// response.
 func (c *Client) GetAuthorizedWithTokenForOrigins(ctx context.Context, rawURL, token string, origins ...string) (*http.Response, error) {
 	policy, err := newMediaOriginPolicy(origins...)
 	if err != nil {
@@ -149,28 +152,17 @@ func (c *Client) getAuthorizedWithToken(ctx context.Context, rawURL, token strin
 		}
 	}
 
+	bearerWithheld := false
 	if token != "" && !policy.allows(parsedURL) {
 		// A playlist or media endpoint may be public, but an unconfigured
-		// origin must never receive the Impartus bearer token. Remove only the
-		// query parameters carrying the token, so unrelated CDN signing
-		// parameters survive, then fail closed if the token is still present
-		// in any URL component (for example a path or hostname). There is no
-		// safe way to rewrite those components while preserving the requested
-		// destination.
-		strippedURL, stripErr := stripBearerQueryParams(rawURL, token)
-		if stripErr != nil {
-			return nil, stripErr
+		// origin must never receive the Impartus bearer token.
+		parsedURL, err = withholdBearerFromURL(rawURL, token)
+		if err != nil {
+			return nil, err
 		}
-		parsedStrippedURL, parseErr := parseRequestURL(strippedURL)
-		if parseErr != nil {
-			return nil, parseErr
-		}
-		if boundaryErr := validateRedirectCredentialBoundary(parsedStrippedURL, token, false); boundaryErr != nil {
-			return nil, boundaryErr
-		}
-		rawURL = parsedStrippedURL.String()
-		parsedURL = parsedStrippedURL
+		rawURL = parsedURL.String()
 		token = ""
+		bearerWithheld = true
 	}
 
 	// Every media request goes through a request-local copy of the HTTP
@@ -184,7 +176,11 @@ func (c *Client) getAuthorizedWithToken(ctx context.Context, rawURL, token strin
 	// The request client never uses this value to attach Authorization; it is
 	// only used to sanitize hook views and reject credential reintroduction.
 	requestClient := c.httpClientForMediaRequest(parsedURL, redactionToken, policy)
-	return c.doRequestWithTokenClient(ctx, http.MethodGet, rawURL, nil, token, requestClient, redactionToken)
+	resp, err := c.doRequestWithTokenClient(ctx, http.MethodGet, rawURL, nil, token, requestClient, redactionToken)
+	if err != nil || !bearerWithheld {
+		return resp, err
+	}
+	return unconfiguredOriginRefusal(resp, parsedURL)
 }
 
 // GetCourses fetches the list of courses for the authenticated user.

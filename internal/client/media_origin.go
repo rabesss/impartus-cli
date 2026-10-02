@@ -3,6 +3,7 @@ package client
 import (
 	"errors"
 	"net"
+	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
@@ -316,6 +317,42 @@ func stripBearerTokenQuery(rawURL, token string) (string, error) {
 	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
+}
+
+// withholdBearerFromURL prepares a URL on an unconfigured origin to be
+// requested without the bearer. It removes only the query parameters carrying
+// the token, so unrelated CDN signing parameters survive, then fails closed if
+// the token is still present in any URL component (for example a path or
+// hostname). There is no safe way to rewrite those components while
+// preserving the requested destination.
+func withholdBearerFromURL(rawURL, token string) (*url.URL, error) {
+	strippedURL, err := stripBearerQueryParams(rawURL, token)
+	if err != nil {
+		return nil, err
+	}
+	parsed, err := parseRequestURL(strippedURL)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateRedirectCredentialBoundary(parsed, token, false); err != nil {
+		return nil, err
+	}
+	return parsed, nil
+}
+
+// unconfiguredOriginRefusal turns a 401 or 403 to a request sent without the
+// bearer, because its origin is not in mediaOrigins, into an
+// UnconfiguredMediaOriginError so callers do not report it as a login failure.
+func unconfiguredOriginRefusal(resp *http.Response, requestURL *url.URL) (*http.Response, error) {
+	if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden {
+		return resp, nil
+	}
+	_ = resp.Body.Close() //nolint:errcheck
+	origin, err := requestOriginKey(requestURL)
+	if err != nil {
+		return nil, err
+	}
+	return nil, &UnconfiguredMediaOriginError{Origin: origin, StatusCode: resp.StatusCode}
 }
 
 // stripBearerTokenFromURL removes the query parameters carrying the bearer

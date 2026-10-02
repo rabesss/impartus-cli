@@ -145,3 +145,55 @@ func TestGetPlaylistsUnauthorizedWrapsTypedAuthenticationError(t *testing.T) {
 		secretMarker,
 	)
 }
+
+func TestMediaRefusalFromUnconfiguredOriginIsNotAuthentication(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			const bodyMarker = "refusal-body-marker"
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(status)
+				writeAuthTestResponse(t, w, bodyMarker)
+			}))
+			defer server.Close()
+
+			// No origin is configured, so the request is sent without the bearer
+			// and signing in again cannot fix the refusal.
+			apiClient := New(server.Client(), nil)
+			_, err := apiClient.getPlaylistWithPolicy(
+				context.Background(),
+				server.URL+"/cdn-path/master.m3u8?Signature=fake-signature",
+				"request-token",
+				Lecture{TTID: 42},
+				mediaOriginPolicy{},
+			)
+			assertUnconfiguredOriginRefusal(t, err, server.URL, status, "/cdn-path", "Signature", bodyMarker)
+		})
+	}
+}
+
+func assertUnconfiguredOriginRefusal(t *testing.T, err error, origin string, status int, absentMarkers ...string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("error = nil, want unconfigured media origin refusal")
+	}
+	if errors.Is(err, ErrAuthentication) {
+		t.Fatalf("error = %q, want a non-authentication error", err)
+	}
+	var originErr *UnconfiguredMediaOriginError
+	if !errors.As(err, &originErr) || !errors.Is(err, ErrUnconfiguredMediaOrigin) {
+		t.Fatalf("error = %T %q, want *UnconfiguredMediaOriginError", err, err)
+	}
+	if originErr.Origin != origin || originErr.StatusCode != status {
+		t.Fatalf("refusal metadata = (%q, %d), want (%q, %d)", originErr.Origin, originErr.StatusCode, origin, status)
+	}
+	for _, want := range []string{origin, "mediaOrigins", "IMPARTUS_MEDIA_ORIGINS", "without the login"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want it to mention %q", err, want)
+		}
+	}
+	for _, marker := range absentMarkers {
+		if strings.Contains(err.Error(), marker) {
+			t.Fatalf("error = %q, want no %q", err, marker)
+		}
+	}
+}

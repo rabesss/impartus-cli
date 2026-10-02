@@ -378,6 +378,7 @@ func TestDownloadPlaylistPreservesChunkAuthenticationFailure(t *testing.T) {
 			defer server.Close()
 
 			cfg := &config.Config{
+				BaseURL:                   server.URL,
 				Token:                     "test-token",
 				TempDirLocation:           t.TempDir(),
 				Views:                     "left",
@@ -405,6 +406,45 @@ func TestDownloadPlaylistPreservesChunkAuthenticationFailure(t *testing.T) {
 			if strings.Contains(err.Error(), "must-not-leak") || strings.Contains(err.Error(), "must-not-reach-job-summary") {
 				t.Fatalf("DownloadPlaylist authentication error leaked upstream data: %v", err)
 			}
+		})
+	}
+}
+
+func TestDownloadPlaylistReportsUnconfiguredOriginRefusal(t *testing.T) {
+	for _, enablePipeline := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pipeline=%t", enablePipeline), func(t *testing.T) {
+			key := []byte("0123456789abcdef")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/key" {
+					writeDownloadSpeedResponse(w, fakeKeyResponse(key))
+					return
+				}
+				http.Error(w, "cdn refusal", http.StatusUnauthorized)
+			}))
+			defer server.Close()
+
+			// No BaseURL or mediaOrigins entry covers the server, so its chunks
+			// are sent without the bearer.
+			cfg := &config.Config{
+				Token:                     "test-token",
+				TempDirLocation:           t.TempDir(),
+				Views:                     "left",
+				EnablePipeline:            enablePipeline,
+				DownloadWorkersPerLecture: 1,
+				DecryptWorkersPerLecture:  1,
+				RateLimit:                 100,
+				APIRateLimit:              20,
+			}
+			d := New(cfg, client.New(server.Client(), nil))
+			d.maxRetries = 1
+
+			_, err := d.DownloadPlaylist(t.Context(), client.ParsedPlaylist{
+				ID:            42,
+				SeqNo:         1,
+				KeyURL:        server.URL + "/key",
+				FirstViewURLs: []string{server.URL + "/chunk"},
+			}, nil, nil)
+			assertDownloaderOriginRefusal(t, err, server.URL)
 		})
 	}
 }

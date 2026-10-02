@@ -236,6 +236,12 @@ func (d *Downloader) handleSegment(playlist client.ParsedPlaylist, keyStore *pla
 
 		resp, err := d.client.GetAuthorizedWithTokenForOrigins(r.Context(), realURL, d.config.Token, d.mediaOrigins...)
 		if err != nil {
+			// A refusal by an origin outside mediaOrigins is not an
+			// authorization failure: the segment was sent without the login.
+			var originErr *client.UnconfiguredMediaOriginError
+			if errors.As(err, &originErr) {
+				failures.report(originErr)
+			}
 			http.Error(w, "failed to fetch upstream segment", http.StatusBadGateway)
 			return
 		}

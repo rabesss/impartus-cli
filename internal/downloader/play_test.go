@@ -428,6 +428,44 @@ func TestPlaybackStreamReportsUpstreamAuthorizationFailure(t *testing.T) {
 	}
 }
 
+func TestPlaybackStreamReportsUnconfiguredOriginRefusal(t *testing.T) {
+	key := []byte("0123456789abcdef")
+	upstream := newPlayTestUpstream(t, key, http.StatusForbidden)
+	defer upstream.Close()
+
+	// With a login but no mediaOrigins entry for the upstream, segments are
+	// sent without the bearer, so a refusal is not an authorization failure.
+	d := New(&config.Config{Views: "left", Token: "test-token"}, client.New(nil, nil))
+	stream, err := d.StartPlaybackStream(context.Background(), client.ParsedPlaylist{
+		KeyURL:        upstream.URL + "/key",
+		FirstViewURLs: []string{upstream.URL + "/segment"},
+	})
+	if err != nil {
+		t.Fatalf("StartPlaybackStream() error = %v", err)
+	}
+	defer stream.Cleanup()
+
+	segmentURL := strings.TrimSuffix(stream.URL, "master.m3u8") + "segment/left/0"
+	resp, err := http.Get(segmentURL) //nolint:noctx // test-only local request
+	if err != nil {
+		t.Fatalf("request segment: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadGateway)
+	}
+
+	select {
+	case failure := <-stream.Failures:
+		if errors.Is(failure, ErrPlaybackAuthorization) {
+			t.Fatalf("playback failure = %v, want an unconfigured origin refusal", failure)
+		}
+		assertDownloaderOriginRefusal(t, failure, upstream.URL)
+	default:
+		t.Fatal("playback stream did not report the origin refusal")
+	}
+}
+
 func TestStartPlayServerPreservesKeyFetchCancellation(t *testing.T) {
 	t.Parallel()
 
