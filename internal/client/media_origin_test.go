@@ -936,7 +936,7 @@ func TestGetAuthorizedWithTokenRejectsCredentialReintroducedInRedirectURLFields(
 	}
 }
 
-func TestTokenlessCredentialQueryIsStrippedAcrossExplicitRedirect(t *testing.T) {
+func TestTokenlessRedirectKeepsLocationQueryAcrossExplicitRedirect(t *testing.T) {
 	const credential = "query-only-secret"
 	var targetQuery string
 	var targetAuthorization string
@@ -963,12 +963,14 @@ func TestTokenlessCredentialQueryIsStrippedAcrossExplicitRedirect(t *testing.T) 
 	if resp != nil {
 		_ = resp.Body.Close() //nolint:errcheck
 	}
-	if targetQuery != "keep=1" || targetAuthorization != "" {
-		t.Fatalf("tokenless redirect target query=%q Authorization=%q, want keep=1 and no auth", targetQuery, targetAuthorization)
+	// A tokenless request has no bearer to remove, so the Location query is
+	// forwarded as net/http would forward it.
+	if targetQuery != "token="+credential+"&keep=1" || targetAuthorization != "" {
+		t.Fatalf("tokenless redirect target query=%q Authorization=%q, want the Location query and no auth", targetQuery, targetAuthorization)
 	}
 }
 
-func TestTokenlessCredentialQueryIsStrippedOnAllowlistedSameOriginRedirect(t *testing.T) {
+func TestTokenlessRedirectKeepsLocationQueryOnAllowlistedSameOriginRedirect(t *testing.T) {
 	const credential = "same-origin-query-only-secret"
 	var finalQuery string
 	var finalAuthorization string
@@ -995,12 +997,12 @@ func TestTokenlessCredentialQueryIsStrippedOnAllowlistedSameOriginRedirect(t *te
 	if resp != nil {
 		_ = resp.Body.Close() //nolint:errcheck
 	}
-	if finalQuery != "keep=1" || finalAuthorization != "" {
-		t.Fatalf("tokenless allowlisted same-origin redirect query=%q Authorization=%q, want keep=1 and no auth", finalQuery, finalAuthorization)
+	if finalQuery != "token="+credential+"&keep=1" || finalAuthorization != "" {
+		t.Fatalf("tokenless allowlisted same-origin redirect query=%q Authorization=%q, want the Location query and no auth", finalQuery, finalAuthorization)
 	}
 }
 
-func TestTokenlessCredentialQueryIsStrippedAfterSameOriginRedirectHook(t *testing.T) {
+func TestTokenlessRedirectHookCannotAddCredentialHeaders(t *testing.T) {
 	const credential = "same-origin-hook-query-only-secret"
 	var finalQuery string
 	var finalAuthorization string
@@ -1026,7 +1028,8 @@ func TestTokenlessCredentialQueryIsStrippedAfterSameOriginRedirectHook(t *testin
 		query.Set("keep", "2")
 		next.URL.RawQuery = query.Encode()
 		// These are intentionally hostile additions. The redirect boundary must
-		// keep tokenless requests credential-free after a caller hook runs.
+		// keep credential headers off tokenless requests after a caller hook
+		// runs; with no bearer, the query has nothing to remove.
 		next.Header.Set("Authorization", "Bearer "+credential)
 		next.Header.Set("Cookie", "session="+credential)
 		next.Header.Set("Referer", "https://source.example.test/?token="+credential)
@@ -1045,8 +1048,8 @@ func TestTokenlessCredentialQueryIsStrippedAfterSameOriginRedirectHook(t *testin
 	if resp != nil {
 		_ = resp.Body.Close() //nolint:errcheck
 	}
-	if finalQuery != "keep=2" || finalAuthorization != "" || finalCookie != "" || finalReferer != "" {
-		t.Fatalf("tokenless hook redirect query=%q Authorization=%q Cookie=%q Referer=%q, want keep=2 and no credentials", finalQuery, finalAuthorization, finalCookie, finalReferer)
+	if finalQuery != "keep=2&token="+credential || finalAuthorization != "" || finalCookie != "" || finalReferer != "" {
+		t.Fatalf("tokenless hook redirect query=%q Authorization=%q Cookie=%q Referer=%q, want the hook query and no credential headers", finalQuery, finalAuthorization, finalCookie, finalReferer)
 	}
 }
 
@@ -1328,6 +1331,83 @@ func TestGetAuthorizedWithTokenRetainsUnconfiguredRedirectBoundaryToken(t *testi
 	}
 	if finalQuery != "keep=1" || finalAuthorization != "" {
 		t.Fatalf("unconfigured redirect final query=%q Authorization=%q, want keep=1 and no auth", finalQuery, finalAuthorization)
+	}
+}
+
+func TestMediaRedirectKeepsSigningParametersAndRemovesOnlyTheBearer(t *testing.T) {
+	const token = "redirect-signing-bearer"
+	const signed = "Expires=1700000000&Signature=fake-signature~A&Key-Pair-Id=FAKEKEYPAIR&sig=fake-sig&key=fake-key"
+	bearerParams := "&token=" + token + "&auth=" + url.QueryEscape("Bearer "+token)
+
+	tests := []struct {
+		name       string
+		configured bool
+	}{
+		{name: "configured source to configured CDN", configured: true},
+		{name: "unconfigured CDN same-origin redirect"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var finalQuery string
+			var finalAuthorization string
+			destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/start" {
+					http.Redirect(w, r, "/segment.ts?"+signed+bearerParams+"&keep=1", http.StatusFound)
+					return
+				}
+				finalQuery = r.URL.RawQuery
+				finalAuthorization = r.Header.Get("Authorization")
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer destination.Close()
+
+			startURL := destination.URL + "/start"
+			var origins []string
+			if tt.configured {
+				source := httptest.NewServer(http.RedirectHandler(destination.URL+"/segment.ts?"+signed+bearerParams+"&keep=1", http.StatusFound))
+				defer source.Close()
+				startURL = source.URL + "/playlist.m3u8"
+				origins = []string{source.URL, destination.URL}
+			}
+
+			resp, err := New(destination.Client(), nil).GetAuthorizedWithTokenForOrigins(context.Background(), startURL, token, origins...)
+			if err != nil {
+				t.Fatalf("GetAuthorizedWithTokenForOrigins() error = %v", err)
+			}
+			if resp != nil {
+				_ = resp.Body.Close() //nolint:errcheck
+			}
+			if finalQuery != signed+"&keep=1" || finalAuthorization != "" {
+				t.Fatalf("redirect target query=%q Authorization=%q, want %q and no auth", finalQuery, finalAuthorization, signed+"&keep=1")
+			}
+		})
+	}
+}
+
+func TestMediaRedirectFailsClosedForBearerSplitAcrossQueryPairs(t *testing.T) {
+	// No single parameter carries the bearer, so nothing is stripped, but the
+	// raw Location query still does.
+	const token = "split-secret&part=two"
+	var finalRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/start" {
+			http.Redirect(w, r, "/final?x="+token+"&keep=1", http.StatusFound)
+			return
+		}
+		finalRequests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	resp, err := New(server.Client(), nil).GetAuthorizedWithTokenForOrigins(context.Background(), server.URL+"/start", token)
+	if resp != nil {
+		_ = resp.Body.Close() //nolint:errcheck
+	}
+	if err == nil || !errors.Is(err, ErrMediaOrigin) {
+		t.Fatalf("GetAuthorizedWithTokenForOrigins() error = %v, want ErrMediaOrigin", err)
+	}
+	if finalRequests != 0 {
+		t.Fatalf("redirect target requests = %d, want 0", finalRequests)
 	}
 }
 

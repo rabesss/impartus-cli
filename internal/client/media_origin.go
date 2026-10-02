@@ -318,11 +318,14 @@ func stripBearerTokenQuery(rawURL, token string) (string, error) {
 	return parsed.String(), nil
 }
 
+// stripBearerTokenFromURL removes the query parameters carrying the bearer
+// from a redirect destination in place, keeping every other parameter the
+// way net/http would forward it.
 func stripBearerTokenFromURL(rawURL *url.URL, token string) error {
 	if rawURL == nil {
 		return newMediaOriginError(ErrInvalidMediaURL)
 	}
-	stripped, err := stripBearerTokenQuery(rawURL.String(), token)
+	stripped, err := stripBearerQueryParams(rawURL.String(), token)
 	if err != nil {
 		return err
 	}

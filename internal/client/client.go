@@ -136,9 +136,8 @@ func (c *Client) getAuthorizedWithToken(ctx context.Context, rawURL, token strin
 		// A tokenless call to a configured origin must not forward a
 		// credential-bearing query alias supplied by an upstream playlist or
 		// caller. An unconfigured origin has no bearer to protect, so its URL
-		// (for example a signed CDN URL) is sent as given. Keep the media
-		// redirect wrapper enabled below so aliases introduced by a redirect
-		// are stripped either way.
+		// (for example a signed CDN URL) is sent as given. The media redirect
+		// wrapper below still removes credential headers across origins.
 		strippedURL, stripErr := stripBearerTokenQuery(rawURL, "")
 		if stripErr != nil {
 			return nil, stripErr
@@ -166,13 +165,8 @@ func (c *Client) getAuthorizedWithToken(ctx context.Context, rawURL, token strin
 		if parseErr != nil {
 			return nil, parseErr
 		}
-		if boundaryErr := validateRedirectCredentialBoundary(parsedStrippedURL, token, true); boundaryErr != nil {
+		if boundaryErr := validateRedirectCredentialBoundary(parsedStrippedURL, token, false); boundaryErr != nil {
 			return nil, boundaryErr
-		}
-		// Check the remaining query for the bearer alone: the generic
-		// credential scrub would also match the signing parameters kept above.
-		if queryCarriesBearer(parsedStrippedURL.RawQuery, token) {
-			return nil, newMediaOriginError(ErrMediaOrigin)
 		}
 		rawURL = parsedStrippedURL.String()
 		parsedURL = parsedStrippedURL

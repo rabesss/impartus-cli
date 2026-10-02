@@ -103,13 +103,13 @@ func (c *Client) handleMediaRedirect(initialURL *url.URL, redactionToken string,
 		return err
 	}
 
-	// Strip credential query aliases before invoking a caller-supplied hook,
-	// so the hook cannot accidentally log or persist them. Tokenless requests
-	// must strip aliases even when their initial origin is explicitly
-	// allowlisted: an allowlist authorizes the destination, not credentials
-	// supplied by an upstream redirect. A configured, token-bearing request may
-	// retain its query form on same-origin redirects because the upstream may
-	// require it in addition to the Authorization header.
+	// Strip the bearer from the query before invoking a caller-supplied hook,
+	// which additionally only sees a sanitized view. Only parameters carrying
+	// the bearer are removed: unrelated parameters such as CDN signing
+	// parameters on the Location are kept, as net/http would. A configured,
+	// token-bearing request may retain its query form on same-origin
+	// redirects because the upstream may require it in addition to the
+	// Authorization header.
 	initialAuthorized := policy.allows(initialURL)
 	sameOrigin := sameMediaOrigin(initialURL, next.URL)
 	stripRedirectCredentials := redactionToken == "" || !initialAuthorized || !sameOrigin
@@ -160,7 +160,11 @@ func removeMediaRedirectHeaders(header http.Header, removeAuth bool) {
 	}
 }
 
-func validateRedirectCredentialBoundary(rawURL *url.URL, token string, allowQuery bool) error {
+// validateRedirectCredentialBoundary rejects a URL carrying the bearer outside
+// its query, or in its query unless allowBearerQuery is set. The query is
+// checked for the bearer alone: the generic credential scrub would also match
+// unrelated parameters such as CDN signing parameters.
+func validateRedirectCredentialBoundary(rawURL *url.URL, token string, allowBearerQuery bool) error {
 	if rawURL == nil {
 		return newMediaOriginError(ErrInvalidMediaURL)
 	}
@@ -176,13 +180,13 @@ func validateRedirectCredentialBoundary(rawURL *url.URL, token string, allowQuer
 	if rawURL.User != nil {
 		parts = append(parts, rawURL.User.String())
 	}
-	if !allowQuery {
-		parts = append(parts, rawURL.RawQuery)
-	}
 	for _, part := range parts {
 		if containsTokenRepresentation(part, token) {
 			return newMediaOriginError(ErrMediaOrigin)
 		}
+	}
+	if !allowBearerQuery && queryCarriesBearer(rawURL.RawQuery, token) {
+		return newMediaOriginError(ErrMediaOrigin)
 	}
 	return nil
 }
@@ -190,13 +194,13 @@ func validateRedirectCredentialBoundary(rawURL *url.URL, token string, allowQuer
 // validateRedirectRequestCredentialBoundary extends the URL credential
 // boundary to request fields that are not represented by URL: Host controls
 // the outgoing Host header and RequestURI can be inspected by a custom
-// RoundTripper even when URL itself is clean. Query credentials remain
-// allowed only for an explicitly configured same-origin request.
-func validateRedirectRequestCredentialBoundary(request *http.Request, token string, allowQuery bool) error {
+// RoundTripper even when URL itself is clean. The bearer remains allowed in
+// the query only for an explicitly configured same-origin request.
+func validateRedirectRequestCredentialBoundary(request *http.Request, token string, allowBearerQuery bool) error {
 	if request == nil {
 		return newMediaOriginError(ErrInvalidMediaURL)
 	}
-	if err := validateRedirectCredentialBoundary(request.URL, token, allowQuery); err != nil {
+	if err := validateRedirectCredentialBoundary(request.URL, token, allowBearerQuery); err != nil {
 		return err
 	}
 	if err := validateRedirectRequestHost(request, token); err != nil {
@@ -212,7 +216,7 @@ func validateRedirectRequestCredentialBoundary(request *http.Request, token stri
 		}
 		return nil
 	}
-	return validateRedirectCredentialBoundary(requestURI, token, allowQuery)
+	return validateRedirectCredentialBoundary(requestURI, token, allowBearerQuery)
 }
 
 func containsTokenRepresentation(value, token string) bool {
