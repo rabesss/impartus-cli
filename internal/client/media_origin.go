@@ -250,6 +250,39 @@ func queryCredentialContainsBearer(value, token string) bool {
 	return false
 }
 
+// queryCarriesBearer reports whether a raw query component carries the
+// bearer in any known representation. Unrelated credential-named parameters
+// (for example a CDN Signature or sig) do not count.
+func queryCarriesBearer(rawQuery, token string) bool {
+	return queryCredentialContainsBearer(rawQuery, token) || secrets.ContainsToken(rawQuery, token)
+}
+
+// stripBearerQueryParams removes only the query parameters that carry the
+// bearer. Every other parameter, including CDN signing parameters, keeps its
+// original order and encoding, since a signature may cover the exact bytes.
+// Malformed queries fail closed.
+func stripBearerQueryParams(rawURL, token string) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", newMediaOriginError(ErrInvalidMediaURL)
+	}
+	if _, err := url.ParseQuery(parsed.RawQuery); err != nil {
+		return "", newMediaOriginError(ErrInvalidMediaURL)
+	}
+	params := strings.Split(parsed.RawQuery, "&")
+	kept := params[:0]
+	for _, param := range params {
+		if !queryCarriesBearer(param, token) {
+			kept = append(kept, param)
+		}
+	}
+	if len(kept) == len(params) {
+		return rawURL, nil
+	}
+	parsed.RawQuery = strings.Join(kept, "&")
+	return parsed.String(), nil
+}
+
 // stripBearerTokenQuery removes known credential query aliases and any other
 // query value carrying the actual bearer. ParseQuery is used instead of
 // URL.Query so malformed escapes fail closed rather than being silently

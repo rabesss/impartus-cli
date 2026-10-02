@@ -132,11 +132,13 @@ func (c *Client) getAuthorizedWithToken(ctx context.Context, rawURL, token strin
 		return nil, validateErr
 	}
 
-	if token == "" && hasCredentialQuery(parsedURL) {
-		// A tokenless call must not forward a credential-bearing query alias
-		// supplied by an upstream playlist or caller. Keep the media redirect
-		// wrapper enabled below so aliases introduced by a redirect are stripped
-		// too.
+	if token == "" && policy.allows(parsedURL) && hasCredentialQuery(parsedURL) {
+		// A tokenless call to a configured origin must not forward a
+		// credential-bearing query alias supplied by an upstream playlist or
+		// caller. An unconfigured origin has no bearer to protect, so its URL
+		// (for example a signed CDN URL) is sent as given. Keep the media
+		// redirect wrapper enabled below so aliases introduced by a redirect
+		// are stripped either way.
 		strippedURL, stripErr := stripBearerTokenQuery(rawURL, "")
 		if stripErr != nil {
 			return nil, stripErr
@@ -150,12 +152,13 @@ func (c *Client) getAuthorizedWithToken(ctx context.Context, rawURL, token strin
 
 	if token != "" && !policy.allows(parsedURL) {
 		// A playlist or media endpoint may be public, but an unconfigured
-		// origin must never receive the Impartus bearer token. Remove known
-		// and token-bearing query aliases, then fail closed if the token is
-		// still present in any other URL component (for example a path or
-		// hostname). There is no safe way to rewrite those components while
-		// preserving the requested destination.
-		strippedURL, stripErr := stripBearerTokenQuery(rawURL, token)
+		// origin must never receive the Impartus bearer token. Remove only the
+		// query parameters carrying the token, so unrelated CDN signing
+		// parameters survive, then fail closed if the token is still present
+		// in any URL component (for example a path or hostname). There is no
+		// safe way to rewrite those components while preserving the requested
+		// destination.
+		strippedURL, stripErr := stripBearerQueryParams(rawURL, token)
 		if stripErr != nil {
 			return nil, stripErr
 		}
@@ -163,8 +166,13 @@ func (c *Client) getAuthorizedWithToken(ctx context.Context, rawURL, token strin
 		if parseErr != nil {
 			return nil, parseErr
 		}
-		if boundaryErr := validateRedirectCredentialBoundary(parsedStrippedURL, token, false); boundaryErr != nil {
+		if boundaryErr := validateRedirectCredentialBoundary(parsedStrippedURL, token, true); boundaryErr != nil {
 			return nil, boundaryErr
+		}
+		// Check the remaining query for the bearer alone: the generic
+		// credential scrub would also match the signing parameters kept above.
+		if queryCarriesBearer(parsedStrippedURL.RawQuery, token) {
+			return nil, newMediaOriginError(ErrMediaOrigin)
 		}
 		rawURL = parsedStrippedURL.String()
 		parsedURL = parsedStrippedURL

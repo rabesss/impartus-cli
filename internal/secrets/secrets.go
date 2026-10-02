@@ -560,6 +560,17 @@ func RedactWithToken(value, token string) string {
 	return replaceTokenVariants(Scrub(value), token)
 }
 
+// ContainsToken reports whether value carries any representation of token
+// that RedactWithToken would remove. Unlike RedactWithToken it ignores other
+// credential-shaped text, so request policy can tell the caller's own token
+// apart from unrelated parameters such as a CDN signature.
+func ContainsToken(value, token string) bool {
+	if value == "" || strings.TrimSpace(token) == "" {
+		return false
+	}
+	return replaceTokenVariants(value, token) != value
+}
+
 // SanitizeErrorWithToken scrubs an error chain and then removes every known
 // representation of token from its presentation. If token material was found,
 // the returned error is intentionally opaque and does not unwrap to the leak.

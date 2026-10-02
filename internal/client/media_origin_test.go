@@ -191,7 +191,7 @@ func TestGetAuthorizedWithTokenStripsTokenlessInitialCredentialAliases(t *testin
 			transport := &mediaOriginCaptureTransport{}
 			c := New(&http.Client{Transport: transport}, nil)
 			rawURL := "https://media.example.test/segment.ts?" + key + "=Bearer+query-only-secret&keep=1"
-			resp, err := c.GetAuthorizedWithTokenForOrigins(context.Background(), rawURL, "")
+			resp, err := c.GetAuthorizedWithTokenForOrigins(context.Background(), rawURL, "", "https://media.example.test")
 			if err != nil {
 				t.Fatalf("GetAuthorizedWithTokenForOrigins() error = %v", err)
 			}
@@ -397,6 +397,63 @@ func TestGetAuthorizedWithTokenFailsClosedForAmbiguousBearerQueryCredential(t *t
 	}
 	if got := transport.request.URL.RawQuery; got != "" {
 		t.Fatalf("query = %q, want ambiguous credential removed", got)
+	}
+}
+
+func TestGetAuthorizedWithTokenKeepsCDNSigningQueryOnUnconfiguredOrigin(t *testing.T) {
+	// Signed CDN URLs carry their own signing parameters, some of which share
+	// names with credential aliases. Only a parameter carrying the bearer may
+	// be removed; the rest must reach the CDN exactly as the playlist sent it.
+	const signing = "Expires=1700000000&Signature=fake-cdn-signature~A_b-&Key-Pair-Id=FAKEKEYPAIR&sig=fake-sig&key=fake-key&Policy=fake%2fpolicy"
+	for _, tc := range []struct {
+		name  string
+		token string
+		query string
+	}{
+		{name: "bearer query", token: "bearer-secret", query: signing + "&token=bearer-secret&keep=1"},
+		{name: "encoded bearer", token: "bearer-secret", query: signing + "&auth=Bearer%2Bbearer-secret&keep=1"},
+		{name: "json escaped bearer", token: "bearer-secret", query: signing + "&x=%5Cu0062earer-secret&keep=1"},
+		{name: "tokenless", token: "", query: signing + "&keep=1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			transport := &mediaOriginCaptureTransport{}
+			c := New(&http.Client{Transport: transport}, nil)
+			rawURL := "https://media.example.test/segment.ts?" + tc.query
+			resp, err := c.GetAuthorizedWithTokenForOrigins(context.Background(), rawURL, tc.token, "https://api.example.test")
+			if err != nil {
+				t.Fatalf("GetAuthorizedWithTokenForOrigins() error = %v", err)
+			}
+			if resp != nil {
+				_ = resp.Body.Close() //nolint:errcheck
+			}
+			if transport.request == nil {
+				t.Fatal("request was not sent")
+			}
+			if got := transport.request.Header.Get("Authorization"); got != "" {
+				t.Fatalf("Authorization = %q, want no bearer token", got)
+			}
+			if got, want := transport.request.URL.RawQuery, signing+"&keep=1"; got != want {
+				t.Fatalf("request query = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestGetAuthorizedWithTokenFailsClosedForBearerSplitAcrossQueryPairs(t *testing.T) {
+	// No single parameter carries the bearer, but the raw query still does.
+	const token = "split-secret&part=two"
+	transport := &mediaOriginCaptureTransport{}
+	c := New(&http.Client{Transport: transport}, nil)
+	rawURL := "https://media.example.test/segment.ts?x=" + token + "&keep=1"
+	resp, err := c.GetAuthorizedWithTokenForOrigins(context.Background(), rawURL, token)
+	if resp != nil {
+		_ = resp.Body.Close() //nolint:errcheck
+	}
+	if err == nil || !errors.Is(err, ErrMediaOrigin) {
+		t.Fatalf("GetAuthorizedWithTokenForOrigins() error = %v, want ErrMediaOrigin", err)
+	}
+	if transport.request != nil {
+		t.Fatal("unconfigured URL carrying the bearer was sent")
 	}
 }
 
