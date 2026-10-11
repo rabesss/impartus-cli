@@ -149,7 +149,7 @@ class MeasurementTests(unittest.TestCase):
                             raise RuntimeError("incorrect plaintext")
                         Path(env["IMPARTUS_PERF_DOWNLOAD_REPORT"]).write_text(json.dumps(runner.DOWNLOAD))
                         return go_output()
-                    if args[:2] == ["bun", "run"]:
+                    if args == ["bun", "./scripts/benchmark.ts"]:
                         value=ui_output()
                         if broken=="candidate-nondeterminism" and Path(cwd).parent.name=="candidate":
                             frame+=1

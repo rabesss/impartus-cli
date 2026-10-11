@@ -316,7 +316,7 @@ def run(args):
                         raw = command(["go", "test", "./internal/downloader", "-run", "^TestPerformanceDownloadWork$", "-bench", "^BenchmarkPerformanceDecrypt$", "-benchtime=10x", "-count=1", "-benchmem", "-timeout=30s"], tree, measured_env)
                         decrypt = parse_go(raw)
                         download = validate_download(strict_json(download_path.read_text()))
-                        ui = validate_ui(strict_json(command(["bun", "run", "scripts/benchmark.ts"], tree / "ui", env, 60)))
+                        ui = validate_ui(strict_json(command(["bun", "./scripts/benchmark.ts"], tree / "ui", env, 60)))
                         report["samples"][role].append({"decryption": decrypt, "download": download, "ui": ui})
                     except (ValueError, RuntimeError, OSError) as exc:
                         report["errors"].append(f"{role} sample {repetition + 1}: {exc}")

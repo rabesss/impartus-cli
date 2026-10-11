@@ -48,6 +48,8 @@ The Go measurement builds only the trusted test fixture: other downloader
 `TestMain` or test `init` functions cannot replace its entrypoint. Production
 code remains unchanged in the snapshots. This is measurement isolation, not a
 hostile-code sandbox; production `init` functions still require ordinary review.
+The UI benchmark is invoked as a file (`bun ./scripts/benchmark.ts`), so a
+same-named candidate package script cannot replace its navigation oracles.
 
 In CI, the established driver, fixtures and budgets come from the exact base commit.
 Candidate changes to those files are reported, and do not raise the active

@@ -27,7 +27,16 @@ jobs:
         with:
           python-version: '3.14.6'
       - name: Check measurement validators
-        run: python3 -m unittest discover -s scripts/performance -p 'test_*.py'
+        run: |
+          python3 - <<'PY'
+          import sys
+          import unittest
+          suite = unittest.defaultTestLoader.discover('scripts/performance', 'test_*.py')
+          if not suite.countTestCases():
+              raise SystemExit('No measurement validator tests were discovered')
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          sys.exit(0 if result.wasSuccessful() else 1)
+          PY
 
   regression:
     name: Performance regression
