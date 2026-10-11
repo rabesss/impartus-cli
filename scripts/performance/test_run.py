@@ -133,7 +133,7 @@ class MeasurementTests(unittest.TestCase):
                 destination = target / path
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(json.dumps(policy) if path == runner.CORE[1] else "fixture")
-        for broken in ("candidate", "base", "candidate-nondeterminism"):
+        for broken in ("candidate", "base", "candidate-nondeterminism", "candidate-install", "base-install"):
             with tempfile.TemporaryDirectory() as directory:
                 frame=0
                 def fake_command(args, cwd, env, timeout=300):
@@ -142,6 +142,8 @@ class MeasurementTests(unittest.TestCase):
                         return "go version go1.26.5 linux/amd64"
                     if args == ["bun", "--version"]:
                         return "1.3.14"
+                    if args[:2] == ["bun", "install"] and broken == Path(cwd).parent.name + "-install":
+                        raise RuntimeError("incorrect lockfile")
                     if args[:2] == ["go", "test"]:
                         if Path(cwd).name == broken:
                             raise RuntimeError("incorrect plaintext")
@@ -159,7 +161,7 @@ class MeasurementTests(unittest.TestCase):
                 with patch.object(runner, "resolve", side_effect=lambda source, sha, env: sha), patch.object(runner, "archive", side_effect=fake_archive), patch.object(runner, "command", side_effect=fake_command), patch.object(runner.platform, "system", return_value="Linux"), patch.object(runner.platform, "machine", return_value="x86_64"), patch("builtins.print"):
                     code = runner.run(args)
                 report = json.loads((args.output/"results.json").read_text())
-                self.assertEqual((code, report["status"]), (2, "unavailable") if broken == "base" else (1, "failed"))
+                self.assertEqual((code, report["status"]), (2, "unavailable") if broken.startswith("base") else (1, "failed"))
 
 
 if __name__ == "__main__":

@@ -297,10 +297,18 @@ def run(args):
             report["harnessDigests"] = {path: hashlib.sha256((trusted / path).read_bytes()).hexdigest() for path in HARNESS}
             report["harnessChanges"] = [path for path in HARNESS if not (trees["candidate"] / path).is_file() or (trees["candidate"] / path).read_bytes() != (trusted / path).read_bytes()]
             report["excludedGoTests"] = {role: overlay_harness(trusted, tree) for role, tree in trees.items()}
-            for tree in trees.values():
-                command(["bun", "install", "--frozen-lockfile", "--ignore-scripts"], tree / "ui", env, 180)
+            installed = {}
+            for role, tree in trees.items():
+                try:
+                    command(["bun", "install", "--frozen-lockfile", "--ignore-scripts"], tree / "ui", env, 180)
+                    installed[role] = True
+                except (ValueError, RuntimeError, OSError) as exc:
+                    installed[role] = False
+                    report["errors"].append(f"{role} dependency setup: {exc}")
             for repetition in range(3):
                 for role in (("base", "candidate") if repetition % 2 == 0 else ("candidate", "base")):
+                    if not installed[role]:
+                        continue
                     tree = trees[role]
                     download_path = root / f"{role}-{repetition}-download.json"
                     measured_env = dict(env, IMPARTUS_PERF_DOWNLOAD_REPORT=str(download_path))

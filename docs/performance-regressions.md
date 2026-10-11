@@ -79,6 +79,8 @@ python3 scripts/performance/run.py \
 Results are `results.json` and `summary.md`. The workflow uploads them as an
 artifact and appends the summary to its job page. It has read-only repository
 permissions, provides no secrets to measured code, and posts no PR comments.
+Candidate validator tests run in a separate job, so they cannot alter the
+measurement runner's toolchain, driver or results before the trusted check.
 Temporary snapshots and dependencies are removed by the local runner. Use an
 isolated reviewed checkout for local candidate execution: the harness is not
 a sandbox for hostile source code.
