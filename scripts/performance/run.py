@@ -123,8 +123,22 @@ def command(args, cwd, env, timeout=300):
     try:
         out, err = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        out, err = proc.communicate()
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            out, err = proc.communicate(timeout=1)
+        except subprocess.TimeoutExpired as drain:
+            # A detached child may retain the pipes after its parent was killed.
+            out, err = drain.output or "", drain.stderr or ""
+            proc.stdout.close()
+            proc.stderr.close()
+            proc.wait(timeout=1)
+        if isinstance(out, bytes):
+            out = out.decode(errors="replace")
+        if isinstance(err, bytes):
+            err = err.decode(errors="replace")
         raise RuntimeError(f"command timed out: {args[0]}\n{(out + err)[-4000:]}") from None
     if proc.returncode:
         raise RuntimeError(f"command failed ({proc.returncode}): {args[0]}\n{(out + err)[-4000:]}")
@@ -271,6 +285,10 @@ def run(args):
                     except (ValueError, RuntimeError, OSError) as exc:
                         report["errors"].append(f"{role} sample {repetition + 1}: {exc}")
             if report["errors"]:
+                if len(report["samples"]["base"]) == 3:
+                    report["status"] = "failed"
+                    report["candidateCheckFailures"] = list(report["errors"])
+                    exit_code = 1
                 raise ValueError("measurement incomplete; no comparative verdict")
             fingerprints = {role: {tuple(sample["ui"][label]["finalFrameSha256"] for label in UI_CASES) for sample in report["samples"][role]} for role in trees}
             if any(len(values) != 1 for values in fingerprints.values()):

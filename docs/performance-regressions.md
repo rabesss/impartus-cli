@@ -48,8 +48,10 @@ Candidate changes to those files are reported, and do not raise the active
 ceilings. The introduction PR uses an explicitly labeled bootstrap harness
 from the candidate for both sources only when none of the three newly added
 core files exists in the baseline. Partial harnesses, unavailable source refs,
-incomplete measurements and malformed results fail availability (exit 2).
-Measured candidate budget violations exit 1; a complete passing run exits 0.
+incomplete baselines and malformed configuration fail availability (exit 2).
+With a complete baseline, failing candidate work checks are explicitly failed
+(exit 1), with partial observations preserved and no comparative claim.
+Measured candidate budget violations also exit 1; a complete passing run exits 0.
 
 Change budgets deliberately in a calibration PR: keep the existing scenarios
 passing, record actual observations on the pinned runner, explain the new

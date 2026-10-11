@@ -90,7 +90,9 @@ func TestPerformanceDownloadWork(t *testing.T) {
 			for i := len(key) - 1; i >= 0; i-- {
 				response = append(response, key[i])
 			}
-			_, _ = w.Write(response)
+			if _, writeErr := w.Write(response); writeErr != nil {
+				return
+			}
 			return
 		}
 		data, ok := encrypted[r.URL.Path]
@@ -116,8 +118,11 @@ func TestPerformanceDownloadWork(t *testing.T) {
 			http.Error(w, "fixture requires three concurrent requests", http.StatusGatewayTimeout)
 			return
 		}
-		written, _ := w.Write(data)
+		written, writeErr := w.Write(data)
 		servedBytes.Add(int64(written))
+		if writeErr != nil {
+			return
+		}
 	}))
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -141,10 +146,10 @@ func TestPerformanceDownloadWork(t *testing.T) {
 			t.Fatalf("view %d: got %d chunks, want %d", view, len(paths), perView)
 		}
 		for index, path := range paths {
-			data, err := os.ReadFile(path)
+			data, readErr := os.ReadFile(path)
 			name := []string{"first", "second"}[view]
-			if err != nil || !bytes.Equal(data, plaintext[fmt.Sprintf("/%s/%d", name, index)]) {
-				t.Fatalf("view %d chunk %d changed or reordered plaintext: %v", view, index, err)
+			if readErr != nil || !bytes.Equal(data, plaintext[fmt.Sprintf("/%s/%d", name, index)]) {
+				t.Fatalf("view %d chunk %d changed or reordered plaintext: %v", view, index, readErr)
 			}
 			all = append(all, data...)
 		}

@@ -60,10 +60,15 @@ async function benchmarkCase(label: string, width: number, height: number, initi
       const frameStarted = performance.now()
       setup.mockInput.pressArrow("down")
       await setup.renderOnce()
+      const frameMilliseconds = performance.now() - frameStarted
       if (state.collections.courses.selected !== iteration + 1) {
         throw new Error(`Input ${iteration + 1} did not advance the selected course`)
       }
-      frameDurations.push(performance.now() - frameStarted)
+      const expectedCourse = `> Course ${String(iteration + 2).padStart(4, "0")}`
+      if (!setup.captureCharFrame().includes(expectedCourse)) {
+        throw new Error(`Input ${iteration + 1} did not render the selected course`)
+      }
+      frameDurations.push(frameMilliseconds)
     }
     frameDurations.sort((left, right) => left - right)
     const finalFrame = setup.captureCharFrame()
