@@ -73,9 +73,33 @@ class MeasurementTests(unittest.TestCase):
     def test_policy_rejects_invalid_versions_and_limits(self):
         policy = json.loads(Path(__file__).with_name("budgets.json").read_text())
         runner.validate_policy(policy)
-        for key, value in {"schemaVersion": True, "goVersion": "1.26.5\nextra=1", "decryptionBytesPerOperationMax": 0}.items():
+        for key, value in {"schemaVersion": True, "goVersion": "1.26.5\nextra=1", "decryptionBytesPerOperationMax": 10**400}.items():
             with self.subTest(key=key), self.assertRaises(ValueError):
                 runner.validate_policy(dict(policy, **{key: value}))
+
+    def test_only_trusted_go_test_entrypoint_is_retained(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trusted, tree = Path(directory)/"trusted", Path(directory)/"candidate"
+            for path in [runner.CORE[2], runner.HARNESS[3]]:
+                p=trusted/path; p.parent.mkdir(parents=True, exist_ok=True); p.write_text("trusted fixture")
+            target=tree/"internal/downloader"; target.mkdir(parents=True)
+            (target/"forged_main_test.go").write_text("TestMain")
+            (target/"test_init_test.go").write_text("init")
+            (target/"production.go").write_text("production unchanged")
+            (target/"performance_benchmark_test.go").symlink_to("production.go")
+            removed=runner.overlay_harness(trusted,tree)
+            self.assertEqual(removed,["forged_main_test.go","test_init_test.go"])
+            self.assertEqual((target/"production.go").read_text(),"production unchanged")
+            self.assertEqual((target/"performance_benchmark_test.go").read_text(),"trusted fixture")
+            self.assertEqual([p.name for p in target.glob("*_test.go")],["performance_benchmark_test.go"])
+
+    def test_harness_parent_symlink_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trusted,tree,other=Path(directory)/"trusted",Path(directory)/"tree",Path(directory)/"other"
+            (tree/"internal").mkdir(parents=True);other.mkdir()
+            (tree/"internal/downloader").symlink_to(other,target_is_directory=True)
+            with self.assertRaisesRegex(ValueError,"directories"):
+                runner.overlay_harness(trusted,tree)
 
     def test_command_timeout_is_bounded(self):
         with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(RuntimeError, "timed out"):
@@ -109,9 +133,11 @@ class MeasurementTests(unittest.TestCase):
                 destination = target / path
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(json.dumps(policy) if path == runner.CORE[1] else "fixture")
-        for broken in ("candidate", "base"):
+        for broken in ("candidate", "base", "candidate-nondeterminism"):
             with tempfile.TemporaryDirectory() as directory:
+                frame=0
                 def fake_command(args, cwd, env, timeout=300):
+                    nonlocal frame
                     if args == ["go", "version"]:
                         return "go version go1.26.5 linux/amd64"
                     if args == ["bun", "--version"]:
@@ -122,14 +148,18 @@ class MeasurementTests(unittest.TestCase):
                         Path(env["IMPARTUS_PERF_DOWNLOAD_REPORT"]).write_text(json.dumps(runner.DOWNLOAD))
                         return go_output()
                     if args[:2] == ["bun", "run"]:
-                        return json.dumps(ui_output())
+                        value=ui_output()
+                        if broken=="candidate-nondeterminism" and Path(cwd).parent.name=="candidate":
+                            frame+=1
+                            value["results"][0]["finalFrameSha256"]=str(frame).zfill(64)
+                        return json.dumps(value)
                     return ""
                 args = SimpleNamespace(source=Path(directory), base="1"*40, candidate="2"*40,
                                        requested_head=None, output=Path(directory)/"results", summary=None)
                 with patch.object(runner, "resolve", side_effect=lambda source, sha, env: sha), patch.object(runner, "archive", side_effect=fake_archive), patch.object(runner, "command", side_effect=fake_command), patch.object(runner.platform, "system", return_value="Linux"), patch.object(runner.platform, "machine", return_value="x86_64"), patch("builtins.print"):
                     code = runner.run(args)
                 report = json.loads((args.output/"results.json").read_text())
-                self.assertEqual((code, report["status"]), (1, "failed") if broken == "candidate" else (2, "unavailable"))
+                self.assertEqual((code, report["status"]), (2, "unavailable") if broken == "base" else (1, "failed"))
 
 
 if __name__ == "__main__":

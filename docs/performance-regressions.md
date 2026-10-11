@@ -43,7 +43,13 @@ commit; the tested candidate is the checked-out merge commit, labeled separately
 from the requested PR head. Main pushes use the prior commit; manual runs use
 the checked-out commit's first parent.
 
-The established driver, fixtures and budgets come from the exact base commit.
+The Go measurement builds only the trusted test fixture: other downloader
+`*_test.go` files are removed from both disposable snapshots so candidate
+`TestMain` or test `init` functions cannot replace its entrypoint. Production
+code remains unchanged in the snapshots. This is measurement isolation, not a
+hostile-code sandbox; production `init` functions still require ordinary review.
+
+In CI, the established driver, fixtures and budgets come from the exact base commit.
 Candidate changes to those files are reported, and do not raise the active
 ceilings. The introduction PR uses an explicitly labeled bootstrap harness
 from the candidate for both sources only when none of the three newly added
@@ -76,3 +82,6 @@ permissions, provides no secrets to measured code, and posts no PR comments.
 Temporary snapshots and dependencies are removed by the local runner. Use an
 isolated reviewed checkout for local candidate execution: the harness is not
 a sandbox for hostile source code.
+The local command executes that reviewed checkout's driver, while selecting
+base fixtures and policy. Results record the actual executed driver digest
+separately from the selected harness digests.

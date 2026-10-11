@@ -43,7 +43,13 @@ def strict_json(text):
 
 
 def number(value, label, integer=False):
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"invalid metric: {label}")
+    try:
+        finite = math.isfinite(value)
+    except OverflowError:
+        finite = False
+    if not finite or value < 0:
         raise ValueError(f"invalid metric: {label}")
     if integer and int(value) != value:
         raise ValueError(f"noninteger metric: {label}")
@@ -169,6 +175,29 @@ def harness_mode(present):
     raise ValueError("partial baseline harness; bootstrap is not allowed")
 
 
+def overlay_harness(trusted, tree):
+    for path in (CORE[2], HARNESS[3]):
+        destination = tree / path
+        for parent in destination.parents:
+            if parent == tree:
+                break
+            if parent.is_symlink():
+                raise ValueError("harness directories must not be symlinks")
+        data = (trusted / path).read_bytes()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.is_symlink():
+            destination.unlink()
+        destination.write_bytes(data)
+    # TestMain and test init functions can replace the Go test entrypoint.
+    # The trusted fixture is self-contained; candidate-owned tests are excluded.
+    removed = []
+    for path in sorted((tree / "internal/downloader").glob("*_test.go")):
+        if path.name != Path(CORE[2]).name:
+            path.unlink()
+            removed.append(path.name)
+    return removed
+
+
 def validate_policy(policy):
     keys = {"schemaVersion", "scenario", "goVersion", "bunVersion", "decryptionBytesPerOperationMax", "decryptionAllocationsPerOperationMax"}
     if not isinstance(policy, dict) or set(policy) != keys:
@@ -240,6 +269,7 @@ def run(args):
     output.mkdir(parents=True, exist_ok=True)
     env = clean_environment()
     report = {"schemaVersion": 1, "scenario": "impartus-performance-v1", "status": "unavailable", "samples": {"base": [], "candidate": []}, "errors": []}
+    report["executedDriverSha256"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     exit_code = 2
     try:
         report["base"] = resolve(source, args.base, env)
@@ -265,11 +295,9 @@ def run(args):
                 raise ValueError("this policy requires pinned Bun on Linux amd64")
             report["policy"] = policy
             report["harnessDigests"] = {path: hashlib.sha256((trusted / path).read_bytes()).hexdigest() for path in HARNESS}
-            report["harnessChanges"] = [path for path in HARNESS if (trees["candidate"] / path).read_bytes() != (trusted / path).read_bytes()]
+            report["harnessChanges"] = [path for path in HARNESS if not (trees["candidate"] / path).is_file() or (trees["candidate"] / path).read_bytes() != (trusted / path).read_bytes()]
+            report["excludedGoTests"] = {role: overlay_harness(trusted, tree) for role, tree in trees.items()}
             for tree in trees.values():
-                for path in (CORE[2], HARNESS[3]):
-                    (tree / path).parent.mkdir(parents=True, exist_ok=True)
-                    (tree / path).write_bytes((trusted / path).read_bytes())
                 command(["bun", "install", "--frozen-lockfile", "--ignore-scripts"], tree / "ui", env, 180)
             for repetition in range(3):
                 for role in (("base", "candidate") if repetition % 2 == 0 else ("candidate", "base")):
@@ -291,8 +319,15 @@ def run(args):
                     exit_code = 1
                 raise ValueError("measurement incomplete; no comparative verdict")
             fingerprints = {role: {tuple(sample["ui"][label]["finalFrameSha256"] for label in UI_CASES) for sample in report["samples"][role]} for role in trees}
-            if any(len(values) != 1 for values in fingerprints.values()):
-                raise ValueError("UI output is nondeterministic within one source")
+            if len(fingerprints["base"]) != 1:
+                report["frameComparison"] = False
+                raise ValueError("baseline UI output is nondeterministic")
+            if len(fingerprints["candidate"]) != 1:
+                report["status"] = "failed"
+                report["frameComparison"] = False
+                report["candidateCheckFailures"] = ["candidate UI output is nondeterministic"]
+                exit_code = 1
+                raise ValueError("candidate UI output is nondeterministic")
             report["frameComparison"] = fingerprints["base"] == fingerprints["candidate"]
             report["violations"] = budget_violations(report["samples"]["candidate"], policy)
             report["status"] = "failed" if report["violations"] else "passed"
