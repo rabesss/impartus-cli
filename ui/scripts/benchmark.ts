@@ -27,10 +27,10 @@ const results = []
 results.push(await benchmarkCase("compact-catalog", 60, 20, baseline, "compact"))
 results.push(await benchmarkCase("medium-catalog", 80, 24, baseline, "medium"))
 results.push(await benchmarkCase("wide-catalog", 140, 32, baseline, "wide"))
-results.push(await benchmarkCase("wide-activity", 140, 32, activity, "wide"))
+results.push(await benchmarkCase("wide-activity", 140, 32, activity, "wide", "download running 42%"))
 process.stdout.write(JSON.stringify({ courseCount, iterations, results }) + "\n")
 
-async function benchmarkCase(label: string, width: number, height: number, initial: FoundationState, expectedMode: LayoutMode) {
+async function benchmarkCase(label: string, width: number, height: number, initial: FoundationState, expectedMode: LayoutMode, expectedText?: string) {
   const layoutMode = calculateLayout(width, height, false).mode
   if (layoutMode !== expectedMode) {
     throw new Error(`${label} layout is ${layoutMode}, want ${expectedMode}`)
@@ -79,6 +79,9 @@ async function benchmarkCase(label: string, width: number, height: number, initi
     const finalFrame = setup.captureCharFrame()
     if (!finalFrame.includes("> Course 0201")) {
       throw new Error("The expected selected course is missing from the final frame")
+    }
+    if (expectedText !== undefined && !finalFrame.includes(expectedText)) {
+      throw new Error(`${label} final frame is missing ${expectedText}`)
     }
     const result = {
       layoutMode,

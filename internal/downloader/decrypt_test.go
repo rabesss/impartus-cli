@@ -122,7 +122,7 @@ func TestDecryptChunkBytes(t *testing.T) {
 
 	t.Run("success writes decrypted file", func(t *testing.T) {
 		inPath := filepath.Join(t.TempDir(), "chunk0.temp")
-		outPath, err := d.decryptChunkBytes(inPath, ciphertext, key)
+		outPath, err := d.decryptChunkBytes(inPath, bytes.Clone(ciphertext), key)
 		if err != nil {
 			t.Fatalf("decryptChunkBytes: %v", err)
 		}

@@ -14,7 +14,7 @@ import (
 )
 
 // Decrypting a chunk in place allocates about 1.3 KiB. The slack tolerates runtime
-// noise and still fails on any extra copy of a chunk.
+// noise and still fails if decryption allocates a copy of the chunk on each call.
 const (
 	decryptAllocationChunkSize = 1 << 20
 	decryptAllocationRuns      = 20
