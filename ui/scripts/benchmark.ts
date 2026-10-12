@@ -1,8 +1,8 @@
 import { createTestRenderer } from "@opentui/core/testing"
-import { createHash } from "node:crypto"
 
 import { FoundationView, type FoundationState } from "../src/view.ts"
 import { createFoundationState, newOperation } from "../src/workspace_controller.ts"
+import { calculateLayout, type LayoutMode } from "../src/workspace_layout.ts"
 
 const courseCount = 5_000
 const iterations = 200
@@ -24,12 +24,17 @@ const activity = createFoundationState({
 })
 
 const results = []
-results.push(await benchmarkCase("medium-catalog", 80, 24, baseline))
-results.push(await benchmarkCase("wide-catalog", 140, 32, baseline))
-results.push(await benchmarkCase("wide-activity", 140, 32, activity))
-process.stdout.write(JSON.stringify({ schemaVersion: 1, scenario: "ui-navigation-v1", courseCount, iterations, results }) + "\n")
+results.push(await benchmarkCase("compact-catalog", 60, 20, baseline, "compact"))
+results.push(await benchmarkCase("medium-catalog", 80, 24, baseline, "medium"))
+results.push(await benchmarkCase("wide-catalog", 140, 32, baseline, "wide"))
+results.push(await benchmarkCase("wide-activity", 140, 32, activity, "wide"))
+process.stdout.write(JSON.stringify({ courseCount, iterations, results }) + "\n")
 
-async function benchmarkCase(label: string, width: number, height: number, initial: FoundationState) {
+async function benchmarkCase(label: string, width: number, height: number, initial: FoundationState, expectedMode: LayoutMode) {
+  const layoutMode = calculateLayout(width, height, false).mode
+  if (layoutMode !== expectedMode) {
+    throw new Error(`${label} layout is ${layoutMode}, want ${expectedMode}`)
+  }
   const setup = await createTestRenderer({ height, kittyKeyboard: true, width })
   let state = initial
   let view: FoundationView | undefined
@@ -76,8 +81,8 @@ async function benchmarkCase(label: string, width: number, height: number, initi
       throw new Error("The expected selected course is missing from the final frame")
     }
     const result = {
+      layoutMode,
       selectedCourseIndex: state.collections.courses.selected,
-      finalFrameSha256: createHash("sha256").update(finalFrame).digest("hex"),
       coldFrameMilliseconds: round(coldFrameMilliseconds),
       height,
       label,

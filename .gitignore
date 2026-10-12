@@ -50,9 +50,6 @@
 !/scripts/run-quality-gate.sh
 !/scripts/test-quality-gate.sh
 !/scripts/gen-tui-protocol.go
-!/scripts/performance/**
-/scripts/performance/__pycache__/
-/scripts/performance/**/*.pyc
 
 # ...even if they are in subdirectories
 !*/

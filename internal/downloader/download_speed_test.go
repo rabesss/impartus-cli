@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -32,10 +33,15 @@ func TestDownloadPlaylistDefaultPipelineBoundsRequestsAndPreservesOrder(t *testi
 	encryptedChunks := downloadSpeedEncryptedChunks(t, key, chunksPerView)
 	var activeRequests atomic.Int64
 	var maxActiveRequests atomic.Int64
+	var requestsMu sync.Mutex
+	requests := make(map[string]int)
 	concurrentWave := make(chan struct{})
 	var releaseWave sync.Once
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestsMu.Lock()
+		requests[r.URL.Path]++
+		requestsMu.Unlock()
 		if r.URL.Path == "/key" {
 			writeDownloadSpeedResponse(w, fakeKeyResponse(key))
 			return
@@ -88,6 +94,18 @@ func TestDownloadPlaylistDefaultPipelineBoundsRequestsAndPreservesOrder(t *testi
 
 	if got := maxActiveRequests.Load(); got != downloadWorkers {
 		t.Fatalf("maximum active chunk requests = %d, want exactly %d", got, downloadWorkers)
+	}
+	wantRequests := map[string]int{"/key": 1}
+	for _, view := range []string{"first", "second"} {
+		for index := 0; index < chunksPerView; index++ {
+			wantRequests[fmt.Sprintf("/chunk/%s/%d", view, index)] = 1
+		}
+	}
+	requestsMu.Lock()
+	gotRequests := maps.Clone(requests)
+	requestsMu.Unlock()
+	if !maps.Equal(gotRequests, wantRequests) {
+		t.Fatalf("requests = %v, want the key and each chunk exactly once", gotRequests)
 	}
 	assertDownloadedView(t, result.FirstViewChunks, "first", chunksPerView)
 	assertDownloadedView(t, result.SecondViewChunks, "second", chunksPerView)

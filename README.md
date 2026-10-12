@@ -939,3 +939,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [`docs/error-codes.md`](docs/error-codes.md) - Error code reference
 - [`docs/runbooks.md`](docs/runbooks.md) - Incident response and troubleshooting
 - [`docs/download-performance.md`](docs/download-performance.md) - Download worker and rate-limit tuning
+- [`docs/performance-regressions.md`](docs/performance-regressions.md) - Performance regression checks

@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "scenario": "impartus-performance-v1",
-  "goVersion": "1.26.5",
-  "bunVersion": "1.3.14",
-  "decryptionBytesPerOperationMax": 2048,
-  "decryptionAllocationsPerOperationMax": 5
-}

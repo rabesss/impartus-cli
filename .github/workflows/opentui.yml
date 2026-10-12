@@ -57,6 +57,11 @@ jobs:
       - name: Typecheck and test UI
         working-directory: ui
         run: bun run typecheck && bun test
+      - name: Benchmark UI navigation
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: ui
+        timeout-minutes: 3
+        run: bun run benchmark
       - name: Build native UI
         working-directory: ui
         run: bun run build -- --outfile=dist/${{ matrix.binary }}
