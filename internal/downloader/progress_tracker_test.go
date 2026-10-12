@@ -111,6 +111,7 @@ func TestNewProgressTracker(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Call with nil progress to avoid mpb dependency
 			pt := NewProgressTracker(tt.totalLectures, tt.totalChunks, nil)
+			t.Cleanup(pt.Stop)
 
 			if tt.expectNotNil && pt == nil {
 				t.Fatal("NewProgressTracker returned nil")
