@@ -90,6 +90,7 @@ func (d *Downloader) decryptChunk(filePath string, key []byte) (string, error) {
 	return d.decryptChunkBytes(filePath, infile, key)
 }
 
+// decryptChunkBytes decrypts infile in place, so the caller must transfer ownership of the slice.
 func (d *Downloader) decryptChunkBytes(filePath string, infile []byte, key []byte) (string, error) {
 	if len(filePath) < 6 {
 		return "", fmt.Errorf("invalid file path: %s", filePath)
@@ -106,7 +107,7 @@ func (d *Downloader) decryptChunkBytes(filePath string, infile []byte, key []byt
 	defer zeroKey(keyCopy)
 
 	outPath := strings.TrimSuffix(filePath, ".temp")
-	plainText, err := DecryptAES(infile, keyCopy)
+	plainText, err := DecryptAESInPlace(infile, keyCopy)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt: %w", err)
 	}

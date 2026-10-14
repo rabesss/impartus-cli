@@ -11,7 +11,7 @@ import (
 
 // encryptCBCZeroIV mirrors the upstream encryption: PKCS7-pad then AES-CBC
 // encrypt with a zero IV, which DecryptAES is expected to reverse.
-func encryptCBCZeroIV(t *testing.T, plaintext, key []byte) []byte {
+func encryptCBCZeroIV(t testing.TB, plaintext, key []byte) []byte {
 	t.Helper()
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -122,7 +122,7 @@ func TestDecryptChunkBytes(t *testing.T) {
 
 	t.Run("success writes decrypted file", func(t *testing.T) {
 		inPath := filepath.Join(t.TempDir(), "chunk0.temp")
-		outPath, err := d.decryptChunkBytes(inPath, ciphertext, key)
+		outPath, err := d.decryptChunkBytes(inPath, bytes.Clone(ciphertext), key)
 		if err != nil {
 			t.Fatalf("decryptChunkBytes: %v", err)
 		}
