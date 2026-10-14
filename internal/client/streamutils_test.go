@@ -149,7 +149,19 @@ func TestSelectStreamByQualityRemainingCoverage(t *testing.T) {
 
 // TestGetAuthorizedWithToken_NilToken tests GetAuthorizedWithToken with empty token
 func TestGetAuthorizedWithToken_NilToken(t *testing.T) {
-	client := New(nil, nil)
+	requestSeen := false
+	client := New(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requestSeen = true
+		if got := req.Header.Get("Authorization"); got != "" {
+			t.Errorf("Authorization header = %q, want empty for a tokenless request", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       http.NoBody,
+			Header:     make(http.Header),
+			Request:    req,
+		}, nil
+	})}, nil)
 
 	resp, err := client.GetAuthorizedWithToken(context.Background(), "http://example.com/test", "")
 	if resp != nil {
@@ -158,13 +170,13 @@ func TestGetAuthorizedWithToken_NilToken(t *testing.T) {
 	if err != nil {
 		t.Errorf("GetAuthorizedWithToken() with empty token should not error on request creation: %v", err)
 	}
+	if !requestSeen {
+		t.Error("GetAuthorizedWithToken() did not send a request")
+	}
 }
 
 // TestDoRequestWithTokenRequestBuilding tests request building
 func TestDoRequestWithTokenRequestBuilding(t *testing.T) {
-	client := New(nil, nil)
-	client.setToken("test-token")
-
 	tests := []struct {
 		name       string
 		method     string
@@ -205,12 +217,26 @@ func TestDoRequestWithTokenRequestBuilding(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var request *http.Request
+			client := New(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				request = req
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       http.NoBody,
+					Header:     make(http.Header),
+					Request:    req,
+				}, nil
+			})}, nil)
+			client.setToken("test-token")
 			resp, err := client.doRequestWithToken(context.Background(), tt.method, tt.url, tt.body, tt.token)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("doRequestWithToken() expected error, got nil")
 				} else if tt.errContain != "" && !strings.Contains(err.Error(), tt.errContain) {
 					t.Errorf("doRequestWithToken() error = %q, want contains %q", err.Error(), tt.errContain)
+				}
+				if request != nil {
+					t.Error("invalid request reached the transport")
 				}
 				return
 			}
@@ -219,6 +245,19 @@ func TestDoRequestWithTokenRequestBuilding(t *testing.T) {
 			}
 			if resp != nil {
 				_ = resp.Body.Close() //nolint:errcheck
+			}
+			if request == nil {
+				t.Fatal("doRequestWithToken() did not send a request")
+			}
+			if request.Method != tt.method || request.URL.String() != tt.url {
+				t.Errorf("request = %s %s, want %s %s", request.Method, request.URL, tt.method, tt.url)
+			}
+			wantAuthorization := ""
+			if tt.token != "" {
+				wantAuthorization = "Bearer " + tt.token
+			}
+			if got := request.Header.Get("Authorization"); got != wantAuthorization {
+				t.Errorf("Authorization header = %q, want %q", got, wantAuthorization)
 			}
 		})
 	}
