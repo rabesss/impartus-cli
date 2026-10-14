@@ -1649,6 +1649,9 @@ func replaceRawCredentialRanges(value string, rawRanges []rawSpan) string {
 	changed := false
 	for _, candidate := range rawRanges {
 		if candidate.start < last {
+			// Decoded views can produce partially overlapping ranges. Keep
+			// their full union redacted, including any later range's tail.
+			last = max(last, candidate.end)
 			continue
 		}
 		scrubbed.WriteString(value[last:candidate.start])
