@@ -41,7 +41,8 @@ LABEL org.opencontainers.image.created="${BUILD_DATE}"
 LABEL org.opencontainers.image.revision="${COMMIT}"
 
 RUN apt-get update && \
-    apt-get install --no-install-recommends -y ca-certificates ffmpeg && \
+    apt-get install --no-install-recommends -y \
+      ca-certificates ffmpeg libpcre2-8-0 perl-base && \
     rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --shell /usr/sbin/nologin impartus && \
