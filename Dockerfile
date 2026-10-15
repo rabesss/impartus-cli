@@ -42,7 +42,7 @@ LABEL org.opencontainers.image.revision="${COMMIT}"
 
 RUN apt-get update && \
     apt-get install --no-install-recommends -y \
-      ca-certificates ffmpeg libpcre2-8-0 perl-base && \
+      ca-certificates ffmpeg liblzma5 libpcre2-8-0 perl-base tzdata && \
     rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --shell /usr/sbin/nologin impartus && \
