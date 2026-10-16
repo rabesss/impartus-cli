@@ -165,20 +165,23 @@ jobs:
           # Run govulncheck and capture output; do not mask exit code
           set +e
           govulncheck ./... 2>&1 | tee govulncheck-results.txt
-          GOVULN_EXIT=$?
+          SCAN_STATUS=("${PIPESTATUS[@]}")
+          GOVULN_EXIT=${SCAN_STATUS[0]}
+          TEE_EXIT=${SCAN_STATUS[1]}
           set -e
           echo "govulncheck exit code: $GOVULN_EXIT"
-          
-          # Check for vulnerabilities
+
+          if [ "$GOVULN_EXIT" -ne 0 ]; then
+            echo "::error::govulncheck failed or reported vulnerabilities; see output above"
+            exit "$GOVULN_EXIT"
+          fi
+          if [ "$TEE_EXIT" -ne 0 ]; then
+            echo "::error::Failed to save govulncheck output"
+            exit "$TEE_EXIT"
+          fi
+
           if grep -q "No vulnerabilities found" govulncheck-results.txt; then
             echo "✓ No vulnerabilities found"
-          else
-            echo "Vulnerabilities detected - see output above"
-            # Fail on high-severity findings
-            if [ "$GOVULN_EXIT" -ne 0 ]; then
-              echo "::error::Vulnerabilities detected by govulncheck"
-              exit 1
-            fi
           fi
 
       - name: Upload govulncheck results
