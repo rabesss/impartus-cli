@@ -104,12 +104,6 @@ func (writer *Writer) Emit(event Event) error {
 	if event.SchemaVersion == 0 {
 		event.SchemaVersion = SchemaVersion
 	}
-	// Event is public and callers can construct it without going through
-	// Failure/Cancellation, so the writer scrubs Error itself and a raw
-	// credential-bearing Error cannot reach NDJSON output. Only Error is
-	// scrubbed here: the other fields, including Details, must carry no
-	// upstream text, which holds for the current callers.
-	event.Error = secrets.Scrub(event.Error)
 	if err := validate(event); err != nil {
 		return err
 	}
@@ -117,7 +111,14 @@ func (writer *Writer) Emit(event Event) error {
 	if terminal {
 		writer.terminalAttempted = true
 	}
-	if err := writer.encoder.Encode(event); err != nil {
+	// Scrub the serialized representation so every string, including nested
+	// Details and custom marshaler output, crosses the same boundary without
+	// modifying caller-owned pointers, maps, or slices.
+	encoded, err := marshalScrubbedEvent(event)
+	if err != nil {
+		return fmt.Errorf("write event %s: %w", event.Type, err)
+	}
+	if err := writer.encoder.Encode(encoded); err != nil {
 		// json.Encoder permanently caches an output error. Recreate it so a
 		// caller can still attempt a terminal failure record when the sink's
 		// failure was transient or occurred before writing any bytes.
