@@ -110,7 +110,7 @@ sidecar; musl-only systems should build the UI locally or use those commands.
 
 ### Requirements
 
-- **Go 1.25+** - Go toolchain for building (pinned in `go.mod`; Docker images may use a newer patch release)
+- **Go 1.26.9+** - Go toolchain for building (pinned in `go.mod`; Docker images may use a newer patch release)
 - **Bun 1.3.14** - Required only when building the OpenTUI frontend from source
 - **FFmpeg** - Required for video processing (must be in `PATH`)
 - **mpv** - Required for TUI or CLI playback (must be in `PATH`)
