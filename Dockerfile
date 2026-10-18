@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
-# golang:1.27.1-bookworm digest last updated: 2026-09-11
-# To update: docker pull golang:1.27.1-bookworm && replace digest below
+# golang:1.27.2-bookworm digest last updated: 2026-10-15
+# To update: docker pull golang:1.27.2-bookworm && replace digest below
 FROM golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS build
 
 ARG TARGETOS=linux
