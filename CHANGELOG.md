@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.1.32](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.31...impartus-cli-v0.1.32) (2026-10-19)
+
+
+### Bug Fixes
+
+* **security:** bound upstream responses, scrub credentials and pin media origins ([#245](https://github.com/rabesss/impartus-cli/issues/245)) ([5469971](https://github.com/rabesss/impartus-cli/commit/54699716dd1f978fa53c96f3797add8d50885ba3))
+* **security:** merge overlapping redaction ranges ([#261](https://github.com/rabesss/impartus-cli/issues/261)) ([8a862f3](https://github.com/rabesss/impartus-cli/commit/8a862f3552560da02a1c3990c84d815b1d1e689d))
+* **security:** update Go patch floor to 1.26.9 ([#274](https://github.com/rabesss/impartus-cli/issues/274)) ([1fe45b9](https://github.com/rabesss/impartus-cli/commit/1fe45b922b817b060bf68f2dc3fcb8c3796bc757))
+* **security:** update remaining Debian runtime packages ([#271](https://github.com/rabesss/impartus-cli/issues/271)) ([49762c4](https://github.com/rabesss/impartus-cli/commit/49762c4444fdb7e614f423fb9b83648f32be0910))
+* **security:** update vulnerable runtime packages ([#270](https://github.com/rabesss/impartus-cli/issues/270)) ([08d4289](https://github.com/rabesss/impartus-cli/commit/08d42894f0cac6216749e184faa8b5b914a4faa3))
+
+
+### Performance
+
+* **downloader:** decrypt chunks in place and guard download work ([#267](https://github.com/rabesss/impartus-cli/issues/267)) ([10d2e96](https://github.com/rabesss/impartus-cli/commit/10d2e9619bdf5e4c7ae40b75392a491e23466c30))
+
+
+### Documentation
+
+* align README Go requirement with go.mod ([#276](https://github.com/rabesss/impartus-cli/issues/276)) ([bb923e8](https://github.com/rabesss/impartus-cli/commit/bb923e82b107e974b47256e1eacdd7b5c32badcc))
+* refresh Dockerfile build-image comments ([#279](https://github.com/rabesss/impartus-cli/issues/279)) ([93371d2](https://github.com/rabesss/impartus-cli/commit/93371d2b045b6fc455584949e1b87bd99d36829c))
+
+
+### Testing
+
+* **api:** enforce race coverage for token cache ([#263](https://github.com/rabesss/impartus-cli/issues/263)) ([66e161c](https://github.com/rabesss/impartus-cli/commit/66e161c6964f8d2971f35ecbe10b3cf18beb1acc))
+
+
+### Build System
+
+* **deps:** bump golang from 1.27.1-bookworm to 1.27.2-bookworm ([#269](https://github.com/rabesss/impartus-cli/issues/269)) ([97dbd6e](https://github.com/rabesss/impartus-cli/commit/97dbd6e3160f87db20c68033d609295995c71c2f))
+
+
+### CI/CD
+
+* **deps:** bump codecov/codecov-action from 7.0.0 to 7.1.1 ([#238](https://github.com/rabesss/impartus-cli/issues/238)) ([dc495fe](https://github.com/rabesss/impartus-cli/commit/dc495fe54132d81bed4ee06fb2e1d56108dab567))
+* **deps:** bump docker/setup-buildx-action from 4.3.0 to 4.4.1 ([#239](https://github.com/rabesss/impartus-cli/issues/239)) ([40090de](https://github.com/rabesss/impartus-cli/commit/40090de1ef7d9fd1b732331159f3bda6f63e051c))
+* **deps:** bump docker/setup-qemu-action from 4.2.0 to 4.4.0 ([#240](https://github.com/rabesss/impartus-cli/issues/240)) ([22ae7e3](https://github.com/rabesss/impartus-cli/commit/22ae7e3a35522b6026455ba9726f4d53e1f00838))
+* **deps:** bump oras-project/setup-oras from 2.0.1 to 2.0.2 ([#281](https://github.com/rabesss/impartus-cli/issues/281)) ([6a48f61](https://github.com/rabesss/impartus-cli/commit/6a48f61a05313e5efd991164f28d007ae7e8fc71))
+* let Droid review rabesss-dot PRs ([#277](https://github.com/rabesss/impartus-cli/issues/277)) ([bd4339f](https://github.com/rabesss/impartus-cli/commit/bd4339ff06b3915eadce6571a48133684c162629))
+
 ## [0.1.31](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.30...impartus-cli-v0.1.31) (2026-09-14)
 
 
