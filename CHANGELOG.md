@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.33](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.32...impartus-cli-v0.1.33) (2026-10-19)
+
+
+### Bug Fixes
+
+* **ci:** upload release binaries without editing the release ([#284](https://github.com/rabesss/impartus-cli/issues/284)) ([3127f4d](https://github.com/rabesss/impartus-cli/commit/3127f4dc7b92299e4d1499763046c2a09be522ff))
+
+
+### CI/CD
+
+* **deps:** bump Factory-AI/droid-action from b46affde010c543aefc51b5d82618b8e825845ca to ed64d1fed4406d0bd3461865fd5f289caaf28571 ([#280](https://github.com/rabesss/impartus-cli/issues/280)) ([f0f0c03](https://github.com/rabesss/impartus-cli/commit/f0f0c03cb8bcd9f72261b80d39db7baf0742c236))
+
 ## [0.1.32](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.31...impartus-cli-v0.1.32) (2026-10-19)
 
 
