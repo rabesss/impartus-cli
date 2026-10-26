@@ -25,7 +25,7 @@ jobs:
           fetch-depth: 1
       - name: Run Droid Auto Review
         if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: Factory-AI/droid-action@ed64d1fed4406d0bd3461865fd5f289caaf28571 # v5
+        uses: Factory-AI/droid-action@bb78b445f5c63185e4546ae283a3c6946f44cce2 # v11
         with:
           factory_api_key: ${{ secrets.FACTORY_API_KEY }}
           automatic_review: true
