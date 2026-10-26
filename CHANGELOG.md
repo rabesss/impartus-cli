@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.34](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.33...impartus-cli-v0.1.34) (2026-10-26)
+
+
+### CI/CD
+
+* pin droid-action to v11 (bb78b44), the debug-artifact token fix ([6ed5249](https://github.com/rabesss/impartus-cli/commit/6ed5249be1f734bfadcd23c802134f96abb1c3e7))
+
 ## [0.1.33](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.32...impartus-cli-v0.1.33) (2026-10-19)
 
 
