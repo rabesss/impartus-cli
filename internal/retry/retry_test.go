@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -172,6 +173,12 @@ func TestDoStopsWhenContextCanceledDuringBackoff(t *testing.T) {
 	}
 }
 
+func TestFullJitterHandlesMaximumCeiling(t *testing.T) {
+	if got := retry.FullJitter(time.Duration(math.MaxInt64)); got < 0 {
+		t.Fatalf("FullJitter(max) = %v, want a non-negative delay", got)
+	}
+}
+
 func TestDoUsesFullJitterByDefault(t *testing.T) {
 	clock := retrytest.NewClock()
 	policy := retry.Default(time.Hour)
@@ -245,6 +252,9 @@ func TestRetryableClassification(t *testing.T) {
 		{"sanitized reset", secrets.SanitizeErrorWithToken(urlErr(&net.OpError{Op: "read", Err: os.NewSyscallError("read", syscall.ECONNRESET)}), "secret"), true},
 		{"sanitized unexpected EOF", fmt.Errorf("could not write chunk: %w", secrets.SanitizeErrorWithToken(io.ErrUnexpectedEOF, "secret")), true},
 		{"refused", &net.OpError{Op: "dial", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}, true},
+		{"sanitized host unreachable", secrets.SanitizeErrorWithToken(urlErr(&net.OpError{Op: "dial", Err: os.NewSyscallError("connect", syscall.EHOSTUNREACH)}), "secret"), true},
+		{"network unreachable", &net.OpError{Op: "dial", Err: os.NewSyscallError("connect", syscall.ENETUNREACH)}, true},
+		{"network reset", &net.OpError{Op: "read", Err: os.NewSyscallError("read", syscall.ENETRESET)}, true},
 		{"canceled", context.Canceled, false},
 		{"plain", errors.New("boom"), false},
 		{"nil", nil, false},

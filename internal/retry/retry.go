@@ -87,6 +87,9 @@ func FullJitter(ceiling time.Duration) time.Duration {
 	if ceiling <= 0 {
 		return 0
 	}
+	if ceiling == math.MaxInt64 {
+		ceiling-- // keep ceiling+1 from overflowing
+	}
 	// Backoff jitter only spreads load; it is not security-sensitive.
 	return time.Duration(rand.Int64N(int64(ceiling) + 1)) // #nosec G404
 }
@@ -227,6 +230,9 @@ func Retryable(err error) bool {
 		syscall.ECONNRESET,
 		syscall.ECONNABORTED,
 		syscall.ECONNREFUSED,
+		syscall.ENETRESET,
+		syscall.ENETUNREACH, // a Wi-Fi or VPN roam mid-download
+		syscall.EHOSTUNREACH,
 		syscall.EPIPE,
 		io.EOF, // connection closed before any response on these idempotent requests
 		io.ErrUnexpectedEOF,

@@ -1,7 +1,9 @@
 package downloader
 
 import (
+	"bytes"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -236,4 +238,32 @@ func TestPlaybackKeyRetryBudgetIsCapped(t *testing.T) {
 	if got := h.script.count("/key"); got != 5 {
 		t.Fatalf("key requests = %d, want 5", got)
 	}
+}
+
+func TestRetryDiagnosticsDoNotLeakToken(t *testing.T) {
+	forEachDownloadPath(t, func(t *testing.T, pipeline bool) {
+		h := newRetryHarness(t, pipeline, 3*time.Minute)
+		var logs bytes.Buffer
+		h.d.diagnostics = log.New(&logs, "", 0) // a Logger serializes writes
+		h.script.queued["/key"] = []int{http.StatusServiceUnavailable}
+		h.script.queued["/chunk"] = []int{http.StatusServiceUnavailable}
+		token := h.d.config.Token
+
+		_, err := h.d.DownloadPlaylist(t.Context(), client.ParsedPlaylist{
+			ID:            42,
+			SeqNo:         1,
+			KeyURL:        h.server.URL + "/key?token=" + token,
+			FirstViewURLs: []string{h.server.URL + "/chunk?token=" + token},
+		}, nil, nil)
+		if err != nil {
+			t.Fatalf("DownloadPlaylist() error = %v", err)
+		}
+		output := logs.String()
+		if !strings.Contains(output, "retrying decryption key") || !strings.Contains(output, "retrying left view chunk") && !strings.Contains(output, "retrying first view chunk") {
+			t.Fatalf("diagnostics = %q, want key and chunk retry lines", output)
+		}
+		if strings.Contains(output, token) {
+			t.Fatalf("retry diagnostics leaked the token: %q", output)
+		}
+	})
 }
