@@ -77,7 +77,7 @@ func TestScrubRedactsOverlappingEncodedEscapedQuotedValue(t *testing.T) {
 	t.Parallel()
 
 	const input = "password%3D%5C%22secret-one%20secret-two%5C%22 tail"
-	const want = "password%3DREDACTED%5C%22 tail"
+	const want = "password%3D%5C%22REDACTED%5C%22 tail"
 	got := Scrub(input)
 	for _, secret := range []string{"secret-one", "secret-two"} {
 		if strings.Contains(got, secret) {
