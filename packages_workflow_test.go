@@ -12,21 +12,13 @@ import (
 func readPackagesWorkflow(t *testing.T) string {
 	t.Helper()
 
-	data, err := os.ReadFile(".github/workflows/packages.yml")
-	if err != nil {
-		t.Fatalf("read packages workflow: %v", err)
-	}
-	return string(data)
+	return readRepoFile(t, ".github/workflows/packages.yml")
 }
 
 func readReleaseWorkflow(t *testing.T) string {
 	t.Helper()
 
-	data, err := os.ReadFile(".github/workflows/release.yml")
-	if err != nil {
-		t.Fatalf("read release workflow: %v", err)
-	}
-	return string(data)
+	return readRepoFile(t, ".github/workflows/release.yml")
 }
 
 func TestReleaseWorkflowDispatchesVersionedPackages(t *testing.T) {

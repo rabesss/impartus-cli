@@ -20,7 +20,8 @@ func readRepoFile(t *testing.T, path string) string {
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	return string(data)
+	// Line-anchored checks must also hold for core.autocrlf=true checkouts.
+	return strings.ReplaceAll(string(data), "\r\n", "\n")
 }
 
 var (
@@ -198,7 +199,8 @@ func TestContainerSmokeScriptCoversCLIAndFFmpegPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat %s: %v", path, err)
 	}
-	if info.Mode().Perm()&0o111 == 0 {
+	// Windows reports no Unix execute bits; git still records the mode there.
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
 		t.Errorf("%s is not executable", path)
 	}
 
@@ -256,5 +258,16 @@ func TestCIContainerJobRunsSmokeScript(t *testing.T) {
 		if !strings.Contains(job, snippet) {
 			t.Errorf("container-permissions job is missing %q", snippet)
 		}
+	}
+}
+
+func TestReadRepoFileNormalisesCRLF(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "Dockerfile")
+	if err := os.WriteFile(path, []byte("FROM a AS build\r\nFROM b\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// core.autocrlf=true checkouts must not break the line-anchored contract checks.
+	if got, want := readRepoFile(t, path), "FROM a AS build\nFROM b\n"; got != want {
+		t.Errorf("readRepoFile = %q, want %q", got, want)
 	}
 }
