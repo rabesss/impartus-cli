@@ -319,10 +319,18 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 	retryPolicy := c.requestRetryPolicy(cfg)
 	parsedPlaylists := make([]ParsedPlaylist, 0, len(lectures))
 	unavailableQualities := make(map[string]struct{})
+	lecturesWithoutStreams := 0
 	for _, lecture := range lectures {
 		streamInfos, err := retryRequest(ctx, retryPolicy, "stream info", func(ctx context.Context) ([]StreamInfo, error) {
 			return c.getStreamInfosWithPolicy(ctx, baseURL, token, lecture, policy)
 		})
+		if errors.Is(err, ErrNoStreams) || (err == nil && len(streamInfos) == 0) {
+			// Like a lecture whose qualities are all unavailable, a lecture
+			// with no usable stream is skipped; the batch fails below only
+			// when no lecture has one.
+			lecturesWithoutStreams++
+			continue
+		}
 		if err != nil {
 			return parsedPlaylists, err
 		}
@@ -350,6 +358,9 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 		}
 		sort.Strings(qualities)
 		return nil, newQualityUnavailableError(cfg.Quality, qualities)
+	}
+	if len(parsedPlaylists) == 0 && lecturesWithoutStreams > 0 {
+		return nil, fmt.Errorf("%w (%d of %d lectures listed none)", ErrNoStreams, lecturesWithoutStreams, len(lectures))
 	}
 
 	return parsedPlaylists, nil

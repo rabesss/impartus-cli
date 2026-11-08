@@ -166,9 +166,8 @@ func parsePlaylistWithBase(scanner *bufio.Scanner, baseURL *url.URL, id int, tit
 	if err := scanner.Err(); err != nil {
 		return ParsedPlaylist{}, fmt.Errorf("scan playlist: %w", err)
 	}
-	if segmentCount == 0 {
-		parsedOutput.KeyURL = currentKeyURL
-	}
+	// A playlist with no segments needs no key: leaving KeyURL empty keeps
+	// callers from fetching one for nothing.
 
 	parsedOutput.FirstViewURLs = firstViewURLs
 	parsedOutput.FirstDurations = firstDurations
@@ -183,7 +182,9 @@ func parsePlaylistWithBase(scanner *bufio.Scanner, baseURL *url.URL, id int, tit
 
 // applySegmentKey records the key in force for a playlist's segment. The key
 // for the first segment decides how the whole playlist is decrypted, so every
-// later segment must agree on whether it is encrypted at all.
+// later segment must use the same key or none. A playlist that rotates to a
+// different key URI is refused: decrypting its later segments with the first
+// key would silently produce garbage.
 func applySegmentKey(playlist *ParsedPlaylist, segmentIndex int, keyURL string) error {
 	if segmentIndex == 0 {
 		playlist.KeyURL = keyURL
@@ -191,6 +192,9 @@ func applySegmentKey(playlist *ParsedPlaylist, segmentIndex int, keyURL string) 
 	}
 	if (keyURL == "") != (playlist.KeyURL == "") {
 		return errors.New("playlist mixes clear and encrypted segments")
+	}
+	if keyURL != playlist.KeyURL {
+		return errors.New("playlist rotates encryption keys: only one key per playlist is supported")
 	}
 	return nil
 }
@@ -220,6 +224,11 @@ func parsePlaylistKey(baseURL *url.URL, line string) (string, error) {
 		// playlist could put credential material in it.
 		return "", errors.New("unsupported HLS encryption method: only AES-128 is supported")
 	}
+	if iv, hasIV := attributes["IV"]; hasIV {
+		if err := validatePlaylistKeyIV(iv); err != nil {
+			return "", err
+		}
+	}
 	uri, ok := attributes["URI"]
 	if !ok {
 		return "", errors.New("invalid playlist key: encrypted key has no URI")
@@ -229,6 +238,37 @@ func parsePlaylistKey(baseURL *url.URL, line string) (string, error) {
 		return "", fmt.Errorf("invalid playlist key URI: %w", err)
 	}
 	return keyURL, nil
+}
+
+// maxPlaylistKeyIVDigits is the number of hex digits in a 128-bit IV.
+const maxPlaylistKeyIVDigits = 32
+
+// validatePlaylistKeyIV accepts an explicit IV only when it is zero, which is
+// the IV every segment is decrypted with. An HLS IV is a hexadecimal integer
+// with a 0x or 0X prefix and at most 128 bits. A non-zero IV would decrypt to
+// garbage, so it is refused, as is a malformed one. The IV is upstream text,
+// so it is never echoed.
+func validatePlaylistKeyIV(iv string) error {
+	digits, ok := strings.CutPrefix(strings.TrimSpace(iv), "0x")
+	if !ok {
+		digits, ok = strings.CutPrefix(strings.TrimSpace(iv), "0X")
+	}
+	if !ok || digits == "" || len(digits) > maxPlaylistKeyIVDigits {
+		return errors.New("invalid playlist key: malformed IV")
+	}
+	zero := true
+	for i := 0; i < len(digits); i++ {
+		if !isHexDigit(digits[i]) {
+			return errors.New("invalid playlist key: malformed IV")
+		}
+		if digits[i] != '0' {
+			zero = false
+		}
+	}
+	if !zero {
+		return errors.New("unsupported HLS key IV: only a zero IV is supported")
+	}
+	return nil
 }
 
 // parseHLSAttributes parses an HLS attribute list (NAME=value pairs separated
@@ -333,6 +373,15 @@ func resolveMediaReference(baseURL *url.URL, rawReference string) (string, error
 }
 
 func validHTTPURL(parsedURL *url.URL) bool {
+	if !validHTTPURLParts(parsedURL) {
+		return false
+	}
+	_, err := parseMediaQuery(parsedURL.RawQuery)
+	return err == nil
+}
+
+// validHTTPURLParts checks everything validHTTPURL does except the query.
+func validHTTPURLParts(parsedURL *url.URL) bool {
 	if parsedURL == nil || parsedURL.Opaque != "" || parsedURL.User != nil || parsedURL.Host == "" {
 		return false
 	}
@@ -349,8 +398,7 @@ func validHTTPURL(parsedURL *url.URL) bool {
 			return false
 		}
 	}
-	_, err := parseMediaQuery(parsedURL.RawQuery)
-	return err == nil
+	return true
 }
 
 func parseEXTINFDuration(line string) float64 {

@@ -26,8 +26,8 @@ func TestParseStreamInfosAcceptsSemicolonQuery(t *testing.T) {
 
 func TestParseStreamInfosRejectsMalformedSemicolonQuery(t *testing.T) {
 	infos, err := ParseStreamInfosFromBody([]byte("https://media.example.test/hls/1280x720/index.m3u8?v=2;x=%zz\n"))
-	if err != nil {
-		t.Fatalf("ParseStreamInfosFromBody() error = %v", err)
+	if !errors.Is(err, ErrNoStreams) {
+		t.Fatalf("ParseStreamInfosFromBody() error = %v, want ErrNoStreams", err)
 	}
 	if len(infos) != 0 {
 		t.Fatalf("ParseStreamInfosFromBody() = %+v, want a malformed escape rejected", infos)
