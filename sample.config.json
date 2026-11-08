@@ -19,6 +19,7 @@
   "downloadWorkersPerLecture": 12,
   "decryptWorkersPerLecture": 4,
   "httpTimeout": "10m",
+  "retryBudget": "3m",
   "enableJitter": true,
   "listenAddr": "127.0.0.1",
   "allowRemoteAccess": false,

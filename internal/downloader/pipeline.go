@@ -216,7 +216,7 @@ func (p *LecturePipeline) downloadWorker() {
 				return
 			}
 
-			encryptedPath, encryptedBytes, err := p.downloader.downloadBytesWithRetry(p.ctx, task.URL, task.LectureID, task.ChunkID, task.View, p.downloader.maxRetries, p.config.ProgressTracker)
+			encryptedPath, encryptedBytes, err := p.downloader.downloadBytesWithRetry(p.ctx, task.URL, task.LectureID, task.ChunkID, task.View, p.config.ProgressTracker)
 			result := DownloadedChunk{
 				ChunkID:        task.ChunkID,
 				View:           task.View,

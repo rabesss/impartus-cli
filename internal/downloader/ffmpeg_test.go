@@ -282,8 +282,8 @@ func TestNewDownloader(t *testing.T) {
 				t.Error("rateLimiter should not be nil")
 			}
 
-			if d.maxRetries != 3 {
-				t.Errorf("maxRetries = %d, want 3", d.maxRetries)
+			if want := (&config.Config{}).RetryBudgetDuration(); d.retry.Budget != want {
+				t.Errorf("retry budget = %v, want the config default %v", d.retry.Budget, want)
 			}
 
 			if d.ffmpegPath != tt.ffmpegPath {

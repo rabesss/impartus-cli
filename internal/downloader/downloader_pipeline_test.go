@@ -2,9 +2,7 @@ package downloader
 
 import (
 	"context"
-	"math"
 	"testing"
-	"time"
 
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
@@ -108,72 +106,6 @@ func TestTotalChunksForPlaylist(t *testing.T) {
 // TestRetryDelay tests exponential backoff calculation
 
 // TestRetryDelay tests exponential backoff calculation
-func TestRetryDelay(t *testing.T) {
-	baseDelay := 1 * time.Second
-
-	tests := []struct {
-		name        string
-		attempt     int
-		minExpected time.Duration
-		maxExpected time.Duration
-	}{
-		{
-			name:        "attempt 0 returns base delay",
-			attempt:     0,
-			minExpected: baseDelay,
-			maxExpected: baseDelay,
-		},
-		{
-			name:        "attempt 1 doubles delay",
-			attempt:     1,
-			minExpected: 2 * baseDelay,
-			maxExpected: 2*baseDelay + time.Millisecond,
-		},
-		{
-			name:        "attempt 2 quadruples delay",
-			attempt:     2,
-			minExpected: 4 * baseDelay,
-			maxExpected: 4*baseDelay + time.Millisecond,
-		},
-		{
-			name:        "attempt 10 has large multiplier",
-			attempt:     10,
-			minExpected: 1024 * baseDelay,
-			maxExpected: 1024*baseDelay + time.Millisecond,
-		},
-		{
-			name:        "attempt negative uses base",
-			attempt:     -1,
-			minExpected: baseDelay,
-			maxExpected: baseDelay,
-		},
-		{
-			name:        "attempt 62 plateaus at max duration",
-			attempt:     62,
-			minExpected: time.Duration(math.MaxInt64),
-			maxExpected: time.Duration(math.MaxInt64),
-		},
-		{
-			name:        "attempt 100 plateaus equal to attempt 62",
-			attempt:     100,
-			minExpected: time.Duration(math.MaxInt64),
-			maxExpected: time.Duration(math.MaxInt64),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := retryDelay(baseDelay, tt.attempt)
-			if got < tt.minExpected {
-				t.Errorf("retryDelay() = %v, want >= %v", got, tt.minExpected)
-			}
-			if got > tt.maxExpected {
-				t.Errorf("retryDelay() = %v, want <= %v", got, tt.maxExpected)
-			}
-		})
-	}
-}
-
 // TestStructTypes tests that struct types can be instantiated
 
 func TestDownloaderNewLecturePipeline(t *testing.T) {

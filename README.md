@@ -187,6 +187,7 @@ protection manually with `chmod 600 config.json`.
 | `downloadWorkersPerLecture` | int | No | `12` | Download workers per lecture (1-12) |
 | `decryptWorkersPerLecture` | int | No | `4` | Decrypt workers per lecture (1-10) |
 | `httpTimeout` | string | No | `"10m"` | Timeout for the shared upstream HTTP client, including login, API, playlist, and media requests (30s-60m) |
+| `retryBudget` | string | No | `"3m"` | How long one media chunk, stream info, playlist or key request keeps retrying transient failures (5xx including 516, 408, 429, timeouts, connection resets) with jittered exponential backoff (0s-30m; `0s` disables retries). Only the time spent waiting between attempts counts against the budget; each attempt is bounded separately by `httpTimeout`, so a timed-out request can still be retried. Playback key requests cap the budget at 15s. 401 and other 4xx responses are never retried |
 | `enableJitter` | bool | No | `true` | Add small random delays to API requests |
 | `skipNoAudio` | bool | No | `false` | Skip lectures with no audio track |
 | `listenAddr` | string | No | `"127.0.0.1"` | API server bind address (loopback only unless `allowRemoteAccess` is set) |
@@ -275,6 +276,7 @@ Only the settings listed below have environment-variable overrides. Settings abs
 | `IMPARTUS_TEMP_DIR_LOCATION` | `tempDirLocation` | Compatibility alias for the shorter temporary-directory variable |
 | `IMPARTUS_AUDIO_FORMAT` | `audioFormat` | `mp3`, `m4a`, `aac`, or `opus` |
 | `IMPARTUS_HTTP_TIMEOUT` | `httpTimeout` | Go duration between 30s and 60m |
+| `IMPARTUS_RETRY_BUDGET` | `retryBudget` | Go duration between 0s and 30m |
 | `IMPARTUS_LISTEN_ADDR` | `listenAddr` | Non-loopback values also require remote-access opt-in |
 | `IMPARTUS_AUDIO_ONLY` | `audioOnly` | Boolean |
 | `IMPARTUS_SLIDES` | `slides` | Boolean |
@@ -304,6 +306,7 @@ Only the settings listed below have environment-variable overrides. Settings abs
 - `numWorkers` must be between 1-50
 - `rateLimit` must be between 0.1-100
 - `httpTimeout` must be between 30s-60m
+- `retryBudget` must be between 0s-30m
 
 ## CLI Usage
 

@@ -21,6 +21,7 @@ import (
 
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
+	"github.com/rabesss/impartus-cli/internal/retry"
 )
 
 func TestDownloadPlaylistDefaultPipelineBoundsRequestsAndPreservesOrder(t *testing.T) {
@@ -307,7 +308,7 @@ func TestDownloadPlaylistPipelineUsesDownloaderRetryLimit(t *testing.T) {
 		APIRateLimit:              20,
 	}
 	d := New(cfg, client.New(server.Client(), nil))
-	d.maxRetries = 1
+	d.retry = retry.Policy{}
 
 	_, err := d.DownloadPlaylist(t.Context(), client.ParsedPlaylist{
 		ID:            42,
@@ -356,7 +357,7 @@ func TestDownloadPlaylistPipelineTreatsUnsetRetryLimitAsOneAttempt(t *testing.T)
 		APIRateLimit:              20,
 	}
 	d := New(cfg, client.New(server.Client(), nil))
-	d.maxRetries = 0
+	d.retry = retry.Policy{}
 
 	_, err := d.DownloadPlaylist(t.Context(), client.ParsedPlaylist{
 		ID:            42,
@@ -407,7 +408,7 @@ func TestDownloadPlaylistPreservesChunkAuthenticationFailure(t *testing.T) {
 				APIRateLimit:              20,
 			}
 			d := New(cfg, client.New(server.Client(), nil))
-			d.maxRetries = 1
+			d.retry = retry.Policy{}
 
 			_, err := d.DownloadPlaylist(t.Context(), client.ParsedPlaylist{
 				ID:     42,
@@ -454,7 +455,7 @@ func TestDownloadPlaylistReportsUnconfiguredOriginRefusal(t *testing.T) {
 				APIRateLimit:              20,
 			}
 			d := New(cfg, client.New(server.Client(), nil))
-			d.maxRetries = 1
+			d.retry = retry.Policy{}
 
 			_, err := d.DownloadPlaylist(t.Context(), client.ParsedPlaylist{
 				ID:            42,
@@ -495,7 +496,7 @@ func TestDownloadPlaylistPipelineOrdersFailureDetailsByChunkNumber(t *testing.T)
 		DownloadWorkersPerLecture: 3, DecryptWorkersPerLecture: 2, RateLimit: 100, APIRateLimit: 20,
 	}
 	d := New(cfg, client.New(server.Client(), nil))
-	d.maxRetries = 1
+	d.retry = retry.Policy{}
 	playlist := downloadSpeedPlaylist(server.URL, chunkCount)
 	playlist.SecondViewURLs = nil
 
@@ -540,7 +541,7 @@ func TestDownloadPlaylistDefaultPipelineRejectsOversizedChunkBeforeReadingBody(t
 		APIRateLimit:              20,
 	}
 	d := New(cfg, client.New(server.Client(), nil))
-	d.maxRetries = 1
+	d.retry = retry.Policy{}
 	ctx, cancel := context.WithTimeout(t.Context(), 750*time.Millisecond)
 	defer cancel()
 

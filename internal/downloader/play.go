@@ -93,7 +93,7 @@ func (d *Downloader) StartPlaybackStream(ctx context.Context, playlist client.Pa
 		return PlaybackStream{}, fmt.Errorf("no playable views available for lecture %d", playlist.SeqNo)
 	}
 
-	decryptionKey, err := d.fetchDecryptionKey(ctx, playlist.KeyURL)
+	decryptionKey, err := d.fetchPlaybackDecryptionKey(ctx, playlist.KeyURL)
 	if err != nil {
 		return PlaybackStream{}, fmt.Errorf("failed to fetch decryption key: %w", sanitizedPlaybackError(err))
 	}
