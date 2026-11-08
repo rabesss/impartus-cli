@@ -248,3 +248,48 @@ func TestKeyChangeRefusesToClearSwappedWorkspace(t *testing.T) {
 		t.Fatalf("file behind the swapped workspace was removed: %v", err)
 	}
 }
+
+// Clearing is bound to the validated directory itself, so a directory or
+// symlink swapped in at the path after every check is never emptied.
+func TestClearWorkspaceIgnoresSwapAfterChecks(t *testing.T) {
+	for _, swap := range []string{"symlink", "directory"} {
+		t.Run(swap, func(t *testing.T) {
+			base := t.TempDir()
+			dir := filepath.Join(base, "lecture-9-resume-0000000000000009")
+			if err := os.Mkdir(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			ident, err := os.Lstat(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			victimDir := filepath.Join(base, "victim")
+			if err := os.Mkdir(victimDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			victim := filepath.Join(victimDir, "keep.txt")
+			if err := os.WriteFile(victim, []byte("keep"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(dir, dir+".moved"); err != nil {
+				t.Fatal(err)
+			}
+			if swap == "symlink" {
+				if err := os.Symlink(victimDir, dir); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+			} else if err := os.Rename(victimDir, dir); err != nil {
+				t.Fatal(err)
+			} else {
+				victim = filepath.Join(dir, "keep.txt")
+			}
+
+			if err := clearWorkspace(dir, ident, false); err == nil {
+				t.Fatal("clearWorkspace() error = nil, want a replaced-workspace error")
+			}
+			if _, err := os.Stat(victim); err != nil {
+				t.Fatalf("file in the swapped-in directory was removed: %v", err)
+			}
+		})
+	}
+}

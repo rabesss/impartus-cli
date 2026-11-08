@@ -222,9 +222,30 @@ func (r *resumeState) save() error {
 }
 
 // clearWorkspace removes everything in dir except the lock and, when
-// keepMeta is set, resume.json.
-func clearWorkspace(dir string, keepMeta bool) error {
-	entries, err := os.ReadDir(dir)
+// keepMeta is set, resume.json. It enumerates and removes through a handle
+// bound to the directory ident describes, so a directory or symlink swapped
+// in at the path, even after the caller's checks, is never cleared.
+func clearWorkspace(dir string, ident os.FileInfo, keepMeta bool) error {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }() //nolint:errcheck // read-only handle
+	info, err := root.Stat(".")
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(ident, info) {
+		return errors.New("workspace was replaced")
+	}
+	handle, err := root.Open(".")
+	if err != nil {
+		return err
+	}
+	entries, err := handle.ReadDir(-1)
+	if closeErr := handle.Close(); err == nil {
+		err = closeErr
+	}
 	if err != nil {
 		return err
 	}
@@ -234,7 +255,7 @@ func clearWorkspace(dir string, keepMeta bool) error {
 		if name == resumeLockName || (keepMeta && name == resumeMetaName) {
 			continue
 		}
-		errs = append(errs, os.RemoveAll(filepath.Join(dir, name)))
+		errs = append(errs, root.RemoveAll(name))
 	}
 	return errors.Join(errs...)
 }
@@ -266,7 +287,7 @@ func clearWorkspaceDurably(dir string, ident os.FileInfo, keepMeta bool) error {
 	if err := revalidateWorkspace(dir, ident); err != nil {
 		return err
 	}
-	if err := clearWorkspace(dir, keepMeta); err != nil {
+	if err := clearWorkspace(dir, ident, keepMeta); err != nil {
 		return err
 	}
 	return syncWorkspaceDirHook(dir)
@@ -339,10 +360,18 @@ func (d *Downloader) discardWorkspace(dir string, ident os.FileInfo, lectureID i
 		return
 	}
 	renameErr := os.Rename(dir, trash)
+	emptied := false
 	if renameErr != nil {
 		// Windows refuses to rename a directory holding an open file (the
-		// lock). Empty it while still holding the lock instead.
-		if clearErr := clearWorkspace(dir, !lockDeleteFailsWhileHeld); clearErr != nil {
+		// lock). Empty it while still holding the lock instead. resume.json
+		// goes last, and only once everything else is gone, so the sweep can
+		// still find a workspace that could not be emptied.
+		clearErr := clearWorkspace(dir, ident, true)
+		if clearErr == nil && lockDeleteFailsWhileHeld {
+			clearErr = clearWorkspace(dir, ident, false)
+		}
+		emptied = clearErr == nil
+		if clearErr != nil {
 			d.logDiagnostic("warning: failed to remove workspace for lecture %d: %s", lectureID, secrets.ScrubError(errors.Join(renameErr, clearErr)))
 		} else {
 			d.logDiagnostic("lecture %d: emptied workspace in place after it could not be moved aside: %s", lectureID, secrets.ScrubError(renameErr))
@@ -352,7 +381,7 @@ func (d *Downloader) discardWorkspace(dir string, ident os.FileInfo, lectureID i
 		d.logDiagnostic("warning: failed to release workspace lock for lecture %d: %s", lectureID, secrets.ScrubError(closeErr))
 	}
 	if renameErr != nil {
-		if lockDeleteFailsWhileHeld {
+		if lockDeleteFailsWhileHeld && emptied {
 			// The emptied workspace holds only the lock. Removing the lock
 			// fails while another download holds it, and removing the
 			// directory fails once anything else is in it, so neither can
