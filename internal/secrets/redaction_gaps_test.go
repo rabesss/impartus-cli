@@ -29,6 +29,8 @@ func TestTokenAwareHelpersRecognizeBase64Bearer(t *testing.T) {
 	for _, source := range []struct{ name, value string }{
 		{"token", token},
 		{"bearer prefixed", "Bearer " + token},
+		{"lowercase scheme", "bearer " + token},
+		{"uppercase scheme", "BEARER " + token},
 	} {
 		for _, encoding := range encodings {
 			encoded := encoding.encoding.EncodeToString([]byte(source.value))
@@ -164,6 +166,8 @@ func TestScrubSeparatorlessValuesWithQuotesAndEscapes(t *testing.T) {
 		{`Authorization Custom fakeAAA-fakeBBB`, `Authorization REDACTED`},
 		{`{"error":"Authorization Custom fakeAAA-fakeBBB"} rest`, `{"error":"Authorization REDACTED"} rest`},
 		{`Authorization fakeAAA-123`, `Authorization REDACTED`},
+		{`Authorization fakeABCdefGHijk`, `Authorization REDACTED`},
+		{`Authorization Unavailable`, `Authorization Unavailable`},
 		{`Authorization ZmFrZUFBQTpmYWtlQkJC==`, `Authorization REDACTED`},
 		{`{"error":"Authorization fakeAAA-123"} rest`, `{"error":"Authorization REDACTED"} rest`},
 		{`Authorization misconfigured.`, `Authorization misconfigured.`},

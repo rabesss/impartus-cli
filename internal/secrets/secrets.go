@@ -750,9 +750,11 @@ func tokenVariants(token string) []string {
 		return nil
 	}
 	values := []string{trimmed}
+	bare := trimmed
 	fields := strings.Fields(trimmed)
 	if len(fields) >= 2 && strings.EqualFold(fields[0], "bearer") {
-		values = append(values, strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0])))
+		bare = strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0]))
+		values = append(values, bare)
 	} else if len(trimmed) <= maxTokenVariantInputSize {
 		values = append(values, "Bearer "+trimmed)
 	}
@@ -782,30 +784,40 @@ func tokenVariants(token string) []string {
 			break
 		}
 	}
-	// A media URL can carry the bearer base64- or base64url-encoded in a query
-	// value or path segment, which decodes trivially back to the token. Add the
-	// whole-value encodings of each base spelling with one URL/JSON escaping
-	// level, so padded and alphabet bytes (=, +, /) also match when escaped.
-	// Matching stays whole-value: no alignment inside larger base64 blobs.
-	if len(variants) < maxTokenVariantCount {
-		for _, value := range values {
-			for _, encoded := range base64TokenEncodings(value) {
-				expandTokenVariantFrontier(
-					expandTokenVariantFrontier([]string{encoded}, 1, &variants, seen),
-					2, &variants, seen,
-				)
-				if len(variants) >= maxTokenVariantCount {
-					break
-				}
-			}
-		}
-	}
+	appendBase64TokenVariants(values, bare, &variants, seen)
 	// Replace longer encodings first. This prevents a shorter representation
 	// from consuming part of a longer, still-secret representation.
 	sort.SliceStable(variants, func(left, right int) bool {
 		return len(variants[left]) > len(variants[right])
 	})
 	return variants
+}
+
+// appendBase64TokenVariants adds the variants of a bearer that a media URL
+// carries base64- or base64url-encoded in a query value or path segment, which
+// decodes trivially back to the token. Each base spelling's whole-value
+// encodings get one URL/JSON escaping level, so padded and alphabet bytes
+// (=, +, /) also match when escaped. Matching stays whole-value: no alignment
+// inside larger base64 blobs. The scheme is case-insensitive, so the encoded
+// header value may spell it in any common case.
+func appendBase64TokenVariants(values []string, bare string, variants *[]string, seen map[string]struct{}) {
+	base64Values := slices.Clone(values)
+	for _, scheme := range []string{"Bearer ", "bearer ", "BEARER "} {
+		if !slices.Contains(base64Values, scheme+bare) {
+			base64Values = append(base64Values, scheme+bare)
+		}
+	}
+	for _, value := range base64Values {
+		for _, encoded := range base64TokenEncodings(value) {
+			if len(*variants) >= maxTokenVariantCount {
+				return
+			}
+			expandTokenVariantFrontier(
+				expandTokenVariantFrontier([]string{encoded}, 1, variants, seen),
+				2, variants, seen,
+			)
+		}
+	}
 }
 
 func expandTokenVariantFrontier(
@@ -1711,7 +1723,8 @@ func isSchemeWord(word string) bool {
 
 // minOpaqueCredentialBytes and maxPlainCredentialBytes describe a word that
 // reads as a credential even with no scheme before it: long enough and
-// carrying a digit, or long enough that no ordinary word matches.
+// carrying a digit or mixed case, or long enough that no ordinary word
+// matches.
 const (
 	minOpaqueCredentialBytes = 8
 	maxPlainCredentialBytes  = 20
@@ -1722,7 +1735,18 @@ func looksLikeOpaqueCredential(word string) bool {
 	if len(word) >= maxPlainCredentialBytes {
 		return true
 	}
-	return len(word) >= minOpaqueCredentialBytes && strings.ContainsAny(word, "0123456789")
+	return len(word) >= minOpaqueCredentialBytes && (strings.ContainsAny(word, "0123456789") || hasInnerCapital(word))
+}
+
+// hasInnerCapital reports whether an ASCII capital letter follows a lowercase
+// one, as in mixed-case tokens ("fakeABCdef") but not in "Lecture" or "HTTP".
+func hasInnerCapital(word string) bool {
+	for index := 1; index < len(word); index++ {
+		if word[index] >= 'A' && word[index] <= 'Z' && word[index-1] >= 'a' && word[index-1] <= 'z' {
+			return true
+		}
+	}
+	return false
 }
 
 // looksLikeCookieValue accepts a separator-less cookie header only when its
