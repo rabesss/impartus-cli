@@ -135,11 +135,17 @@ var bareBearerCredential = regexp.MustCompile(
 var schemeSecretAssignment = regexp.MustCompile(
 	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*[:=]\s*)(?:` + strings.Join(credentialSchemes, "|") + `)\s+[^\s,;&}]+`,
 )
+
+// bareSecretEquals and bareSecretColon match only the first byte of the
+// value. The value runs on to the next byte that openValueStop accepts, and
+// the shared matcher finds that end only when it needs it: a quoted value
+// resumes at its closing quote, so matching the whole run here would rescan
+// the rest of a line of glued quoted assignments for each one.
 var bareSecretEquals = regexp.MustCompile(
-	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*=\s*)[^\s,;&}]+`,
+	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*=\s*)[^\s,;&}]`,
 )
 var bareSecretColon = regexp.MustCompile(
-	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*:\s*)[^\s,;&}]+`,
+	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*:\s*)[^\s,;&}]`,
 )
 
 // RedactionEvidence records credential values recognized during a scrub. The
@@ -1571,6 +1577,9 @@ type credentialAssignmentStep struct {
 	// lineValue marks expressions whose unquoted value runs to the end of the
 	// line. A quoted value still ends at its closing quote.
 	lineValue bool
+	// valueRun marks an expression that matches only the first byte of an
+	// open value; the value runs on to the next openValueStop byte.
+	valueRun bool
 	// accept, when set, rejects matches whose value does not have the shape of
 	// a credential, so that rules without a key=value separator do not
 	// redact ordinary prose. value[start:end] is the first word of the value.
@@ -1587,8 +1596,8 @@ var credentialAssignmentStepList = []credentialAssignmentStep{
 	{expression: separatorlessCookie, prefixGroup: 2, openValue: true, lineValue: true, accept: firstWord(looksLikeCookieValue)},
 	{expression: separatorlessAPIKey, prefixGroup: 2, openValue: true, accept: firstWord(looksLikeTokenValue)},
 	{expression: schemeSecretAssignment, prefixGroup: 2},
-	{expression: bareSecretEquals, prefixGroup: 2, openValue: true},
-	{expression: bareSecretColon, prefixGroup: 2, openValue: true},
+	{expression: bareSecretEquals, prefixGroup: 2, openValue: true, valueRun: true},
+	{expression: bareSecretColon, prefixGroup: 2, openValue: true, valueRun: true},
 	{expression: bareBearerCredential, prefixGroup: 2, accept: firstWord(looksLikeTokenValue)},
 }
 
@@ -1749,16 +1758,16 @@ func nextCredentialMatch(value string, step credentialAssignmentStep, from int) 
 // one quoted string keeps its delimiters; any other value runs through a
 // quote that a nested assignment leaves open.
 func openCredentialValue(value string, step credentialAssignmentStep, match credentialMatch) credentialMatch {
-	prefixEnd, matchEnd := match.prefixEnd, match.end
+	prefixEnd := match.prefixEnd
 	width := quoteOpenerWidth(value, prefixEnd)
 	if width == 0 {
-		match.end = extendUnmatchedQuote(value, prefixEnd, matchEnd)
+		match.end = extendUnmatchedQuote(value, prefixEnd, step.valueEnd(value, prefixEnd, match.end))
 		match.resume = match.end
 		return match
 	}
 	closeStart, closeWidth := quotedValueClose(value, prefixEnd)
 	closeEnd := closeStart + closeWidth
-	if step.lineValue || closeEnd >= matchEnd || startsAssignment(value[closeEnd:matchEnd]) {
+	if step.lineValue || step.quotedValueStands(value, prefixEnd, closeEnd, match.end) {
 		// Replace only the contents and keep the delimiters, so later passes
 		// see a quoted REDACTED marker instead of an open value that runs on
 		// to the next break.
@@ -1772,9 +1781,53 @@ func openCredentialValue(value string, step credentialAssignmentStep, match cred
 	// Text that is not another assignment is glued to the closing quote
 	// (password="a"b...), so the quotes may be part of the value. Keep the
 	// whole match redacted, through any quote it leaves open.
-	match.end = extendUnmatchedQuote(value, prefixEnd, matchEnd)
+	match.end = extendUnmatchedQuote(value, prefixEnd, step.valueEnd(value, prefixEnd, match.end))
 	match.resume = match.end
 	return match
+}
+
+// valueEnd returns where an open value that starts at start ends. matchEnd is
+// the end of the expression's match, which is the whole value unless the
+// expression matched only its first byte.
+func (step credentialAssignmentStep) valueEnd(value string, start, matchEnd int) int {
+	if !step.valueRun {
+		return matchEnd
+	}
+	end := start
+	for end < len(value) && !openValueStop(value[end]) {
+		end++
+	}
+	return end
+}
+
+// quotedValueStands reports whether a quoted value that closes at closeEnd is
+// the whole value: the open value ends at or before its closing quote, or
+// another assignment is glued to that quote. For a valueRun step it looks no
+// further than the key after the quote, so the scan stays linear.
+func (step credentialAssignmentStep) quotedValueStands(value string, start, closeEnd, matchEnd int) bool {
+	if !step.valueRun {
+		return closeEnd >= matchEnd || startsAssignment(value[closeEnd:matchEnd])
+	}
+	if closeEnd >= len(value) || openValueStop(value[closeEnd]) || strings.ContainsFunc(value[start:closeEnd], func(character rune) bool {
+		return character < 0x80 && openValueStop(byte(character))
+	}) {
+		return true
+	}
+	keyEnd := closeEnd
+	for keyEnd < len(value) && isCredentialKeyByte(value[keyEnd]) {
+		keyEnd++
+	}
+	return keyEnd > closeEnd && keyEnd < len(value) && (value[keyEnd] == '=' || value[keyEnd] == ':')
+}
+
+// openValueStop reports whether character ends a bare value, matching the
+// [^\s,;&}] class of the bare assignment expressions.
+func openValueStop(character byte) bool {
+	switch character {
+	case '\t', '\n', '\f', '\r', ' ', ',', ';', '&', '}':
+		return true
+	}
+	return false
 }
 
 // lineValueEnd finds the end of a value that runs to the end of its line,
@@ -1813,30 +1866,30 @@ func isCredentialKeyByte(character byte) bool {
 
 // extendUnmatchedQuote extends an open value that ends inside a quote opened
 // by a nested assignment (password=abc"sig="x y") through that quote's
-// closing partner. Only a quote right after '=' or ':' counts as an opener,
-// so apostrophes in prose ("don't") do not extend the value.
+// closing partner. Only a quote right after '=' or ':', possibly escaped
+// (sig=\"x y\"), counts as an opener, so apostrophes in prose ("don't") do
+// not extend the value.
 func extendUnmatchedQuote(value string, start, end int) int {
-	open := -1
 	for index := start; index < end; index++ {
 		character := value[index]
 		if character != '"' && character != '\'' {
 			continue
 		}
-		if open >= 0 {
-			if character == value[open] && !isEscapedByte(value, index) {
-				open = -1
-			}
+		opener := index
+		for opener > start && index-opener <= maxQuoteEscapeDepth && value[opener-1] == '\\' {
+			opener--
+		}
+		if opener <= start || (value[opener-1] != '=' && value[opener-1] != ':') || quoteOpenerWidth(value, opener) == 0 {
 			continue
 		}
-		if index > start && (value[index-1] == '=' || value[index-1] == ':') {
-			open = index
+		closeStart, closeWidth := quotedValueClose(value, opener)
+		if closeEnd := closeStart + closeWidth; closeEnd >= end {
+			return max(end, closeEnd)
+		} else if closeEnd > index {
+			index = closeEnd - 1
 		}
 	}
-	if open < 0 {
-		return end
-	}
-	closeStart, closeWidth := quotedValueClose(value, open)
-	return max(end, closeStart+closeWidth)
+	return end
 }
 
 const (

@@ -197,6 +197,8 @@ func TestScrubEscapedAndNestedQuotedAssignments(t *testing.T) {
 		{`{"msg":"password=\"secret-one secret-two\" next"}`, `{"msg":"password=\"REDACTED\" next"}`},
 		{`x-auth-token: \"secret-a secret-b\" tail-visible`, `x-auth-token: \"REDACTED\" tail-visible`},
 		{`password=abc"sig="secret-x secret-y"`, ""},
+		{`password=abc"sig=\"secret-x secret-y\" tail`, `password=REDACTED tail`},
+		{`{"msg":"password=abc\"sig=\"secret-x secret-y\"\"}`, ""},
 		{`password=\'secret-one secret-two\' keep=1`, `password=\'REDACTED\' keep=1`},
 		{`password=\\"secret-one secret-two\\" keep=1`, `password=\\"REDACTED\\" keep=1`},
 		{`{"msg":"{\"detail\":\"password=\\\"secret-one secret-two\\\" next\"}"}`, `{"msg":"{\"detail\":\"password=\\\"REDACTED\\\" next\"}"}`},
@@ -291,6 +293,11 @@ func TestScrubRepeatedAcceptedAssignmentsStayLinear(t *testing.T) {
 		{`x-api-key="k" `, `zqzqzqzqz="k" `},
 		{`set-cookie='x' `, `zqzqzqzqzq='x' `},
 		{"cookie=x\n", "zqzqzq=x\n"},
+		{`password="a"`, `zqzqzqzq="a"`},
+		{`password=\"a\"`, `zqzqzqzq=\"a\"`},
+		{`token='a'`, `zqzqz='a'`},
+		{`password="`, `zqzqzqzq="`},
+		{`secret: "a"`, `zqzqzq: "a"`},
 	} {
 		t.Run(test.hostile, func(t *testing.T) {
 			hostileInput := strings.Repeat(test.hostile, maxScrubInputSize/2/len(test.hostile))
