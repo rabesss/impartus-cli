@@ -121,17 +121,20 @@ func encodedPartialTokenBodies(token string) map[string]string {
 }
 
 func TestReadSanitizedErrorBodyOmitsEncodedPartialToken(t *testing.T) {
-	token := longTestBearer()
-	for name, body := range encodedPartialTokenBodies(token) {
-		t.Run(name, func(t *testing.T) {
-			got, err := ReadSanitizedErrorBody(strings.NewReader(body), 512, token)
-			if err != nil {
-				t.Fatalf("ReadSanitizedErrorBody() error = %v", err)
-			}
-			if got != UpstreamErrorBodyOmitted {
-				t.Fatalf("ReadSanitizedErrorBody() = %q, want %q", got, UpstreamErrorBodyOmitted)
-			}
-		})
+	// The second size takes the path for tokens over 4 KiB, which scrubs
+	// instead of matching whole token spellings.
+	for _, token := range []string{longTestBearer(), strings.Repeat(longTestBearer(), 6)[:5000]} {
+		for name, body := range encodedPartialTokenBodies(token) {
+			t.Run(fmt.Sprintf("%d-byte token/%s", len(token), name), func(t *testing.T) {
+				got, err := ReadSanitizedErrorBody(strings.NewReader(body), 512, token)
+				if err != nil {
+					t.Fatalf("ReadSanitizedErrorBody() error = %v", err)
+				}
+				if got != UpstreamErrorBodyOmitted {
+					t.Fatalf("ReadSanitizedErrorBody() = %q, want %q", got, UpstreamErrorBodyOmitted)
+				}
+			})
+		}
 	}
 }
 
