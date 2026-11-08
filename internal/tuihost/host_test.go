@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rabesss/impartus-cli/internal/testdeadline"
 	"github.com/rabesss/impartus-cli/internal/tuihost"
 	"github.com/rabesss/impartus-cli/internal/tuiproto"
 )
@@ -100,12 +101,16 @@ func TestRunCancellationKillsChildAndCleansBootstrap(t *testing.T) {
 			Stderr:     &output,
 		})
 	}()
-	deadline := time.Now().Add(time.Second)
-	for !strings.Contains(output.String(), "impartus-tui-session-") {
-		if time.Now().After(deadline) {
-			t.Fatal("child did not consume bootstrap before cancellation")
-		}
-		time.Sleep(time.Millisecond)
+	// The helper prints its bootstrap directory only after consuming the
+	// bootstrap, so the marker proves consumption without a wall-clock budget.
+	consumed := output.waitFor("impartus-tui-session-")
+	hangGuard := testdeadline.Guard(t)
+	select {
+	case <-consumed:
+	case runErr := <-done:
+		t.Fatalf("Run() returned before the child consumed its bootstrap: %v\nchild output:\n%s", runErr, output.String())
+	case <-hangGuard:
+		t.Fatalf("child did not consume bootstrap before the test deadline\nchild output:\n%s", output.String())
 	}
 	cancel()
 	select {
@@ -113,8 +118,8 @@ func TestRunCancellationKillsChildAndCleansBootstrap(t *testing.T) {
 		if !errors.Is(runErr, context.Canceled) {
 			t.Fatalf("Run() error = %v, want context cancellation", runErr)
 		}
-	case <-time.After(time.Second):
-		t.Fatal("Run() did not stop the child after cancellation")
+	case <-hangGuard:
+		t.Fatal("Run() did not stop the child after cancellation before the test deadline")
 	}
 	directory := strings.Split(strings.TrimSpace(output.String()), "\n")[0]
 	if _, statErr := os.Stat(directory); !os.IsNotExist(statErr) {
@@ -204,19 +209,51 @@ func hasArgument(arguments []string, name string) bool {
 	return false
 }
 
+// synchronizedBuffer collects child output from os/exec copier goroutines and
+// lets a test wait for a marker without polling.
 type synchronizedBuffer struct {
-	mu     sync.Mutex
-	buffer bytes.Buffer
+	mu      sync.Mutex
+	buffer  bytes.Buffer
+	waiters []outputWaiter
+}
+
+type outputWaiter struct {
+	marker string
+	ready  chan struct{}
 }
 
 func (buffer *synchronizedBuffer) Write(content []byte) (int, error) {
 	buffer.mu.Lock()
 	defer buffer.mu.Unlock()
-	return buffer.buffer.Write(content)
+	written, err := buffer.buffer.Write(content)
+	pending := buffer.waiters[:0]
+	for _, waiter := range buffer.waiters {
+		if strings.Contains(buffer.buffer.String(), waiter.marker) {
+			close(waiter.ready)
+			continue
+		}
+		pending = append(pending, waiter)
+	}
+	buffer.waiters = pending
+	return written, err
 }
 
 func (buffer *synchronizedBuffer) String() string {
 	buffer.mu.Lock()
 	defer buffer.mu.Unlock()
 	return buffer.buffer.String()
+}
+
+// waitFor returns a channel that is closed once the output contains marker,
+// including when it already does.
+func (buffer *synchronizedBuffer) waitFor(marker string) <-chan struct{} {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	ready := make(chan struct{})
+	if strings.Contains(buffer.buffer.String(), marker) {
+		close(ready)
+		return ready
+	}
+	buffer.waiters = append(buffer.waiters, outputWaiter{marker: marker, ready: ready})
+	return ready
 }

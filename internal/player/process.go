@@ -57,8 +57,10 @@ type Options struct {
 	testArgs         []string
 	testEnvironment  []string
 	testSocketName   string
-	testPIDFile      string
 	testChildPIDFile string
+	// testStartedHook receives the child PID right after the process starts,
+	// before Start can time out, cancel, or reap it.
+	testStartedHook func(pid int)
 }
 
 type runtimeReservation struct {
@@ -181,6 +183,9 @@ func Start(ctx context.Context, options Options) (*Session, error) {
 	command.Env = append(os.Environ(), options.testEnvironment...)
 	if startErr := command.Start(); startErr != nil {
 		return nil, errors.Join(fmt.Errorf("start mpv: %w", startErr), runtime.cleanup())
+	}
+	if options.testStartedHook != nil {
+		options.testStartedHook(command.Process.Pid)
 	}
 
 	session := &Session{
