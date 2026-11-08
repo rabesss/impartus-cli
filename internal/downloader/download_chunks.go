@@ -40,10 +40,17 @@ func copyWithLimit(dst io.Writer, src io.Reader, limit int64) (int64, error) {
 // doDownloadChunk performs a single HTTP download, writing to a file or reading to memory
 // depending on the toMemory flag. It handles rate limiting, error status codes, and
 // returns the file path (when toMemory=false) or data bytes (when toMemory=true).
+// chunkPath is the decrypted chunk file for one view's chunk in the current
+// workspace. The encrypted download uses it with a ".temp" suffix.
+func (d *Downloader) chunkPath(id int, view string, chunk int) string {
+	return filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_%s_%04d.ts", id, view, chunk))
+}
+
 func (d *Downloader) doDownloadChunk(ctx context.Context, url string, id int, chunk int, view string, toMemory bool) (string, []byte, int64, error) {
 	return d.doDownloadChunkWithLimit(ctx, url, id, chunk, view, toMemory, maxChunkSize)
 }
 
+//nolint:gocyclo // Keep response, size and staging-file checks in one flow.
 func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, id int, chunk int, view string, toMemory bool, limit int64) (string, []byte, int64, error) {
 	if d.mediaOriginErr != nil {
 		return "", nil, 0, d.mediaOriginErr
@@ -62,7 +69,7 @@ func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, i
 		return "", nil, 0, statusErr
 	}
 
-	outFilepath := filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_%s_%04d.ts.temp", id, view, chunk))
+	outFilepath := d.chunkPath(id, view, chunk) + ".temp"
 	if resp.ContentLength > limit {
 		return "", nil, 0, fmt.Errorf("chunk %d exceeds max size %d bytes: %w", chunk, limit, errDownloadSizeLimit)
 	}
@@ -77,9 +84,14 @@ func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, i
 		}
 		return outFilepath, data, int64(len(data)), nil
 	}
+	// A resumable workspace may hold an earlier attempt's file here; replace
+	// it with a new file rather than writing through whatever is there.
+	if removeErr := os.Remove(outFilepath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		return "", nil, 0, fmt.Errorf("could not replace file for chunk %d: %w", chunk, removeErr)
+	}
 	// G304: file paths are constructed from validated config and internal data
 	// #nosec G304
-	outFile, createErr := os.Create(outFilepath)
+	outFile, createErr := os.OpenFile(outFilepath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if createErr != nil {
 		return "", nil, 0, fmt.Errorf("could not create file for chunk %d: %w", chunk, createErr)
 	}

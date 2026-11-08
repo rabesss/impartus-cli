@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"testing"
 	"time"
@@ -17,21 +18,24 @@ import (
 	"github.com/rabesss/impartus-cli/internal/artifact"
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
+	"github.com/rabesss/impartus-cli/internal/lockfile"
 )
 
-func TestDownloadSIGINTCleansWorkspace(t *testing.T) {
+// An interrupted download keeps its resumable workspace so the next run can
+// reuse finished chunks, and releases its lock on the way out.
+func TestDownloadSIGINTKeepsResumableWorkspace(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("os.Interrupt is not supported on Windows")
 	}
 
 	for _, mode := range []string{"human", "json"} {
 		t.Run(mode, func(t *testing.T) {
-			testDownloadSIGINTCleansWorkspace(t, mode)
+			testDownloadSIGINTKeepsResumableWorkspace(t, mode)
 		})
 	}
 }
 
-func testDownloadSIGINTCleansWorkspace(t *testing.T, mode string) {
+func testDownloadSIGINTKeepsResumableWorkspace(t *testing.T, mode string) {
 	t.Helper()
 	tempBase := t.TempDir()
 	readyPath := filepath.Join(tempBase, "chunk-requested")
@@ -98,10 +102,23 @@ func testDownloadSIGINTCleansWorkspace(t *testing.T, mode string) {
 	if err != nil {
 		t.Fatalf("glob helper workspaces after exit: %v", err)
 	}
-	if len(workspaces) != 0 {
-		t.Fatalf("SIGINT left temporary lecture workspaces behind: %v", workspaces)
+	if len(workspaces) != 1 || !resumeWorkspacePattern.MatchString(filepath.Base(workspaces[0])) {
+		t.Fatalf("SIGINT workspaces = %v, want only lecture 7's resumable workspace", workspaces)
+	}
+	lock, err := lockfile.TryAcquire(filepath.Join(workspaces[0], ".lock"))
+	if err != nil {
+		t.Fatalf("resumable workspace lock still held after exit: %v", err)
+	}
+	if closeErr := lock.Close(); closeErr != nil {
+		t.Fatalf("release workspace lock: %v", closeErr)
+	}
+	partials, err := filepath.Glob(filepath.Join(workspaces[0], "*.part"))
+	if err != nil || len(partials) != 0 {
+		t.Fatalf("SIGINT left partial chunk files %v (err %v)", partials, err)
 	}
 }
+
+var resumeWorkspacePattern = regexp.MustCompile(`^lecture-7-resume-[0-9a-f]{16}$`)
 
 func TestDownloadSIGINTProcessHelper(t *testing.T) {
 	if os.Getenv("IMPARTUS_DOWNLOAD_SIGINT_HELPER") != "1" {

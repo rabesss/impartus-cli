@@ -110,6 +110,9 @@ type Downloader struct {
 	playlistSlots  chan struct{}
 	mediaOriginErr error
 	mediaOrigins   []string
+	// resume is set on the per-invocation copy that writes into a resumable
+	// workspace; chunks it already holds are reused instead of fetched.
+	resume *resumeState
 
 	// pipelineObserver is a package-private lifecycle hook used by tests.
 	pipelineObserver func(*LecturePipeline)
@@ -225,6 +228,15 @@ func (d *Downloader) DownloadPlaylist(ctx context.Context, playlist client.Parse
 	defer zeroKey(decryptionKey)                                         // zero key after all chunks are processed
 	if err := os.MkdirAll(d.config.TempDirLocation, 0o755); err != nil { // #nosec G301
 		return DownloadedPlaylist{}, err
+	}
+	if d.resume != nil {
+		discarded, err := d.resume.verifyKey(decryptionKey)
+		if err != nil {
+			return DownloadedPlaylist{}, fmt.Errorf("prepare resumable workspace: %w", secrets.SanitizeError(err))
+		}
+		if discarded {
+			d.logDiagnostic("lecture %d: decryption key changed; discarding earlier chunks", playlist.ID)
+		}
 	}
 
 	if d.config.EnablePipeline {
@@ -342,25 +354,21 @@ func (d *Downloader) DownloadAndJoinPlaylist(ctx context.Context, playlist clien
 	if d.totalChunksForPlaylist(playlist) == 0 {
 		return JoinResult{}, fmt.Errorf("%w for lecture %d", ErrNoSelectedMedia, playlist.ID)
 	}
-	// Each invocation owns a unique child workspace. The configured base
-	// directory remains caller-owned and may be shared by concurrent downloads.
-	if err := os.MkdirAll(d.config.TempDirLocation, 0o755); err != nil { // #nosec G301
-		return JoinResult{}, err
-	}
-	workspace, err := os.MkdirTemp(d.config.TempDirLocation, fmt.Sprintf("lecture-%d-", playlist.ID))
+	// Each invocation owns its workspace under the caller-owned base
+	// directory: the lecture's resumable workspace, or a one-off one when
+	// another download of the same lecture holds it.
+	workspace, err := d.openLectureWorkspace(playlist)
 	if err != nil {
 		return JoinResult{}, err
 	}
-	defer func() {
-		if cleanupErr := os.RemoveAll(workspace); cleanupErr != nil {
-			d.logDiagnostic("warning: failed to remove temporary workspace for lecture %d: %s", playlist.ID, secrets.ScrubError(cleanupErr))
-		}
-	}()
+	succeeded := false
+	defer func() { workspace.close(d, succeeded) }()
 
 	invocationConfig := *d.config
-	invocationConfig.TempDirLocation = workspace
+	invocationConfig.TempDirLocation = workspace.dir
 	invocationDownloader := *d
 	invocationDownloader.config = &invocationConfig
+	invocationDownloader.resume = workspace.resume
 
 	downloadedPlaylist, err := invocationDownloader.DownloadPlaylist(ctx, playlist, p, tracker)
 	if err != nil {
@@ -370,7 +378,9 @@ func (d *Downloader) DownloadAndJoinPlaylist(ctx context.Context, playlist clien
 	if err != nil {
 		return JoinResult{}, err
 	}
-	return invocationDownloader.JoinLectureOutput(ctx, metadataFile)
+	result, err := invocationDownloader.JoinLectureOutput(ctx, metadataFile)
+	succeeded = err == nil
+	return result, err
 }
 
 // DownloadAndJoin downloads one playlist without owning a presentation-layer
@@ -461,6 +471,10 @@ func (d *Downloader) newViewBar(p *mpb.Progress, total, seqNo int, label string)
 }
 
 func (d *Downloader) downloadAndDecryptChunk(ctx context.Context, chunkURL string, playlistID, chunkIndex int, view string, decryptionKey []byte, tracker *ProgressTracker) (string, error) {
+	if chunkPath, size, ok := d.completedChunk(playlistID, view, chunkIndex); ok {
+		ChunkResumed(tracker, size)
+		return chunkPath, nil
+	}
 	filePath, err := d.downloadWithRetry(ctx, chunkURL, playlistID, chunkIndex, view, tracker)
 	if err != nil {
 		return "", fmt.Errorf("download failed for chunk %d: %w", chunkIndex, err)

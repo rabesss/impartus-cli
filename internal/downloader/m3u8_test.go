@@ -90,3 +90,24 @@ func TestCreateTempM3U8FileNaming(t *testing.T) {
 		t.Errorf("unexpected second view file name %q", m3u8File.SecondViewFile)
 	}
 }
+
+func TestWriteM3U8FileDoesNotFollowSymlink(t *testing.T) {
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "victim")
+	if err := os.WriteFile(victim, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest := filepath.Join(dir, "42_first.m3u8")
+	if err := os.Symlink(victim, manifest); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := writeM3U8File(manifest, []string{filepath.Join(dir, "chunk.ts")}); err != nil {
+		t.Fatalf("writeM3U8File() error = %v", err)
+	}
+	if got, err := os.ReadFile(victim); err != nil || string(got) != "keep" {
+		t.Fatalf("symlink target = %q, %v; want it untouched", got, err)
+	}
+	if info, err := os.Lstat(manifest); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("manifest = %v, %v; want a regular file", info, err)
+	}
+}

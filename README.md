@@ -57,6 +57,7 @@ A Go-based CLI/TUI and HTTP API server for browsing, streaming, and downloading 
 - **Multi-View Video Processing** - Support for instructor/dual-view video streams
 - **AES Encrypted Chunk Handling** - Automatic decryption of Impartus video chunks
 - **Pipeline Parallelization** - Concurrent download + decrypt for faster throughput
+- **Resumable Downloads** - A rerun after a failed or interrupted download fetches only the chunks it is missing
 - **Progress Tracking with ETA** - Real-time progress bars with speed and time estimates
 - **Rate Limiting** - Configurable API and download rate limits
 - **Slide Download Support** - Download lecture slides alongside video content
@@ -176,7 +177,7 @@ protection manually with `chmod 600 config.json`.
 | `views` | string | No | `"both"` | Views: `left`, `right`, `both`, `first`, `second` |
 | `downloadLocation` | string | No | `"./downloads"` | Output directory |
 | `tokenCachePath` | string | No | `".token"` | Private bearer-token cache path; `IMPARTUS_TOKEN_CACHE` overrides it |
-| `tempDirLocation` | string | No | `"./temp"` | Temporary directory |
+| `tempDirLocation` | string | No | `"./temp"` | Temporary directory; failed downloads keep finished chunks here so a rerun resumes them (see [Resuming failed downloads](#resuming-failed-downloads)) |
 | `slides` | bool | No | `false` | Download slides alongside video |
 | `audioOnly` | bool | No | `false` | Download audio only |
 | `audioFormat` | string | No | `"mp3"` | Audio format: `mp3`, `m4a`, `aac`, `opus` |
@@ -534,6 +535,19 @@ the selection alone.
 # Temporary compatibility path; IPC failures never select this automatically
 ./impartus play -s 123 -S 456 --lecture 3 --mpv-mode legacy
 ```
+
+#### Resuming failed downloads
+
+When a lecture download fails or is interrupted, its finished chunks stay in a
+per-lecture workspace under `tempDirLocation` (`IMPARTUS_TEMP_DIR`). Running the
+same download again with the same temporary directory reuses those chunks and
+fetches only the missing ones. The download starts over if the lecture's
+playlist or decryption key has changed, or if you switch between pipelined and
+serial downloads. On Linux and macOS, a workspace that another user owns or
+can access is never reused. Windows does not check workspace ownership, so keep
+`tempDirLocation` in a folder only you can write to. A successful download
+removes its workspace, and later downloads remove workspaces left unused for 7
+days.
 
 ### Durable Watch
 

@@ -1,15 +1,21 @@
 package downloader
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 )
 
 func writeM3U8File(path string, chunks []string) error {
+	// Never write through whatever is already at the path (a symlink, say):
+	// remove it and create the manifest exclusively.
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	// G304: file paths are constructed from validated config and internal data
 	// #nosec G304
-	f, err := os.Create(path)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
