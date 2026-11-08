@@ -98,8 +98,13 @@ var quotedKeySchemeSecretValue = regexp.MustCompile(
 var quotedKeyBareSecretValue = regexp.MustCompile(
 	`(?i)(\b` + sensitiveAssignmentKey + `\s*["']\s*[:=]\s*)[^\s"',;&}][^\s,;&}]*`,
 )
+
+// strongCredentialAssignment matches only the first byte of the value; the
+// shared matcher finds where the value ends (its closing quote or the end of
+// the line). Matching through the end of the line here would rescan the rest
+// of the line for every short quoted header on it.
 var strongCredentialAssignment = regexp.MustCompile(
-	`(?i)(^|[^/\\a-z0-9_-])((?:authorization|proxy[-_]?authorization|auth|(?:x[-_])?api[-_]?key|cookie2?|set[-_]?cookie2?)\s*[:=]\s*)[^\r\n&]+`,
+	`(?i)(^|[^/\\a-z0-9_-])((?:authorization|proxy[-_]?authorization|auth|(?:x[-_])?api[-_]?key|cookie2?|set[-_]?cookie2?)\s*[:=]\s*)[^\r\n&]`,
 )
 
 // Header dumps sometimes separate the name from the value with whitespace

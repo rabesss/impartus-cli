@@ -201,6 +201,7 @@ func TestScrubEscapedAndNestedQuotedAssignments(t *testing.T) {
 		{`password=\\"secret-one secret-two\\" keep=1`, `password=\\"REDACTED\\" keep=1`},
 		{`{"msg":"{\"detail\":\"password=\\\"secret-one secret-two\\\" next\"}"}`, `{"msg":"{\"detail\":\"password=\\\"REDACTED\\\" next\"}"}`},
 		{`{"msg":"token: \"secret-a secret-b\", status=401"}`, `{"msg":"token: \"REDACTED\", status=401"}`},
+		{`{"msg":"password=\"secret-one \\\"secret-two secret-a\\\" secret-b\" keep=1"}`, `{"msg":"password=\"REDACTED\" keep=1"}`},
 	} {
 		t.Run(test.input, func(t *testing.T) {
 			got := Scrub(test.input)
@@ -265,15 +266,7 @@ func TestScrubRejectedSeparatorlessHeadersStayLinear(t *testing.T) {
 		}
 		return builder.String()
 	}
-	fastest := func(input string) time.Duration {
-		best := time.Duration(1<<63 - 1)
-		for range 2 {
-			start := time.Now()
-			_ = Scrub(input)
-			best = min(best, time.Since(start))
-		}
-		return best
-	}
+	fastest := fastestScrub
 	for _, separator := range []string{"\n", ",", ";"} {
 		for _, key := range []string{"authorization", "cookie", "x-api-key"} {
 			t.Run(strconv.Quote(separator)+"/"+key, func(t *testing.T) {
@@ -285,4 +278,37 @@ func TestScrubRejectedSeparatorlessHeadersStayLinear(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestScrubRepeatedAcceptedAssignmentsStayLinear(t *testing.T) {
+	// Each accepted strong assignment resumes after its own value. Matching
+	// must not scan on to the end of the line for every one of them, or many
+	// short quoted headers on one line take quadratic time. Each benign unit
+	// has the same length and shape under a key that matches no rule.
+	for _, test := range []struct{ hostile, benign string }{
+		{`cookie="x" `, `zqzqzq="x" `},
+		{`authorization="Bearer x" `, `zqzqzqzqzqzqz="Bearer x" `},
+		{`x-api-key="k" `, `zqzqzqzqz="k" `},
+		{`set-cookie='x' `, `zqzqzqzqzq='x' `},
+		{"cookie=x\n", "zqzqzq=x\n"},
+	} {
+		t.Run(test.hostile, func(t *testing.T) {
+			hostileInput := strings.Repeat(test.hostile, maxScrubInputSize/2/len(test.hostile))
+			benignInput := strings.Repeat(test.benign, maxScrubInputSize/2/len(test.benign))
+			hostile, benign := fastestScrub(hostileInput), fastestScrub(benignInput)
+			if limit := 5*benign + 150*time.Millisecond; hostile > limit {
+				t.Fatalf("Scrub took %v on repeated %q, want at most %v (benign input took %v)", hostile, test.hostile, limit, benign)
+			}
+		})
+	}
+}
+
+func fastestScrub(input string) time.Duration {
+	best := time.Duration(1<<63 - 1)
+	for range 2 {
+		start := time.Now()
+		_ = Scrub(input)
+		best = min(best, time.Since(start))
+	}
+	return best
 }
