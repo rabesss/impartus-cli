@@ -282,7 +282,10 @@ func TestDownloadChunkKeepsErrorBodyForLongToken(t *testing.T) {
 
 	d := testLimitDownloader(t.TempDir(), client.New(server.Client(), nil))
 	d.config.Token = token
-	_, _, _, err := d.doDownloadChunkWithLimit(t.Context(), server.URL+"/chunk.ts", 1, 0, "left", true, 8)
+	path, _, _, err := d.doDownloadChunkWithLimit(t.Context(), server.URL+"/chunk.ts", 1, 0, "left", true, 8)
+	if path != "" {
+		t.Fatalf("failed chunk returned path %q", path)
+	}
 	if err == nil {
 		t.Fatal("doDownloadChunkWithLimit() error = nil, want upstream failure")
 	}
@@ -307,7 +310,10 @@ func TestDownloadChunkOmitsEncodedPartialToken(t *testing.T) {
 
 	d := testLimitDownloader(t.TempDir(), client.New(server.Client(), nil))
 	d.config.Token = token
-	_, _, _, err := d.doDownloadChunkWithLimit(t.Context(), server.URL+"/chunk.ts", 1, 0, "left", true, 8)
+	path, _, _, err := d.doDownloadChunkWithLimit(t.Context(), server.URL+"/chunk.ts", 1, 0, "left", true, 8)
+	if path != "" {
+		t.Fatalf("failed chunk returned path %q", path)
+	}
 	if err == nil || !strings.Contains(err.Error(), chunkErrorBodyOmitted) || strings.Contains(err.Error(), `\u`) {
 		t.Fatalf("chunk error = %v, want the encoded token body omitted", err)
 	}

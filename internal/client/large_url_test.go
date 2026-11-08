@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -45,12 +46,16 @@ func TestQueryCarriesBearerIgnoresSizeAlone(t *testing.T) {
 
 func TestGetAuthorizedForwardsLargeURLComponentsToUnconfiguredOrigin(t *testing.T) {
 	long := strings.Repeat("a", 70*1024)
-	var seen *http.Request
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen = r.Clone(context.Background())
+	seen := make(chan *http.Request, 1)
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case seen <- r.Clone(context.Background()):
+		default:
+		}
 	}))
-	defer server.Close()
 	server.Config.MaxHeaderBytes = 1 << 20
+	server.Start()
+	defer server.Close()
 
 	tests := []struct {
 		name      string
@@ -63,19 +68,21 @@ func TestGetAuthorizedForwardsLargeURLComponentsToUnconfiguredOrigin(t *testing.
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			seen = nil
 			resp, err := New(server.Client(), nil).GetAuthorizedWithTokenForOrigins(context.Background(), tt.rawURL, largeURLTestToken, "https://api.example.test")
 			if err != nil {
 				t.Fatalf("GetAuthorizedWithTokenForOrigins() error = %v", err)
 			}
 			_ = resp.Body.Close() //nolint:errcheck
-			if seen == nil {
+			var got *http.Request
+			select {
+			case got = <-seen:
+			default:
 				t.Fatal("request was not sent")
 			}
-			if seen.URL.Path != tt.wantPath || seen.URL.RawQuery != tt.wantQuery {
-				t.Fatalf("server saw path %d bytes, query %d bytes; want %d and %d", len(seen.URL.Path), len(seen.URL.RawQuery), len(tt.wantPath), len(tt.wantQuery))
+			if got.URL.Path != tt.wantPath || got.URL.RawQuery != tt.wantQuery {
+				t.Fatalf("server saw path %d bytes, query %d bytes; want %d and %d", len(got.URL.Path), len(got.URL.RawQuery), len(tt.wantPath), len(tt.wantQuery))
 			}
-			if seen.Header.Get("Authorization") != "" {
+			if got.Header.Get("Authorization") != "" {
 				t.Fatal("unconfigured origin received Authorization")
 			}
 		})
@@ -101,18 +108,19 @@ func TestGetAuthorizedRefusesLargePathCarryingMarkerSpelledToken(t *testing.T) {
 	// A bearer spelled like the redaction marker must still be detected:
 	// replacing it with the marker leaves the text unchanged.
 	const token = "REDACTED"
-	var sent bool
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { sent = true }))
-	defer server.Close()
+	var sent atomic.Bool
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { sent.Store(true) }))
 	server.Config.MaxHeaderBytes = 1 << 20
+	server.Start()
+	defer server.Close()
 
 	rawURL := server.URL + "/" + strings.Repeat("a", 70*1024) + "/" + token + "/seg.ts"
 	resp, err := New(server.Client(), nil).GetAuthorizedWithTokenForOrigins(context.Background(), rawURL, token, "https://api.example.test")
 	if resp != nil {
 		_ = resp.Body.Close() //nolint:errcheck
 	}
-	if err == nil || sent {
-		t.Fatalf("GetAuthorizedWithTokenForOrigins() error = %v, sent = %v; want a refusal before sending", err, sent)
+	if err == nil || sent.Load() {
+		t.Fatalf("GetAuthorizedWithTokenForOrigins() error = %v, sent = %v; want a refusal before sending", err, sent.Load())
 	}
 	if !containsTokenRepresentation("/"+strings.Repeat("a", 70*1024)+"/"+token, token) {
 		t.Fatal("containsTokenRepresentation(marker-spelled token) = false")

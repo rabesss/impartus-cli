@@ -110,37 +110,52 @@ func decodeErrorBodyLayer(value string) (string, bool) {
 	var out strings.Builder
 	out.Grow(len(value))
 	changed := false
-	for i := 0; i < len(value); i++ {
-		switch c := value[i]; {
-		case c == '%' && i+2 < len(value) && isHexDigit(value[i+1]) && isHexDigit(value[i+2]):
-			out.WriteByte(unhex(value[i+1])<<4 | unhex(value[i+2]))
-			i += 2
+	for i := 0; i < len(value); {
+		if n := decodeEscapeAt(&out, value, i); n > 0 {
+			i += n
 			changed = true
-		case c == '\\' && i+5 < len(value) && value[i+1] == 'u' && isHex4(value[i+2:i+6]):
-			r := unhex4(value[i+2 : i+6])
-			i += 5
-			// A JSON decoder joins a UTF-16 surrogate pair into one
-			// character, so this view must too.
-			if utf16.IsSurrogate(r) && i+6 < len(value) && value[i+1] == '\\' && value[i+2] == 'u' && isHex4(value[i+3:i+7]) {
-				if joined := utf16.DecodeRune(r, unhex4(value[i+3:i+7])); joined != utf8.RuneError {
-					r = joined
-					i += 6
-				}
-			}
-			out.WriteRune(r)
-			changed = true
-		case c == '\\' && i+1 < len(value) && strings.IndexByte(`"\/bfnrt`, value[i+1]) >= 0:
-			out.WriteByte(jsonEscapeByte(value[i+1]))
-			i++
-			changed = true
-		default:
-			out.WriteByte(c)
+			continue
 		}
+		out.WriteByte(value[i])
+		i++
 	}
 	if !changed {
 		return value, false
 	}
 	return out.String(), true
+}
+
+// decodeEscapeAt writes the decoding of the %XX or JSON string escape that
+// starts at value[i] to out and returns how many input bytes it spans. It
+// returns 0 and writes nothing when value[i] does not start a valid escape.
+func decodeEscapeAt(out *strings.Builder, value string, i int) int {
+	switch c := value[i]; {
+	case c == '%' && i+2 < len(value) && isHexDigit(value[i+1]) && isHexDigit(value[i+2]):
+		out.WriteByte(unhex(value[i+1])<<4 | unhex(value[i+2]))
+		return 3
+	case c == '\\' && i+5 < len(value) && value[i+1] == 'u' && isHex4(value[i+2:i+6]):
+		r, n := decodeJSONUnicodeEscape(value, i)
+		out.WriteRune(r)
+		return n
+	case c == '\\' && i+1 < len(value) && strings.IndexByte(`"\/bfnrt`, value[i+1]) >= 0:
+		out.WriteByte(jsonEscapeByte(value[i+1]))
+		return 2
+	default:
+		return 0
+	}
+}
+
+// decodeJSONUnicodeEscape decodes the \uXXXX escape at value[i] and returns
+// the character and how many input bytes it spans. A JSON decoder joins a
+// UTF-16 surrogate pair into one character, so this view does too.
+func decodeJSONUnicodeEscape(value string, i int) (rune, int) {
+	r := unhex4(value[i+2 : i+6])
+	if utf16.IsSurrogate(r) && i+11 < len(value) && value[i+6] == '\\' && value[i+7] == 'u' && isHex4(value[i+8:i+12]) {
+		if joined := utf16.DecodeRune(r, unhex4(value[i+8:i+12])); joined != utf8.RuneError {
+			return joined, 12
+		}
+	}
+	return r, 6
 }
 
 func jsonEscapeByte(c byte) byte {

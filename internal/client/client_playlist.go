@@ -148,13 +148,8 @@ func parsePlaylistWithBase(scanner *bufio.Scanner, baseURL *url.URL, id int, tit
 			if err != nil {
 				return ParsedPlaylist{}, fmt.Errorf("invalid playlist segment URI: %w", err)
 			}
-			// The key in force for the first segment decides how the whole
-			// playlist is decrypted, so every segment must agree on whether it
-			// is encrypted at all.
-			if segmentCount == 0 {
-				parsedOutput.KeyURL = currentKeyURL
-			} else if (currentKeyURL == "") != (parsedOutput.KeyURL == "") {
-				return ParsedPlaylist{}, errors.New("playlist mixes clear and encrypted segments")
+			if err := applySegmentKey(&parsedOutput, segmentCount, currentKeyURL); err != nil {
+				return ParsedPlaylist{}, err
 			}
 			if isFirstView {
 				firstViewURLs = append(firstViewURLs, segmentURL)
@@ -186,11 +181,25 @@ func parsePlaylistWithBase(scanner *bufio.Scanner, baseURL *url.URL, id int, tit
 	return parsedOutput, nil
 }
 
+// applySegmentKey records the key in force for a playlist's segment. The key
+// for the first segment decides how the whole playlist is decrypted, so every
+// later segment must agree on whether it is encrypted at all.
+func applySegmentKey(playlist *ParsedPlaylist, segmentIndex int, keyURL string) error {
+	if segmentIndex == 0 {
+		playlist.KeyURL = keyURL
+		return nil
+	}
+	if (keyURL == "") != (playlist.KeyURL == "") {
+		return errors.New("playlist mixes clear and encrypted segments")
+	}
+	return nil
+}
+
 // parsePlaylistKey returns the resolved key URI an #EXT-X-KEY line puts in
 // force, or "" when it switches encryption off. Segments are decrypted whole
 // with AES-CBC, so only AES-128 is accepted, together with the non-standard
 // ENCRYPTION spelling some upstreams send and a missing METHOD (the legacy
-// behaviour). Every other method is refused rather than mangled.
+// behavior). Every other method is refused rather than mangled.
 func parsePlaylistKey(baseURL *url.URL, line string) (string, error) {
 	attributes, err := parseHLSAttributes(strings.TrimPrefix(line, "#EXT-X-KEY:"))
 	if err != nil {
@@ -224,13 +233,7 @@ func parsePlaylistKey(baseURL *url.URL, line string) (string, error) {
 // read two ways.
 func parseHLSAttributes(list string) (map[string]string, error) {
 	attributes := make(map[string]string)
-	for i := 0; i < len(list); {
-		for i < len(list) && (list[i] == ' ' || list[i] == '\t') {
-			i++
-		}
-		if i == len(list) {
-			break
-		}
+	for i := skipHLSBlanks(list, 0); i < len(list); i = skipHLSBlanks(list, i) {
 		eq := strings.IndexByte(list[i:], '=')
 		if eq < 0 {
 			return nil, errors.New("malformed attribute list")
@@ -239,38 +242,50 @@ func parseHLSAttributes(list string) (map[string]string, error) {
 		if name == "" || strings.ContainsAny(name, ",\"") {
 			return nil, errors.New("malformed attribute list")
 		}
-		i += eq + 1
-		var value string
-		if i < len(list) && list[i] == '"' {
-			closing := strings.IndexByte(list[i+1:], '"')
-			if closing < 0 {
-				return nil, errors.New("unterminated quoted attribute")
-			}
-			value = list[i+1 : i+1+closing]
-			i += closing + 2
-			for i < len(list) && (list[i] == ' ' || list[i] == '\t') {
-				i++
-			}
-			if i < len(list) && list[i] != ',' {
-				return nil, errors.New("malformed attribute list")
-			}
-		} else {
-			comma := strings.IndexByte(list[i:], ',')
-			if comma < 0 {
-				comma = len(list) - i
-			}
-			value = strings.TrimSpace(list[i : i+comma])
-			i += comma
+		value, next, err := parseHLSAttributeValue(list, i+eq+1)
+		if err != nil {
+			return nil, err
 		}
 		if _, dup := attributes[name]; dup {
 			return nil, errors.New("repeated attribute")
 		}
 		attributes[name] = value
+		i = next
 		if i < len(list) && list[i] == ',' {
 			i++
 		}
 	}
 	return attributes, nil
+}
+
+// parseHLSAttributeValue parses the attribute value that starts at list[i]
+// and returns it with the index just past it, which is the separating comma
+// or the end of list.
+func parseHLSAttributeValue(list string, i int) (string, int, error) {
+	if i >= len(list) || list[i] != '"' {
+		comma := strings.IndexByte(list[i:], ',')
+		if comma < 0 {
+			comma = len(list) - i
+		}
+		return strings.TrimSpace(list[i : i+comma]), i + comma, nil
+	}
+	closing := strings.IndexByte(list[i+1:], '"')
+	if closing < 0 {
+		return "", 0, errors.New("unterminated quoted attribute")
+	}
+	value := list[i+1 : i+1+closing]
+	next := skipHLSBlanks(list, i+closing+2)
+	if next < len(list) && list[next] != ',' {
+		return "", 0, errors.New("malformed attribute list")
+	}
+	return value, next, nil
+}
+
+func skipHLSBlanks(list string, i int) int {
+	for i < len(list) && (list[i] == ' ' || list[i] == '\t') {
+		i++
+	}
+	return i
 }
 
 func resolveMediaReference(baseURL *url.URL, rawReference string) (string, error) {
