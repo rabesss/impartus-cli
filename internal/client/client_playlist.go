@@ -18,6 +18,7 @@ import (
 
 var invalidFileNameRe = regexp.MustCompile(`[<>:"/\\|?*\n\r]`)
 var uriValueRe = regexp.MustCompile(`URI="([^"]+)"`)
+var methodValueRe = regexp.MustCompile(`(?:^#EXT-X-KEY:|,)\s*METHOD=([^,]*)`)
 
 const (
 	maxPlaylistResponseSize int64 = 10 * 1024 * 1024
@@ -124,21 +125,19 @@ func parsePlaylistWithBase(scanner *bufio.Scanner, baseURL *url.URL, id int, tit
 	secondDurations := make([]float64, 0)
 	pendingDuration := 0.0
 	segmentCount := 0
+	currentKeyURL := ""
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
-		if parsedOutput.KeyURL == "" && strings.HasPrefix(line, "#EXT-X-KEY") {
-			match := uriValueRe.FindStringSubmatch(line)
-			if len(match) == 2 {
-				keyURL, err := resolveMediaReference(baseURL, match[1])
-				if err != nil {
-					return ParsedPlaylist{}, fmt.Errorf("invalid playlist key URI: %w", err)
-				}
-				parsedOutput.KeyURL = keyURL
+		if strings.HasPrefix(line, "#EXT-X-KEY:") {
+			keyURL, err := parsePlaylistKey(baseURL, line)
+			if err != nil {
+				return ParsedPlaylist{}, err
 			}
+			currentKeyURL = keyURL
 		} else if strings.HasPrefix(line, "#EXTINF:") {
 			pendingDuration = parseEXTINFDuration(line)
 		} else if line == "#EXT-X-DISCONTINUITY" {
@@ -150,6 +149,14 @@ func parsePlaylistWithBase(scanner *bufio.Scanner, baseURL *url.URL, id int, tit
 			segmentURL, err := resolveMediaReference(baseURL, line)
 			if err != nil {
 				return ParsedPlaylist{}, fmt.Errorf("invalid playlist segment URI: %w", err)
+			}
+			// The key in force for the first segment decides how the whole
+			// playlist is decrypted, so every segment must agree on whether it
+			// is encrypted at all.
+			if segmentCount == 0 {
+				parsedOutput.KeyURL = currentKeyURL
+			} else if (currentKeyURL == "") != (parsedOutput.KeyURL == "") {
+				return ParsedPlaylist{}, errors.New("playlist mixes clear and encrypted segments")
 			}
 			if isFirstView {
 				firstViewURLs = append(firstViewURLs, segmentURL)
@@ -166,6 +173,9 @@ func parsePlaylistWithBase(scanner *bufio.Scanner, baseURL *url.URL, id int, tit
 	if err := scanner.Err(); err != nil {
 		return ParsedPlaylist{}, fmt.Errorf("scan playlist: %w", err)
 	}
+	if segmentCount == 0 {
+		parsedOutput.KeyURL = currentKeyURL
+	}
 
 	parsedOutput.FirstViewURLs = firstViewURLs
 	parsedOutput.FirstDurations = firstDurations
@@ -176,6 +186,37 @@ func parsePlaylistWithBase(scanner *bufio.Scanner, baseURL *url.URL, id int, tit
 	}
 
 	return parsedOutput, nil
+}
+
+// parsePlaylistKey returns the resolved key URI an #EXT-X-KEY line puts in
+// force, or "" when it switches encryption off. Segments are decrypted whole
+// with AES-CBC, so SAMPLE-AES variants are refused rather than mangled. Other
+// methods are treated as AES-128 for compatibility with upstreams that send a
+// non-standard METHOD value.
+func parsePlaylistKey(baseURL *url.URL, line string) (string, error) {
+	method := ""
+	if match := methodValueRe.FindStringSubmatch(line); len(match) == 2 {
+		method = strings.ToUpper(strings.Trim(strings.TrimSpace(match[1]), `"`))
+	}
+	if method == "NONE" {
+		return "", nil
+	}
+	if strings.HasPrefix(method, "SAMPLE-AES") {
+		const maxReportedMethod = 32
+		if len(method) > maxReportedMethod {
+			method = method[:maxReportedMethod] + "..."
+		}
+		return "", fmt.Errorf("unsupported HLS encryption method %q", method)
+	}
+	match := uriValueRe.FindStringSubmatch(line)
+	if len(match) != 2 {
+		return "", errors.New("invalid playlist key: encrypted key has no URI")
+	}
+	keyURL, err := resolveMediaReference(baseURL, match[1])
+	if err != nil {
+		return "", fmt.Errorf("invalid playlist key URI: %w", err)
+	}
+	return keyURL, nil
 }
 
 func resolveMediaReference(baseURL *url.URL, rawReference string) (string, error) {

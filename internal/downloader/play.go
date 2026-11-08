@@ -23,7 +23,10 @@ import (
 type playbackKey struct {
 	mutex    sync.Mutex
 	material []byte
-	closed   bool
+	// plain marks a clear playlist: there is no key and segments are served
+	// unchanged.
+	plain  bool
+	closed bool
 }
 
 // ErrPlaybackAuthorization is reported when the private playback proxy receives
@@ -57,13 +60,24 @@ func newPlaybackKey(material []byte) *playbackKey {
 	return &playbackKey{material: material}
 }
 
-func (key *playbackKey) acquire() ([]byte, bool) {
+// newClearPlaybackKey is the key store for a playlist with no key: segments
+// are served unchanged.
+func newClearPlaybackKey() *playbackKey {
+	return &playbackKey{plain: true}
+}
+
+// acquire returns a private copy of the key, or a nil key with plain set for
+// a clear playlist. ok is false once playback is shutting down.
+func (key *playbackKey) acquire() (material []byte, plain, ok bool) {
 	key.mutex.Lock()
 	defer key.mutex.Unlock()
 	if key.closed {
-		return nil, false
+		return nil, false, false
 	}
-	return append([]byte(nil), key.material...), true
+	if key.plain {
+		return nil, true, true
+	}
+	return append([]byte(nil), key.material...), false, true
 }
 
 func (key *playbackKey) close() {
@@ -93,11 +107,14 @@ func (d *Downloader) StartPlaybackStream(ctx context.Context, playlist client.Pa
 		return PlaybackStream{}, fmt.Errorf("no playable views available for lecture %d", playlist.SeqNo)
 	}
 
-	decryptionKey, err := d.fetchPlaybackDecryptionKey(ctx, playlist.KeyURL)
-	if err != nil {
-		return PlaybackStream{}, fmt.Errorf("failed to fetch decryption key: %w", sanitizedPlaybackError(err))
+	keyStore := newClearPlaybackKey()
+	if playlist.KeyURL != "" {
+		decryptionKey, err := d.fetchPlaybackDecryptionKey(ctx, playlist.KeyURL)
+		if err != nil {
+			return PlaybackStream{}, fmt.Errorf("failed to fetch decryption key: %w", sanitizedPlaybackError(err))
+		}
+		keyStore = newPlaybackKey(decryptionKey)
 	}
-	keyStore := newPlaybackKey(decryptionKey)
 	keyOwned := true
 	defer func() {
 		if keyOwned {
@@ -269,16 +286,19 @@ func (d *Downloader) handleSegment(playlist client.ParsedPlaylist, keyStore *pla
 			return
 		}
 
-		decryptionKey, acquired := keyStore.acquire()
+		decryptionKey, plain, acquired := keyStore.acquire()
 		if !acquired {
 			http.Error(w, "playback is shutting down", http.StatusServiceUnavailable)
 			return
 		}
-		defer zeroKey(decryptionKey)
-		decryptedBytes, err := DecryptAESInPlace(encryptedBytes, decryptionKey)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to decrypt segment: %v", err), http.StatusInternalServerError)
-			return
+		decryptedBytes := encryptedBytes
+		if !plain {
+			defer zeroKey(decryptionKey)
+			decryptedBytes, err = DecryptAESInPlace(encryptedBytes, decryptionKey)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("failed to decrypt segment: %v", err), http.StatusInternalServerError)
+				return
+			}
 		}
 
 		w.Header().Set("Content-Type", "video/MP2T")

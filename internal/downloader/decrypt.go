@@ -102,13 +102,24 @@ func (d *Downloader) decryptChunk(filePath string, key []byte) (string, error) {
 	return outPath, nil
 }
 
-// decryptChunkBytes decrypts infile in place, so the caller must transfer ownership of the slice.
+// decryptChunkBytes decrypts infile in place, so the caller must transfer
+// ownership of the slice. A nil key means a clear playlist: infile is written
+// unchanged.
 func (d *Downloader) decryptChunkBytes(filePath string, infile []byte, key []byte) (string, error) {
 	if len(filePath) < 6 {
 		return "", fmt.Errorf("invalid file path: %s", filePath)
 	}
 	if !strings.HasSuffix(filePath, ".temp") {
 		return "", fmt.Errorf("invalid file path extension: %s", filePath)
+	}
+
+	outPath := strings.TrimSuffix(filePath, ".temp")
+	if key == nil {
+		// Clear HLS: the downloaded bytes are the media.
+		if err := writeChunkAtomically(outPath, infile, d.resume != nil); err != nil {
+			return "", fmt.Errorf("failed to write chunk file %s: %w", outPath, err)
+		}
+		return outPath, nil
 	}
 
 	// Work on a copy of the key so the caller's shared key is not zeroed,
@@ -118,7 +129,6 @@ func (d *Downloader) decryptChunkBytes(filePath string, infile []byte, key []byt
 	copy(keyCopy, key)
 	defer zeroKey(keyCopy)
 
-	outPath := strings.TrimSuffix(filePath, ".temp")
 	plainText, err := DecryptAESInPlace(infile, keyCopy)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt: %w", err)

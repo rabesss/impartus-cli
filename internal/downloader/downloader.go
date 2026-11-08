@@ -221,16 +221,26 @@ func (d *Downloader) DownloadPlaylist(ctx context.Context, playlist client.Parse
 	}
 	defer releasePlaylistSlot()
 
-	decryptionKey, err := d.fetchDecryptionKey(ctx, playlist.KeyURL)
-	if err != nil {
-		return DownloadedPlaylist{}, err
+	// A playlist without a key is clear HLS: a nil key makes every chunk a
+	// plain copy. fetchDecryptionKey never returns nil or a wrong-length key,
+	// so an encrypted playlist cannot fall through to the clear path.
+	var decryptionKey []byte
+	if playlist.KeyURL != "" {
+		decryptionKey, err = d.fetchDecryptionKey(ctx, playlist.KeyURL)
+		if err != nil {
+			return DownloadedPlaylist{}, err
+		}
+		defer zeroKey(decryptionKey) // zero key after all chunks are processed
 	}
-	defer zeroKey(decryptionKey)                                         // zero key after all chunks are processed
 	if err := os.MkdirAll(d.config.TempDirLocation, 0o755); err != nil { // #nosec G301
 		return DownloadedPlaylist{}, err
 	}
 	if d.resume != nil {
-		discarded, err := d.resume.verifyKey(decryptionKey)
+		verify := d.resume.verifyClear
+		if decryptionKey != nil {
+			verify = func() (bool, error) { return d.resume.verifyKey(decryptionKey) }
+		}
+		discarded, err := verify()
 		if err != nil {
 			return DownloadedPlaylist{}, fmt.Errorf("prepare resumable workspace: %w", secrets.SanitizeError(err))
 		}

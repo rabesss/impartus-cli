@@ -202,6 +202,7 @@ func TestParsePlaylistKeyURLPattern(t *testing.T) {
 		name       string
 		keyLine    string
 		wantKeyURL string
+		wantErr    bool
 	}{
 		{
 			name:       "simple URI",
@@ -214,13 +215,20 @@ func TestParsePlaylistKeyURLPattern(t *testing.T) {
 			wantKeyURL: "https://placeholder.test/key?a=b=c",
 		},
 		{
-			name:       "no URI",
-			keyLine:    `#EXT-X-KEY:METHOD=ENCRYPTION`,
-			wantKeyURL: "",
+			// An encrypted key with nowhere to fetch it from must not be
+			// mistaken for a clear playlist.
+			name:    "no URI",
+			keyLine: `#EXT-X-KEY:METHOD=ENCRYPTION`,
+			wantErr: true,
 		},
 		{
-			name:       "empty URI",
-			keyLine:    `#EXT-X-KEY:METHOD=ENCRYPTION,URI=""`,
+			name:    "empty URI",
+			keyLine: `#EXT-X-KEY:METHOD=ENCRYPTION,URI=""`,
+			wantErr: true,
+		},
+		{
+			name:       "METHOD=NONE",
+			keyLine:    `#EXT-X-KEY:METHOD=NONE`,
 			wantKeyURL: "",
 		},
 	}
@@ -230,6 +238,12 @@ func TestParsePlaylistKeyURLPattern(t *testing.T) {
 			input := tt.keyLine + "\n#EXTINF:1\nchunk.ts\n"
 			scanner := bufio.NewScanner(strings.NewReader(input))
 			result, err := client.ParsePlaylist(scanner, 1, "Test", 1)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ParsePlaylist() error = nil, want an error (KeyURL %q)", result.KeyURL)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("ParsePlaylist() unexpected error: %v", err)
 			}
