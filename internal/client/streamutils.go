@@ -1,6 +1,8 @@
 package client
 
 import (
+	"errors"
+	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
@@ -12,31 +14,67 @@ import (
 // resolution strings (e.g. a bare "x" in a URL path) are not accepted.
 var resolutionRe = regexp.MustCompile(`\d+x\d+`)
 
+// ErrNoStreams reports that the stream info for the selected lectures listed
+// no usable stream at all.
+var ErrNoStreams = errors.New("no streams available for the selected lectures")
+
+// noUsableStreamsError reports a stream info response that has lines but no
+// usable stream. It counts the malformed lines instead of quoting them, since
+// they are upstream text.
+type noUsableStreamsError struct {
+	malformed int
+}
+
+func (e *noUsableStreamsError) Error() string {
+	return fmt.Sprintf("stream info response has no usable streams (%d malformed lines)", e.malformed)
+}
+
+func (e *noUsableStreamsError) Unwrap() error { return ErrNoStreams }
+
 // ParseStreamInfosFromBody extracts stream information from response body.
 // Each line is checked for URL pattern and resolution in format "WIDTHxHEIGHT".
+// Blank lines and HLS tags or comments (lines starting with '#') are skipped.
+// Any other line that is not an HTTP(S) URL with a resolution is malformed.
+// When at least one stream parses, malformed lines are ignored, since an
+// upstream may list extra lines; when none does, a response with malformed
+// lines is an error wrapping ErrNoStreams. An empty list is returned without
+// an error, and the caller decides what that means.
 func ParseStreamInfosFromBody(body []byte) ([]StreamInfo, error) {
 	lines := strings.Split(string(body), "\n")
 
 	streamInfos := make([]StreamInfo, 0)
+	malformed := 0
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if line == "" {
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		parsedURL, err := url.Parse(line)
-		if err != nil || !validHTTPURL(parsedURL) {
+		if streamInfo, ok := parseStreamInfoLine(line); ok {
+			streamInfos = append(streamInfos, streamInfo)
 			continue
 		}
-		match := resolutionRe.FindStringSubmatch(line)
-		if len(match) > 0 {
-			resolution := strings.Split(match[0], "x")
-			if len(resolution) == 2 {
-				streamInfos = append(streamInfos, StreamInfo{Quality: resolution[1], URL: line})
-			}
-		}
+		malformed++
 	}
-
+	if len(streamInfos) == 0 && malformed > 0 {
+		return nil, &noUsableStreamsError{malformed: malformed}
+	}
 	return streamInfos, nil
+}
+
+func parseStreamInfoLine(line string) (StreamInfo, bool) {
+	parsedURL, err := url.Parse(line)
+	if err != nil || !validHTTPURL(parsedURL) {
+		return StreamInfo{}, false
+	}
+	match := resolutionRe.FindStringSubmatch(line)
+	if len(match) == 0 {
+		return StreamInfo{}, false
+	}
+	resolution := strings.Split(match[0], "x")
+	if len(resolution) != 2 {
+		return StreamInfo{}, false
+	}
+	return StreamInfo{Quality: resolution[1], URL: line}, true
 }
 
 // SelectStreamByQuality selects the best stream URL based on quality preferences.

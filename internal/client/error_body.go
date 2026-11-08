@@ -1,6 +1,7 @@
 package client
 
 import (
+	"fmt"
 	"io"
 	"net/url"
 	"strings"
@@ -40,7 +41,7 @@ const maxWholeTokenRedactionSize = 4 * 1024
 func ReadSanitizedErrorBody(body io.Reader, limit int64, token string) (string, error) {
 	contents, err := io.ReadAll(io.LimitReader(body, limit+1))
 	if err != nil {
-		return "", secrets.SanitizeErrorWithToken(err, token)
+		return "", sanitizeErrorBodyReadError(err, token)
 	}
 	if int64(len(contents)) > limit {
 		return UpstreamErrorBodyOmitted, nil
@@ -49,6 +50,12 @@ func ReadSanitizedErrorBody(body io.Reader, limit int64, token string) (string, 
 		return UpstreamErrorBodyOmitted, nil
 	}
 	trimmed := strings.TrimSpace(string(contents))
+	var windows tokenWindows
+	if len(trimmed) >= minTokenFragment {
+		// Decoding only shortens text, so a shorter body cannot hold a
+		// fragment in any view.
+		windows = newTokenWindows(token)
+	}
 	var redacted string
 	if len(strings.TrimSpace(token)) > maxWholeTokenRedactionSize {
 		// RedactWithToken replaces any body with a fixed marker for a token
@@ -56,11 +63,11 @@ func ReadSanitizedErrorBody(body io.Reader, limit int64, token string) (string, 
 		// minTokenFragment run that redactTokenFragments or
 		// hasEncodedTokenFragment catches, so scrub the generic credentials
 		// and rely on those instead.
-		redacted = redactTokenFragments(secrets.Scrub(trimmed), token)
+		redacted = redactTokenFragments(secrets.Scrub(trimmed), windows)
 	} else {
-		redacted = redactTokenFragments(secrets.RedactWithToken(trimmed, token), token)
+		redacted = redactTokenFragments(secrets.RedactWithToken(trimmed, token), windows)
 	}
-	if hasEncodedTokenFragment(redacted, token) {
+	if hasEncodedTokenFragment(redacted, windows) {
 		// Part of the token survives behind percent or JSON escapes that a
 		// byte-level redaction cannot map back to the body, so drop it all.
 		return UpstreamErrorBodyOmitted, nil
@@ -68,59 +75,151 @@ func ReadSanitizedErrorBody(body io.Reader, limit int64, token string) (string, 
 	return redacted, nil
 }
 
-// maxErrorBodyDecodeDepth bounds how many layers of percent and JSON escapes
-// hasEncodedTokenFragment unwraps.
-const maxErrorBodyDecodeDepth = 3
+// errorBodyReadFailed prefixes a read error whose text still carried token
+// material after sanitizing; the text itself is dropped.
+const errorBodyReadFailed = "upstream error body could not be read"
 
-// hasEncodedTokenFragment reports whether a percent- or JSON-decoded view of
-// value still holds a minTokenFragment-byte run of the token, or whether value
-// is still decoding after the bounded number of layers.
-func hasEncodedTokenFragment(value, token string) bool {
-	bare := normalizeBearerToken(token)
-	if len(bare) < minTokenFragment {
+// sanitizeErrorBodyReadError scrubs an error from reading an upstream error
+// body. SanitizeErrorWithToken removes whole token spellings, but a transport
+// error can echo a truncated or escaped part of the bearer, so a message that
+// still holds a minTokenFragment run, raw or behind escapes, is replaced
+// entirely. Safe classifications such as timeouts, cancellation and transient
+// network errors survive either way, so retry decisions are unchanged.
+func sanitizeErrorBodyReadError(err error, token string) error {
+	sanitized := secrets.SanitizeErrorWithToken(err, token)
+	if len(normalizeBearerToken(token)) > maxFragmentRedactionTokenSize {
+		return fmt.Errorf("%s: %w", errorBodyReadFailed, opaqueSanitizedError(err))
+	}
+	message := sanitized.Error()
+	if len(message) < minTokenFragment {
+		return sanitized
+	}
+	windows := newTokenWindows(token)
+	if !windows.containsFragment(message) && !hasEncodedTokenFragment(message, windows) {
+		return sanitized
+	}
+	return fmt.Errorf("%s: %w", errorBodyReadFailed, opaqueSanitizedError(err))
+}
+
+// opaqueSanitizedError returns err's safe classifications with its whole
+// message redacted: the message is passed as the credential to remove.
+func opaqueSanitizedError(err error) error {
+	return secrets.SanitizeErrorWithCredentials(err, panicSafeErrorText(err))
+}
+
+func panicSafeErrorText(err error) (text string) {
+	defer func() {
+		if recover() != nil {
+			text = ""
+		}
+	}()
+	return err.Error()
+}
+
+// tokenWindows is the set of every minTokenFragment-byte run in any spelling
+// of a bearer token (bare, query-escaped and path-escaped). Building it once
+// makes each fragment check linear in the length of the checked text.
+type tokenWindows map[[minTokenFragment]byte]struct{}
+
+func newTokenWindows(token string) tokenWindows {
+	spellings := tokenFragmentSpellings(token)
+	if len(spellings) == 0 {
+		return nil
+	}
+	size := 0
+	for _, spelling := range spellings {
+		size += max(0, len(spelling)-minTokenFragment+1)
+	}
+	windows := make(tokenWindows, size)
+	for _, spelling := range spellings {
+		for start := 0; start+minTokenFragment <= len(spelling); start++ {
+			windows[[minTokenFragment]byte([]byte(spelling[start:start+minTokenFragment]))] = struct{}{}
+		}
+	}
+	return windows
+}
+
+func (w tokenWindows) hasWindowAt(value string, start int) bool {
+	_, ok := w[[minTokenFragment]byte([]byte(value[start:start+minTokenFragment]))]
+	return ok
+}
+
+func (w tokenWindows) containsFragment(value string) bool {
+	if len(w) == 0 {
 		return false
 	}
-	view := value
-	for depth := 0; depth <= maxErrorBodyDecodeDepth; depth++ {
-		decoded, changed := decodeErrorBodyLayer(view)
-		if !changed {
-			return false
-		}
-		if depth == maxErrorBodyDecodeDepth {
+	for start := 0; start+minTokenFragment <= len(value); start++ {
+		if w.hasWindowAt(value, start) {
 			return true
 		}
-		if containsTokenFragment(decoded, []string{bare}) {
-			return true
-		}
-		view = decoded
 	}
 	return false
 }
 
-func containsTokenFragment(value string, spellings []string) bool {
-	for start := 0; start+minTokenFragment <= len(value); start++ {
-		window := value[start : start+minTokenFragment]
-		for _, spelling := range spellings {
-			if strings.Contains(spelling, window) {
+// maxErrorBodyDecodeViews bounds how many distinct decoded views of a body
+// hasEncodedTokenFragment explores. Every caller caps error bodies at a few
+// hundred bytes, so the bound is generous for real escapes while keeping the
+// search cheap; a body that still yields new views at the bound is treated
+// as carrying token material.
+const maxErrorBodyDecodeViews = 128
+
+// errorBodyDecoders are the single-layer decodings hasEncodedTokenFragment
+// applies in every order: percent escapes only, JSON escapes only, and both
+// in one pass. Trying them separately catches spellings such as
+// %41\u002541, where only alternating the two kinds reveals the token.
+var errorBodyDecoders = []func(string) (string, bool){
+	func(value string) (string, bool) { return decodeErrorBodyLayer(value, true, false) },
+	func(value string) (string, bool) { return decodeErrorBodyLayer(value, false, true) },
+	func(value string) (string, bool) { return decodeErrorBodyLayer(value, true, true) },
+}
+
+// hasEncodedTokenFragment reports whether any view of value reached by
+// repeatedly decoding percent and JSON escapes, in any order, holds a
+// minTokenFragment-byte run of a token spelling. Each decoding that changes
+// a view makes it strictly shorter, so the search ends; it is also capped at
+// maxErrorBodyDecodeViews views and fails closed beyond that.
+func hasEncodedTokenFragment(value string, windows tokenWindows) bool {
+	if len(windows) == 0 {
+		return false
+	}
+	seen := map[string]struct{}{value: {}}
+	pending := []string{value}
+	for len(pending) > 0 {
+		view := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		for _, decode := range errorBodyDecoders {
+			decoded, changed := decode(view)
+			if !changed {
+				continue
+			}
+			if _, ok := seen[decoded]; ok {
+				continue
+			}
+			if windows.containsFragment(decoded) {
 				return true
 			}
+			if len(seen) >= maxErrorBodyDecodeViews {
+				return true
+			}
+			seen[decoded] = struct{}{}
+			pending = append(pending, decoded)
 		}
 	}
 	return false
 }
 
-// decodeErrorBodyLayer decodes one layer of %XX escapes and of the JSON
-// string escapes (\uXXXX, \", \\, \/ and the control escapes). Invalid
-// escapes are kept as they are.
-func decodeErrorBodyLayer(value string) (string, bool) {
-	if !strings.ContainsAny(value, "%\\") {
+// decodeErrorBodyLayer decodes one layer of %XX escapes when percent is set
+// and of the JSON string escapes (\uXXXX, \", \\, \/ and the control
+// escapes) when json is set. Invalid escapes are kept as they are.
+func decodeErrorBodyLayer(value string, percent, json bool) (string, bool) {
+	if (!percent || strings.IndexByte(value, '%') < 0) && (!json || strings.IndexByte(value, '\\') < 0) {
 		return value, false
 	}
 	var out strings.Builder
 	out.Grow(len(value))
 	changed := false
 	for i := 0; i < len(value); {
-		if n := decodeEscapeAt(&out, value, i); n > 0 {
+		if n := decodeEscapeAt(&out, value, i, percent, json); n > 0 {
 			i += n
 			changed = true
 			continue
@@ -134,19 +233,20 @@ func decodeErrorBodyLayer(value string) (string, bool) {
 	return out.String(), true
 }
 
-// decodeEscapeAt writes the decoding of the %XX or JSON string escape that
-// starts at value[i] to out and returns how many input bytes it spans. It
-// returns 0 and writes nothing when value[i] does not start a valid escape.
-func decodeEscapeAt(out *strings.Builder, value string, i int) int {
+// decodeEscapeAt writes the decoding of the %XX (when percent is set) or JSON
+// string escape (when json is set) that starts at value[i] to out and returns
+// how many input bytes it spans. It returns 0 and writes nothing when value[i]
+// does not start an enabled, valid escape.
+func decodeEscapeAt(out *strings.Builder, value string, i int, percent, json bool) int {
 	switch c := value[i]; {
-	case c == '%' && i+2 < len(value) && isHexDigit(value[i+1]) && isHexDigit(value[i+2]):
+	case percent && c == '%' && i+2 < len(value) && isHexDigit(value[i+1]) && isHexDigit(value[i+2]):
 		out.WriteByte(unhex(value[i+1])<<4 | unhex(value[i+2]))
 		return 3
-	case c == '\\' && i+5 < len(value) && value[i+1] == 'u' && isHex4(value[i+2:i+6]):
+	case json && c == '\\' && i+5 < len(value) && value[i+1] == 'u' && isHex4(value[i+2:i+6]):
 		r, n := decodeJSONUnicodeEscape(value, i)
 		out.WriteRune(r)
 		return n
-	case c == '\\' && i+1 < len(value) && strings.IndexByte(`"\/bfnrt`, value[i+1]) >= 0:
+	case json && c == '\\' && i+1 < len(value) && strings.IndexByte(`"\/bfnrt`, value[i+1]) >= 0:
 		out.WriteByte(jsonEscapeByte(value[i+1]))
 		return 2
 	default:
@@ -208,24 +308,19 @@ func unhex(c byte) byte {
 }
 
 // redactTokenFragments replaces every maximal run of value covered by
-// minTokenFragment-byte windows that also occur in a spelling of token.
-func redactTokenFragments(value, token string) string {
-	spellings := tokenFragmentSpellings(token)
-	if len(spellings) == 0 || len(value) < minTokenFragment {
+// minTokenFragment-byte windows that also occur in a spelling of the token.
+func redactTokenFragments(value string, windows tokenWindows) string {
+	if len(windows) == 0 || len(value) < minTokenFragment {
 		return value
 	}
 	covered := make([]bool, len(value))
 	found := false
 	for start := 0; start+minTokenFragment <= len(value); start++ {
-		window := value[start : start+minTokenFragment]
-		for _, spelling := range spellings {
-			if strings.Contains(spelling, window) {
-				for i := start; i < start+minTokenFragment; i++ {
-					covered[i] = true
-				}
-				found = true
-				break
+		if windows.hasWindowAt(value, start) {
+			for i := start; i < start+minTokenFragment; i++ {
+				covered[i] = true
 			}
+			found = true
 		}
 	}
 	if !found {

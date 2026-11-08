@@ -319,10 +319,18 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 	retryPolicy := c.requestRetryPolicy(cfg)
 	parsedPlaylists := make([]ParsedPlaylist, 0, len(lectures))
 	unavailableQualities := make(map[string]struct{})
+	lecturesWithoutStreams := 0
 	for _, lecture := range lectures {
 		streamInfos, err := retryRequest(ctx, retryPolicy, "stream info", func(ctx context.Context) ([]StreamInfo, error) {
 			return c.getStreamInfosWithPolicy(ctx, baseURL, token, lecture, policy)
 		})
+		if errors.Is(err, ErrNoStreams) || (err == nil && len(streamInfos) == 0) {
+			// Like a lecture whose qualities are all unavailable, a lecture
+			// with no usable stream is skipped; the batch fails below only
+			// when no lecture has one.
+			lecturesWithoutStreams++
+			continue
+		}
 		if err != nil {
 			return parsedPlaylists, err
 		}
@@ -343,16 +351,31 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 		}
 		parsedPlaylists = append(parsedPlaylists, parsed)
 	}
-	if len(parsedPlaylists) == 0 && len(unavailableQualities) > 0 {
-		qualities := make([]string, 0, len(unavailableQualities))
-		for quality := range unavailableQualities {
-			qualities = append(qualities, quality)
+	if len(parsedPlaylists) == 0 {
+		if err := noPlaylistsError(cfg.Quality, unavailableQualities, lecturesWithoutStreams, len(lectures)); err != nil {
+			return nil, err
 		}
-		sort.Strings(qualities)
-		return nil, newQualityUnavailableError(cfg.Quality, qualities)
 	}
 
 	return parsedPlaylists, nil
+}
+
+// noPlaylistsError explains a batch that produced no playlist: the requested
+// quality was unavailable, or no lecture listed a usable stream. It returns
+// nil when neither applies.
+func noPlaylistsError(quality string, unavailableQualities map[string]struct{}, lecturesWithoutStreams, lectureCount int) error {
+	if len(unavailableQualities) > 0 {
+		qualities := make([]string, 0, len(unavailableQualities))
+		for q := range unavailableQualities {
+			qualities = append(qualities, q)
+		}
+		sort.Strings(qualities)
+		return newQualityUnavailableError(quality, qualities)
+	}
+	if lecturesWithoutStreams > 0 {
+		return fmt.Errorf("%w (%d of %d lectures listed none)", ErrNoStreams, lecturesWithoutStreams, lectureCount)
+	}
+	return nil
 }
 
 func (c *Client) getPlaylist(ctx context.Context, streamURL, token string, lecture Lecture) (ParsedPlaylist, error) {

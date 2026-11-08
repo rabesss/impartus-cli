@@ -70,9 +70,10 @@ func TestParsePlaylistEncryptionStates(t *testing.T) {
 			wantSegs: 1,
 		},
 		{
-			name:     "key without segments is kept",
+			// No segment needs the key, so it is not fetched (#303).
+			name:     "key without segments is dropped",
 			playlist: "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n",
-			wantKey:  "https://media.example.test/hls/key.bin",
+			wantKey:  "",
 			wantSegs: 0,
 		},
 	}

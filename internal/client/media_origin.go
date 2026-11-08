@@ -24,7 +24,21 @@ var (
 	// ErrInvalidMediaURL identifies malformed, unsupported, or relative media
 	// URLs. It is deliberately fixed text so malformed URLs cannot echo secrets.
 	ErrInvalidMediaURL = errors.New("media URL must be an absolute HTTP(S) URL with a host")
+	// ErrInvalidMediaQuery identifies a media URL whose query cannot be
+	// parsed, for example because of a malformed percent escape. It matches
+	// ErrInvalidMediaURL with errors.Is, so callers checking for that keep
+	// working; only the message is more specific. Like ErrInvalidMediaURL it
+	// is fixed text and never echoes the query.
+	ErrInvalidMediaQuery error = invalidMediaQueryError{}
 )
+
+type invalidMediaQueryError struct{}
+
+func (invalidMediaQueryError) Error() string { return "media URL query is malformed" }
+
+// Unwrap (rather than an Is method) keeps ErrInvalidMediaURL in the chain, so
+// it also survives secrets.SanitizeError, which keeps chain members.
+func (invalidMediaQueryError) Unwrap() error { return ErrInvalidMediaURL }
 
 // MediaOriginError reports a safe, typed media-origin policy failure without
 // retaining the rejected URL (which may contain upstream query credentials).
@@ -144,8 +158,11 @@ func validateMediaURL(parsed *url.URL, requireHTTPS bool) error {
 	if parsed != nil && parsed.User != nil {
 		return newMediaOriginError(ErrMediaURLUserinfo)
 	}
-	if parsed == nil || !validHTTPURL(parsed) {
+	if parsed == nil || !validHTTPURLParts(parsed) {
 		return newMediaOriginError(ErrInvalidMediaURL)
+	}
+	if _, err := parseMediaQuery(parsed.RawQuery); err != nil {
+		return newMediaOriginError(ErrInvalidMediaQuery)
 	}
 	if requireHTTPS && strings.EqualFold(parsed.Scheme, "http") && !isLoopbackMediaHost(parsed.Hostname()) {
 		return newMediaOriginError(ErrInsecureMediaURL)
@@ -280,7 +297,7 @@ func stripBearerQueryParams(rawURL, token string) (string, error) {
 		return "", newMediaOriginError(ErrInvalidMediaURL)
 	}
 	if _, err := parseMediaQuery(parsed.RawQuery); err != nil {
-		return "", newMediaOriginError(ErrInvalidMediaURL)
+		return "", newMediaOriginError(ErrInvalidMediaQuery)
 	}
 	rawQuery := parsed.RawQuery
 	var kept strings.Builder
@@ -312,9 +329,11 @@ func stripBearerQueryParams(rawURL, token string) (string, error) {
 }
 
 // stripBearerTokenQuery removes known credential query aliases and any other
-// query value carrying the actual bearer. ParseQuery is used instead of
-// URL.Query so malformed escapes fail closed rather than being silently
-// discarded.
+// query parameter whose key also has a value carrying the actual bearer.
+// Like stripBearerQueryParams it edits the raw query in place: every kept
+// parameter keeps its bytes, its order and the '&' or ';' before it, since a
+// CDN signature may cover the exact query. Malformed escapes fail closed
+// rather than being silently discarded.
 func stripBearerTokenQuery(rawURL, token string) (string, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
@@ -322,28 +341,56 @@ func stripBearerTokenQuery(rawURL, token string) (string, error) {
 	}
 	query, err := parseMediaQuery(parsed.RawQuery)
 	if err != nil {
-		return "", newMediaOriginError(ErrInvalidMediaURL)
+		return "", newMediaOriginError(ErrInvalidMediaQuery)
 	}
-	changed := false
+	removeKeys := make(map[string]bool)
 	for key, values := range query {
-		knownCredentialKey := secrets.IsSensitiveQueryKey(key)
-		remove := knownCredentialKey
+		if secrets.IsSensitiveQueryKey(key) {
+			removeKeys[key] = true
+			continue
+		}
 		for _, value := range values {
 			if queryCredentialContainsBearer(value, token) {
-				remove = true
+				removeKeys[key] = true
 				break
 			}
 		}
-		if remove {
-			delete(query, key)
-			changed = true
-		}
 	}
-	if !changed {
+	if len(removeKeys) == 0 {
 		return rawURL, nil
 	}
-	parsed.RawQuery = query.Encode()
+	rawQuery := parsed.RawQuery
+	var kept strings.Builder
+	keptAny := false
+	start := 0
+	for i := 0; i <= len(rawQuery); i++ {
+		if i < len(rawQuery) && !isQuerySeparator(rawQuery[i]) {
+			continue
+		}
+		param := rawQuery[start:i]
+		if !removeKeys[rawQueryParamKey(param)] {
+			if keptAny {
+				kept.WriteByte(rawQuery[start-1])
+			}
+			kept.WriteString(param)
+			keptAny = true
+		}
+		start = i + 1
+	}
+	parsed.RawQuery = kept.String()
 	return parsed.String(), nil
+}
+
+// rawQueryParamKey decodes the key of one raw query parameter the way
+// url.ParseQuery does, so it matches the keys parseMediaQuery returned. The
+// caller has already parsed the whole query, so the key's escapes are valid.
+func rawQueryParamKey(param string) string {
+	key, _, _ := strings.Cut(param, "=")
+	decoded, err := url.QueryUnescape(key)
+	if err != nil {
+		return key
+	}
+	return decoded
 }
 
 // withholdBearerFromURL prepares a URL on an unconfigured origin to be

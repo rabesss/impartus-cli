@@ -48,6 +48,7 @@ type fakeProducer struct {
 	cfg             *config.Config
 	mu              sync.Mutex
 	downloads       int
+	fetches         int
 	fetchErrors     map[int]error
 	downloadErrors  map[int]error
 	failuresLeft    map[int]int
@@ -123,6 +124,9 @@ func (emitter *recordingEmitter) types() []string {
 
 func (producer *fakeProducer) FetchLecturePlaylists(_ context.Context, lectures []client.Lecture) ([]client.ParsedPlaylist, error) {
 	lecture := lectures[0]
+	producer.mu.Lock()
+	producer.fetches++
+	producer.mu.Unlock()
 	if producer.beforeFetch != nil {
 		producer.beforeFetch()
 	}

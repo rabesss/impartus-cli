@@ -107,6 +107,11 @@ func (d *Downloader) StartPlaybackStream(ctx context.Context, playlist client.Pa
 		return PlaybackStream{}, fmt.Errorf("no playable views available for lecture %d", playlist.SeqNo)
 	}
 
+	// A clear playlist fetches no key, so check the media origin policy here;
+	// otherwise playback would start and every segment would fail.
+	if d.mediaOriginErr != nil {
+		return PlaybackStream{}, fmt.Errorf("failed to start playback: %w", d.mediaOriginErr)
+	}
 	keyStore := newClearPlaybackKey()
 	if playlist.KeyURL != "" {
 		decryptionKey, err := d.fetchPlaybackDecryptionKey(ctx, playlist.KeyURL)

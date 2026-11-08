@@ -27,6 +27,10 @@ func sanitizeUpstreamErr(err error) string {
 	if errors.Is(err, downloader.ErrNoMediaOutputs) {
 		return downloader.ErrNoMediaOutputs.Error()
 	}
+	if errors.Is(err, client.ErrNoStreams) {
+		// Fixed text: no lecture listed a usable stream.
+		return client.ErrNoStreams.Error()
+	}
 	var qualityErr *client.QualityUnavailableError
 	if errors.As(err, &qualityErr) {
 		return qualityErr.Error()

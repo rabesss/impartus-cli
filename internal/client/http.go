@@ -229,7 +229,10 @@ func containsTokenRepresentation(value, token string) bool {
 		}
 		// Other credential-shaped text also counts, but Scrub replaces any
 		// oversized value with a fixed marker, which is not evidence of a
-		// credential. A large component is judged by the bearer alone.
+		// credential. A large component is judged by the bearer alone, so
+		// other credential-shaped text in it (for example access_token= with
+		// some other value) is not flagged; that trade-off was accepted in
+		// the #253 review, since the bearer itself is still found.
 		if !secrets.ScrubInputTooLarge(value) && secrets.Scrub(value) != value {
 			return true
 		}

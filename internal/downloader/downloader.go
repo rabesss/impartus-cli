@@ -215,6 +215,12 @@ func (d *Downloader) downloadLecturePlaylists(ctx context.Context, playlists []c
 
 // DownloadPlaylist downloads all chunks for both views of a playlist.
 func (d *Downloader) DownloadPlaylist(ctx context.Context, playlist client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) (DownloadedPlaylist, error) {
+	// An invalid media origin policy fails every request. Report it before
+	// the key fetch and workspace setup, which a clear playlist would
+	// otherwise skip straight past.
+	if d.mediaOriginErr != nil {
+		return DownloadedPlaylist{}, d.mediaOriginErr
+	}
 	releasePlaylistSlot, err := d.acquirePlaylistSlot(ctx)
 	if err != nil {
 		return DownloadedPlaylist{}, err
@@ -360,6 +366,9 @@ func pipelineFailureError(failures []ChunkFailure) error {
 func (d *Downloader) DownloadAndJoinPlaylist(ctx context.Context, playlist client.ParsedPlaylist, p *mpb.Progress, tracker *ProgressTracker) (JoinResult, error) {
 	if err := ctx.Err(); err != nil {
 		return JoinResult{}, err
+	}
+	if d.mediaOriginErr != nil {
+		return JoinResult{}, d.mediaOriginErr
 	}
 	if d.totalChunksForPlaylist(playlist) == 0 {
 		return JoinResult{}, fmt.Errorf("%w for lecture %d", ErrNoSelectedMedia, playlist.ID)
