@@ -329,9 +329,11 @@ func TestStartCancellationReapsChildAndCleansSocket(t *testing.T) {
 		// The hook fires on Start's goroutine once a connect attempt has found no
 		// socket. The no-socket helper never creates one and ConnectTimeout is an
 		// hour, so from then on Start stays in the connect loop until canceled.
-		parentConnecting := make(chan struct{})
+		connecting := make(chan struct{})
 		var connectingOnce sync.Once
-		options.testConnectWaitHook = func() { connectingOnce.Do(func() { close(parentConnecting) }) }
+		options.testConnectWaitHook = func() { connectingOnce.Do(func() { close(connecting) }) }
+		// The loop below sets its copy to nil once received; the hook keeps its own.
+		parentConnecting := (<-chan struct{})(connecting)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		var startedPIDs []int
@@ -350,7 +352,7 @@ func TestStartCancellationReapsChildAndCleansSocket(t *testing.T) {
 			case readyErr := <-childReady:
 				if readyErr != nil {
 					cancel()
-					t.Fatalf("readiness handshake: %v (%s)", readyErr, startResultWithin(startDone, time.Second))
+					t.Fatalf("readiness handshake: %v (%s)", readyErr, startResultWithin(t, startDone))
 				}
 				childReady = nil
 			case <-parentConnecting:
@@ -359,7 +361,7 @@ func TestStartCancellationReapsChildAndCleansSocket(t *testing.T) {
 				t.Fatalf("Start() returned before the helper was ready and Start was connecting: %v", err)
 			case <-hangGuard:
 				cancel()
-				t.Fatalf("helper readiness or the connect loop was not reached before the test deadline (%s)", startResultWithin(startDone, time.Second))
+				t.Fatalf("helper readiness or the connect loop was not reached before the test deadline (%s)", startResultWithin(t, startDone))
 			}
 		}
 		cancel()
@@ -373,9 +375,13 @@ func TestStartCancellationReapsChildAndCleansSocket(t *testing.T) {
 	})
 }
 
-// startResultWithin describes Start's result for a failure message, waiting
-// at most bound so a stuck Start cannot hold the test past its deadline.
-func startResultWithin(startDone <-chan error, bound time.Duration) string {
+// startResultWithin describes Start's result for a failure message. It waits
+// at most a second, and no longer than the budget left before the test
+// deadline: once the hang guard has fired that is about zero, so a stuck Start
+// cannot hold the test past go test's timeout.
+func startResultWithin(t *testing.T, startDone <-chan error) string {
+	t.Helper()
+	bound := min(time.Second, testdeadline.Budget(t, time.Second))
 	timer := time.NewTimer(bound)
 	defer timer.Stop()
 	select {
@@ -538,6 +544,9 @@ func TestEventsAndWaitForEndObserveTheSameTerminalEvent(t *testing.T) {
 	if err := session.Load(context.Background(), "http://127.0.0.1:1234/token/master.m3u8"); err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
+	// WaitForEnd and the UI event share half the remaining budget, so a
+	// failure here still leaves time for cleanupSession's Close (QuitTimeout
+	// plus up to 1.5x the Budget/8 KillTimeout) before go test's timeout.
 	waitCtx, cancel := context.WithTimeout(context.Background(), deadlineShare(t, 2))
 	defer cancel()
 	if waitErr := session.WaitForEnd(waitCtx); waitErr != nil {
@@ -548,8 +557,8 @@ func TestEventsAndWaitForEndObserveTheSameTerminalEvent(t *testing.T) {
 		if event.Reason != "eof" {
 			t.Fatalf("UI terminal event = %+v", event)
 		}
-	case <-testdeadline.Guard(t):
-		t.Fatal("UI did not receive terminal event consumed by WaitForEnd before the test deadline")
+	case <-waitCtx.Done():
+		t.Fatal("UI did not receive terminal event consumed by WaitForEnd within its deadline share")
 	}
 }
 

@@ -134,7 +134,7 @@ func TestRunLoggedFailsWhenTheLogCannotBeWritten(t *testing.T) {
 			if result.status != test.want {
 				t.Fatalf("status = %d, want %d\nstderr:\n%s", result.status, test.want, result.stderr)
 			}
-			if !strings.Contains(result.stderr, "::error::failed to write log") {
+			if !strings.Contains(result.stderr, "::error::tee failed writing the log") {
 				t.Fatalf("stderr = %q, want an explicit log-write error", result.stderr)
 			}
 			if !strings.Contains(result.stdout, "audit-output") {
@@ -145,15 +145,10 @@ func TestRunLoggedFailsWhenTheLogCannotBeWritten(t *testing.T) {
 }
 
 func TestRunLoggedKeepsProducerAndLogWhenStdoutCloses(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the audit log helper runs in the Linux Security workflow")
-	}
-	if err := exec.CommandContext(t.Context(), "tee", "--output-error=warn", os.DevNull).Run(); err != nil {
-		t.Skip("tee does not support --output-error=warn")
-	}
 	logPath := filepath.Join(t.TempDir(), "audit.txt")
-	// 4096 lines of 64 bytes exceed any pipe buffer, so writes to the closed
-	// stdout fail long before the producer finishes.
+	// The read end is closed, so tee's first write to stdout fails with EPIPE;
+	// 4096 lines of 64 bytes (more than a pipe buffer) make sure the producer
+	// keeps writing well after that.
 	command := runLoggedCommand(t, logPath, "bash", "-c",
 		`for i in $(seq 1 4096); do printf '%063d\n' "$i"; done; echo producer-finished; exit 4`)
 	reader, writer, err := os.Pipe()

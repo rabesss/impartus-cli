@@ -20,25 +20,22 @@ fi
 log_file=$1
 shift
 
-# GNU tee's --output-error=warn keeps writing the log when stdout goes away
-# (instead of dying on SIGPIPE and taking the command with it) and still exits
-# nonzero, which is reported below.
-tee_options=()
-if tee --output-error=warn /dev/null </dev/null >/dev/null 2>&1; then
-  tee_options=(--output-error=warn)
-fi
+# If stdout goes away (a closed reader), SIGPIPE would kill tee and then the
+# command, losing both the log and the command's status. Ignored signals are
+# inherited, so with SIGPIPE ignored tee gets EPIPE instead and keeps writing
+# the log (GNU and BSD tee alike), and the command keeps its own status.
+trap '' PIPE
 
 # errexit stays off (only nounset is set), so a failing command cannot end the
-# script before PIPESTATUS is read. The ${a[@]+...} form keeps an empty array
-# safe under nounset on bash 3.2.
-"$@" 2>&1 | tee ${tee_options[@]+"${tee_options[@]}"} -- "$log_file"
+# script before PIPESTATUS is read.
+"$@" 2>&1 | tee -- "$log_file"
 statuses=("${PIPESTATUS[@]}")
 
 command_status=${statuses[0]}
 tee_status=${statuses[1]}
 
 if [ "$tee_status" -ne 0 ]; then
-  echo "::error::failed to write log $log_file (tee status $tee_status); the log may be incomplete" >&2
+  echo "::error::tee failed writing the log $log_file or stdout (tee status $tee_status); the log may be incomplete" >&2
 fi
 if [ "$command_status" -ne 0 ]; then
   echo "::error::$1 exited with status $command_status" >&2
