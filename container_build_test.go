@@ -169,7 +169,7 @@ func TestDockerfileCrossCompilesBuildStage(t *testing.T) {
 	if download == -1 || targetArgs == -1 || goBuild == -1 {
 		t.Fatalf("Dockerfile is missing go mod download (%d), ARG TARGETOS TARGETARCH (%d) or go build (%d)", download, targetArgs, goBuild)
 	}
-	if !(download < targetArgs && targetArgs < goBuild) {
+	if download > targetArgs || targetArgs > goBuild {
 		t.Error("declare ARG TARGETOS TARGETARCH after go mod download so the module layer is shared across platforms")
 	}
 	if !strings.Contains(dockerfile, "CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH}") {
