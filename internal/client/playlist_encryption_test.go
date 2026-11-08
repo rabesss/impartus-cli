@@ -64,6 +64,12 @@ func TestParsePlaylistEncryptionStates(t *testing.T) {
 			wantSegs: 1,
 		},
 		{
+			name:     "space before a quoted URI",
+			playlist: "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128, URI= \"key.bin?a=1,b=2\"\nseg0.ts\n",
+			wantKey:  "https://media.example.test/hls/key.bin?a=1,b=2",
+			wantSegs: 1,
+		},
+		{
 			name:     "key without segments is kept",
 			playlist: "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n",
 			wantKey:  "https://media.example.test/hls/key.bin",
@@ -116,6 +122,16 @@ func TestParsePlaylistRejectsUnsupportedEncryption(t *testing.T) {
 			name:     "unterminated quoted URI",
 			playlist: "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\nseg0.ts\n",
 			want:     "unterminated",
+		},
+		{
+			name:     "unterminated quoted URI after a space",
+			playlist: "#EXTM3U\n#EXT-X-KEY:URI= \"key,METHOD=NONE\nseg0.ts\n",
+			want:     "unterminated",
+		},
+		{
+			name:     "quote inside an unquoted value",
+			playlist: "#EXTM3U\n#EXT-X-KEY:URI=key\"x,METHOD=NONE\nseg0.ts\n",
+			want:     "malformed attribute list",
 		},
 		{
 			name:     "encrypted key with no URI",

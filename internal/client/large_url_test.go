@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -41,6 +42,15 @@ func TestQueryCarriesBearerIgnoresSizeAlone(t *testing.T) {
 	}
 	if !queryCarriesBearer("p="+long+url.QueryEscape(largeURLTestToken), largeURLTestToken) {
 		t.Fatal("queryCarriesBearer(70 KiB with token) = false, want true")
+	}
+	// Each token byte as a \uXXXX escape whose backslash is JSON-escaped
+	// again, then URL-escaped: percent, JSON and JSON layers recover it.
+	var doubleEscaped strings.Builder
+	for i := 0; i < len(largeURLTestToken); i++ {
+		fmt.Fprintf(&doubleEscaped, `\\u%04x`, largeURLTestToken[i])
+	}
+	if !queryCarriesBearer("p="+long+url.QueryEscape(doubleEscaped.String()), largeURLTestToken) {
+		t.Fatal("queryCarriesBearer(70 KiB with a URL-escaped double JSON-escaped token) = false, want true")
 	}
 }
 

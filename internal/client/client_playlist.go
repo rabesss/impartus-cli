@@ -262,13 +262,25 @@ func parseHLSAttributes(list string) (map[string]string, error) {
 // and returns it with the index just past it, which is the separating comma
 // or the end of list.
 func parseHLSAttributeValue(list string, i int) (string, int, error) {
-	if i >= len(list) || list[i] != '"' {
-		comma := strings.IndexByte(list[i:], ',')
-		if comma < 0 {
-			comma = len(list) - i
-		}
-		return strings.TrimSpace(list[i : i+comma]), i + comma, nil
+	if start := skipHLSBlanks(list, i); start < len(list) && list[start] == '"' {
+		return parseHLSQuotedValue(list, start)
 	}
+	comma := strings.IndexByte(list[i:], ',')
+	if comma < 0 {
+		comma = len(list) - i
+	}
+	value := strings.TrimSpace(list[i : i+comma])
+	if strings.Contains(value, `"`) {
+		// A stray quote means the line was meant to hold a quoted string
+		// that never closes; reading on would split it into attributes.
+		return "", 0, errors.New("malformed attribute list")
+	}
+	return value, i + comma, nil
+}
+
+// parseHLSQuotedValue parses the quoted string whose opening quote is at
+// list[i].
+func parseHLSQuotedValue(list string, i int) (string, int, error) {
 	closing := strings.IndexByte(list[i+1:], '"')
 	if closing < 0 {
 		return "", 0, errors.New("unterminated quoted attribute")
