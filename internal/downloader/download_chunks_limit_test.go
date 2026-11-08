@@ -290,3 +290,25 @@ func TestDownloadChunkKeepsErrorBodyForLongToken(t *testing.T) {
 		t.Fatalf("chunk error = %v, want the upstream body %q", err, body)
 	}
 }
+
+func TestDownloadChunkOmitsEncodedPartialToken(t *testing.T) {
+	t.Parallel()
+
+	token := strings.Repeat("placeholder-jwt-segment-", 38)[:900]
+	var body strings.Builder
+	for i := 0; i < 40; i++ {
+		fmt.Fprintf(&body, `\u%04x`, token[i])
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, `{"error":"`+body.String()+`"}`) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	d := testLimitDownloader(t.TempDir(), client.New(server.Client(), nil))
+	d.config.Token = token
+	_, _, _, err := d.doDownloadChunkWithLimit(t.Context(), server.URL+"/chunk.ts", 1, 0, "left", true, 8)
+	if err == nil || !strings.Contains(err.Error(), chunkErrorBodyOmitted) || strings.Contains(err.Error(), `\u`) {
+		t.Fatalf("chunk error = %v, want the encoded token body omitted", err)
+	}
+}

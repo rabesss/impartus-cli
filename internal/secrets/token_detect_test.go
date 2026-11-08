@@ -59,3 +59,12 @@ func TestScrubInputTooLarge(t *testing.T) {
 		t.Fatal("ScrubInputTooLarge(over cap) = false")
 	}
 }
+
+func TestContainsTokenDetectsMarkerSpelledToken(t *testing.T) {
+	long := strings.Repeat("a", maxEncodedTokenViewSize+1)
+	for _, value := range []string{"REDACTED", "/x/REDACTED", long + "REDACTED", long + `REDACTED`} {
+		if !ContainsToken(value, "REDACTED") {
+			t.Errorf("ContainsToken(%.40q, REDACTED) = false", value)
+		}
+	}
+}

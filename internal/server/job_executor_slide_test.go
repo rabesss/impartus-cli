@@ -490,3 +490,25 @@ func TestDownloadLectureSlideKeepsErrorBodyForLongToken(t *testing.T) {
 		t.Fatalf("slide error = %v, want the upstream body %q", err, body)
 	}
 }
+
+func TestDownloadLectureSlideOmitsEncodedPartialToken(t *testing.T) {
+	token := strings.Repeat("placeholder-jwt-segment-", 38)[:900]
+	var body strings.Builder
+	for i := 0; i < 40; i++ {
+		fmt.Fprintf(&body, `\u%04x`, token[i])
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, `{"error":"`+body.String()+`"}`) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	err := downloadLectureSlideWithLimit(context.Background(), client.New(server.Client(), nil), &config.Config{
+		BaseURL:          server.URL,
+		DownloadLocation: t.TempDir(),
+		Token:            token,
+	}, client.Lecture{VideoID: 10, SeqNo: 1, Topic: "Lecture"}, 8)
+	if err == nil || !strings.Contains(err.Error(), slideErrorBodyOmitted) || strings.Contains(err.Error(), `\u`) {
+		t.Fatalf("slide error = %v, want the encoded token body omitted", err)
+	}
+}

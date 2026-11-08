@@ -23,8 +23,9 @@ func containsTokenVariant(value, token string) bool {
 	if len(trimmed) > maxTokenVariantInputSize {
 		return true
 	}
+	variants := tokenVariants(token)
 	candidate := value
-	if replaceTokenVariantsDirect(candidate, token) != candidate {
+	if matchesTokenVariantsDirect(candidate, variants) {
 		return true
 	}
 	for depth := 0; depth < maxRawPercentDecodeDepth; depth++ {
@@ -32,13 +33,38 @@ func containsTokenVariant(value, token string) bool {
 		if !changed {
 			return false
 		}
-		if replaceTokenVariantsDirect(decoded, token) != decoded {
+		if matchesTokenVariantsDirect(decoded, variants) {
 			return true
 		}
 		candidate = decoded
 	}
 	_, stillEncoded := decodePercentEscapes(candidate)
 	return stillEncoded
+}
+
+// matchesTokenVariantsDirect is the boolean form of
+// replaceTokenVariantsDirect. It searches for the variants instead of
+// comparing replaced output with its input, which would miss a token whose
+// spelling equals the replacement marker.
+func matchesTokenVariantsDirect(value string, variants []string) bool {
+	for _, variant := range variants {
+		if variant != "" && strings.Contains(value, variant) {
+			return true
+		}
+	}
+	if !strings.Contains(value, "\\") {
+		return false
+	}
+	view := decodeEncodedViewLayer(rawEncodedView(value), false)
+	if !view.changed {
+		return false
+	}
+	for _, variant := range variants {
+		if variant != "" && strings.Contains(view.text, variant) {
+			return true
+		}
+	}
+	return false
 }
 
 // ScrubInputTooLarge reports whether Scrub replaces s with a fixed marker

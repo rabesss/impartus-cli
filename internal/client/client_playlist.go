@@ -202,11 +202,9 @@ func parsePlaylistKey(baseURL *url.URL, line string) (string, error) {
 		return "", nil
 	}
 	if strings.HasPrefix(method, "SAMPLE-AES") {
-		const maxReportedMethod = 32
-		if len(method) > maxReportedMethod {
-			method = method[:maxReportedMethod] + "..."
-		}
-		return "", fmt.Errorf("unsupported HLS encryption method %q", method)
+		// The METHOD value is upstream text, so it is not echoed: a crafted
+		// playlist could put credential material after the prefix.
+		return "", errors.New("unsupported HLS encryption method: SAMPLE-AES is not supported")
 	}
 	match := uriValueRe.FindStringSubmatch(line)
 	if len(match) != 2 {

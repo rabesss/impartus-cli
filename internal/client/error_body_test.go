@@ -1,6 +1,8 @@
 package client
 
 import (
+	"errors"
+	"fmt"
 	"net/url"
 	"strings"
 	"testing"
@@ -83,5 +85,79 @@ func TestReadSanitizedErrorBodyOmitsOversizedBody(t *testing.T) {
 	}
 	if got != UpstreamErrorBodyOmitted {
 		t.Fatalf("ReadSanitizedErrorBody() = %q, want %q", got, UpstreamErrorBodyOmitted)
+	}
+}
+
+// jsonEscapeAll spells every byte of s as a JSON \u escape.
+func jsonEscapeAll(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		fmt.Fprintf(&b, `\u%04x`, s[i])
+	}
+	return b.String()
+}
+
+// percentEscapeEvery escapes every other byte of s, so no 16-byte window of
+// the literal or fully escaped token appears.
+func percentEscapeEvery(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if i%2 == 0 {
+			fmt.Fprintf(&b, "%%%02X", s[i])
+		} else {
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
+}
+
+func encodedPartialTokenBodies(token string) map[string]string {
+	return map[string]string{
+		"json-escaped prefix":       `{"error":"bad token ` + jsonEscapeAll(token[:40]) + `"}`,
+		"selectively percent-coded": "bad token " + percentEscapeEvery(token[:40]),
+		"double percent-coded":      "bad token " + strings.ReplaceAll(percentEscapeEvery(token[:40]), "%", "%25"),
+	}
+}
+
+func TestReadSanitizedErrorBodyOmitsEncodedPartialToken(t *testing.T) {
+	token := longTestBearer()
+	for name, body := range encodedPartialTokenBodies(token) {
+		t.Run(name, func(t *testing.T) {
+			got, err := ReadSanitizedErrorBody(strings.NewReader(body), 512, token)
+			if err != nil {
+				t.Fatalf("ReadSanitizedErrorBody() error = %v", err)
+			}
+			if got != UpstreamErrorBodyOmitted {
+				t.Fatalf("ReadSanitizedErrorBody() = %q, want %q", got, UpstreamErrorBodyOmitted)
+			}
+		})
+	}
+}
+
+func TestReadSanitizedErrorBodyKeepsOrdinaryEscapes(t *testing.T) {
+	const body = `{"error":"quota\nexceeded","path":"/a%20b"}`
+	got, err := ReadSanitizedErrorBody(strings.NewReader(body), 512, longTestBearer())
+	if err != nil {
+		t.Fatalf("ReadSanitizedErrorBody() error = %v", err)
+	}
+	if got != body {
+		t.Fatalf("ReadSanitizedErrorBody() = %q, want %q", got, body)
+	}
+}
+
+type tokenErrorReader struct{ token string }
+
+func (r tokenErrorReader) Read([]byte) (int, error) {
+	return 0, errors.New("read failed near " + r.token)
+}
+
+func TestReadSanitizedErrorBodySanitizesReadError(t *testing.T) {
+	token := longTestBearer()[:100]
+	got, err := ReadSanitizedErrorBody(tokenErrorReader{token: token}, 512, token)
+	if err == nil {
+		t.Fatalf("ReadSanitizedErrorBody() = %q, nil; want a read error", got)
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Fatalf("read error exposed the token: %v", err)
 	}
 }

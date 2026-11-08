@@ -96,3 +96,25 @@ func TestGetAuthorizedStillRefusesLargePathCarryingToken(t *testing.T) {
 		t.Fatal("token-carrying path was sent")
 	}
 }
+
+func TestGetAuthorizedRefusesLargePathCarryingMarkerSpelledToken(t *testing.T) {
+	// A bearer spelled like the redaction marker must still be detected:
+	// replacing it with the marker leaves the text unchanged.
+	const token = "REDACTED"
+	var sent bool
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { sent = true }))
+	defer server.Close()
+	server.Config.MaxHeaderBytes = 1 << 20
+
+	rawURL := server.URL + "/" + strings.Repeat("a", 70*1024) + "/" + token + "/seg.ts"
+	resp, err := New(server.Client(), nil).GetAuthorizedWithTokenForOrigins(context.Background(), rawURL, token, "https://api.example.test")
+	if resp != nil {
+		_ = resp.Body.Close() //nolint:errcheck
+	}
+	if err == nil || sent {
+		t.Fatalf("GetAuthorizedWithTokenForOrigins() error = %v, sent = %v; want a refusal before sending", err, sent)
+	}
+	if !containsTokenRepresentation("/"+strings.Repeat("a", 70*1024)+"/"+token, token) {
+		t.Fatal("containsTokenRepresentation(marker-spelled token) = false")
+	}
+}

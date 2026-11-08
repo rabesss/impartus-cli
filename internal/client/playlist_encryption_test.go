@@ -115,3 +115,12 @@ func TestParsePlaylistRejectsUnsupportedEncryption(t *testing.T) {
 		})
 	}
 }
+
+func TestParsePlaylistUnsupportedMethodIsNotEchoed(t *testing.T) {
+	const marker = "secret-bearer-abc123"
+	playlist := "#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES-" + marker + ",URI=\"key.bin\"\nseg0.ts\n"
+	_, err := parsePlaylist(bufio.NewScanner(strings.NewReader(playlist)), encryptionTestBase, 1, "Lecture", 1)
+	if err == nil || strings.Contains(err.Error(), marker) {
+		t.Fatalf("parsePlaylist() error = %v, want a fixed unsupported-method error", err)
+	}
+}
