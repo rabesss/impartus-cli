@@ -199,7 +199,7 @@ func TestDownloadChunkOmitsOversizedErrorBodyBeforeRedaction(t *testing.T) {
 	}
 }
 
-func TestDownloadChunkOmitsTokenPrefixWithinBodyCap(t *testing.T) {
+func TestDownloadChunkRedactsTokenPrefixWithinBodyCap(t *testing.T) {
 	t.Parallel()
 
 	token := strings.Repeat("long-token-", 60)
@@ -219,7 +219,7 @@ func TestDownloadChunkOmitsTokenPrefixWithinBodyCap(t *testing.T) {
 	if path != "" || data != nil || written != 0 {
 		t.Fatalf("failed download returned path=%q data=%v written=%d", path, data, written)
 	}
-	if strings.Contains(err.Error(), prefix) || !strings.Contains(err.Error(), chunkErrorBodyOmitted) {
+	if strings.Contains(err.Error(), token[:16]) || !strings.Contains(err.Error(), "REDACTED") {
 		t.Fatalf("chunk error exposed token prefix: %v", err)
 	}
 }
@@ -267,4 +267,26 @@ func (r *failingChunkReader) Read(p []byte) (int, error) {
 	}
 	r.read = true
 	return copy(p, "1234"), nil
+}
+
+func TestDownloadChunkKeepsErrorBodyForLongToken(t *testing.T) {
+	t.Parallel()
+
+	const body = `{"error":"quota exceeded"}`
+	token := strings.Repeat("placeholder-jwt-segment-", 38)[:900]
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, body) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	d := testLimitDownloader(t.TempDir(), client.New(server.Client(), nil))
+	d.config.Token = token
+	_, _, _, err := d.doDownloadChunkWithLimit(t.Context(), server.URL+"/chunk.ts", 1, 0, "left", true, 8)
+	if err == nil {
+		t.Fatal("doDownloadChunkWithLimit() error = nil, want upstream failure")
+	}
+	if !strings.Contains(err.Error(), body) {
+		t.Fatalf("chunk error = %v, want the upstream body %q", err, body)
+	}
 }

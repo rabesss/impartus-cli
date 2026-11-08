@@ -288,7 +288,7 @@ func TestDownloadLectureSlideOmitsOversizedErrorBodyBeforeRedaction(t *testing.T
 	}
 }
 
-func TestDownloadLectureSlideOmitsTokenPrefixWithinBodyCap(t *testing.T) {
+func TestDownloadLectureSlideRedactsTokenPrefixWithinBodyCap(t *testing.T) {
 	token := strings.Repeat("long-token-", 60)
 	prefix := token[:maxSlideErrorBodySize-1]
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -305,7 +305,7 @@ func TestDownloadLectureSlideOmitsTokenPrefixWithinBodyCap(t *testing.T) {
 	if err == nil {
 		t.Fatal("downloadLectureSlideWithLimit() error = nil, want upstream failure")
 	}
-	if strings.Contains(err.Error(), prefix) || !strings.Contains(err.Error(), slideErrorBodyOmitted) {
+	if strings.Contains(err.Error(), token[:16]) || !strings.Contains(err.Error(), "REDACTED") {
 		t.Fatalf("slide error exposed token prefix: %v", err)
 	}
 }
@@ -467,4 +467,26 @@ func (r *failingSlideReader) Read(p []byte) (int, error) {
 	}
 	r.read = true
 	return copy(p, "1234"), nil
+}
+
+func TestDownloadLectureSlideKeepsErrorBodyForLongToken(t *testing.T) {
+	const body = `{"error":"quota exceeded"}`
+	token := strings.Repeat("placeholder-jwt-segment-", 38)[:900]
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, body) //nolint:errcheck
+	}))
+	defer server.Close()
+
+	err := downloadLectureSlideWithLimit(context.Background(), client.New(server.Client(), nil), &config.Config{
+		BaseURL:          server.URL,
+		DownloadLocation: t.TempDir(),
+		Token:            token,
+	}, client.Lecture{VideoID: 10, SeqNo: 1, Topic: "Lecture"}, 8)
+	if err == nil {
+		t.Fatal("downloadLectureSlideWithLimit() error = nil, want upstream failure")
+	}
+	if !strings.Contains(err.Error(), body) {
+		t.Fatalf("slide error = %v, want the upstream body %q", err, body)
+	}
 }

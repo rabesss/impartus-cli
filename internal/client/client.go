@@ -40,7 +40,7 @@ const maxCatalogResponseSize int64 = 10 * 1024 * 1024
 
 const maxUpstreamErrorBodySize int64 = 512
 
-const upstreamErrorBodyOmitted = "upstream response body omitted"
+const upstreamErrorBodyOmitted = UpstreamErrorBodyOmitted
 
 var errResponseSizeLimit = errors.New("response exceeds max size")
 
@@ -56,19 +56,7 @@ func readResponseBodyWithLimit(body io.Reader, limit int64) ([]byte, error) {
 }
 
 func readSanitizedErrorBody(body io.Reader, token string) (string, error) {
-	if int64(len(strings.TrimSpace(token))) > maxUpstreamErrorBodySize {
-		return upstreamErrorBodyOmitted, nil
-	}
-	contents, err := io.ReadAll(io.LimitReader(body, maxUpstreamErrorBodySize+1))
-	if err != nil {
-		return "", secrets.SanitizeErrorWithToken(err, token)
-	}
-	if int64(len(contents)) > maxUpstreamErrorBodySize {
-		// Do not expose a prefix of an oversized body: an unknown credential may
-		// begin before the cap and continue beyond it, defeating token redaction.
-		return upstreamErrorBodyOmitted, nil
-	}
-	return secrets.RedactWithToken(strings.TrimSpace(string(contents)), token), nil
+	return ReadSanitizedErrorBody(body, maxUpstreamErrorBodySize, token)
 }
 
 // New creates a new Impartus API client with the given HTTP client and user agent

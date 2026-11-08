@@ -177,16 +177,14 @@ func TestReadSanitizedErrorBodyDoesNotExposeTruncatedTokenPrefix(t *testing.T) {
 	}
 }
 
-func TestReadSanitizedErrorBodyOmitsPrefixWhenTokenExceedsBodyCap(t *testing.T) {
+func TestReadSanitizedErrorBodyRedactsTokenPrefixWhenTokenExceedsBodyCap(t *testing.T) {
 	token := strings.Repeat("long-token-", 60)
 	prefix := token[:maxUpstreamErrorBodySize-1]
 	got, err := readSanitizedErrorBody(strings.NewReader(prefix), token)
 	if err != nil {
 		t.Fatalf("readSanitizedErrorBody() error = %v", err)
 	}
-	if got != upstreamErrorBodyOmitted {
-		t.Fatalf("readSanitizedErrorBody() = %q, want bounded omission", got)
-	}
+	assertNoTokenFragment(t, got, token)
 }
 
 func TestGetStreamInfosEscapesTokenQueryValue(t *testing.T) {

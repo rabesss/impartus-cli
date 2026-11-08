@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/rabesss/impartus-cli/internal/client"
@@ -24,7 +23,7 @@ var errDownloadSizeLimit = errors.New("download exceeds size limit")
 
 const chunkErrorBodyLimit int64 = 512
 
-const chunkErrorBodyOmitted = "upstream response body omitted"
+const chunkErrorBodyOmitted = client.UpstreamErrorBodyOmitted
 
 func copyWithLimit(dst io.Writer, src io.Reader, limit int64) (int64, error) {
 	written, err := io.Copy(dst, io.LimitReader(src, limit+1))
@@ -132,17 +131,10 @@ func chunkResponseError(resp *http.Response, url, token string) error {
 }
 
 func chunkStatusError(resp *http.Response, url, token string) error {
-	if int64(len(strings.TrimSpace(token))) > chunkErrorBodyLimit {
-		return fmt.Errorf("chunk request failed with status %d for URL %s: %s", resp.StatusCode, secrets.RedactURLWithToken(url, token), chunkErrorBodyOmitted)
-	}
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, chunkErrorBodyLimit+1))
+	message, readErr := client.ReadSanitizedErrorBody(resp.Body, chunkErrorBodyLimit, token)
 	if readErr != nil {
-		return fmt.Errorf("chunk request failed with status %d and unreadable error body: %w", resp.StatusCode, secrets.SanitizeErrorWithToken(readErr, token))
+		return fmt.Errorf("chunk request failed with status %d and unreadable error body: %w", resp.StatusCode, readErr)
 	}
-	if int64(len(body)) > chunkErrorBodyLimit {
-		return fmt.Errorf("chunk request failed with status %d for URL %s: %s", resp.StatusCode, secrets.RedactURLWithToken(url, token), chunkErrorBodyOmitted)
-	}
-	message := secrets.RedactWithToken(strings.TrimSpace(string(body)), token)
 	if message == "" {
 		return fmt.Errorf("chunk request failed with status %d for URL %s", resp.StatusCode, secrets.RedactURLWithToken(url, token))
 	}

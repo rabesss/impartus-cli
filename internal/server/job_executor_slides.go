@@ -31,20 +31,10 @@ var errSlideSizeLimit = errors.New("slide exceeds size limit")
 
 const maxSlideErrorBodySize int64 = 512
 
-const slideErrorBodyOmitted = "upstream response body omitted"
+const slideErrorBodyOmitted = client.UpstreamErrorBodyOmitted
 
 func readSanitizedSlideErrorBody(body io.Reader, token string) (string, error) {
-	if int64(len(strings.TrimSpace(token))) > maxSlideErrorBodySize {
-		return slideErrorBodyOmitted, nil
-	}
-	contents, err := io.ReadAll(io.LimitReader(body, maxSlideErrorBodySize+1))
-	if err != nil {
-		return "", secrets.SanitizeErrorWithToken(err, token)
-	}
-	if int64(len(contents)) > maxSlideErrorBodySize {
-		return slideErrorBodyOmitted, nil
-	}
-	return secrets.RedactWithToken(strings.TrimSpace(string(contents)), token), nil
+	return client.ReadSanitizedErrorBody(body, maxSlideErrorBodySize, token)
 }
 
 func downloadLectureSlide(ctx context.Context, c *client.Client, cfg *config.Config, lecture client.Lecture) error {
