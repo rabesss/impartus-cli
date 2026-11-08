@@ -37,6 +37,11 @@ func TestClearPlaylistReportsInvalidMediaOriginPolicy(t *testing.T) {
 	if !errors.Is(err, client.ErrInsecureMediaURL) {
 		t.Fatalf("StartPlaybackStream() error = %v, want ErrInsecureMediaURL", err)
 	}
+	// The policy error also wins over an empty playlist, as in DownloadPlaylist.
+	empty := client.ParsedPlaylist{ID: 8, SeqNo: 2}
+	if _, err := d.DownloadAndJoinPlaylist(t.Context(), empty, nil, nil); !errors.Is(err, client.ErrInsecureMediaURL) {
+		t.Fatalf("DownloadAndJoinPlaylist(empty) error = %v, want ErrInsecureMediaURL", err)
+	}
 	if got := requests(); len(got) != 0 {
 		t.Fatalf("requests = %v, want none", got)
 	}

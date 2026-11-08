@@ -36,7 +36,9 @@ type invalidMediaQueryError struct{}
 
 func (invalidMediaQueryError) Error() string { return "media URL query is malformed" }
 
-func (invalidMediaQueryError) Is(target error) bool { return target == ErrInvalidMediaURL }
+// Unwrap (rather than an Is method) keeps ErrInvalidMediaURL in the chain, so
+// it also survives secrets.SanitizeError, which keeps chain members.
+func (invalidMediaQueryError) Unwrap() error { return ErrInvalidMediaURL }
 
 // MediaOriginError reports a safe, typed media-origin policy failure without
 // retaining the rejected URL (which may contain upstream query credentials).

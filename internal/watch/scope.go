@@ -92,11 +92,21 @@ func (watcher *Watcher) resolveLecture(
 
 func (watcher *Watcher) fetchPlaylists(ctx context.Context, lecture client.Lecture) ([]client.ParsedPlaylist, error) {
 	var result []client.ParsedPlaylist
+	var noStreams error
 	err := watcher.retry(ctx, func() error {
 		var err error
 		result, err = watcher.producer.FetchLecturePlaylists(ctx, []client.Lecture{lecture})
+		if errors.Is(err, client.ErrNoStreams) {
+			// A lecture that lists no stream is not a transient failure, so
+			// it is reported at once instead of being retried.
+			noStreams = err
+			return nil
+		}
 		return err
 	})
+	if err == nil && noStreams != nil {
+		return nil, noStreams
+	}
 	return result, err
 }
 

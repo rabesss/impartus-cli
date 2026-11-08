@@ -128,7 +128,7 @@ func newTokenWindows(token string) tokenWindows {
 	}
 	size := 0
 	for _, spelling := range spellings {
-		size += len(spelling) - minTokenFragment + 1
+		size += max(0, len(spelling)-minTokenFragment+1)
 	}
 	windows := make(tokenWindows, size)
 	for _, spelling := range spellings {

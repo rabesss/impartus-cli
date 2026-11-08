@@ -245,13 +245,15 @@ const maxPlaylistKeyIVDigits = 32
 
 // validatePlaylistKeyIV accepts an explicit IV only when it is zero, which is
 // the IV every segment is decrypted with. An HLS IV is a hexadecimal integer
-// with a 0x or 0X prefix and at most 128 bits. A non-zero IV would decrypt to
-// garbage, so it is refused, as is a malformed one. The IV is upstream text,
-// so it is never echoed.
+// with a 0x or 0X prefix and at most 128 bits. Decrypting with a zero IV in
+// place of a non-zero one corrupts the first block of every segment, so a
+// non-zero IV is refused rather than silently mangled, as is a malformed one.
+// The IV is upstream text, so it is never echoed.
 func validatePlaylistKeyIV(iv string) error {
-	digits, ok := strings.CutPrefix(strings.TrimSpace(iv), "0x")
+	trimmed := strings.TrimSpace(iv)
+	digits, ok := strings.CutPrefix(trimmed, "0x")
 	if !ok {
-		digits, ok = strings.CutPrefix(strings.TrimSpace(iv), "0X")
+		digits, ok = strings.CutPrefix(trimmed, "0X")
 	}
 	if !ok || digits == "" || len(digits) > maxPlaylistKeyIVDigits {
 		return errors.New("invalid playlist key: malformed IV")

@@ -367,11 +367,11 @@ func (d *Downloader) DownloadAndJoinPlaylist(ctx context.Context, playlist clien
 	if err := ctx.Err(); err != nil {
 		return JoinResult{}, err
 	}
-	if d.totalChunksForPlaylist(playlist) == 0 {
-		return JoinResult{}, fmt.Errorf("%w for lecture %d", ErrNoSelectedMedia, playlist.ID)
-	}
 	if d.mediaOriginErr != nil {
 		return JoinResult{}, d.mediaOriginErr
+	}
+	if d.totalChunksForPlaylist(playlist) == 0 {
+		return JoinResult{}, fmt.Errorf("%w for lecture %d", ErrNoSelectedMedia, playlist.ID)
 	}
 	// Each invocation owns its workspace under the caller-owned base
 	// directory: the lecture's resumable workspace, or a one-off one when
