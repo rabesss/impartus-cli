@@ -263,7 +263,7 @@ func validHTTPURL(parsedURL *url.URL) bool {
 			return false
 		}
 	}
-	_, err := url.ParseQuery(parsedURL.RawQuery)
+	_, err := parseMediaQuery(parsedURL.RawQuery)
 	return err == nil
 }
 
