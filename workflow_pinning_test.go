@@ -24,11 +24,7 @@ func TestPullfrogActionTracksCurrentMajor(t *testing.T) {
 	}
 
 	for _, workflowPath := range workflowPaths {
-		workflow, readErr := os.ReadFile(workflowPath)
-		if readErr != nil {
-			t.Fatalf("read workflow %s: %v", workflowPath, readErr)
-		}
-		findings, scanErr := scanUnsupportedPullfrogWorkflowRefs(string(workflow))
+		findings, scanErr := scanUnsupportedPullfrogWorkflowRefs(readRepoFile(t, workflowPath))
 		if scanErr != nil {
 			t.Fatalf("parse action YAML %s: %v", workflowPath, scanErr)
 		}

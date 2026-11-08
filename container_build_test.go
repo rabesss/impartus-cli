@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -27,9 +28,13 @@ func readRepoFile(t *testing.T, path string) string {
 var (
 	goDirectivePattern        = regexp.MustCompile(`(?m)^go (\d+\.\d+(?:\.\d+)?)\s*$`)
 	toolchainDirectivePattern = regexp.MustCompile(`(?m)^toolchain go(\d+\.\d+\.\d+)\s*$`)
-	buildStagePattern         = regexp.MustCompile(`(?m)^FROM (--platform=\$BUILDPLATFORM )?golang:(\d+\.\d+\.\d+)-bookworm@sha256:[0-9a-f]{64} AS build$`)
-	runtimeStagePattern       = regexp.MustCompile(`(?m)^FROM (debian:\S+)$`)
-	datedDebianPattern        = regexp.MustCompile(`^debian:bookworm-\d{8}-slim@sha256:[0-9a-f]{64}$`)
+	// Any Debian codename is accepted, so a move to a new Debian release
+	// changes the Dockerfile and not these tests. Both stages must use the same one.
+	buildStagePattern   = regexp.MustCompile(`(?m)^FROM (--platform=\$BUILDPLATFORM )?golang:(\d+\.\d+\.\d+)-([a-z]+)@sha256:[0-9a-f]{64} AS build$`)
+	runtimeStagePattern = regexp.MustCompile(`(?m)^FROM (debian:\S+)$`)
+	datedDebianPattern  = regexp.MustCompile(`^debian:([a-z]+)-\d{8}-slim@sha256:[0-9a-f]{64}$`)
+	// ffprobe piped into another command hides its exit status in dash, which has no pipefail.
+	ffprobePipePattern = regexp.MustCompile(`(?m)^[^#\n]*\bffprobe\b[^\n]*\|`)
 )
 
 // goModVersion returns the single Go version CI, release and the Dockerfile
@@ -99,7 +104,7 @@ func TestGoModIsTheSingleGoVersion(t *testing.T) {
 	dockerfile := readRepoFile(t, "Dockerfile")
 	build := buildStagePattern.FindStringSubmatch(dockerfile)
 	if build == nil {
-		t.Fatal("Dockerfile build stage must be `FROM --platform=$BUILDPLATFORM golang:<go.mod version>-bookworm@sha256:<digest> AS build`")
+		t.Fatal("Dockerfile build stage must be `FROM --platform=$BUILDPLATFORM golang:<go.mod version>-<debian codename>@sha256:<digest> AS build`")
 	}
 	if build[2] != version {
 		t.Errorf("Dockerfile builds with golang:%s, but go.mod selects go%s; bump both in one change", build[2], version)
@@ -115,35 +120,74 @@ func TestWorkflowsTakeGoVersionFromGoMod(t *testing.T) {
 		t.Fatal("no workflows found")
 	}
 
-	versionFile := regexp.MustCompile(`^\s*go-version-file: '?go\.mod'?\s*$`)
 	setupGoUses := 0
 	for _, path := range paths {
-		lines := strings.Split(readRepoFile(t, path), "\n")
-		for i, line := range lines {
-			if strings.Contains(line, "go-version:") {
-				t.Errorf("%s:%d pins a Go version; use go-version-file: go.mod", path, i+1)
-			}
-			if strings.Contains(line, "GOTOOLCHAIN") {
-				t.Errorf("%s:%d overrides GOTOOLCHAIN; go.mod is the only Go version", path, i+1)
-			}
-			if !strings.Contains(line, "uses: actions/setup-go@") {
-				continue
-			}
-			setupGoUses++
-			found := false
-			for _, next := range lines[i+1 : min(i+6, len(lines))] {
-				if versionFile.MatchString(next) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				t.Errorf("%s:%d sets up Go without go-version-file: go.mod", path, i+1)
-			}
+		findings, uses := goVersionPinFindings(readRepoFile(t, path))
+		setupGoUses += uses
+		for _, finding := range findings {
+			t.Errorf("%s:%s", path, finding)
 		}
 	}
 	if setupGoUses == 0 {
 		t.Fatal("no actions/setup-go uses found")
+	}
+}
+
+var goVersionFilePattern = regexp.MustCompile(`^\s*go-version-file: '?go\.mod'?\s*$`)
+
+// goVersionPinFindings reports workflow lines that pin a Go version other than
+// go.mod's, and counts actions/setup-go uses. Full-line YAML comments are
+// skipped; a trailing comment after a real key is still checked.
+func goVersionPinFindings(workflow string) (findings []string, setupGoUses int) {
+	lines := strings.Split(workflow, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		if strings.Contains(line, "go-version:") {
+			findings = append(findings, fmt.Sprintf("%d pins a Go version; use go-version-file: go.mod", i+1))
+		}
+		if strings.Contains(line, "GOTOOLCHAIN") {
+			findings = append(findings, fmt.Sprintf("%d overrides GOTOOLCHAIN; go.mod is the only Go version", i+1))
+		}
+		if !strings.Contains(line, "uses: actions/setup-go@") {
+			continue
+		}
+		setupGoUses++
+		found := false
+		for _, next := range lines[i+1 : min(i+6, len(lines))] {
+			if goVersionFilePattern.MatchString(next) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			findings = append(findings, fmt.Sprintf("%d sets up Go without go-version-file: go.mod", i+1))
+		}
+	}
+	return findings, setupGoUses
+}
+
+func TestGoVersionPinFindingsSkipsCommentLines(t *testing.T) {
+	cases := []struct {
+		name     string
+		workflow string
+		want     int
+	}{
+		{"comment mentioning go-version", "    # do not add go-version: here\n", 0},
+		{"comment mentioning GOTOOLCHAIN", "  # GOTOOLCHAIN=local would override go.mod\n", 0},
+		{"real go-version pin", "        with:\n          go-version: '1.27'\n", 1},
+		{"GOTOOLCHAIN in run", "        run: GOTOOLCHAIN=local go test ./...\n", 1},
+		{"trailing comment does not hide a pin", "          go-version: '1.27' # temporary\n", 1},
+		{"setup-go without go-version-file", "      - uses: actions/setup-go@abc # v7\n        with:\n          cache: true\n", 1},
+		{"setup-go with go-version-file", "      - uses: actions/setup-go@abc # v7\n        with:\n          go-version-file: 'go.mod'\n", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, _ := goVersionPinFindings(tc.workflow); len(got) != tc.want {
+				t.Errorf("goVersionPinFindings = %q, want %d finding(s)", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -188,8 +232,50 @@ func TestDockerfileRuntimeBaseIsDependabotTrackable(t *testing.T) {
 	}
 	// A rolling tag such as bookworm-slim gives Dependabot a version that never
 	// changes, so one closed digest PR (#75) suppressed every later refresh (#304).
-	if !datedDebianPattern.MatchString(match[1]) {
-		t.Errorf("runtime base %q must be a dated debian:bookworm-YYYYMMDD-slim@sha256 pin so Dependabot sees new versions", match[1])
+	base := datedDebianPattern.FindStringSubmatch(match[1])
+	if base == nil {
+		t.Fatalf("runtime base %q must be a dated debian:<codename>-YYYYMMDD-slim@sha256 pin so Dependabot sees new versions", match[1])
+	}
+	build := buildStagePattern.FindStringSubmatch(readRepoFile(t, "Dockerfile"))
+	if build == nil {
+		t.Fatal("Dockerfile is missing the golang build stage")
+	}
+	if build[3] != base[1] {
+		t.Errorf("build stage uses Debian %q but the runtime base uses %q; move both together", build[3], base[1])
+	}
+}
+
+func TestDockerfileBasePatternsAcceptAnyDebianCodename(t *testing.T) {
+	const digest = "@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	builds := []struct {
+		line string
+		want bool
+	}{
+		{"FROM --platform=$BUILDPLATFORM golang:1.27.3-bookworm" + digest + " AS build", true},
+		{"FROM --platform=$BUILDPLATFORM golang:1.27.3-trixie" + digest + " AS build", true},
+		{"FROM --platform=$BUILDPLATFORM golang:1.27.3" + digest + " AS build", false},
+		{"FROM --platform=$BUILDPLATFORM golang:1.27.3-trixie AS build", false},
+		{"FROM --platform=$BUILDPLATFORM golang:1.27-trixie" + digest + " AS build", false},
+	}
+	for _, tc := range builds {
+		if got := buildStagePattern.MatchString(tc.line); got != tc.want {
+			t.Errorf("buildStagePattern.MatchString(%q) = %v, want %v", tc.line, got, tc.want)
+		}
+	}
+	runtimes := []struct {
+		image string
+		want  bool
+	}{
+		{"debian:bookworm-20261104-slim" + digest, true},
+		{"debian:trixie-20261104-slim" + digest, true},
+		{"debian:trixie-slim" + digest, false},
+		{"debian:trixie-20261104-slim", false},
+		{"debian:trixie-20261104" + digest, false},
+	}
+	for _, tc := range runtimes {
+		if got := datedDebianPattern.MatchString(tc.image); got != tc.want {
+			t.Errorf("datedDebianPattern.MatchString(%q) = %v, want %v", tc.image, got, tc.want)
+		}
 	}
 }
 
@@ -234,6 +320,29 @@ func TestContainerSmokeScriptCoversCLIAndFFmpegPaths(t *testing.T) {
 	if strings.Contains(script, "/work") {
 		t.Errorf("%s must not depend on /work, which older release images do not make writable", path)
 	}
+	if !strings.Contains(script, "ffprobe failed") {
+		t.Errorf("%s must report an ffprobe failure itself", path)
+	}
+	if pipe := ffprobePipePattern.FindString(script); pipe != "" {
+		t.Errorf("%s pipes ffprobe into another command, which hides its exit status in dash: %q", path, pipe)
+	}
+}
+
+func TestFFprobePipePattern(t *testing.T) {
+	cases := []struct {
+		script string
+		want   bool
+	}{
+		{"video=$(ffprobe -v error views.mkv | wc -l)\n", true},
+		{"if ! streams=$(ffprobe -v error views.mkv); then\n", false},
+		{"# ffprobe output | wc -l used to hide failures\n", false},
+		{"video=$(printf '%s\\n' \"$streams\" | grep -cx video || true)\n", false},
+	}
+	for _, tc := range cases {
+		if got := ffprobePipePattern.MatchString(tc.script); got != tc.want {
+			t.Errorf("ffprobePipePattern.MatchString(%q) = %v, want %v", tc.script, got, tc.want)
+		}
+	}
 }
 
 func TestCIContainerJobRunsSmokeScript(t *testing.T) {
@@ -262,12 +371,28 @@ func TestCIContainerJobRunsSmokeScript(t *testing.T) {
 }
 
 func TestReadRepoFileNormalisesCRLF(t *testing.T) {
+	const digest = "@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	raw := "FROM --platform=$BUILDPLATFORM golang:1.27.3-bookworm" + digest + " AS build\r\n" +
+		"RUN go build\r\n" +
+		"FROM debian:bookworm-20261104-slim" + digest + "\r\n"
 	path := filepath.Join(t.TempDir(), "Dockerfile")
-	if err := os.WriteFile(path, []byte("FROM a AS build\r\nFROM b\r\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// core.autocrlf=true checkouts must not break the line-anchored contract checks.
-	if got, want := readRepoFile(t, path), "FROM a AS build\nFROM b\n"; got != want {
+	got := readRepoFile(t, path)
+	if want := strings.ReplaceAll(raw, "\r\n", "\n"); got != want {
 		t.Errorf("readRepoFile = %q, want %q", got, want)
+	}
+	// The raw bytes defeat the $-anchored pattern, so the normalisation is what makes the checks pass.
+	if buildStagePattern.MatchString(raw) {
+		t.Fatal("buildStagePattern matched CRLF input; this fixture no longer proves normalisation matters")
+	}
+	if build := buildStagePattern.FindStringSubmatch(got); build == nil || build[2] != "1.27.3" || build[3] != "bookworm" {
+		t.Errorf("buildStagePattern on normalised Dockerfile = %q", build)
+	}
+	stage := runtimeStagePattern.FindStringSubmatch(got)
+	if stage == nil || !datedDebianPattern.MatchString(stage[1]) {
+		t.Errorf("runtime stage on normalised Dockerfile = %q, want a dated debian pin", stage)
 	}
 }

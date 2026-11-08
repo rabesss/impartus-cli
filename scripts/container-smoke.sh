@@ -55,8 +55,14 @@ for output in joined.mp4 views.mkv audio.mp3 audio.m4a audio.opus; do
 	ffmpeg -nostdin -hide_banner -v error -xerror -i "$output" -f null -
 done
 
-video=$(ffprobe -v error -select_streams v -show_entries stream=index -of csv=p=0 views.mkv | wc -l)
-audio=$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 views.mkv | wc -l)
+# The image's sh is dash, which has no pipefail: run ffprobe on its own so a
+# failure is reported as such, then count the stream types it printed.
+if ! streams=$(ffprobe -v error -show_entries stream=codec_type -of csv=p=0 views.mkv); then
+	echo "ffprobe failed on views.mkv" >&2
+	exit 1
+fi
+video=$(printf '%s\n' "$streams" | grep -cx video || true)
+audio=$(printf '%s\n' "$streams" | grep -cx audio || true)
 if [ "$video" -ne 2 ] || [ "$audio" -ne 2 ]; then
 	echo "views.mkv has $video video and $audio audio streams, want 2 and 2" >&2
 	exit 1
