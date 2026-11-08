@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -301,11 +300,14 @@ func TestStartTimesOutAndReapsWhenSocketNeverAppears(t *testing.T) {
 }
 
 func TestStartCancellationReapsChildAndCleansSocket(t *testing.T) {
-	t.Run("before the child runs", func(t *testing.T) {
+	t.Run("before Start connects", func(t *testing.T) {
 		options := startupCancellationOptions(t)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		var startedPIDs []int
+		// The hook runs on Start's goroutine after the child starts and before
+		// Start's isolation check and IPC connect loop. The child itself may or
+		// may not have run yet.
 		options.testStartedHook = func(pid int) {
 			startedPIDs = append(startedPIDs, pid)
 			cancel()
@@ -316,31 +318,35 @@ func TestStartCancellationReapsChildAndCleansSocket(t *testing.T) {
 
 	t.Run("while the child waits for IPC", func(t *testing.T) {
 		options := startupCancellationOptions(t)
-		readyPath := filepath.Join(t.TempDir(), "ready.fifo")
-		if err := syscall.Mkfifo(readyPath, 0o600); err != nil {
-			t.Fatalf("create readiness FIFO: %v", err)
-		}
+		readyPath := filepath.Join(options.RuntimeBase, "ready.sock")
+		childReady := awaitHelperReady(t, readyPath)
 		options.testEnvironment = append(options.testEnvironment, "IMPARTUS_FAKE_MPV_READY="+readyPath)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		var startedPIDs []int
 		options.testStartedHook = func(pid int) { startedPIDs = append(startedPIDs, pid) }
-		childReady := awaitFIFOWriter(t, readyPath)
-		hangGuard := testdeadline.Guard(t)
-		cancelled := make(chan error, 1)
+		startDone := make(chan error, 1)
 		go func() {
-			select {
-			case err := <-childReady:
-				cancelled <- err
-			case <-hangGuard:
-				cancelled <- errors.New("helper never reported readiness before the test deadline")
+			session, err := Start(ctx, options)
+			if session != nil {
+				err = errors.Join(errors.New("Start() unexpectedly succeeded"), err, session.Close(context.Background()))
 			}
-			cancel()
+			startDone <- err
 		}()
-		_, err := Start(ctx, options)
-		if readyErr := <-cancelled; readyErr != nil {
-			t.Fatalf("readiness handshake: %v (Start() error = %v)", readyErr, err)
+		select {
+		case readyErr := <-childReady:
+			if readyErr != nil {
+				cancel()
+				t.Fatalf("readiness handshake: %v (Start() error = %v)", readyErr, <-startDone)
+			}
+		case err := <-startDone:
+			t.Fatalf("Start() returned before the helper reported readiness: %v", err)
+		case <-testdeadline.Guard(t):
+			cancel()
+			t.Fatalf("helper never reported readiness before the test deadline (Start() error = %v)", <-startDone)
 		}
+		cancel()
+		err := <-startDone
 		assertStartupCancellationReaped(t, options, err, onlyStartedPID(t, startedPIDs))
 	})
 }
@@ -378,28 +384,30 @@ func assertStartupCancellationReaped(t *testing.T, options Options, err error, p
 	}
 }
 
-// awaitFIFOWriter reports once another process opens path for writing and
-// closes it. Opening a FIFO for reading blocks until a writer appears, which
-// gives a cross-process handshake without polling. Cleanup unblocks the open
-// if the writer never came.
-func awaitFIFOWriter(t *testing.T, path string) <-chan error {
+// awaitHelperReady listens on a Unix socket and reports once the helper
+// connects to it, a cross-process handshake without polling. Cleanup closes
+// the listener, which unblocks Accept if the helper never connects.
+func awaitHelperReady(t *testing.T, path string) <-chan error {
 	t.Helper()
-	result := make(chan error, 1)
-	go func() {
-		reader, err := os.Open(path) // #nosec G304 -- test-owned FIFO under t.TempDir
-		if err != nil {
-			result <- err
-			return
-		}
-		_, readErr := io.Copy(io.Discard, reader)
-		result <- errors.Join(readErr, reader.Close())
-	}()
+	var listenConfig net.ListenConfig
+	listener, err := listenConfig.Listen(context.Background(), "unix", path)
+	if err != nil {
+		t.Fatalf("listen for helper readiness: %v", err)
+	}
 	t.Cleanup(func() {
-		writer, err := os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0) // #nosec G304 -- test-owned FIFO under t.TempDir
-		if err == nil {
-			_ = writer.Close() //nolint:errcheck
+		if closeErr := listener.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			t.Errorf("close readiness listener: %v", closeErr)
 		}
 	})
+	result := make(chan error, 1)
+	go func() {
+		connection, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			result <- acceptErr
+			return
+		}
+		result <- connection.Close()
+	}()
 	return result
 }
 
@@ -605,7 +613,8 @@ func runFakeMPV() int {
 	}
 	if mode == "no-socket" {
 		if readyPath := os.Getenv("IMPARTUS_FAKE_MPV_READY"); readyPath != "" {
-			ready, err := os.OpenFile(readyPath, os.O_WRONLY, 0) // #nosec G304 -- parent-provided test FIFO
+			var dialer net.Dialer
+			ready, err := dialer.DialContext(context.Background(), "unix", readyPath)
 			if err != nil {
 				return 16
 			}
