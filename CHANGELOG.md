@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.1.34](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.33...impartus-cli-v0.1.34) (2026-11-08)
+
+
+### Features
+
+* resume failed downloads from completed chunks ([#294](https://github.com/rabesss/impartus-cli/issues/294)) ([eec753d](https://github.com/rabesss/impartus-cli/commit/eec753d5c295db62ab482ef94fff6e3fbcd76bfe))
+
+
+### Bug Fixes
+
+* **api:** close [#297](https://github.com/rabesss/impartus-cli/issues/297) follow-ups for HLS keys, error bodies and query separators ([#311](https://github.com/rabesss/impartus-cli/issues/311)) ([4a9bb6f](https://github.com/rabesss/impartus-cli/commit/4a9bb6f4151ddc003b1237e2e1976ad9e494bf8b))
+* **ci:** preserve govulncheck status and finish player/tuihost timing follow-ups ([#302](https://github.com/rabesss/impartus-cli/issues/302)) ([ad75c3c](https://github.com/rabesss/impartus-cli/commit/ad75c3cb4490b4dc56c14848f9ab63e3c7e10b57))
+* clear HLS, long-bearer error bodies, ';' queries and large URL components ([#297](https://github.com/rabesss/impartus-cli/issues/297)) ([6b2b78d](https://github.com/rabesss/impartus-cli/commit/6b2b78db331fd2d7e4f50dff42779ff015cf9f4a))
+* retry transient upstream failures within a retry budget ([#293](https://github.com/rabesss/impartus-cli/issues/293)) ([58b7823](https://github.com/rabesss/impartus-cli/commit/58b7823c8cbf7d2a2bc7777ec36edf74b75d7c70))
+* **security:** bump Go to 1.27.3/1.26.10 and refresh bookworm-slim to clear Trivy gate ([#301](https://github.com/rabesss/impartus-cli/issues/301)) ([9903053](https://github.com/rabesss/impartus-cli/commit/99030535c7f6cd13133d43c8c0e873e1efc6ca6b))
+* **security:** close redaction gaps for base64 bearer, separator-less headers and quoted values ([#298](https://github.com/rabesss/impartus-cli/issues/298)) ([4c75361](https://github.com/rabesss/impartus-cli/commit/4c7536196128f8e1fe6572ae15041975b7bf3184))
+
+
+### Testing
+
+* close [#313](https://github.com/rabesss/impartus-cli/issues/313) container and workflow-test follow-ups ([#318](https://github.com/rabesss/impartus-cli/issues/318)) ([1a5a7b8](https://github.com/rabesss/impartus-cli/commit/1a5a7b865d10b3fa7634d1feb23a1affee2ee9cc))
+* deflake tuihost and player timing tests under -race and CPU contention ([#296](https://github.com/rabesss/impartus-cli/issues/296)) ([f20f888](https://github.com/rabesss/impartus-cli/commit/f20f8880e0d1d886c4543e382c2668ca92eb702e))
+* follow-ups from [#302](https://github.com/rabesss/impartus-cli/issues/302) council (ignore-quit reap wait, security-report log, P3 nits) ([#307](https://github.com/rabesss/impartus-cli/issues/307)) ([6ee8ff8](https://github.com/rabesss/impartus-cli/commit/6ee8ff84acb1580ae3749305ce39a29a6bfd3e06))
+
+
+### CI/CD
+
+* **deps:** bump docker/build-push-action from 7.3.0 to 7.4.0 ([#287](https://github.com/rabesss/impartus-cli/issues/287)) ([1111d49](https://github.com/rabesss/impartus-cli/commit/1111d49de1e1e739c4ef0582421187ff436a7379))
+* **deps:** bump docker/login-action from 4.6.0 to 4.8.0 ([#315](https://github.com/rabesss/impartus-cli/issues/315)) ([55a95db](https://github.com/rabesss/impartus-cli/commit/55a95db002f6d3abea56036aac6b564ba1ce2fe8))
+* **deps:** bump github/codeql-action/upload-sarif from 4.37.9 to 4.39.3 ([#314](https://github.com/rabesss/impartus-cli/issues/314)) ([c2aa874](https://github.com/rabesss/impartus-cli/commit/c2aa874d377f6fee43e2eb3cc614312f193e9552))
+* follow Factory-AI/droid-action@main instead of the v11 pin ([#295](https://github.com/rabesss/impartus-cli/issues/295)) ([8982f37](https://github.com/rabesss/impartus-cli/commit/8982f37bc1737d7706ebf2c78f76d6c85e32c268))
+* pin droid-action to v11 (bb78b44), the debug-artifact token fix ([6ed5249](https://github.com/rabesss/impartus-cli/commit/6ed5249be1f734bfadcd23c802134f96abb1c3e7))
+* smoke-test images, cross-compile arm64, one Go version, trackable debian pin ([#312](https://github.com/rabesss/impartus-cli/issues/312)) ([64583b0](https://github.com/rabesss/impartus-cli/commit/64583b0273be31ba2762a1a02e8932fb8cbf4069))
+
 ## [0.1.33](https://github.com/rabesss/impartus-cli/compare/impartus-cli-v0.1.32...impartus-cli-v0.1.33) (2026-10-19)
 
 
