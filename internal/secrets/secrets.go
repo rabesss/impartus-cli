@@ -1708,6 +1708,9 @@ type credentialMatch struct {
 	// resume is where the next search for the same step starts.
 	resume   int
 	accepted bool
+	// boundaryQuote is the quote that ends a string enclosing the whole
+	// assignment ({"error":"Cookie a=b"}), or zero.
+	boundaryQuote byte
 }
 
 // nextCredentialMatch finds the next match of step in value at or after from.
@@ -1735,18 +1738,18 @@ func nextCredentialMatch(value string, step credentialAssignmentStep, from int) 
 		// keeps the scan linear and still finds a later credential.
 		return credentialMatch{matchStart: index[0], prefixEnd: prefixEnd, start: prefixEnd, end: index[1], resume: index[1]}, true
 	}
+	// A line value ends at a line break. When the assignment itself sits
+	// inside a quoted string ({"error":"Authorization Bearer ..."}), it also
+	// ends at that string's closing quote, so the delimiters and the rest of
+	// the line stay intact.
+	var boundaryQuote byte
+	if step.lineValue && index[3]-index[2] == 1 && (value[index[2]] == '"' || value[index[2]] == '\'') {
+		boundaryQuote = value[index[2]]
+	}
 	if step.lineValue && quoteOpenerWidth(value, prefixEnd) == 0 {
-		// A line value ends at a line break. When the assignment itself sits
-		// inside a quoted string ({"error":"Authorization Bearer ..."}), it
-		// also ends at that string's closing quote, so the delimiters and
-		// the rest of the line stay intact.
-		var boundaryQuote byte
-		if index[3]-index[2] == 1 && (value[index[2]] == '"' || value[index[2]] == '\'') {
-			boundaryQuote = value[index[2]]
-		}
 		index[1] = lineValueEnd(value, prefixEnd, boundaryQuote)
 	}
-	match := credentialMatch{matchStart: index[0], prefixEnd: prefixEnd, start: prefixEnd, end: index[1], resume: index[1]}
+	match := credentialMatch{matchStart: index[0], prefixEnd: prefixEnd, start: prefixEnd, end: index[1], resume: index[1], boundaryQuote: boundaryQuote}
 	if step.openValue {
 		match = openCredentialValue(value, step, match)
 	}
@@ -1767,7 +1770,7 @@ func openCredentialValue(value string, step credentialAssignmentStep, match cred
 	}
 	closeStart, closeWidth := quotedValueClose(value, prefixEnd)
 	closeEnd := closeStart + closeWidth
-	if step.lineValue || step.quotedValueStands(value, prefixEnd, closeEnd, match.end) {
+	if step.quotedValueStands(value, prefixEnd, closeStart, closeEnd, match.end) {
 		// Replace only the contents and keep the delimiters, so later passes
 		// see a quoted REDACTED marker instead of an open value that runs on
 		// to the next break.
@@ -1780,8 +1783,13 @@ func openCredentialValue(value string, step credentialAssignmentStep, match cred
 	}
 	// Text that is not another assignment is glued to the closing quote
 	// (password="a"b...), so the quotes may be part of the value. Keep the
-	// whole match redacted, through any quote it leaves open.
-	match.end = extendUnmatchedQuote(value, prefixEnd, step.valueEnd(value, prefixEnd, match.end))
+	// whole match redacted, through any quote it leaves open; a line value
+	// runs on to the end of its line.
+	if step.lineValue {
+		match.end = lineValueEnd(value, closeEnd, match.boundaryQuote)
+	} else {
+		match.end = extendUnmatchedQuote(value, prefixEnd, step.valueEnd(value, prefixEnd, match.end))
+	}
 	match.resume = match.end
 	return match
 }
@@ -1804,13 +1812,13 @@ func (step credentialAssignmentStep) valueEnd(value string, start, matchEnd int)
 // the whole value: the open value ends at or before its closing quote, or
 // another assignment is glued to that quote. For a valueRun step it looks no
 // further than the key after the quote, so the scan stays linear.
-func (step credentialAssignmentStep) quotedValueStands(value string, start, closeEnd, matchEnd int) bool {
-	if !step.valueRun {
+func (step credentialAssignmentStep) quotedValueStands(value string, start, closeStart, closeEnd, matchEnd int) bool {
+	switch {
+	case step.lineValue:
+		return lineQuotedValueStands(value, closeStart, closeEnd)
+	case !step.valueRun:
 		return closeEnd >= matchEnd || startsAssignment(value[closeEnd:matchEnd])
-	}
-	if closeEnd >= len(value) || openValueStop(value[closeEnd]) || strings.ContainsFunc(value[start:closeEnd], func(character rune) bool {
-		return character < 0x80 && openValueStop(byte(character))
-	}) {
+	case closeEnd >= len(value) || openValueStop(value[closeEnd]) || containsOpenValueStop(value[start:closeEnd]):
 		return true
 	}
 	keyEnd := closeEnd
@@ -1818,6 +1826,22 @@ func (step credentialAssignmentStep) quotedValueStands(value string, start, clos
 		keyEnd++
 	}
 	return keyEnd > closeEnd && keyEnd < len(value) && (value[keyEnd] == '=' || value[keyEnd] == ':')
+}
+
+// lineQuotedValueStands reports whether a quoted line value is the whole
+// value: its quote is unterminated or ends an enclosing string, or a
+// delimiter, another quote or another assignment follows its closing quote.
+// Other glued text may be part of the value, so the value then runs on to the
+// end of the line.
+func lineQuotedValueStands(value string, closeStart, closeEnd int) bool {
+	return closeEnd == closeStart || closeEnd >= len(value) || openValueStop(value[closeEnd]) ||
+		strings.IndexByte(`"'\`, value[closeEnd]) >= 0 || startsAssignment(value[closeEnd:])
+}
+
+func containsOpenValueStop(text string) bool {
+	return strings.ContainsFunc(text, func(character rune) bool {
+		return character < 0x80 && openValueStop(byte(character))
+	})
 }
 
 // openValueStop reports whether character ends a bare value, matching the

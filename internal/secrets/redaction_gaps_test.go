@@ -239,6 +239,11 @@ func TestScrubQuotedStrongValuesKeepTheRestOfTheLine(t *testing.T) {
 		// Controls: unquoted strong values keep running to the end of the line,
 		// and text glued to a closing quote stays redacted.
 		{`password="secret-a"secret-b keep=1`, `password=REDACTED keep=1`},
+		{`cookie="secret-a"secret-b keep=1`, `cookie=REDACTED`},
+		{`authorization="secret-c"secret-d keep=1`, `authorization=REDACTED`},
+		{`Cookie "a=secret-a"secret-b keep=1`, `Cookie REDACTED`},
+		{`Authorization "Bearer secret-c"secret-d keep=1`, `Authorization REDACTED`},
+		{`{"h":"Cookie \"a=secret-a\""} keep=1`, `{"h":"Cookie \"REDACTED\""} keep=1`},
 		{`cookie: session=secret-a; theme=dark`, `cookie: REDACTED`},
 		{`authorization: Custom secret-c secret-d`, `authorization: REDACTED`},
 	} {
