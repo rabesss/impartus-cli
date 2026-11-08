@@ -44,3 +44,6 @@ fi
 if [ "$tee_status" -ne 0 ]; then
   exit 1
 fi
+# One line on stderr, so the streamed output and the log stay exactly the
+# command's own output.
+echo "run-logged: $1 succeeded; log saved to $log_file" >&2

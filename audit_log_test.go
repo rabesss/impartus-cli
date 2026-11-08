@@ -5,7 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -103,6 +105,9 @@ func TestRunLoggedPreservesNonzeroProducerStatus(t *testing.T) {
 	if !strings.Contains(result.stderr, "::error::bash exited with status 3") {
 		t.Errorf("stderr = %q, want an error annotation naming the status", result.stderr)
 	}
+	if strings.Contains(result.stderr, "succeeded") {
+		t.Errorf("failed run printed the success line: %q", result.stderr)
+	}
 }
 
 func TestRunLoggedPassesSuccessfulProducer(t *testing.T) {
@@ -116,6 +121,12 @@ func TestRunLoggedPassesSuccessfulProducer(t *testing.T) {
 	}
 	if strings.Contains(result.stderr, "::error::") {
 		t.Fatalf("successful run emitted an error annotation: %q", result.stderr)
+	}
+	if want := "run-logged: bash succeeded; log saved to " + logPath; !strings.Contains(result.stderr, want) {
+		t.Fatalf("stderr = %q, want the success line %q", result.stderr, want)
+	}
+	if strings.Contains(result.stdout, "run-logged:") {
+		t.Fatalf("success line leaked into the streamed output: %q", result.stdout)
 	}
 }
 
@@ -136,6 +147,9 @@ func TestRunLoggedFailsWhenTheLogCannotBeWritten(t *testing.T) {
 			}
 			if !strings.Contains(result.stderr, "::error::tee failed writing the log") {
 				t.Fatalf("stderr = %q, want an explicit log-write error", result.stderr)
+			}
+			if strings.Contains(result.stderr, "succeeded") {
+				t.Fatalf("run with an unwritable log printed the success line: %q", result.stderr)
 			}
 			if !strings.Contains(result.stdout, "audit-output") {
 				t.Fatalf("streamed output = %q, want the producer output despite the log failure", result.stdout)
@@ -210,21 +224,27 @@ func TestRunLoggedRejectsMissingCommand(t *testing.T) {
 }
 
 type workflowFile struct {
-	Jobs map[string]struct {
-		Steps []workflowStep `yaml:"steps"`
-	} `yaml:"jobs"`
+	Jobs map[string]workflowJob `yaml:"jobs"`
+}
+
+type workflowJob struct {
+	Needs []string       `yaml:"needs"`
+	If    string         `yaml:"if"`
+	Steps []workflowStep `yaml:"steps"`
 }
 
 type workflowStep struct {
-	ID   string            `yaml:"id"`
-	Name string            `yaml:"name"`
-	If   string            `yaml:"if"`
-	Run  string            `yaml:"run"`
-	Uses string            `yaml:"uses"`
-	With map[string]string `yaml:"with"`
+	ID              string            `yaml:"id"`
+	ContinueOnError bool              `yaml:"continue-on-error"`
+	Name            string            `yaml:"name"`
+	If              string            `yaml:"if"`
+	Run             string            `yaml:"run"`
+	Uses            string            `yaml:"uses"`
+	With            map[string]string `yaml:"with"`
 }
 
-func TestDependencyAuditKeepsGovulncheckStatusAndLog(t *testing.T) {
+func readSecurityWorkflow(t *testing.T) workflowFile {
+	t.Helper()
 	content, err := os.ReadFile(".github/workflows/security.yml")
 	if err != nil {
 		t.Fatalf("read security workflow: %v", err)
@@ -233,6 +253,11 @@ func TestDependencyAuditKeepsGovulncheckStatusAndLog(t *testing.T) {
 	if err := yaml.Unmarshal(content, &workflow); err != nil {
 		t.Fatalf("parse security workflow: %v", err)
 	}
+	return workflow
+}
+
+func TestDependencyAuditKeepsGovulncheckStatusAndLog(t *testing.T) {
+	workflow := readSecurityWorkflow(t)
 	job, ok := workflow.Jobs["dependency-audit"]
 	if !ok {
 		t.Fatal("security workflow has no dependency-audit job")
@@ -263,3 +288,51 @@ func TestDependencyAuditKeepsGovulncheckStatusAndLog(t *testing.T) {
 		t.Errorf("upload step if=%q path=%q, want always() and govulncheck-results.txt", upload.If, upload.With["path"])
 	}
 }
+
+// The summary job runs on a fresh runner with no checkout, so the govulncheck
+// log only exists there if it downloads the dependency-audit artifact first.
+func TestSecurityReportDownloadsGovulncheckLogBeforeReadingIt(t *testing.T) {
+	workflow := readSecurityWorkflow(t)
+	job, ok := workflow.Jobs["security-report"]
+	if !ok {
+		t.Fatal("security workflow has no security-report job")
+	}
+	if !slices.Contains(job.Needs, "dependency-audit") {
+		t.Errorf("security-report needs = %v, want it to wait for dependency-audit", job.Needs)
+	}
+	if job.If != "always()" {
+		t.Errorf("security-report if = %q, want always() so failed scans are still summarised", job.If)
+	}
+	download, summary := -1, -1
+	for index, step := range job.Steps {
+		switch {
+		case strings.HasPrefix(step.Uses, "actions/download-artifact@") && step.With["name"] == "govulncheck-results":
+			download = index
+			if !pinnedActionRef.MatchString(step.Uses) {
+				t.Errorf("download step uses %q, want a full commit SHA pin", step.Uses)
+			}
+			if !step.ContinueOnError {
+				t.Error("download step must continue on error: the artifact is missing when the audit fails before logging")
+			}
+			if path := step.With["path"]; path != "" && path != "." {
+				t.Errorf("download path = %q, want the workspace root the summary reads", path)
+			}
+		case strings.Contains(step.Run, "govulncheck-results.txt"):
+			summary = index
+			if !strings.Contains(step.Run, "needs.dependency-audit.result") {
+				t.Errorf("summary does not report a missing govulncheck log:\n%s", step.Run)
+			}
+		}
+	}
+	if download < 0 {
+		t.Fatal("security-report never downloads the govulncheck-results artifact")
+	}
+	if summary < 0 {
+		t.Fatal("security-report no longer summarises govulncheck-results.txt")
+	}
+	if download > summary {
+		t.Errorf("download step %d runs after the summary step %d that reads the log", download, summary)
+	}
+}
+
+var pinnedActionRef = regexp.MustCompile(`@[0-9a-f]{40}$`)

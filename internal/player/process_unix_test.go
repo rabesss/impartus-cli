@@ -234,11 +234,14 @@ func TestLoadRejectsNonLoopbackCapabilityWithoutLeakingIt(t *testing.T) {
 
 func TestCloseKillsAndReapsMPVThatIgnoresQuit(t *testing.T) {
 	options := fakeMPVOptions(t, "ignore-quit", filepath.Join(t.TempDir(), "argv.txt"), filepath.Join(t.TempDir(), "load.txt"))
-	// These limits drive the escalation under test: the child ignores quit and
-	// SIGTERM, so Close always waits QuitTimeout and then KillTimeout/2 before
-	// SIGKILL. A deadline-sized KillTimeout would stall that step for minutes.
+	// The child ignores quit and SIGTERM, so Close always waits QuitTimeout and
+	// then the SIGTERM grace before SIGKILL; both waits always expire here, so
+	// they stay short. The grace would otherwise be KillTimeout/2, and the
+	// deadline-sized KillTimeout from fakeMPVOptions would stall that step for
+	// tens of seconds. KillTimeout itself now bounds only the reap after
+	// SIGKILL, which expires only if the kernel never reaps the child.
 	options.QuitTimeout = 50 * time.Millisecond
-	options.KillTimeout = time.Second
+	options.testTermGrace = 50 * time.Millisecond
 	session, err := Start(context.Background(), options)
 	if err != nil {
 		t.Fatalf("Start() error = %v", err)
@@ -418,9 +421,9 @@ func startupKillTimeout(t *testing.T) time.Duration {
 // can run one after another fit the budget together. The result is never
 // zero: Options would replace zero with a multi-second production default that
 // could outlast the deadline, while one nanosecond just fails at once.
-func deadlineShare(t *testing.T, parts time.Duration) time.Duration {
+func deadlineShare(t *testing.T, parts int) time.Duration {
 	t.Helper()
-	return max(testdeadline.Budget(t, 2*time.Minute)/parts, time.Nanosecond)
+	return max(testdeadline.Budget(t, 2*time.Minute)/time.Duration(parts), time.Nanosecond)
 }
 
 func assertStartupCancellationReaped(t *testing.T, options Options, err error, pid int) {
@@ -553,13 +556,21 @@ func TestEventsAndWaitForEndObserveTheSameTerminalEvent(t *testing.T) {
 	if waitErr := session.WaitForEnd(waitCtx); waitErr != nil {
 		t.Fatalf("WaitForEnd() error = %v", waitErr)
 	}
+	// Take an event that is already there before looking at the context: a
+	// select with both cases ready picks one at random, so an event that
+	// arrived just as the deadline share ran out could be reported as missing.
+	var event Event
 	select {
-	case event := <-eventSeen:
-		if event.Reason != "eof" {
-			t.Fatalf("UI terminal event = %+v", event)
+	case event = <-eventSeen:
+	default:
+		select {
+		case event = <-eventSeen:
+		case <-waitCtx.Done():
+			t.Fatal("UI did not receive terminal event consumed by WaitForEnd within its deadline share")
 		}
-	case <-waitCtx.Done():
-		t.Fatal("UI did not receive terminal event consumed by WaitForEnd within its deadline share")
+	}
+	if event.Reason != "eof" {
+		t.Fatalf("UI terminal event = %+v", event)
 	}
 }
 
@@ -661,7 +672,7 @@ func fakeMPVOptions(t *testing.T, mode, argvPath, loadPath string) Options {
 		Binary:         os.Args[0],
 		RuntimeBase:    runtimeBase,
 		ConnectTimeout: deadlineShare(t, 4),
-		CommandTimeout: deadlineShare(t, 4*time.Duration(len(ObservedProperties)+1)),
+		CommandTimeout: deadlineShare(t, 4*(len(ObservedProperties)+1)),
 		QuitTimeout:    200 * time.Millisecond,
 		KillTimeout:    deadlineShare(t, 8),
 		testArgs:       []string{"-test.run=^TestMPVHelperProcess$", "--"},

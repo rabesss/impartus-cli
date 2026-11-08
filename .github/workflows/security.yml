@@ -180,6 +180,16 @@ jobs:
     needs: [secret-scanning, gosec-security-scan, trivy-scan, dependency-audit]
     if: always()
     steps:
+      # This job has no checkout: the govulncheck log exists only in the
+      # dependency-audit job's workspace, so fetch its artifact first. It is
+      # missing when that job failed before writing the log, which the summary
+      # reports instead of failing here.
+      - name: Download govulncheck results
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: govulncheck-results
+
       - name: Create Security Report Summary
         run: |
           echo "## Security Scan Summary" >> $GITHUB_STEP_SUMMARY
@@ -225,16 +235,18 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
           fi
           
-          # Check govulncheck results
+          # Check govulncheck results (downloaded from the dependency-audit job)
+          echo "### Go Vulnerability Check" >> $GITHUB_STEP_SUMMARY
           if [ -f govulncheck-results.txt ]; then
-            echo "### Go Vulnerability Check" >> $GITHUB_STEP_SUMMARY
             if grep -q "No vulnerabilities found" govulncheck-results.txt; then
               echo "✓ No Go vulnerabilities detected" >> $GITHUB_STEP_SUMMARY
             else
               echo "⚠️ Go vulnerabilities detected - review govulncheck-results artifact" >> $GITHUB_STEP_SUMMARY
             fi
-            echo "" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ govulncheck log unavailable (Dependency Audit: ${{ needs.dependency-audit.result }})" >> $GITHUB_STEP_SUMMARY
           fi
+          echo "" >> $GITHUB_STEP_SUMMARY
           
           echo "---" >> $GITHUB_STEP_SUMMARY
           echo "Full reports available in workflow artifacts." >> $GITHUB_STEP_SUMMARY
