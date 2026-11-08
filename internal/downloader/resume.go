@@ -163,7 +163,7 @@ func (d *Downloader) tryResumeWorkspace(dir string, lectureID int, fingerprint s
 func loadResumeState(dir, fingerprint string) (*resumeState, error) {
 	meta, _, err := readResumeMeta(dir)
 	if err != nil || meta.Version != resumeFormatVersion || meta.Fingerprint != fingerprint {
-		if clearErr := clearWorkspace(dir, false); clearErr != nil {
+		if clearErr := clearWorkspaceDurably(dir, false); clearErr != nil {
 			return nil, clearErr
 		}
 		meta = resumeMeta{Version: resumeFormatVersion, Fingerprint: fingerprint}
@@ -181,9 +181,20 @@ func readResumeMeta(dir string) (resumeMeta, os.FileInfo, error) {
 	if !info.Mode().IsRegular() || info.Size() > maxResumeMetaSize {
 		return resumeMeta{}, nil, errors.New("resume metadata is not a small regular file")
 	}
-	data, err := os.ReadFile(path) // #nosec G304 -- fixed name inside a validated workspace
+	file, err := os.Open(path) // #nosec G304 -- fixed name inside a validated workspace
 	if err != nil {
 		return resumeMeta{}, nil, err
+	}
+	// Bound the read itself: the file may have changed since the Lstat.
+	data, err := io.ReadAll(io.LimitReader(file, maxResumeMetaSize+1))
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return resumeMeta{}, nil, err
+	}
+	if len(data) > maxResumeMetaSize {
+		return resumeMeta{}, nil, errors.New("resume metadata is not a small regular file")
 	}
 	var meta resumeMeta
 	if err := json.Unmarshal(data, &meta); err != nil {
@@ -218,6 +229,18 @@ func clearWorkspace(dir string, keepMeta bool) error {
 	return errors.Join(errs...)
 }
 
+// syncWorkspaceDirHook lets tests observe the directory sync.
+var syncWorkspaceDirHook = syncWorkspaceDir
+
+// clearWorkspaceDurably clears dir and syncs it before the caller publishes
+// new resume metadata, so old chunks can never survive under it.
+func clearWorkspaceDurably(dir string, keepMeta bool) error {
+	if err := clearWorkspace(dir, keepMeta); err != nil {
+		return err
+	}
+	return syncWorkspaceDirHook(dir)
+}
+
 // verifyKey runs after the key fetch and before any chunk is reused. Chunks
 // decrypted with a different key are discarded.
 func (r *resumeState) verifyKey(key []byte) (discarded bool, err error) {
@@ -229,7 +252,7 @@ func (r *resumeState) verifyKey(key []byte) (discarded bool, err error) {
 		return false, nil
 	}
 	discarded = r.meta.KeyHash != ""
-	if err := clearWorkspace(r.dir, true); err != nil {
+	if err := clearWorkspaceDurably(r.dir, true); err != nil {
 		return discarded, err
 	}
 	r.meta.KeyHash = keyHash

@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -122,4 +123,48 @@ func slicesEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// A key change must make the chunk removals durable before resume.json
+// records the new key, or a power loss could pair old chunks with it.
+func TestKeyChangeSyncsChunkRemovalBeforeNewKeyHash(t *testing.T) {
+	paths := []string{"/c0.ts", "/c1.ts", "/c2.ts"}
+	h := newResumeHarness(t, false, 3)
+	h.server.fail["/c1.ts"] = http.StatusNotFound
+	if _, err := h.run(t, h.server.playlist(paths...), nil); err == nil {
+		t.Fatal("first run error = nil, want failure")
+	}
+	dirs, err := filepath.Glob(filepath.Join(h.d.config.TempDirLocation, "lecture-*-resume-*"))
+	if err != nil || len(dirs) != 1 {
+		t.Fatalf("resume workspaces = %v (%v), want one", dirs, err)
+	}
+	oldMeta, _, err := readResumeMeta(dirs[0])
+	if err != nil || oldMeta.KeyHash == "" {
+		t.Fatalf("readResumeMeta() = %+v, %v; want a recorded key hash", oldMeta, err)
+	}
+
+	var synced int
+	saved := syncWorkspaceDirHook
+	syncWorkspaceDirHook = func(dir string) error {
+		synced++
+		if chunks, _ := filepath.Glob(filepath.Join(dir, "*.ts")); len(chunks) != 0 {
+			t.Errorf("chunks %v still present at the directory sync", chunks)
+		}
+		if meta, _, err := readResumeMeta(dir); err != nil || meta.KeyHash != oldMeta.KeyHash {
+			t.Errorf("resume.json key hash changed before the directory sync: %+v, %v", meta, err)
+		}
+		return saved(dir)
+	}
+	t.Cleanup(func() { syncWorkspaceDirHook = saved })
+
+	delete(h.server.fail, "/c1.ts")
+	h.server.mu.Lock()
+	h.server.key = []byte("6543210987654321")
+	h.server.mu.Unlock()
+	if _, err := h.run(t, h.server.playlist(paths...), nil); err != nil {
+		t.Fatalf("second run error = %v", err)
+	}
+	if synced != 1 {
+		t.Fatalf("directory syncs = %d, want 1 for the key change", synced)
+	}
 }

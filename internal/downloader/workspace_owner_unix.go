@@ -25,3 +25,13 @@ func validatePrivateWorkspace(info os.FileInfo) error {
 	}
 	return nil
 }
+
+// syncWorkspaceDir makes earlier entry removals in dir durable, so a later
+// resume.json rename cannot reach disk ahead of them after a power loss.
+func syncWorkspaceDir(dir string) error {
+	directory, err := os.Open(dir) // #nosec G304 -- validated resumable workspace
+	if err != nil {
+		return err
+	}
+	return errors.Join(directory.Sync(), directory.Close())
+}
