@@ -10,7 +10,7 @@ import (
 )
 
 // These tests pin the container build contract from issue #304: one Go
-// toolchain everywhere, a cross-compiled build stage, a Dependabot-trackable
+// version everywhere, a cross-compiled build stage, a Dependabot-trackable
 // runtime base and an ffmpeg smoke test of the built image.
 
 func readRepoFile(t *testing.T, path string) string {
@@ -31,14 +31,30 @@ var (
 	datedDebianPattern        = regexp.MustCompile(`^debian:bookworm-\d{8}-slim@sha256:[0-9a-f]{64}$`)
 )
 
-func goModToolchain(t *testing.T) string {
+// goModVersion returns the single Go version CI, release and the Dockerfile
+// build with: the go.mod toolchain directive if present, else the go directive
+// (setup-go's go-version-file resolves it the same way).
+func goModVersion(t *testing.T) string {
 	t.Helper()
 
 	goMod := readRepoFile(t, "go.mod")
-	if got := len(toolchainDirectivePattern.FindAllString(goMod, -1)); got != 1 {
-		t.Fatalf("go.mod toolchain directive count = %d, want exactly one `toolchain goX.Y.Z` line (the single Go version source for CI, release and the Dockerfile)", got)
+	toolchains := toolchainDirectivePattern.FindAllStringSubmatch(goMod, -1)
+	switch len(toolchains) {
+	case 0:
+	case 1:
+		return toolchains[0][1]
+	default:
+		t.Fatalf("go.mod has %d toolchain directives, want at most one", len(toolchains))
 	}
-	return toolchainDirectivePattern.FindStringSubmatch(goMod)[1]
+
+	match := goDirectivePattern.FindStringSubmatch(goMod)
+	if match == nil {
+		t.Fatal("go.mod is missing its go directive")
+	}
+	if strings.Count(match[1], ".") != 2 {
+		t.Fatalf("go directive %q must name an exact patch release (goX.Y.Z) so every build uses the same Go", match[1])
+	}
+	return match[1]
 }
 
 func parseGoVersion(t *testing.T, version string) [3]int {
@@ -68,24 +84,24 @@ func goVersionLessOrEqual(a, b [3]int) bool {
 	return true
 }
 
-func TestGoModToolchainIsTheSingleGoVersion(t *testing.T) {
-	toolchain := goModToolchain(t)
+func TestGoModIsTheSingleGoVersion(t *testing.T) {
+	version := goModVersion(t)
 
 	match := goDirectivePattern.FindStringSubmatch(readRepoFile(t, "go.mod"))
 	if match == nil {
 		t.Fatal("go.mod is missing its go directive")
 	}
-	if !goVersionLessOrEqual(parseGoVersion(t, match[1]), parseGoVersion(t, toolchain)) {
-		t.Errorf("go directive %s is newer than toolchain go%s", match[1], toolchain)
+	if !goVersionLessOrEqual(parseGoVersion(t, match[1]), parseGoVersion(t, version)) {
+		t.Errorf("go directive %s is newer than toolchain go%s", match[1], version)
 	}
 
 	dockerfile := readRepoFile(t, "Dockerfile")
 	build := buildStagePattern.FindStringSubmatch(dockerfile)
 	if build == nil {
-		t.Fatal("Dockerfile build stage must be `FROM --platform=$BUILDPLATFORM golang:<toolchain>-bookworm@sha256:<digest> AS build`")
+		t.Fatal("Dockerfile build stage must be `FROM --platform=$BUILDPLATFORM golang:<go.mod version>-bookworm@sha256:<digest> AS build`")
 	}
-	if build[2] != toolchain {
-		t.Errorf("Dockerfile builds with golang:%s, but go.mod toolchain is go%s; bump both in one change", build[2], toolchain)
+	if build[2] != version {
+		t.Errorf("Dockerfile builds with golang:%s, but go.mod selects go%s; bump both in one change", build[2], version)
 	}
 }
 
@@ -107,7 +123,7 @@ func TestWorkflowsTakeGoVersionFromGoMod(t *testing.T) {
 				t.Errorf("%s:%d pins a Go version; use go-version-file: go.mod", path, i+1)
 			}
 			if strings.Contains(line, "GOTOOLCHAIN") {
-				t.Errorf("%s:%d overrides GOTOOLCHAIN; the go.mod toolchain directive is the only Go version", path, i+1)
+				t.Errorf("%s:%d overrides GOTOOLCHAIN; go.mod is the only Go version", path, i+1)
 			}
 			if !strings.Contains(line, "uses: actions/setup-go@") {
 				continue
@@ -130,12 +146,12 @@ func TestWorkflowsTakeGoVersionFromGoMod(t *testing.T) {
 	}
 }
 
-func TestCIRunsTheGoModToolchain(t *testing.T) {
+func TestCIRunsTheGoModVersion(t *testing.T) {
 	if os.Getenv("GITHUB_ACTIONS") != "true" {
 		t.Skip("only meaningful under actions/setup-go")
 	}
-	if want := "go" + goModToolchain(t); runtime.Version() != want {
-		t.Errorf("CI runs %s, want %s from the go.mod toolchain directive", runtime.Version(), want)
+	if want := "go" + goModVersion(t); runtime.Version() != want {
+		t.Errorf("CI runs %s, want %s from go.mod", runtime.Version(), want)
 	}
 }
 

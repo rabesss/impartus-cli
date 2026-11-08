@@ -32,13 +32,14 @@ make security
 
 ## Bumping Go
 
-`go.mod`'s `toolchain` line is the only Go version. CI, security scans and
-release builds read it through `actions/setup-go`, and the Dockerfile's
-`golang:<version>-bookworm` build image must match it. To bump Go, change the
-`toolchain` line and the Dockerfile tag and digest in the same PR;
-`container_build_test.go` fails if they differ. A Dependabot golang image bump
-therefore needs the matching `toolchain` change before it can merge. Raise the
-`go` line only when the code needs newer language features.
+`go.mod` holds the only Go version: its `go` line (or a `toolchain` line, if
+one is ever added). CI, security scans and release builds read it through
+`actions/setup-go`, and the Dockerfile's `golang:<version>-bookworm` build image
+must match it. To bump Go, change `go.mod` and the Dockerfile tag and digest in
+the same PR; `container_build_test.go` fails if they differ. A Dependabot golang
+image bump therefore needs the matching `go.mod` change before it can merge.
+Moving to a new minor release can also need newer golangci-lint and gosec
+releases built with that Go version.
 
 ## Code Style
 
