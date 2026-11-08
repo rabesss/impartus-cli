@@ -75,6 +75,14 @@ func (c *Client) doRequestWithTokenClient(ctx context.Context, method, rawURL st
 		if errors.As(err, &originErr) {
 			return nil, originErr
 		}
+		// A strict refusal of a redirect hop carries only a token-checked
+		// scheme://host[:port], so it is safe to return unwrapped. Only the
+		// unexported carrier is trusted: a caller hook could return a forged
+		// *UnconfiguredMediaOriginError with arbitrary fields.
+		var strictErr *strictRedirectRefusal
+		if errors.As(err, &strictErr) {
+			return nil, strictErr.err
+		}
 		// http.Client.Do returns a *url.Error whose Error() embeds the full
 		// request URL (including query tokens). Sanitize it before wrapping so
 		// the token can never reach logs via %w/%v on this error.
@@ -99,7 +107,7 @@ func (c *Client) handleMediaRedirect(initialURL *url.URL, redactionToken string,
 		return errors.New("stopped after 10 redirects")
 	}
 	canonicalizeMediaRedirectScheme(next)
-	if err := validateMediaRedirect(initialURL, next.URL, policy); err != nil {
+	if err := validateMediaRedirect(initialURL, next.URL, policy, redactionToken); err != nil {
 		return err
 	}
 
@@ -125,7 +133,7 @@ func (c *Client) handleMediaRedirect(initialURL *url.URL, redactionToken string,
 	// A custom hook may rewrite the URL or add sensitive headers. Recheck
 	// the policy and enforce the cross-origin header boundary after it runs.
 	canonicalizeMediaRedirectScheme(next)
-	if err := validateMediaRedirect(initialURL, next.URL, policy); err != nil {
+	if err := validateMediaRedirect(initialURL, next.URL, policy, redactionToken); err != nil {
 		return err
 	}
 	sameOrigin = sameMediaOrigin(initialURL, next.URL)
@@ -253,7 +261,7 @@ func deleteHeaderCaseInsensitive(header http.Header, names ...string) {
 	}
 }
 
-func validateMediaRedirect(initial, destination *url.URL, policy mediaOriginPolicy) error {
+func validateMediaRedirect(initial, destination *url.URL, policy mediaOriginPolicy, redactionToken string) error {
 	// A tokenless compatibility request may legitimately begin on a public
 	// HTTP origin. Preserve that public/loopback behavior for its redirects;
 	// authenticated requests have already been rejected before this hook when
@@ -262,6 +270,9 @@ func validateMediaRedirect(initial, destination *url.URL, policy mediaOriginPoli
 	requireHTTPS := initial == nil || !strings.EqualFold(initial.Scheme, "http")
 	if err := validateMediaURL(destination, requireHTTPS); err != nil {
 		return err
+	}
+	if policy.strict && !policy.allows(destination) {
+		return strictRedirectOriginRefusal(destination, redactionToken)
 	}
 	if !policy.allowsRedirect(initial, destination) {
 		return newMediaOriginError(ErrMediaOrigin)

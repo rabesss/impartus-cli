@@ -828,3 +828,80 @@ func TestNormalizeViews(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadResolvedStrictMediaOriginsDefaultsFalse(t *testing.T) {
+	unsetConfigEnv(t, "IMPARTUS_STRICT_MEDIA_ORIGINS")
+	path := writeTempConfig(t, `{
+		"username": "u", "password": "p", "baseUrl": "https://example.com",
+		"quality": "450", "views": "both"
+	}`)
+	cfg, err := LoadResolved(path)
+	if err != nil {
+		t.Fatalf("LoadResolved: %v", err)
+	}
+	if cfg.StrictMediaOrigins {
+		t.Error("expected StrictMediaOrigins to default false so CDN media keeps working")
+	}
+}
+
+func TestLoadResolvedStrictMediaOriginsFromFile(t *testing.T) {
+	unsetConfigEnv(t, "IMPARTUS_STRICT_MEDIA_ORIGINS")
+	path := writeTempConfig(t, `{
+		"username": "u", "password": "p", "baseUrl": "https://example.com",
+		"quality": "450", "views": "both", "strictMediaOrigins": true
+	}`)
+	cfg, err := LoadResolved(path)
+	if err != nil {
+		t.Fatalf("LoadResolved: %v", err)
+	}
+	if !cfg.StrictMediaOrigins {
+		t.Error("expected strictMediaOrigins: true to enable strict media origins")
+	}
+}
+
+func TestLoadResolvedStrictMediaOriginsEnvOverridesFileValue(t *testing.T) {
+	for _, tc := range []struct {
+		env  string
+		file string
+		want bool
+	}{
+		{env: "true", file: "false", want: true},
+		{env: "false", file: "true", want: false},
+	} {
+		t.Run(tc.env, func(t *testing.T) {
+			t.Setenv("IMPARTUS_STRICT_MEDIA_ORIGINS", tc.env)
+			path := writeTempConfig(t, `{
+				"username": "u", "password": "p", "baseUrl": "https://example.com",
+				"quality": "450", "views": "both", "strictMediaOrigins": `+tc.file+`
+			}`)
+			cfg, err := LoadResolved(path)
+			if err != nil {
+				t.Fatalf("LoadResolved: %v", err)
+			}
+			if cfg.StrictMediaOrigins != tc.want {
+				t.Errorf("StrictMediaOrigins = %t, want %t", cfg.StrictMediaOrigins, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoadResolvedRejectsInvalidStrictMediaOriginsEnvironment(t *testing.T) {
+	t.Setenv("IMPARTUS_STRICT_MEDIA_ORIGINS", "sometimes")
+	path := writeTempConfig(t, `{
+		"username": "u", "password": "p", "baseUrl": "https://example.com",
+		"quality": "450", "views": "both"
+	}`)
+	if _, err := LoadResolved(path); err == nil || !strings.Contains(err.Error(), "IMPARTUS_STRICT_MEDIA_ORIGINS") {
+		t.Fatalf("LoadResolved error = %v, want an invalid IMPARTUS_STRICT_MEDIA_ORIGINS error", err)
+	}
+}
+
+func TestApplyDefaultsPreservesStrictMediaOrigins(t *testing.T) {
+	for _, want := range []bool{false, true} {
+		cfg := &Config{StrictMediaOrigins: want}
+		cfg.ApplyDefaults()
+		if cfg.StrictMediaOrigins != want {
+			t.Errorf("ApplyDefaults changed StrictMediaOrigins from %t", want)
+		}
+	}
+}

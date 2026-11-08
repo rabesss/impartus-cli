@@ -108,11 +108,21 @@ func (c *Client) GetAuthorizedWithToken(ctx context.Context, rawURL, token strin
 // from it is returned as an *UnconfiguredMediaOriginError instead of a
 // response.
 func (c *Client) GetAuthorizedWithTokenForOrigins(ctx context.Context, rawURL, token string, origins ...string) (*http.Response, error) {
-	policy, err := newMediaOriginPolicy(origins...)
+	return c.GetAuthorizedWithMediaPolicy(ctx, rawURL, token, MediaRequestPolicy{Origins: origins})
+}
+
+// GetAuthorizedWithMediaPolicy is GetAuthorizedWithTokenForOrigins with an
+// explicit strict mode. With policy.Strict set, a request or redirect hop to
+// an origin outside policy.Origins is refused before it is sent and returns
+// an *UnconfiguredMediaOriginError with Strict set, which matches both
+// ErrUnconfiguredMediaOrigin and ErrMediaOrigin.
+func (c *Client) GetAuthorizedWithMediaPolicy(ctx context.Context, rawURL, token string, policy MediaRequestPolicy) (*http.Response, error) {
+	originPolicy, err := newMediaOriginPolicy(policy.Origins...)
 	if err != nil {
 		return nil, err
 	}
-	return c.getAuthorizedWithToken(ctx, rawURL, token, policy)
+	originPolicy.strict = policy.Strict
+	return c.getAuthorizedWithToken(ctx, rawURL, token, originPolicy)
 }
 
 func (c *Client) getAuthorizedWithToken(ctx context.Context, rawURL, token string, policy mediaOriginPolicy) (*http.Response, error) {
@@ -128,6 +138,12 @@ func (c *Client) getAuthorizedWithToken(ctx context.Context, rawURL, token strin
 	rawURL = parsedURL.String()
 	if validateErr := validateMediaURL(parsedURL, token != ""); validateErr != nil {
 		return nil, validateErr
+	}
+	if policy.strict && !policy.allows(parsedURL) {
+		// Strict mode refuses an unconfigured origin before anything is
+		// sent, with or without a bearer, so the origin never learns of the
+		// request.
+		return nil, strictOriginRefusal(parsedURL, redactionToken)
 	}
 
 	if token == "" && policy.allows(parsedURL) && hasCredentialQuery(parsedURL) {
@@ -310,6 +326,7 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 	if err != nil {
 		return nil, err
 	}
+	policy.strict = cfg.StrictMediaOrigins
 
 	token, err := c.resolveToken(cfg)
 	if err != nil {

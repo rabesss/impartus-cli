@@ -52,9 +52,22 @@ func newMediaOriginError(reason error) error {
 
 // mediaOriginPolicy is immutable after construction. Sharing it between
 // concurrent requests is safe because no request mutates the sorted origin
-// slice.
+// slice. strict refuses any request or redirect hop to an origin outside
+// origins before it is sent, instead of sending it without the bearer.
 type mediaOriginPolicy struct {
 	origins []string
+	strict  bool
+}
+
+// MediaRequestPolicy is the request-scoped origin policy for
+// GetAuthorizedWithMediaPolicy. Origins is the exact-origin allowlist (the
+// API base URL plus mediaOrigins). With Strict set, a request or redirect to
+// any other origin is refused before it is sent, with an
+// *UnconfiguredMediaOriginError naming the origin. Without it, such a request
+// is sent without the bearer.
+type MediaRequestPolicy struct {
+	Origins []string
+	Strict  bool
 }
 
 func newMediaOriginPolicy(origins ...string) (mediaOriginPolicy, error) {
@@ -365,6 +378,42 @@ func withholdBearerFromURL(rawURL, token string) (*url.URL, error) {
 		return nil, err
 	}
 	return parsed, nil
+}
+
+// strictOriginRefusal reports a request or redirect hop that strict mode
+// refuses before sending. The error names the origin to add to mediaOrigins.
+// An origin that carries any representation of the bearer (for example in a
+// hostname label) is never echoed; the generic policy error is returned.
+func strictOriginRefusal(destination *url.URL, token string) error {
+	origin, err := requestOriginKey(destination)
+	if err != nil {
+		return err
+	}
+	if containsTokenRepresentation(origin, token) {
+		return newMediaOriginError(ErrMediaOrigin)
+	}
+	return &UnconfiguredMediaOriginError{Origin: origin, Strict: true}
+}
+
+// strictRedirectRefusal carries a strict refusal of a redirect hop out of
+// http.Client.Do. The type is unexported so a caller-supplied CheckRedirect
+// hook cannot forge it: only refusals built by strictOriginRefusal are passed
+// through to the caller unsanitized.
+type strictRedirectRefusal struct {
+	err *UnconfiguredMediaOriginError
+}
+
+func (e *strictRedirectRefusal) Error() string { return e.err.Error() }
+
+func (e *strictRedirectRefusal) Unwrap() error { return e.err }
+
+func strictRedirectOriginRefusal(destination *url.URL, token string) error {
+	err := strictOriginRefusal(destination, token)
+	var refusal *UnconfiguredMediaOriginError
+	if errors.As(err, &refusal) {
+		return &strictRedirectRefusal{err: refusal}
+	}
+	return err
 }
 
 // unconfiguredOriginRefusal turns a 401 or 403 to a request sent without the

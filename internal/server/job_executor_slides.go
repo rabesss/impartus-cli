@@ -53,7 +53,7 @@ func downloadLectureSlideWithLimit(ctx context.Context, c *client.Client, cfg *c
 		return err
 	}
 	origins := append([]string{cfg.BaseURL}, cfg.MediaOrigins...)
-	resp, err := c.GetAuthorizedWithTokenForOrigins(ctx, url, cfg.Token, origins...)
+	resp, err := c.GetAuthorizedWithMediaPolicy(ctx, url, cfg.Token, client.MediaRequestPolicy{Origins: origins, Strict: cfg.StrictMediaOrigins})
 	if err != nil {
 		return err
 	}

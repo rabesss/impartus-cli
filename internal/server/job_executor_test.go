@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/rabesss/impartus-cli/internal/client"
@@ -241,5 +242,60 @@ func TestContainsAny(t *testing.T) {
 	}
 	if containsAny("clean message", []string{"token", "auth"}) {
 		t.Error("expected no match for clean message")
+	}
+}
+
+func TestSanitizeUpstreamErrExplainsStrictOriginRefusal(t *testing.T) {
+	const urlMarker = "strict-chunk-path-marker"
+	keyResponse := append([]byte{0, 0}, []byte("fedcba9876543210")...)
+	configured := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/key" {
+			if _, err := w.Write(keyResponse); err != nil {
+				t.Errorf("write key response: %v", err)
+			}
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer configured.Close()
+	var cdnRequests atomic.Int32
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		cdnRequests.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer cdn.Close()
+
+	cfg := &config.Config{
+		BaseURL:                   configured.URL,
+		Token:                     "request-token",
+		StrictMediaOrigins:        true,
+		TempDirLocation:           t.TempDir(),
+		Views:                     "left",
+		EnablePipeline:            true,
+		DownloadWorkersPerLecture: 1,
+		DecryptWorkersPerLecture:  1,
+		RateLimit:                 100,
+		APIRateLimit:              100,
+	}
+	d := downloader.NewWithDiagnosticWriter(cfg, client.New(configured.Client(), nil), io.Discard)
+	_, err := d.DownloadPlaylist(t.Context(), client.ParsedPlaylist{
+		ID:            42,
+		SeqNo:         1,
+		KeyURL:        configured.URL + "/key",
+		FirstViewURLs: []string{cdn.URL + "/" + urlMarker + "?sig=strict-query-marker"},
+	}, nil, nil)
+	got := sanitizeUpstreamErr(err)
+	for _, want := range []string{cdn.URL, "IMPARTUS_MEDIA_ORIGINS", "strictMediaOrigins"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("sanitizeUpstreamErr(strict refusal) = %q, want it to mention %q", got, want)
+		}
+	}
+	for _, leaked := range []string{urlMarker, "strict-query-marker", "authentication failed"} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("sanitizeUpstreamErr(strict refusal) = %q, must not contain %q", got, leaked)
+		}
+	}
+	if got := cdnRequests.Load(); got != 0 {
+		t.Fatalf("unconfigured CDN requests = %d, want 0", got)
 	}
 }

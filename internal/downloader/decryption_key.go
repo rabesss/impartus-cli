@@ -75,7 +75,7 @@ func (d *Downloader) fetchDecryptionKeyOnce(ctx context.Context, keyURL string) 
 	if err := d.rateLimiter.WaitForAPI(ctx); err != nil {
 		return nil, err
 	}
-	resp, err := d.client.GetAuthorizedWithTokenForOrigins(ctx, keyURL, d.config.Token, d.mediaOrigins...)
+	resp, err := d.client.GetAuthorizedWithMediaPolicy(ctx, keyURL, d.config.Token, d.mediaPolicy())
 	if err != nil {
 		return nil, err
 	}

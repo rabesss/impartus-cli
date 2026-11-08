@@ -512,3 +512,44 @@ func TestDownloadLectureSlideOmitsEncodedPartialToken(t *testing.T) {
 		t.Fatalf("slide error = %v, want the encoded token body omitted", err)
 	}
 }
+
+func TestDownloadLectureSlideStrictMediaOriginsNamesRefusedRedirectOrigin(t *testing.T) {
+	const token = "slide-strict-secret"
+	var unconfiguredRequests int
+	unconfigured := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		unconfiguredRequests++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer unconfigured.Close()
+	redirectSource := httptest.NewServer(http.RedirectHandler(unconfigured.URL+"/private-slide-path/slide.pdf?sig=signed-slide-query", http.StatusFound))
+	defer redirectSource.Close()
+
+	cfg := &config.Config{
+		BaseURL:            redirectSource.URL,
+		DownloadLocation:   t.TempDir(),
+		Token:              token,
+		StrictMediaOrigins: true,
+	}
+	err := downloadLectureSlideWithLimit(context.Background(), client.New(redirectSource.Client(), nil), cfg, client.Lecture{VideoID: 12, SeqNo: 1, Topic: "Strict"}, 8)
+	var originErr *client.UnconfiguredMediaOriginError
+	if !errors.As(err, &originErr) || !originErr.Strict || originErr.Origin != unconfigured.URL {
+		t.Fatalf("strict slide redirect error = %v, want a strict refusal naming %s", err, unconfigured.URL)
+	}
+	if !errors.Is(err, client.ErrMediaOrigin) {
+		t.Fatalf("strict slide redirect error = %v, want errors.Is(ErrMediaOrigin)", err)
+	}
+	if unconfiguredRequests != 0 {
+		t.Fatalf("unconfigured-origin requests = %d, want 0", unconfiguredRequests)
+	}
+	got := sanitizeUpstreamErr(err)
+	for _, want := range []string{unconfigured.URL, "IMPARTUS_MEDIA_ORIGINS", "strictMediaOrigins"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("sanitizeUpstreamErr(strict refusal) = %q, want it to mention %q", got, want)
+		}
+	}
+	for _, leaked := range []string{token, "private-slide-path", "signed-slide-query", "authentication failed"} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("sanitizeUpstreamErr(strict refusal) = %q, must not contain %q", got, leaked)
+		}
+	}
+}

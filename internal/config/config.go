@@ -44,10 +44,16 @@ type Config struct {
 	// MediaOrigins lists additional exact origins (typically a CDN) that may
 	// receive the upstream bearer token for playlist and media requests. The
 	// API base URL is always authorized separately.
-	MediaOrigins     []string `json:"mediaOrigins,omitempty"`
-	Quality          string   `json:"quality"`
-	Views            string   `json:"views"`
-	DownloadLocation string   `json:"downloadLocation"`
+	MediaOrigins []string `json:"mediaOrigins,omitempty"`
+	// StrictMediaOrigins refuses playlist, segment, key, slide and redirect
+	// requests to any origin other than BaseURL and MediaOrigins before they
+	// are sent. Off by default: an unconfigured origin (for example a public
+	// CDN named by an upstream playlist) is then contacted without the
+	// bearer token.
+	StrictMediaOrigins bool   `json:"strictMediaOrigins,omitempty"`
+	Quality            string `json:"quality"`
+	Views              string `json:"views"`
+	DownloadLocation   string `json:"downloadLocation"`
 	// Token is populated by client.LoginAndSetToken for backwards compatibility.
 	// Config values, including Token, are caller-owned and must not be read or
 	// mutated concurrently with login. Concurrent API requests should leave
@@ -469,6 +475,7 @@ func applyEnvOverrides(cfg *Config) error {
 	applyStringEnv("IMPARTUS_RETRY_BUDGET", &cfg.RetryBudget)
 	applyStringEnv("IMPARTUS_LISTEN_ADDR", &cfg.ListenAddr)
 	for _, apply := range []func() error{
+		func() error { return applyBoolEnv("IMPARTUS_STRICT_MEDIA_ORIGINS", &cfg.StrictMediaOrigins) },
 		func() error { return applyBoolEnv("IMPARTUS_AUDIO_ONLY", &cfg.AudioOnly) },
 		func() error { return applyBoolEnv("IMPARTUS_SLIDES", &cfg.Slides) },
 		func() error { return applyBoolEnv("IMPARTUS_SKIP_NO_AUDIO", &cfg.SkipNoAudio) },

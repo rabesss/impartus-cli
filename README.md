@@ -173,6 +173,7 @@ protection manually with `chmod 600 config.json`.
 | `password` | string | Yes | - | Impartus password |
 | `baseUrl` | string | Yes | - | Impartus API base URL |
 | `mediaOrigins` | array of strings | No | `[]` | Additional exact HTTPS origins allowed for authenticated playlist/media requests; loopback HTTP is allowed for local testing |
+| `strictMediaOrigins` | bool | No | `false` | Refuse playlist, segment, key, slide and redirect requests to any origin other than `baseUrl` and `mediaOrigins` before they are sent. Off by default, so media on a CDN origin you have not listed keeps working: such an origin is contacted without the login. Turn it on once `mediaOrigins` lists every CDN your lectures use. A refusal names the origin to add (see [Strict media origins](#strict-media-origins)) |
 | `quality` | string | No | `"720"` | Video quality: `144`, `450`, `720` |
 | `views` | string | No | `"both"` | Views: `left`, `right`, `both`, `first`, `second` |
 | `downloadLocation` | string | No | `"./downloads"` | Output directory |
@@ -269,6 +270,7 @@ Only the settings listed below have environment-variable overrides. Settings abs
 | `IMPARTUS_PASSWORD` | `password` | Required unless supplied in JSON |
 | `IMPARTUS_BASE_URL` | `baseUrl` | Required unless supplied in JSON |
 | `IMPARTUS_MEDIA_ORIGINS` | `mediaOrigins` | Comma-separated exact origins; remote origins must use HTTPS |
+| `IMPARTUS_STRICT_MEDIA_ORIGINS` | `strictMediaOrigins` | Boolean |
 | `IMPARTUS_QUALITY` | `quality` | `144`, `450`, or `720` |
 | `IMPARTUS_VIEWS` | `views` | `left`, `right`, `both`, `first`, or `second` |
 | `IMPARTUS_DOWNLOAD_LOCATION` | `downloadLocation` | Output directory |
@@ -296,6 +298,26 @@ Only the settings listed below have environment-variable overrides. Settings abs
 | `IMPARTUS_WATCH_QUALITY` | `watch.quality` | `144`, `450`, or `720` |
 | `IMPARTUS_WATCH_VIEWS` | `watch.views` | `left`, `right`, or `both` |
 | `IMPARTUS_WATCH_AUDIO_FORMAT` | `watch.audioFormat` | `mp3`, `m4a`, `aac`, or `opus` |
+
+#### Strict media origins
+
+By default, a media request to an origin outside `baseUrl` and `mediaOrigins`
+is still sent, but without the login (the bearer token is withheld). Public
+CDN segments keep working, and a 401 or 403 from such an origin is reported as
+"not in mediaOrigins" rather than as a login failure.
+
+Set `strictMediaOrigins: true` (or `IMPARTUS_STRICT_MEDIA_ORIGINS=true`) to
+refuse those requests before anything is sent, including redirects to an
+unlisted origin. The error names only the refused `scheme://host[:port]`, for
+example:
+
+```text
+media origin https://cdn.example.com is not in mediaOrigins (IMPARTUS_MEDIA_ORIGINS); strictMediaOrigins refused the request before it was sent
+```
+
+Add that origin to `mediaOrigins` if you trust it. The option is off by default
+because lectures whose playlists name a CDN not yet listed in `mediaOrigins`
+would otherwise stop downloading.
 
 #### Validation Rules
 
