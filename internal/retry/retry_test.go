@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"syscall"
 	"testing"
 	"time"
@@ -121,22 +122,42 @@ func TestDoGivesUpWhenRetryAfterExceedsBudget(t *testing.T) {
 	}
 }
 
-func TestDoRespectsMaxAttemptsAndZeroPolicy(t *testing.T) {
-	clock := retrytest.NewClock()
-	policy := retry.Policy{MaxAttempts: 3, BaseDelay: time.Second, Clock: clock, Jitter: retrytest.MaxJitter}
-	attempts, err := policy.Do(context.Background(), func(context.Context) error { return status(502) })
-	if attempts != 3 || err == nil {
-		t.Fatalf("MaxAttempts policy = (%d, %v), want 3 attempts", attempts, err)
-	}
-
-	attempts, err = retry.Policy{}.Do(context.Background(), func(context.Context) error { return status(502) })
+func TestDoZeroBudgetMakesOneAttempt(t *testing.T) {
+	attempts, err := retry.Policy{}.Do(context.Background(), func(context.Context) error { return status(502) })
 	if attempts != 1 || err == nil {
 		t.Fatalf("zero policy = (%d, %v), want 1 attempt", attempts, err)
 	}
 
-	attempts, _ = retry.Default(0).Do(context.Background(), func(context.Context) error { return status(502) })
-	if attempts != 1 {
-		t.Fatalf("Default(0) attempts = %d, want 1", attempts)
+	attempts, err = retry.Default(0).Do(context.Background(), func(context.Context) error { return status(502) })
+	if attempts != 1 || err == nil {
+		t.Fatalf("Default(0) = (%d, %v), want 1 attempt", attempts, err)
+	}
+}
+
+// A slow attempt (here, one that hits a 10m HTTP timeout) must not use up the
+// budget: only time spent waiting between attempts counts against it.
+func TestDoChargesOnlyWaitingAgainstBudget(t *testing.T) {
+	clock := retrytest.NewClock()
+	calls := 0
+	attempts, err := testPolicy(clock, 3*time.Minute).Do(context.Background(), func(context.Context) error {
+		calls++
+		clock.Advance(10 * time.Minute)
+		if calls < 3 {
+			return timeoutError{}
+		}
+		return nil
+	})
+	if err != nil || attempts != 3 {
+		t.Fatalf("Do() = (%d, %v), want success on attempt 3 despite slow attempts", attempts, err)
+	}
+	if got := clock.Sleeps(); !slices.Equal(got, []time.Duration{time.Second, 2 * time.Second}) {
+		t.Fatalf("sleeps = %v, want [1s 2s]", got)
+	}
+}
+
+func TestDoRetriesEOFBeforeResponse(t *testing.T) {
+	if !retry.Retryable(fmt.Errorf("Get chunk: %w", io.EOF)) {
+		t.Fatal("Retryable(wrapped io.EOF) = false, want true")
 	}
 }
 
@@ -155,8 +176,9 @@ func TestDoUsesFullJitterByDefault(t *testing.T) {
 	clock := retrytest.NewClock()
 	policy := retry.Default(time.Hour)
 	policy.Clock = clock
-	policy.MaxAttempts = 8
-	_, _ = policy.Do(context.Background(), func(context.Context) error { return status(503) })
+	if _, err := policy.Do(context.Background(), func(context.Context) error { return status(503) }); err == nil {
+		t.Fatal("Do() error = nil, want 503 after the budget")
+	}
 	for i, d := range clock.Sleeps() {
 		if ceiling := retry.Backoff(retry.DefaultBaseDelay, retry.DefaultMaxDelay, i); d < 0 || d > ceiling {
 			t.Fatalf("sleep %d = %v outside [0, %v]", i, d, ceiling)
@@ -183,8 +205,11 @@ func TestBackoffCapsAndNeverOverflows(t *testing.T) {
 
 func TestDoNeverRetriesWithoutBackoff(t *testing.T) {
 	clock := retrytest.NewClock()
-	policy := retry.Policy{MaxAttempts: 3, Clock: clock, Jitter: retrytest.MaxJitter}
-	_, _ = policy.Do(context.Background(), func(context.Context) error { return status(503) })
+	// No BaseDelay or MaxDelay: the defaults apply. 1s+2s fits 3s; 4s does not.
+	policy := retry.Policy{Budget: 3 * time.Second, Clock: clock, Jitter: retrytest.MaxJitter}
+	if _, err := policy.Do(context.Background(), func(context.Context) error { return status(503) }); err == nil {
+		t.Fatal("Do() error = nil, want 503 after the budget")
+	}
 	want := []time.Duration{retry.DefaultBaseDelay, 2 * retry.DefaultBaseDelay}
 	if got := clock.Sleeps(); len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("sleeps without BaseDelay = %v, want %v", got, want)
@@ -271,7 +296,7 @@ func TestNewStatusErrorKeepsMessageAndRetryAfter(t *testing.T) {
 	if err.Error() != "stream info request failed with status 503: busy" {
 		t.Fatalf("message = %q", err.Error())
 	}
-	if retry.RetryAfterOf(err) != 7*time.Second || !retry.Retryable(err) {
-		t.Fatalf("RetryAfterOf = %v, Retryable = %v", retry.RetryAfterOf(err), retry.Retryable(err))
+	if retry.HintedDelay(err) != 7*time.Second || !retry.Retryable(err) {
+		t.Fatalf("HintedDelay = %v, Retryable = %v", retry.HintedDelay(err), retry.Retryable(err))
 	}
 }

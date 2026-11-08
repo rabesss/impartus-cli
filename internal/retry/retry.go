@@ -18,8 +18,6 @@ import (
 )
 
 const (
-	// DefaultBudget bounds the total time spent retrying one request.
-	DefaultBudget = 3 * time.Minute
 	// DefaultBaseDelay is the backoff ceiling before the first retry.
 	DefaultBaseDelay = time.Second
 	// DefaultMaxDelay caps a single backoff step.
@@ -56,15 +54,13 @@ func RealClock() Clock { return realClock{} }
 // Policy describes how an operation is retried. The zero value makes exactly
 // one attempt.
 type Policy struct {
-	// Budget bounds the time from the first attempt until the last retry
-	// starts. Zero disables the time bound.
-	Budget time.Duration
-	// MaxAttempts caps the number of attempts. Zero means no cap other than
-	// Budget. With both zero, one attempt is made.
-	MaxAttempts int
-	BaseDelay   time.Duration
-	MaxDelay    time.Duration
-	Clock       Clock
+	// Budget bounds the total time spent waiting between attempts. Time
+	// spent inside an attempt is not charged, so a slow or timed-out request
+	// still leaves room to retry. Zero disables retries.
+	Budget    time.Duration
+	BaseDelay time.Duration
+	MaxDelay  time.Duration
+	Clock     Clock
 	// Jitter maps a backoff ceiling to the delay actually waited. Nil uses
 	// full jitter: a uniform delay in [0, ceiling].
 	Jitter func(ceiling time.Duration) time.Duration
@@ -78,16 +74,12 @@ func Default(budget time.Duration) Policy {
 	if budget < 0 {
 		budget = 0
 	}
-	policy := Policy{
+	return Policy{
 		Budget:    budget,
 		BaseDelay: DefaultBaseDelay,
 		MaxDelay:  DefaultMaxDelay,
 		Clock:     RealClock(),
 	}
-	if budget == 0 {
-		policy.MaxAttempts = 1
-	}
-	return policy
 }
 
 // FullJitter returns a uniformly random duration in [0, ceiling].
@@ -108,7 +100,7 @@ func (p Policy) Do(ctx context.Context, op func(ctx context.Context) error) (int
 	if clock == nil {
 		clock = RealClock()
 	}
-	start := clock.Now()
+	var waited time.Duration
 	attempts := 0
 	for {
 		attempts++
@@ -116,14 +108,14 @@ func (p Policy) Do(ctx context.Context, op func(ctx context.Context) error) (int
 		if err == nil {
 			return attempts, nil
 		}
-		if ctx.Err() != nil || !Retryable(err) || !p.allowsAnotherAttempt(attempts) {
+		if ctx.Err() != nil || !Retryable(err) || p.Budget <= 0 {
 			return attempts, err
 		}
 		delay := p.delay(attempts)
-		if retryAfter := RetryAfterOf(err); retryAfter > delay {
-			delay = retryAfter
+		if hinted := HintedDelay(err); hinted > delay {
+			delay = hinted
 		}
-		if p.Budget > 0 && clock.Now().Sub(start)+delay > p.Budget {
+		if delay > p.Budget-waited {
 			return attempts, err
 		}
 		if p.OnRetry != nil {
@@ -132,14 +124,8 @@ func (p Policy) Do(ctx context.Context, op func(ctx context.Context) error) (int
 		if sleepErr := clock.Sleep(ctx, delay); sleepErr != nil {
 			return attempts, sleepErr
 		}
+		waited += delay
 	}
-}
-
-func (p Policy) allowsAnotherAttempt(attempts int) bool {
-	if p.MaxAttempts > 0 {
-		return attempts < p.MaxAttempts
-	}
-	return p.Budget > 0
 }
 
 // delay returns the jittered backoff before attempt number attempts+1.
@@ -242,6 +228,7 @@ func Retryable(err error) bool {
 		syscall.ECONNABORTED,
 		syscall.ECONNREFUSED,
 		syscall.EPIPE,
+		io.EOF, // connection closed before any response on these idempotent requests
 		io.ErrUnexpectedEOF,
 	} {
 		if errors.Is(err, transient) {
@@ -251,8 +238,9 @@ func Retryable(err error) bool {
 	return false
 }
 
-// RetryAfterOf returns the server-requested delay carried by err, if any.
-func RetryAfterOf(err error) time.Duration {
+// HintedDelay returns the server-requested (Retry-After) delay carried by
+// err, if any.
+func HintedDelay(err error) time.Duration {
 	var statusErr *StatusError
 	if errors.As(err, &statusErr) && statusErr.RetryAfter > 0 {
 		return statusErr.RetryAfter
