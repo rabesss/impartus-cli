@@ -28,7 +28,7 @@ jobs:
         uses: reviewdog/action-golangci-lint@c76cceaaab89abe74e649d2e34c6c9adc26662d2 # v2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          golangci_lint_version: v2.12.1
+          golangci_lint_version: v2.15.0
           golangci_lint_flags: "--config=.golangci.yml --timeout=5m"
           reporter: github-pr-review
           filter_mode: diff_context
@@ -63,7 +63,7 @@ jobs:
       - name: Install golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
         with:
-          version: v2.12.1
+          version: v2.15.0
           args: --timeout=5m
 
   test:
@@ -220,7 +220,7 @@ jobs:
 
       - name: Install golangci-lint for Desloppify
         run: |
-          GOBIN="$PWD/.venv-desloppify/bin" go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.1
+          GOBIN="$PWD/.venv-desloppify/bin" go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
           "$DESLOPPIFY_GOLANGCI_LINT_REAL" --version
 
       - name: Test quality gate tooling

@@ -43,12 +43,9 @@ updates:
     labels:
       - "dependencies"
       - "docker"
-    ignore:
-      # The golang tag must equal go.mod's Go version (container_build_test.go),
-      # so a new Go minor needs a hand-made PR that bumps go.mod and the
-      # analyzers too (#309). Patch bumps still arrive and need go.mod updated.
-      - dependency-name: "golang"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    # The golang tag must equal go.mod's Go version (container_build_test.go),
+    # so a golang bump PR fails until go.mod moves with it. A new Go minor may
+    # also need newer golangci-lint and gosec releases (#309).
 
   # Enable version updates for GitHub Actions
   - package-ecosystem: "github-actions"

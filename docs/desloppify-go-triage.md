@@ -62,7 +62,7 @@ Before adding, widening, or removing a suppression:
    ```bash
    make quality-gate-install
    GOBIN="$PWD/.venv-desloppify/bin" \
-     go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.1
+     go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
    ```
 
 3. Run the authoritative gate through the committed adapter and full-state

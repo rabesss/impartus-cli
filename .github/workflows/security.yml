@@ -52,11 +52,11 @@ jobs:
           cache: true
 
       - name: Install gosec
-        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.26.1
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.30.0
 
       - name: Run gosec security scanner
         run: |
-          # Run gosec and capture exit code
+          # gosec exits non-zero on any finding; the gates below decide.
           set +e
           gosec -fmt json -out=gosec-results.json -stdout ./... 2>&1
           GOSEC_EXIT=$?
@@ -64,17 +64,29 @@ jobs:
 
           echo "gosec exit code: $GOSEC_EXIT"
 
-          # Count high-severity issues
-          if [ -f gosec-results.json ]; then
-            ISSUES=$(grep -c '"severity"' gosec-results.json 2>/dev/null || echo "0")
-            echo "Security issues found: $ISSUES"
+          # No report, or an unreadable one, means gosec did not run.
+          if ! jq -e . gosec-results.json >/dev/null; then
+            echo "::error::gosec did not write a valid gosec-results.json"
+            exit 1
+          fi
 
-            # Fail on high-severity findings
-            HIGH_SEV=$(jq -r '.Issues[] | select(.severity == "HIGH" or .severity == "CRITICAL") | .severity' gosec-results.json 2>/dev/null | wc -l)
-            if [ "$HIGH_SEV" -gt 0 ]; then
-              echo "::error::Found $HIGH_SEV high-severity security issues"
-              exit 1
-            fi
+          # Packages gosec cannot type-check (for example on a Go release it
+          # does not support yet) are skipped without findings (#309).
+          GOLANG_ERRORS=$(jq '.["Golang errors"] // {} | length' gosec-results.json)
+          if [ "$GOLANG_ERRORS" -ne 0 ]; then
+            echo "::error::gosec could not type-check $GOLANG_ERRORS package(s)"
+            jq '.["Golang errors"]' gosec-results.json
+            exit 1
+          fi
+
+          ISSUES=$(jq '.Issues // [] | length' gosec-results.json)
+          echo "Security issues found: $ISSUES"
+
+          # Fail on high-severity findings
+          HIGH_SEV=$(jq '[.Issues // [] | .[] | select(.severity == "HIGH" or .severity == "CRITICAL")] | length' gosec-results.json)
+          if [ "$HIGH_SEV" -gt 0 ]; then
+            echo "::error::Found $HIGH_SEV high-severity security issues"
+            exit 1
           fi
 
           # Upload SARIF for GitHub Security tab (always run regardless of exit code)
@@ -161,7 +173,7 @@ jobs:
       - name: Run Go vulnerability check
         id: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
           # The helper streams and logs the output and exits with govulncheck's
           # own status (nonzero on findings or errors), so the step fails then.
           bash scripts/run-logged.sh govulncheck-results.txt govulncheck ./...
