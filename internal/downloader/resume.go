@@ -149,6 +149,11 @@ func (d *Downloader) tryResumeWorkspace(dir string, lectureID int, fingerprint s
 		_ = lock.Close() //nolint:errcheck // nothing was written under it
 		return nil, "workspace was removed while opening it"
 	}
+	// Likewise the directory itself must still be the one validated above.
+	if now, err := os.Lstat(dir); err != nil || !os.SameFile(info, now) {
+		_ = lock.Close() //nolint:errcheck // nothing was written under it
+		return nil, "workspace was replaced while opening it"
+	}
 	state, err := loadResumeState(dir, fingerprint)
 	if err != nil {
 		_ = lock.Close() //nolint:errcheck // the load error is the one to report
@@ -308,7 +313,9 @@ func (d *Downloader) discardWorkspace(dir string, lectureID int, lock *lockfile.
 		// it while still holding the lock instead; the small remainder is
 		// swept once it has been unused for resumeTTL.
 		if clearErr := clearWorkspace(dir, true); clearErr != nil {
-			d.logDiagnostic("warning: failed to remove workspace for lecture %d: %s", lectureID, secrets.ScrubError(clearErr))
+			d.logDiagnostic("warning: failed to remove workspace for lecture %d: %s", lectureID, secrets.ScrubError(errors.Join(renameErr, clearErr)))
+		} else {
+			d.logDiagnostic("lecture %d: emptied workspace in place after it could not be moved aside: %s", lectureID, secrets.ScrubError(renameErr))
 		}
 	}
 	if closeErr := lock.Close(); closeErr != nil {
