@@ -1873,9 +1873,12 @@ func lineQuotedValueStands(value string, closeStart, closeEnd int) bool {
 }
 
 func containsOpenValueStop(text string) bool {
-	return strings.ContainsFunc(text, func(character rune) bool {
-		return character < 0x80 && openValueStop(byte(character))
-	})
+	for index := 0; index < len(text); index++ {
+		if openValueStop(text[index]) {
+			return true
+		}
+	}
+	return false
 }
 
 // openValueStop reports whether character ends a bare value, matching the
