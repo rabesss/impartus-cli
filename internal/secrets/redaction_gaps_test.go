@@ -143,6 +143,56 @@ func TestScrubSeparatorlessAndCompoundKeys(t *testing.T) {
 	}
 }
 
+// Separator-less values keep running through backslashes and quotes inside
+// them, and a custom Authorization scheme is redacted while diagnostics that
+// start with a prose word stay readable. Every value is a fake placeholder.
+func TestScrubSeparatorlessValuesWithQuotesAndEscapes(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		input string
+		want  string
+	}{
+		{`X-Api-Key fakeAAA\fakeBBB rest`, `X-Api-Key REDACTED rest`},
+		{`X-Api-Key fakeAAA"fakeBBB rest`, `X-Api-Key REDACTED rest`},
+		{`X-Api-Key fake'AAA'fakeBBB rest`, `X-Api-Key REDACTED rest`},
+		{`X-Api-Key "fakeAAA"fakeBBB rest`, `X-Api-Key REDACTED rest`},
+		{`X-Api-Key "fakeAAA" rest`, `X-Api-Key "REDACTED" rest`},
+		{`{"error":"X-Api-Key fakeAAA\\fakeBBB"} rest`, `{"error":"X-Api-Key REDACTED"} rest`},
+		{`{"error":"X-Api-Key fakeAAA\u0022fakeBBB"} rest`, `{"error":"X-Api-Key REDACTED"} rest`},
+		{`{"error":"X-Api-Key \"fakeAAA\"fakeBBB"} rest`, `{"error":"X-Api-Key REDACTED"} rest`},
+		{`Authorization Custom fakeAAA-fakeBBB`, `Authorization REDACTED`},
+		{`{"error":"Authorization Custom fakeAAA-fakeBBB"} rest`, `{"error":"Authorization REDACTED"} rest`},
+		{`Authorization failed request123`, `Authorization failed request123`},
+		{`authorization denied for lecture 42`, `authorization denied for lecture 42`},
+		{`authorization succeeded for user`, `authorization succeeded for user`},
+		{`x-api-key required`, `x-api-key required`},
+		{`{"error":"api-key required"} rest`, `{"error":"api-key required"} rest`},
+	} {
+		t.Run(test.input, func(t *testing.T) {
+			if got := Scrub(test.input); got != test.want {
+				t.Fatalf("Scrub(%q) = %q, want %q", test.input, got, test.want)
+			}
+			if test.want == test.input {
+				return
+			}
+			for _, view := range []string{
+				test.input,
+				"headers: " + test.input,
+				"next=" + url.PathEscape(test.input),
+				`{"error":` + strconv.Quote(test.input) + `}`,
+			} {
+				got := Scrub(view)
+				for _, secret := range []string{"fakeAAA", "fakeBBB", "AAA'fake"} {
+					if strings.Contains(got, secret) {
+						t.Fatalf("Scrub(%q) = %q kept %q", view, got, secret)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestScrubSensitiveParamsCoverCookie2(t *testing.T) {
 	t.Parallel()
 
@@ -303,6 +353,11 @@ func TestScrubRepeatedAcceptedAssignmentsStayLinear(t *testing.T) {
 		{`token='a'`, `zqzqz='a'`},
 		{`password="`, `zqzqzqzq="`},
 		{`secret: "a"`, `zqzqzq: "a"`},
+		{"\nx-api-key \"k\"z", "\nzqzqzqzqz \"k\"z"},
+		{`,x-api-key k\"z`, `,zqzqzqzqz k\"z`},
+		{`,x-api-key required`, `,zqzqzqzqz required`},
+		{"\nauthorization Custom k-1", "\nzqzqzqzqzqzqz Custom k-1"},
+		{`"authorization failed k-1"`, `"zqzqzqzqzqzqz failed k-1"`},
 	} {
 		t.Run(test.hostile, func(t *testing.T) {
 			hostileInput := strings.Repeat(test.hostile, maxScrubInputSize/2/len(test.hostile))
