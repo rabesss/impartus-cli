@@ -57,8 +57,11 @@ type Options struct {
 	testArgs         []string
 	testEnvironment  []string
 	testSocketName   string
-	testPIDFile      string
 	testChildPIDFile string
+	// testStartedHook receives the child PID once the process is started and
+	// its reaper goroutine has been launched, before Start can time out or be
+	// canceled. It runs on Start's goroutine and must return promptly.
+	testStartedHook func(pid int)
 }
 
 type runtimeReservation struct {
@@ -193,6 +196,9 @@ func Start(ctx context.Context, options Options) (*Session, error) {
 		playbackEnd: make(chan error, 1),
 	}
 	go session.reapProcess()
+	if options.testStartedHook != nil {
+		options.testStartedHook(command.Process.Pid)
+	}
 	if isolationErr := verifyProcessIsolation(command.Process.Pid); isolationErr != nil {
 		killErr := command.Process.Kill()
 		if errors.Is(killErr, os.ErrProcessDone) {

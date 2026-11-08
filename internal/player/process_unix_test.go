@@ -17,6 +17,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/rabesss/impartus-cli/internal/testdeadline"
 )
 
 func TestReserveRuntimeRejectsUnsafePaths(t *testing.T) {
@@ -279,57 +281,143 @@ func TestStartSurfacesSilentProcessDeath(t *testing.T) {
 func TestStartTimesOutAndReapsWhenSocketNeverAppears(t *testing.T) {
 	options := fakeMPVOptions(t, "no-socket", filepath.Join(t.TempDir(), "argv.txt"), filepath.Join(t.TempDir(), "load.txt"))
 	options.ConnectTimeout = 60 * time.Millisecond
+	options.KillTimeout = startupKillTimeout(t)
+	// The hook runs on Start's goroutine before Start returns, so the PID is
+	// known even if the timeout fires before the helper process runs at all.
+	var startedPIDs []int
+	options.testStartedHook = func(pid int) { startedPIDs = append(startedPIDs, pid) }
 	_, err := Start(context.Background(), options)
 	if err == nil || !strings.Contains(err.Error(), "IPC readiness timeout") {
 		t.Fatalf("Start() error = %v, want readiness timeout", err)
 	}
-	pidText, readErr := os.ReadFile(options.testPIDFile)
-	if readErr != nil {
-		t.Fatalf("read helper PID: %v", readErr)
+	if strings.Contains(err.Error(), "could not be reaped") {
+		t.Fatalf("Start() error = %v, want the timed-out child reaped", err)
 	}
-	pid, parseErr := strconv.Atoi(string(pidText))
-	if parseErr != nil {
-		t.Fatalf("parse helper PID: %v", parseErr)
-	}
+	pid := onlyStartedPID(t, startedPIDs)
 	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
 		t.Fatalf("timed-out child was not reaped: %v", err)
 	}
 }
 
 func TestStartCancellationReapsChildAndCleansSocket(t *testing.T) {
-	options := fakeMPVOptions(t, "no-socket", filepath.Join(t.TempDir(), "argv.txt"), filepath.Join(t.TempDir(), "load.txt"))
-	options.ConnectTimeout = time.Second
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	cancelComplete := make(chan struct{})
-	go func() {
-		defer close(cancelComplete)
-		deadline := time.Now().Add(5 * time.Second)
-		for time.Now().Before(deadline) {
-			if _, statErr := os.Stat(options.testPIDFile); statErr == nil {
-				cancel()
-				return
+	t.Run("before Start connects", func(t *testing.T) {
+		options := startupCancellationOptions(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		var startedPIDs []int
+		// The hook runs on Start's goroutine after the child starts and before
+		// Start's isolation check and IPC connect loop. The child itself may or
+		// may not have run yet.
+		options.testStartedHook = func(pid int) {
+			startedPIDs = append(startedPIDs, pid)
+			cancel()
+		}
+		_, err := Start(ctx, options)
+		assertStartupCancellationReaped(t, options, err, onlyStartedPID(t, startedPIDs))
+	})
+
+	t.Run("while the child waits for IPC", func(t *testing.T) {
+		options := startupCancellationOptions(t)
+		readyPath := filepath.Join(options.RuntimeBase, "ready.sock")
+		childReady := awaitHelperReady(t, readyPath)
+		options.testEnvironment = append(options.testEnvironment, "IMPARTUS_FAKE_MPV_READY="+readyPath)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		var startedPIDs []int
+		options.testStartedHook = func(pid int) { startedPIDs = append(startedPIDs, pid) }
+		startDone := make(chan error, 1)
+		go func() {
+			session, err := Start(ctx, options)
+			if session != nil {
+				err = errors.Join(errors.New("Start() unexpectedly succeeded"), err, session.Close(context.Background()))
 			}
-			time.Sleep(10 * time.Millisecond)
+			startDone <- err
+		}()
+		select {
+		case readyErr := <-childReady:
+			if readyErr != nil {
+				cancel()
+				t.Fatalf("readiness handshake: %v (Start() error = %v)", readyErr, <-startDone)
+			}
+		case err := <-startDone:
+			t.Fatalf("Start() returned before the helper reported readiness: %v", err)
+		case <-testdeadline.Guard(t):
+			cancel()
+			t.Fatalf("helper never reported readiness before the test deadline (Start() error = %v)", <-startDone)
 		}
 		cancel()
-	}()
-	_, err := Start(ctx, options)
-	<-cancelComplete
+		err := <-startDone
+		assertStartupCancellationReaped(t, options, err, onlyStartedPID(t, startedPIDs))
+	})
+}
+
+// startupCancellationOptions configures a helper whose socket never appears,
+// with a readiness timeout far beyond any test run, so only cancellation can
+// end Start.
+func startupCancellationOptions(t *testing.T) Options {
+	t.Helper()
+	options := fakeMPVOptions(t, "no-socket", filepath.Join(t.TempDir(), "argv.txt"), filepath.Join(t.TempDir(), "load.txt"))
+	options.ConnectTimeout = time.Hour
+	options.KillTimeout = startupKillTimeout(t)
+	return options
+}
+
+// startupKillTimeout bounds the reap wait without making it semantic.
+// abortStartup can wait KillTimeout twice (after the group SIGKILL and again
+// after Process.Kill), so half the deadline budget lets a real reap hang fail
+// with "could not be reaped" before go test's own timeout panics.
+func startupKillTimeout(t *testing.T) time.Duration {
+	t.Helper()
+	return testdeadline.Budget(t, 2*time.Minute) / 2
+}
+
+func assertStartupCancellationReaped(t *testing.T, options Options, err error, pid int) {
+	t.Helper()
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Start() error = %v, want context cancellation", err)
 	}
-	pidText, readErr := os.ReadFile(options.testPIDFile)
-	if readErr != nil {
-		t.Fatalf("read helper PID: %v", readErr)
-	}
-	pid, parseErr := strconv.Atoi(string(pidText))
-	if parseErr != nil {
-		t.Fatalf("parse helper PID: %v", parseErr)
+	if strings.Contains(err.Error(), "could not be reaped") {
+		t.Fatalf("Start() error = %v, want the canceled child reaped", err)
 	}
 	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
 		t.Fatalf("canceled child was not reaped: %v", err)
 	}
+	// The shared XDG child directory is kept by design; no per-session socket
+	// may remain in it.
+	entries, readErr := os.ReadDir(filepath.Join(options.RuntimeBase, "impartus"))
+	if readErr != nil {
+		t.Fatalf("read runtime directory: %v", readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("runtime directory still holds %d entries after canceled startup", len(entries))
+	}
+}
+
+// awaitHelperReady listens on a Unix socket and reports once the helper
+// connects to it, a cross-process handshake without polling. Cleanup closes
+// the listener, which unblocks Accept if the helper never connects.
+func awaitHelperReady(t *testing.T, path string) <-chan error {
+	t.Helper()
+	var listenConfig net.ListenConfig
+	listener, err := listenConfig.Listen(context.Background(), "unix", path)
+	if err != nil {
+		t.Fatalf("listen for helper readiness: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := listener.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			t.Errorf("close readiness listener: %v", closeErr)
+		}
+	})
+	result := make(chan error, 1)
+	go func() {
+		connection, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			result <- acceptErr
+			return
+		}
+		result <- connection.Close()
+	}()
+	return result
 }
 
 func TestLifecycleCancellationReapsChildAndCleansSocket(t *testing.T) {
@@ -360,7 +448,7 @@ func TestLifecycleCancellationReapsChildAndCleansSocket(t *testing.T) {
 	if _, err := os.Lstat(socketPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("canceled lifecycle socket remains: %v", err)
 	}
-	if err := waitForProcessGone(childPID, time.Second); err != nil {
+	if err := waitForProcessGone(t, childPID); err != nil {
 		t.Fatalf("canceled lifecycle group child survived: %v", err)
 	}
 }
@@ -497,7 +585,6 @@ func fakeMPVOptions(t *testing.T, mode, argvPath, loadPath string) Options {
 	if err := os.Chmod(runtimeBase, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	pidPath := filepath.Join(t.TempDir(), "pid.txt")
 	childPIDPath := filepath.Join(t.TempDir(), "child-pid.txt")
 	return Options{
 		Binary:         os.Args[0],
@@ -512,10 +599,8 @@ func fakeMPVOptions(t *testing.T, mode, argvPath, loadPath string) Options {
 			"IMPARTUS_FAKE_MPV_MODE=" + mode,
 			"IMPARTUS_FAKE_MPV_ARGV=" + argvPath,
 			"IMPARTUS_FAKE_MPV_LOAD=" + loadPath,
-			"IMPARTUS_FAKE_MPV_PID=" + pidPath,
 			"IMPARTUS_FAKE_MPV_CHILD_PID=" + childPIDPath,
 		},
-		testPIDFile:      pidPath,
 		testChildPIDFile: childPIDPath,
 	}
 }
@@ -531,14 +616,21 @@ func runFakeMPV() int {
 	if err := os.WriteFile(os.Getenv("IMPARTUS_FAKE_MPV_ARGV"), []byte(strings.Join(os.Args, "\n")), 0o600); err != nil {
 		return 2
 	}
-	if err := os.WriteFile(os.Getenv("IMPARTUS_FAKE_MPV_PID"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
-		return 2
-	}
 	mode := os.Getenv("IMPARTUS_FAKE_MPV_MODE")
 	if mode == "ignore-quit" {
 		signal.Ignore(syscall.SIGTERM)
 	}
 	if mode == "no-socket" {
+		if readyPath := os.Getenv("IMPARTUS_FAKE_MPV_READY"); readyPath != "" {
+			var dialer net.Dialer
+			ready, err := dialer.DialContext(context.Background(), "unix", readyPath)
+			if err != nil {
+				return 16
+			}
+			if err := ready.Close(); err != nil {
+				return 17
+			}
+		}
 		select {}
 	}
 	socketPath := ""
@@ -644,43 +736,62 @@ func runFakeMPV() int {
 	}
 }
 
-func readProcessID(t *testing.T, path string) int {
+func onlyStartedPID(t *testing.T, pids []int) int {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		contents, err := os.ReadFile(path)
-		if err == nil {
-			pid, parseErr := strconv.Atoi(string(contents))
-			if parseErr != nil {
-				t.Fatalf("parse process ID from %s: %v", path, parseErr)
-			}
-			return pid
-		}
-		time.Sleep(10 * time.Millisecond)
+	if len(pids) != 1 || pids[0] <= 0 {
+		t.Fatalf("started PIDs = %v, want exactly one positive PID", pids)
 	}
-	t.Fatalf("timed out reading process ID from %s", path)
-	return 0
+	return pids[0]
 }
 
-func waitForProcessGone(pid int, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
+// readProcessID reads a PID that the helper published before Start returned.
+func readProcessID(t *testing.T, path string) int {
+	t.Helper()
+	contents, err := os.ReadFile(path) // #nosec G304 -- test-owned file under t.TempDir
+	if err != nil {
+		t.Fatalf("read process ID from %s: %v", path, err)
+	}
+	pid, err := strconv.Atoi(string(contents))
+	if err != nil {
+		t.Fatalf("parse process ID from %s: %v", path, err)
+	}
+	return pid
+}
+
+// waitForProcessGone polls until pid no longer exists or is a zombie. Only the
+// test binary's deadline bounds it.
+func waitForProcessGone(t *testing.T, pid int) error {
+	t.Helper()
+	hangGuard := testdeadline.Guard(t)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if processGone(pid) {
 			return nil
 		}
-		statusPath := filepath.Join("/proc", strconv.Itoa(pid), "stat")
-		if status, err := os.ReadFile(statusPath); err == nil {
-			closingParen := strings.LastIndexByte(string(status), ')')
-			if closingParen >= 0 {
-				fields := strings.Fields(string(status[closingParen+1:]))
-				if len(fields) > 0 && fields[0] == "Z" {
-					return nil
-				}
-			}
+		select {
+		case <-ticker.C:
+		case <-hangGuard:
+			return fmt.Errorf("process %d still exists at the test deadline", pid)
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
-	return fmt.Errorf("process %d still exists", pid)
+}
+
+func processGone(pid int) bool {
+	if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
+		return true
+	}
+	statusPath := filepath.Join("/proc", strconv.Itoa(pid), "stat")
+	status, err := os.ReadFile(statusPath)
+	if err != nil {
+		return false
+	}
+	closingParen := strings.LastIndexByte(string(status), ')')
+	if closingParen < 0 {
+		return false
+	}
+	fields := strings.Fields(string(status[closingParen+1:]))
+	return len(fields) > 0 && fields[0] == "Z"
 }
 
 func cleanupSession(t *testing.T, session *Session) {
