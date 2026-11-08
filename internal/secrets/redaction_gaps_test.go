@@ -13,7 +13,7 @@ import (
 // Every credential below is a fake placeholder. The tables pin the gaps from
 // issues #247, #249, #256, #257 and #260.
 
-func TestTokenAwareHelpersRecogniseBase64Bearer(t *testing.T) {
+func TestTokenAwareHelpersRecognizeBase64Bearer(t *testing.T) {
 	t.Parallel()
 
 	const token = "secret-bearer-abc123"

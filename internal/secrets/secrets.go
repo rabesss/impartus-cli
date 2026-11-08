@@ -83,7 +83,7 @@ var sensitiveAssignmentKey = buildSensitiveAssignmentKey()
 // credentialKeySuffix lists the compound *_key names that carry credentials.
 // It is explicit so that unrelated names such as cache_key or sort_key are not
 // redacted.
-const credentialKeySuffix = `[a-z0-9_-]*(?:api|private|secret|access|signing|encryption)[_-]?key`
+const credentialKeySuffix = `[a-z0-9_-]*(?:api|private|secret|access|signing|encryption)[_-]?key` // #nosec G101 -- a key-name pattern, not a credential
 
 var credentialSchemes = []string{"bearer", "basic", "token", "apikey", "oauth"}
 var quotedSecretValue = regexp.MustCompile(
@@ -1618,7 +1618,7 @@ func looksLikeTokenValue(credential string) bool {
 }
 
 // startsWithCredentialScheme accepts a separator-less Authorization header
-// whose first word, inside any opening quote, is a recognised scheme.
+// whose first word, inside any opening quote, is a recognized scheme.
 func startsWithCredentialScheme(word string) bool {
 	return hasRecognizedCredentialScheme(word[quoteOpenerWidth(word, 0):])
 }
@@ -1634,7 +1634,7 @@ func looksLikeCookieValue(credential string) bool {
 	return strings.Contains(credential[:end], "=")
 }
 
-// credentialMatch is one assignment that a step recognised. value[start:end]
+// credentialMatch is one assignment that a step recognized. value[start:end]
 // is the credential that is replaced; opener and closer are the quote
 // delimiters around a quoted value, which the replacement keeps.
 type credentialMatch struct {
@@ -1678,32 +1678,43 @@ func nextCredentialMatch(value string, step credentialAssignmentStep, from int) 
 		index[1] = lineValueEnd(value, index[1])
 	}
 	match := credentialMatch{matchStart: index[0], prefixEnd: prefixEnd, start: prefixEnd, end: index[1], resume: index[1]}
-	if width := quoteOpenerWidth(value, prefixEnd); step.openValue && width > 0 {
-		closeStart, closeWidth := quotedValueClose(value, prefixEnd)
-		closeEnd := closeStart + closeWidth
-		if step.lineValue || closeEnd >= index[1] || startsAssignment(value[closeEnd:index[1]]) {
-			// The value is exactly one quoted string: replace only its contents
-			// and keep the delimiters, so later passes see a quoted REDACTED
-			// marker instead of an open value that runs on to the next break.
-			match.start = prefixEnd + width
-			match.end = closeStart
-			match.opener = value[prefixEnd:match.start]
-			match.closer = value[closeStart:closeEnd]
-			match.resume = closeEnd
-		} else {
-			// Text that is not another assignment is glued to the closing
-			// quote (password="a"b...), so the quotes may be part of the
-			// value. Keep the whole match redacted, through any quote it
-			// leaves open.
-			match.end = extendUnmatchedQuote(value, prefixEnd, index[1])
-			match.resume = match.end
-		}
-	} else if step.openValue {
-		match.end = extendUnmatchedQuote(value, prefixEnd, index[1])
-		match.resume = match.end
+	if step.openValue {
+		match = openCredentialValue(value, step, match)
 	}
 	match.accepted = match.end > match.start
 	return match, true
+}
+
+// openCredentialValue sets where an open value ends. A value that is exactly
+// one quoted string keeps its delimiters; any other value runs through a
+// quote that a nested assignment leaves open.
+func openCredentialValue(value string, step credentialAssignmentStep, match credentialMatch) credentialMatch {
+	prefixEnd, matchEnd := match.prefixEnd, match.end
+	width := quoteOpenerWidth(value, prefixEnd)
+	if width == 0 {
+		match.end = extendUnmatchedQuote(value, prefixEnd, matchEnd)
+		match.resume = match.end
+		return match
+	}
+	closeStart, closeWidth := quotedValueClose(value, prefixEnd)
+	closeEnd := closeStart + closeWidth
+	if step.lineValue || closeEnd >= matchEnd || startsAssignment(value[closeEnd:matchEnd]) {
+		// Replace only the contents and keep the delimiters, so later passes
+		// see a quoted REDACTED marker instead of an open value that runs on
+		// to the next break.
+		match.start = prefixEnd + width
+		match.end = closeStart
+		match.opener = value[prefixEnd:match.start]
+		match.closer = value[closeStart:closeEnd]
+		match.resume = closeEnd
+		return match
+	}
+	// Text that is not another assignment is glued to the closing quote
+	// (password="a"b...), so the quotes may be part of the value. Keep the
+	// whole match redacted, through any quote it leaves open.
+	match.end = extendUnmatchedQuote(value, prefixEnd, matchEnd)
+	match.resume = match.end
+	return match
 }
 
 // lineValueEnd extends a value that runs to the end of its line, stopping at
@@ -1860,7 +1871,7 @@ func regexCredentialValueRanges(value string, canonical []credentialValueRange) 
 			}
 			if match.opener != "" && coverage.covers(value, start, match.end) {
 				// The canonical scanner already claimed this whole quoted value,
-				// and for authorization keys it keeps a recognised scheme
+				// and for authorization keys it keeps a recognized scheme
 				// visible. When it did not (for example, a key glued to a
 				// non-ASCII letter, or only a nested assignment inside the
 				// value), this pass claims the whole quoted value itself.
@@ -1905,7 +1916,7 @@ func newCredentialRangeCoverage(ranges []credentialValueRange) credentialRangeCo
 	return coverage
 }
 
-// covers reports whether one range spans value[start:end]. A recognised
+// covers reports whether one range spans value[start:end]. A recognized
 // scheme word and the space after it may stay outside the range, as the
 // canonical scanner keeps them visible for authorization keys.
 func (coverage credentialRangeCoverage) covers(value string, start, end int) bool {
@@ -2348,7 +2359,7 @@ func replaceCredentialValues(value string, step credentialAssignmentStep) (strin
 		case credential != "REDACTED":
 			evidence.values = append(evidence.values, credential)
 		case match.opener != "":
-			// A quoted marker is still a recognised assignment. Count it, as
+			// A quoted marker is still a recognized assignment. Count it, as
 			// callers compare counts across views, but record no value: the
 			// marker itself stays visible in the output by design.
 			evidence.values = append(evidence.values, "")
