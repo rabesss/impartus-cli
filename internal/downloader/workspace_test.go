@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -111,10 +113,15 @@ func TestDownloadAndJoinPlaylistWorkspaceCleanupOnFailure(t *testing.T) {
 		chunkBody     []byte
 		cancelContext bool
 		ffmpegFails   bool
+		// kept is the resumable workspace's contents after the failure; nil
+		// means no workspace is left at all.
+		kept []string
 	}{
-		{name: "upstream chunk", chunkStatus: http.StatusServiceUnavailable},
-		{name: "decryption", chunkStatus: http.StatusOK, chunkBody: make([]byte, 15)},
-		{name: "ffmpeg", chunkStatus: http.StatusOK, chunkBody: make([]byte, 16), ffmpegFails: true},
+		{name: "upstream chunk", chunkStatus: http.StatusServiceUnavailable, kept: []string{".lock", "resume.json"}},
+		// The failed decrypt leaves its encrypted download, which is never
+		// treated as complete.
+		{name: "decryption", chunkStatus: http.StatusOK, chunkBody: make([]byte, 15), kept: []string{".lock", "77_left_0000.ts.temp", "resume.json"}},
+		{name: "ffmpeg", chunkStatus: http.StatusOK, chunkBody: make([]byte, 16), ffmpegFails: true, kept: []string{".lock", "77_first.m3u8", "77_left_0000.ts", "resume.json"}},
 		{name: "cancellation", chunkStatus: http.StatusOK, chunkBody: make([]byte, 16), cancelContext: true},
 	}
 
@@ -163,9 +170,41 @@ func TestDownloadAndJoinPlaylistWorkspaceCleanupOnFailure(t *testing.T) {
 			if err == nil {
 				t.Fatal("DownloadAndJoinPlaylist() error = nil, want failure")
 			}
-			assertOnlyWorkspaceSentinel(t, tempBase)
+			if tt.kept == nil {
+				assertOnlyWorkspaceSentinel(t, tempBase)
+				return
+			}
+			workspace := onlyResumeWorkspace(t, tempBase, 77)
+			if got := dirNames(t, workspace); !slices.Equal(got, tt.kept) {
+				t.Fatalf("kept workspace entries = %v, want %v", got, tt.kept)
+			}
 		})
 	}
+}
+
+// onlyResumeWorkspace asserts that tempBase holds the caller's sentinel and
+// exactly one resumable workspace for lectureID, and returns its path.
+func onlyResumeWorkspace(t *testing.T, tempBase string, lectureID int) string {
+	t.Helper()
+	names := dirNames(t, tempBase)
+	pattern := regexp.MustCompile(fmt.Sprintf(`^lecture-%d-resume-[0-9a-f]{16}$`, lectureID))
+	if len(names) != 2 || names[0] != "caller-owned.sentinel" || !pattern.MatchString(names[1]) {
+		t.Fatalf("temp base entries = %v, want the sentinel and one resumable workspace for lecture %d", names, lectureID)
+	}
+	return filepath.Join(tempBase, names[1])
+}
+
+func dirNames(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir(%q) failed: %v", dir, err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
 }
 
 func TestDownloadPlaylistPipelineCancelsContextAfterSuccess(t *testing.T) {

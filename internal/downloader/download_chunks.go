@@ -40,6 +40,12 @@ func copyWithLimit(dst io.Writer, src io.Reader, limit int64) (int64, error) {
 // doDownloadChunk performs a single HTTP download, writing to a file or reading to memory
 // depending on the toMemory flag. It handles rate limiting, error status codes, and
 // returns the file path (when toMemory=false) or data bytes (when toMemory=true).
+// chunkPath is the decrypted chunk file for one view's chunk in the current
+// workspace. The encrypted download uses it with a ".temp" suffix.
+func (d *Downloader) chunkPath(id int, view string, chunk int) string {
+	return filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_%s_%04d.ts", id, view, chunk))
+}
+
 func (d *Downloader) doDownloadChunk(ctx context.Context, url string, id int, chunk int, view string, toMemory bool) (string, []byte, int64, error) {
 	return d.doDownloadChunkWithLimit(ctx, url, id, chunk, view, toMemory, maxChunkSize)
 }
@@ -62,7 +68,7 @@ func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, i
 		return "", nil, 0, statusErr
 	}
 
-	outFilepath := filepath.Join(d.config.TempDirLocation, fmt.Sprintf("%d_%s_%04d.ts.temp", id, view, chunk))
+	outFilepath := d.chunkPath(id, view, chunk) + ".temp"
 	if resp.ContentLength > limit {
 		return "", nil, 0, fmt.Errorf("chunk %d exceeds max size %d bytes: %w", chunk, limit, errDownloadSizeLimit)
 	}

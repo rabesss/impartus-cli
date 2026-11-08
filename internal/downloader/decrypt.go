@@ -3,9 +3,12 @@ package downloader
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
 // DecryptAES performs AES-128-CBC decryption with a zero IV and removes PKCS7 padding.
@@ -87,7 +90,16 @@ func (d *Downloader) decryptChunk(filePath string, key []byte) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to read encrypted file %s: %w", filePath, err)
 	}
-	return d.decryptChunkBytes(filePath, infile, key)
+	outPath, err := d.decryptChunkBytes(filePath, infile, key)
+	if err != nil {
+		return "", err
+	}
+	// The encrypted copy is no longer needed; dropping it halves the disk a
+	// kept (resumable) workspace uses.
+	if removeErr := os.Remove(filePath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		d.logDiagnostic("warning: failed to remove encrypted chunk: %s", secrets.ScrubError(removeErr))
+	}
+	return outPath, nil
 }
 
 // decryptChunkBytes decrypts infile in place, so the caller must transfer ownership of the slice.
@@ -112,10 +124,41 @@ func (d *Downloader) decryptChunkBytes(filePath string, infile []byte, key []byt
 		return "", fmt.Errorf("failed to decrypt: %w", err)
 	}
 
-	// G703: path components are from validated config and sanitized input
-	// #nosec G703
-	if err := os.WriteFile(outPath, plainText, 0o600); err != nil {
+	if err := writeChunkAtomically(outPath, plainText, d.resume != nil); err != nil {
 		return "", fmt.Errorf("failed to write decrypted file %s: %w", outPath, err)
 	}
 	return outPath, nil
+}
+
+// writeChunkAtomically writes data to path+".part" and renames it into place,
+// so a final chunk file exists only once it is complete. A resumable
+// workspace treats that file as done on the next attempt, so durable also
+// fsyncs the data before the rename.
+func writeChunkAtomically(path string, data []byte, durable bool) (err error) {
+	partial := path + ".part"
+	// G304/G703: path components are from validated config and sanitized input
+	// #nosec G304 G703
+	file, err := os.OpenFile(partial, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = os.Remove(partial) //nolint:errcheck // best effort; the next attempt truncates it
+		}
+	}()
+	if _, err = file.Write(data); err != nil {
+		_ = file.Close() //nolint:errcheck // the write error is the one to report
+		return err
+	}
+	if durable {
+		if err = file.Sync(); err != nil {
+			_ = file.Close() //nolint:errcheck // the sync error is the one to report
+			return err
+		}
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(partial, path)
 }

@@ -58,7 +58,10 @@ type ProgressTracker struct {
 
 	totalBytes      int64
 	downloadedBytes int64
-	startTime       time.Time
+	// resumedBytes counts bytes reused from an earlier attempt. They count
+	// toward progress but not toward speed.
+	resumedBytes int64
+	startTime    time.Time
 
 	speedSamples   []SpeedSample
 	speedMutex     sync.RWMutex
@@ -146,6 +149,16 @@ func ChunkCompleted(pt *ProgressTracker, bytesDownloaded int64) {
 	atomic.AddInt64(&pt.downloadedBytes, bytesDownloaded)
 	pt.updateTotalBytesEstimate()
 	pt.reportProgress()
+}
+
+// ChunkResumed counts a chunk reused from an earlier attempt. Its size counts
+// toward progress and the size estimate but not toward download speed.
+func ChunkResumed(pt *ProgressTracker, size int64) {
+	if pt == nil {
+		return
+	}
+	atomic.AddInt64(&pt.resumedBytes, size)
+	ChunkCompleted(pt, size)
 }
 
 // LectureCompleted increments the completed lecture counter.
@@ -314,7 +327,7 @@ func (pt *ProgressTracker) updateLoop() {
 }
 
 func (pt *ProgressTracker) updateSpeedSample() {
-	currentBytes := atomic.LoadInt64(&pt.downloadedBytes)
+	currentBytes := atomic.LoadInt64(&pt.downloadedBytes) - atomic.LoadInt64(&pt.resumedBytes)
 	currentTime := time.Now()
 
 	pt.speedMutex.Lock()

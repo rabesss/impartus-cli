@@ -3,7 +3,9 @@ package lockfile
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -147,5 +149,55 @@ func TestAcquireReturnsWhenContextIsCanceled(t *testing.T) {
 	}
 	if time.Since(started) > 200*time.Millisecond {
 		t.Fatalf("Acquire ignored cancellation for %s", time.Since(started))
+	}
+}
+
+func TestHoldsPathDetectsMovedOrReplacedFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows cannot rename a directory holding an open file")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "workspace", ".lock")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := TryAcquire(path)
+	if err != nil {
+		t.Fatalf("TryAcquire() error = %v", err)
+	}
+	if !lock.HoldsPath(path) {
+		t.Fatal("HoldsPath() = false right after acquiring")
+	}
+
+	moved := filepath.Join(dir, "trash")
+	if err := os.Rename(filepath.Dir(path), moved); err != nil {
+		t.Fatal(err)
+	}
+	if lock.HoldsPath(path) {
+		t.Fatal("HoldsPath() = true after its directory was moved away")
+	}
+	if !lock.HoldsPath(filepath.Join(moved, ".lock")) {
+		t.Fatal("HoldsPath() = false for the file's new location")
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if lock.HoldsPath(path) {
+		t.Fatal("HoldsPath() = true for a different file at the same path")
+	}
+
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if lock.HoldsPath(filepath.Join(moved, ".lock")) {
+		t.Fatal("HoldsPath() = true after Close")
+	}
+	var nilLock *Lock
+	if nilLock.HoldsPath(path) {
+		t.Fatal("nil HoldsPath() = true")
 	}
 }

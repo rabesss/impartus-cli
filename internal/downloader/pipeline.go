@@ -44,6 +44,9 @@ type DownloadedChunk struct {
 	LectureID      int
 	DownloadTime   time.Duration
 	Err            error
+	// ResumedPath is a chunk an earlier attempt already decrypted; it skips
+	// decryption.
+	ResumedPath string
 }
 
 // DecryptedChunk holds the result of decrypting a downloaded chunk.
@@ -216,6 +219,16 @@ func (p *LecturePipeline) downloadWorker() {
 				return
 			}
 
+			if resumedPath, size, ok := p.downloader.completedChunk(task.LectureID, task.View, task.ChunkID); ok {
+				ChunkResumed(p.config.ProgressTracker, size)
+				select {
+				case <-p.ctx.Done():
+					return
+				case p.downloadedChunks <- DownloadedChunk{ChunkID: task.ChunkID, View: task.View, LectureID: task.LectureID, ResumedPath: resumedPath}:
+				}
+				continue
+			}
+
 			encryptedPath, encryptedBytes, err := p.downloader.downloadBytesWithRetry(p.ctx, task.URL, task.LectureID, task.ChunkID, task.View, p.config.ProgressTracker)
 			result := DownloadedChunk{
 				ChunkID:        task.ChunkID,
@@ -253,6 +266,15 @@ func (p *LecturePipeline) decryptWorker() {
 		case downloaded, ok := <-p.downloadedChunks:
 			if !ok {
 				return
+			}
+
+			if downloaded.ResumedPath != "" {
+				select {
+				case <-p.ctx.Done():
+					return
+				case p.decryptedChunks <- DecryptedChunk{ChunkID: downloaded.ChunkID, View: downloaded.View, DecryptedPath: downloaded.ResumedPath}:
+				}
+				continue
 			}
 
 			if downloaded.Err != nil {

@@ -110,3 +110,26 @@ func (lock *Lock) Close() error {
 	}
 	return errors.Join(unlockFile(lock.file), lock.file.Close())
 }
+
+// HoldsPath reports whether lock still owns the file currently at path. It is
+// false once the file was renamed or replaced after the lock was taken, so a
+// caller can tell that it locked a file another owner already moved away.
+func (lock *Lock) HoldsPath(path string) bool {
+	if lock == nil {
+		return false
+	}
+	lock.mu.Lock()
+	defer lock.mu.Unlock()
+	if lock.closed || lock.file == nil {
+		return false
+	}
+	held, err := lock.file.Stat()
+	if err != nil {
+		return false
+	}
+	current, err := os.Lstat(path)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(held, current)
+}
