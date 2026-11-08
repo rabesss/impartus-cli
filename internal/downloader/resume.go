@@ -305,7 +305,19 @@ func (r *resumeState) verifyKey(key []byte) (discarded bool, err error) {
 	h := sha256.New()
 	_, _ = io.WriteString(h, "impartus-resume-key-v1\x00") //nolint:errcheck // hash writes never fail
 	_, _ = h.Write(key)                                    // hash writes never fail
-	keyHash := hex.EncodeToString(h.Sum(nil))
+	return r.recordKeyHash(hex.EncodeToString(h.Sum(nil)))
+}
+
+// clearKeyHash marks a workspace whose chunks were copied from a clear (no
+// key) playlist. It cannot collide with a hex SHA-256 key hash.
+const clearKeyHash = "clear"
+
+// verifyClear is verifyKey for a playlist with no key.
+func (r *resumeState) verifyClear() (discarded bool, err error) {
+	return r.recordKeyHash(clearKeyHash)
+}
+
+func (r *resumeState) recordKeyHash(keyHash string) (discarded bool, err error) {
 	if r.meta.KeyHash == keyHash {
 		return false, nil
 	}

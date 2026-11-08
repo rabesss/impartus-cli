@@ -100,5 +100,11 @@ func (d *Downloader) fetchDecryptionKeyOnce(ctx context.Context, keyURL string) 
 	}
 	derivedKey := deriveDecryptionKey(keyURLContent)
 	zeroKey(keyURLContent) // zero raw key material after deriving
+	// Callers treat a nil key as a clear playlist, so a malformed response
+	// (an empty 200, say) must fail here instead of reaching them.
+	if n := len(derivedKey); n != 16 && n != 24 && n != 32 {
+		zeroKey(derivedKey)
+		return nil, fmt.Errorf("invalid AES key length: %d", n)
+	}
 	return derivedKey, nil
 }

@@ -119,7 +119,7 @@ func TestGetAuthorizedWithTokenRejectsMalformedUnsupportedOrRelativeURL(t *testi
 		"file:///tmp/segment.ts",
 		"https://media.example.test/%zz?token=bearer-secret",
 		"https://media.example.test/segment.ts?token=bearer-secret%zz",
-		"https://media.example.test/segment.ts?token=bearer-secret;keep=1",
+		"https://media.example.test/segment.ts?token=bearer-secret;keep=%zz",
 	} {
 		t.Run(rawURL, func(t *testing.T) {
 			resp, err := c.GetAuthorizedWithTokenForOrigins(context.Background(), rawURL, "bearer-secret")

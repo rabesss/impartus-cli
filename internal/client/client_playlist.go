@@ -17,7 +17,6 @@ import (
 )
 
 var invalidFileNameRe = regexp.MustCompile(`[<>:"/\\|?*\n\r]`)
-var uriValueRe = regexp.MustCompile(`URI="([^"]+)"`)
 
 const (
 	maxPlaylistResponseSize int64 = 10 * 1024 * 1024
@@ -124,21 +123,19 @@ func parsePlaylistWithBase(scanner *bufio.Scanner, baseURL *url.URL, id int, tit
 	secondDurations := make([]float64, 0)
 	pendingDuration := 0.0
 	segmentCount := 0
+	currentKeyURL := ""
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
-		if parsedOutput.KeyURL == "" && strings.HasPrefix(line, "#EXT-X-KEY") {
-			match := uriValueRe.FindStringSubmatch(line)
-			if len(match) == 2 {
-				keyURL, err := resolveMediaReference(baseURL, match[1])
-				if err != nil {
-					return ParsedPlaylist{}, fmt.Errorf("invalid playlist key URI: %w", err)
-				}
-				parsedOutput.KeyURL = keyURL
+		if strings.HasPrefix(line, "#EXT-X-KEY") {
+			keyURL, err := parsePlaylistKey(baseURL, line)
+			if err != nil {
+				return ParsedPlaylist{}, err
 			}
+			currentKeyURL = keyURL
 		} else if strings.HasPrefix(line, "#EXTINF:") {
 			pendingDuration = parseEXTINFDuration(line)
 		} else if line == "#EXT-X-DISCONTINUITY" {
@@ -150,6 +147,9 @@ func parsePlaylistWithBase(scanner *bufio.Scanner, baseURL *url.URL, id int, tit
 			segmentURL, err := resolveMediaReference(baseURL, line)
 			if err != nil {
 				return ParsedPlaylist{}, fmt.Errorf("invalid playlist segment URI: %w", err)
+			}
+			if err := applySegmentKey(&parsedOutput, segmentCount, currentKeyURL); err != nil {
+				return ParsedPlaylist{}, err
 			}
 			if isFirstView {
 				firstViewURLs = append(firstViewURLs, segmentURL)
@@ -166,6 +166,9 @@ func parsePlaylistWithBase(scanner *bufio.Scanner, baseURL *url.URL, id int, tit
 	if err := scanner.Err(); err != nil {
 		return ParsedPlaylist{}, fmt.Errorf("scan playlist: %w", err)
 	}
+	if segmentCount == 0 {
+		parsedOutput.KeyURL = currentKeyURL
+	}
 
 	parsedOutput.FirstViewURLs = firstViewURLs
 	parsedOutput.FirstDurations = firstDurations
@@ -176,6 +179,130 @@ func parsePlaylistWithBase(scanner *bufio.Scanner, baseURL *url.URL, id int, tit
 	}
 
 	return parsedOutput, nil
+}
+
+// applySegmentKey records the key in force for a playlist's segment. The key
+// for the first segment decides how the whole playlist is decrypted, so every
+// later segment must agree on whether it is encrypted at all.
+func applySegmentKey(playlist *ParsedPlaylist, segmentIndex int, keyURL string) error {
+	if segmentIndex == 0 {
+		playlist.KeyURL = keyURL
+		return nil
+	}
+	if (keyURL == "") != (playlist.KeyURL == "") {
+		return errors.New("playlist mixes clear and encrypted segments")
+	}
+	return nil
+}
+
+// parsePlaylistKey returns the resolved key URI an #EXT-X-KEY line puts in
+// force, or "" when it switches encryption off. Segments are decrypted whole
+// with AES-CBC, so only AES-128 is accepted, together with the non-standard
+// ENCRYPTION spelling some upstreams send and a missing METHOD (the legacy
+// behavior). Every other method is refused rather than mangled.
+func parsePlaylistKey(baseURL *url.URL, line string) (string, error) {
+	list, ok := strings.CutPrefix(line, "#EXT-X-KEY:")
+	if !ok {
+		// A bare or misspelled key tag must not read as a clear playlist.
+		return "", errors.New("invalid playlist key: malformed EXT-X-KEY tag")
+	}
+	attributes, err := parseHLSAttributes(list)
+	if err != nil {
+		return "", fmt.Errorf("invalid playlist key: %w", err)
+	}
+	method, hasMethod := attributes["METHOD"]
+	switch method = strings.ToUpper(strings.TrimSpace(method)); {
+	case method == "NONE":
+		return "", nil
+	case !hasMethod, method == "AES-128", method == "ENCRYPTION":
+	default:
+		// The METHOD value is upstream text, so it is not echoed: a crafted
+		// playlist could put credential material in it.
+		return "", errors.New("unsupported HLS encryption method: only AES-128 is supported")
+	}
+	uri, ok := attributes["URI"]
+	if !ok {
+		return "", errors.New("invalid playlist key: encrypted key has no URI")
+	}
+	keyURL, err := resolveMediaReference(baseURL, uri)
+	if err != nil {
+		return "", fmt.Errorf("invalid playlist key URI: %w", err)
+	}
+	return keyURL, nil
+}
+
+// parseHLSAttributes parses an HLS attribute list (NAME=value pairs separated
+// by commas, where a value may be a quoted string containing commas and '=').
+// Names are upper-cased. A repeated name, a pair with no '=', or an
+// unterminated quoted string is an error, so an ambiguous key line cannot be
+// read two ways.
+func parseHLSAttributes(list string) (map[string]string, error) {
+	attributes := make(map[string]string)
+	for i := skipHLSBlanks(list, 0); i < len(list); i = skipHLSBlanks(list, i) {
+		eq := strings.IndexByte(list[i:], '=')
+		if eq < 0 {
+			return nil, errors.New("malformed attribute list")
+		}
+		name := strings.ToUpper(strings.TrimSpace(list[i : i+eq]))
+		if name == "" || strings.ContainsAny(name, ",\"") {
+			return nil, errors.New("malformed attribute list")
+		}
+		value, next, err := parseHLSAttributeValue(list, i+eq+1)
+		if err != nil {
+			return nil, err
+		}
+		if _, dup := attributes[name]; dup {
+			return nil, errors.New("repeated attribute")
+		}
+		attributes[name] = value
+		i = next
+		if i < len(list) && list[i] == ',' {
+			i++
+		}
+	}
+	return attributes, nil
+}
+
+// parseHLSAttributeValue parses the attribute value that starts at list[i]
+// and returns it with the index just past it, which is the separating comma
+// or the end of list.
+func parseHLSAttributeValue(list string, i int) (string, int, error) {
+	if start := skipHLSBlanks(list, i); start < len(list) && list[start] == '"' {
+		return parseHLSQuotedValue(list, start)
+	}
+	comma := strings.IndexByte(list[i:], ',')
+	if comma < 0 {
+		comma = len(list) - i
+	}
+	value := strings.TrimSpace(list[i : i+comma])
+	if strings.Contains(value, `"`) {
+		// A stray quote means the line was meant to hold a quoted string
+		// that never closes; reading on would split it into attributes.
+		return "", 0, errors.New("malformed attribute list")
+	}
+	return value, i + comma, nil
+}
+
+// parseHLSQuotedValue parses the quoted string whose opening quote is at
+// list[i].
+func parseHLSQuotedValue(list string, i int) (string, int, error) {
+	closing := strings.IndexByte(list[i+1:], '"')
+	if closing < 0 {
+		return "", 0, errors.New("unterminated quoted attribute")
+	}
+	value := list[i+1 : i+1+closing]
+	next := skipHLSBlanks(list, i+closing+2)
+	if next < len(list) && list[next] != ',' {
+		return "", 0, errors.New("malformed attribute list")
+	}
+	return value, next, nil
+}
+
+func skipHLSBlanks(list string, i int) int {
+	for i < len(list) && (list[i] == ' ' || list[i] == '\t') {
+		i++
+	}
+	return i
 }
 
 func resolveMediaReference(baseURL *url.URL, rawReference string) (string, error) {
@@ -222,7 +349,7 @@ func validHTTPURL(parsedURL *url.URL) bool {
 			return false
 		}
 	}
-	_, err := url.ParseQuery(parsedURL.RawQuery)
+	_, err := parseMediaQuery(parsedURL.RawQuery)
 	return err == nil
 }
 

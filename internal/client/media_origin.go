@@ -208,7 +208,7 @@ func hasCredentialQuery(parsed *url.URL) bool {
 	if parsed == nil || parsed.RawQuery == "" {
 		return false
 	}
-	query, err := url.ParseQuery(parsed.RawQuery)
+	query, err := parseMediaQuery(parsed.RawQuery)
 	if err != nil {
 		return true
 	}
@@ -218,6 +218,18 @@ func hasCredentialQuery(parsed *url.URL) bool {
 		}
 	}
 	return false
+}
+
+// parseMediaQuery parses a raw media query and treats ';' as a parameter
+// separator, like '&'. A ';' is legal in a URI query and the secrets scrubber
+// already splits on it, but url.ParseQuery rejects it. Malformed escapes are
+// still an error.
+func parseMediaQuery(rawQuery string) (url.Values, error) {
+	return url.ParseQuery(strings.ReplaceAll(rawQuery, ";", "&"))
+}
+
+func isQuerySeparator(b byte) bool {
+	return b == '&' || b == ';'
 }
 
 func normalizeBearerToken(token string) string {
@@ -267,20 +279,35 @@ func stripBearerQueryParams(rawURL, token string) (string, error) {
 	if err != nil {
 		return "", newMediaOriginError(ErrInvalidMediaURL)
 	}
-	if _, err := url.ParseQuery(parsed.RawQuery); err != nil {
+	if _, err := parseMediaQuery(parsed.RawQuery); err != nil {
 		return "", newMediaOriginError(ErrInvalidMediaURL)
 	}
-	params := strings.Split(parsed.RawQuery, "&")
-	kept := params[:0]
-	for _, param := range params {
-		if !queryCarriesBearer(param, token) {
-			kept = append(kept, param)
+	rawQuery := parsed.RawQuery
+	var kept strings.Builder
+	keptAny, removed := false, false
+	start := 0
+	for i := 0; i <= len(rawQuery); i++ {
+		if i < len(rawQuery) && !isQuerySeparator(rawQuery[i]) {
+			continue
 		}
+		param := rawQuery[start:i]
+		if queryCarriesBearer(param, token) {
+			removed = true
+		} else {
+			// A kept parameter after the first keeps the separator that
+			// preceded it, so '&' and ';' survive unchanged.
+			if keptAny {
+				kept.WriteByte(rawQuery[start-1])
+			}
+			kept.WriteString(param)
+			keptAny = true
+		}
+		start = i + 1
 	}
-	if len(kept) == len(params) {
+	if !removed {
 		return rawURL, nil
 	}
-	parsed.RawQuery = strings.Join(kept, "&")
+	parsed.RawQuery = kept.String()
 	return parsed.String(), nil
 }
 
@@ -293,7 +320,7 @@ func stripBearerTokenQuery(rawURL, token string) (string, error) {
 	if err != nil {
 		return "", newMediaOriginError(ErrInvalidMediaURL)
 	}
-	query, err := url.ParseQuery(parsed.RawQuery)
+	query, err := parseMediaQuery(parsed.RawQuery)
 	if err != nil {
 		return "", newMediaOriginError(ErrInvalidMediaURL)
 	}
