@@ -50,7 +50,7 @@ type UnconfiguredMediaOriginError struct {
 func (e *UnconfiguredMediaOriginError) Error() string {
 	if e.Strict {
 		if e.Origin == "" {
-			return "media origin (withheld: it contains the login token) is not in mediaOrigins (IMPARTUS_MEDIA_ORIGINS); strictMediaOrigins refused the request before it was sent"
+			return "media origin (withheld: it looks like a credential) is not in mediaOrigins (IMPARTUS_MEDIA_ORIGINS); strictMediaOrigins refused the request before it was sent"
 		}
 		return fmt.Sprintf(
 			"media origin %s is not in mediaOrigins (IMPARTUS_MEDIA_ORIGINS); strictMediaOrigins refused the request before it was sent",

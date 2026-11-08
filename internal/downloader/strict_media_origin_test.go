@@ -206,7 +206,10 @@ func TestDownloadChunkStrictMediaOriginsWithholdsBearerOrigin(t *testing.T) {
 	d := testLimitDownloader(t.TempDir(), client.New(nil, nil))
 	d.config.StrictMediaOrigins = true
 	d.config.Token = "MiXeDChunkBearer"
-	_, _, _, err := d.doDownloadChunkWithLimit(t.Context(), strictMediaURL("https://"+d.config.Token+".cdn.example.test"), 1, 0, "left", true, 8)
+	path, data, written, err := d.doDownloadChunkWithLimit(t.Context(), strictMediaURL("https://"+d.config.Token+".cdn.example.test"), 1, 0, "left", true, 8)
+	if path != "" || data != nil || written != 0 {
+		t.Fatalf("refused chunk returned path=%q data=%v written=%d", path, data, written)
+	}
 	assertWithheldStrictRefusal(t, err, d.config.Token)
 }
 
@@ -228,7 +231,10 @@ func TestDownloadChunkStrictMediaOriginsDropsURLOnOtherPolicyRefusal(t *testing.
 	d := testLimitDownloader(t.TempDir(), client.New(server.Client(), nil))
 	d.config.StrictMediaOrigins = true
 	d.mediaOrigins = []string{server.URL}
-	_, _, _, err := d.doDownloadChunkWithLimit(t.Context(), strictMediaURL(server.URL), 1, 0, "left", true, 8)
+	path, data, written, err := d.doDownloadChunkWithLimit(t.Context(), strictMediaURL(server.URL), 1, 0, "left", true, 8)
+	if path != "" || data != nil || written != 0 {
+		t.Fatalf("refused chunk returned path=%q data=%v written=%d", path, data, written)
+	}
 	if err == nil || !errors.Is(err, client.ErrMediaOrigin) {
 		t.Fatalf("error = %v, want ErrMediaOrigin", err)
 	}

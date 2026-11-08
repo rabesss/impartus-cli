@@ -317,6 +317,9 @@ and redirects then return an error that names only the refused
 media origin https://cdn.example.com is not in mediaOrigins (IMPARTUS_MEDIA_ORIGINS); strictMediaOrigins refused the request before it was sent
 ```
 
+If the refused origin looks like it contains the login token, the error leaves
+the origin out and says it was withheld; it is still the same strict refusal.
+
 Add that origin to `mediaOrigins` if you trust it. The option is off by default
 because lectures whose playlists name a CDN not yet listed in `mediaOrigins`
 would otherwise stop downloading.

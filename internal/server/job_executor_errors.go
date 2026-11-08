@@ -67,9 +67,9 @@ func sanitizeUpstreamErr(err error) string {
 	return "upstream API error"
 }
 
-// mediaOriginPolicyRefusal is the job error for a media URL refused by the
+// mediaOriginPolicyRefusal is the job error for a media URL rejected by the
 // media origin policy, without the URL, which may carry signing material.
-const mediaOriginPolicyRefusal = "media request refused by the media origin policy (mediaOrigins / IMPARTUS_MEDIA_ORIGINS)"
+const mediaOriginPolicyRefusal = "media URL rejected by the media URL policy (check mediaOrigins / IMPARTUS_MEDIA_ORIGINS and that the URL is HTTPS without credentials)"
 
 func containsAny(s string, substrs []string) bool {
 	for _, sub := range substrs {
