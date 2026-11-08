@@ -84,6 +84,10 @@ func TestScrubSeparatorlessAndCompoundKeys(t *testing.T) {
 		{"request failed: bearer secret-abc123 rejected", "request failed: bearer REDACTED rejected"},
 		{"Authorization Bearer secret-abc123", "Authorization REDACTED"},
 		{"Proxy-Authorization Basic c2VjcmV0LWFiYzEyMw==", "Proxy-Authorization REDACTED"},
+		{"Authorization Custom secret-abc123", "Authorization REDACTED"},
+		{`{"error":"Authorization Bearer secret-abc123"} status=401`, `{"error":"Authorization REDACTED"} status=401`},
+		{`{"error":"Cookie session=secret-abc123"}`, `{"error":"Cookie REDACTED"}`},
+		{`{"error":"X-Api-Key secret-abc123"}`, `{"error":"X-Api-Key REDACTED"}`},
 		{"x-api-key secret-abc123, status=401", "x-api-key REDACTED, status=401"},
 		{"X-Api-Key secret-abc123", "X-Api-Key REDACTED"},
 		{"headers: Cookie session=secret-abc123", "headers: Cookie REDACTED"},
@@ -104,6 +108,7 @@ func TestScrubSeparatorlessAndCompoundKeys(t *testing.T) {
 		{"Bearer REDACTED", "Bearer REDACTED"},
 		{"cookie consent banner dismissed", "cookie consent banner dismissed"},
 		{"authorization failed for lecture 42", "authorization failed for lecture 42"},
+		{"Authorization header missing-or-invalid", "Authorization header missing-or-invalid"},
 		{"error: api-key missing", "error: api-key missing"},
 		{"the doctor says it contains a bearer token", "the doctor says it contains a bearer token"},
 	} {
@@ -193,6 +198,8 @@ func TestScrubEscapedAndNestedQuotedAssignments(t *testing.T) {
 		{`x-auth-token: \"secret-a secret-b\" tail-visible`, `x-auth-token: \"REDACTED\" tail-visible`},
 		{`password=abc"sig="secret-x secret-y"`, ""},
 		{`password=\'secret-one secret-two\' keep=1`, `password=\'REDACTED\' keep=1`},
+		{`password=\\"secret-one secret-two\\" keep=1`, `password=\\"REDACTED\\" keep=1`},
+		{`{"msg":"{\"detail\":\"password=\\\"secret-one secret-two\\\" next\"}"}`, `{"msg":"{\"detail\":\"password=\\\"REDACTED\\\" next\"}"}`},
 		{`{"msg":"token: \"secret-a secret-b\", status=401"}`, `{"msg":"token: \"REDACTED\", status=401"}`},
 	} {
 		t.Run(test.input, func(t *testing.T) {

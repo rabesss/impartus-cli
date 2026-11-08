@@ -119,7 +119,7 @@ var separatorlessCookie = regexp.MustCompile(
 	separatorlessBoundary + `(\s*(?:set[-_]?)?cookie2?[ \t]+)[^\s&]+`,
 )
 var separatorlessAPIKey = regexp.MustCompile(
-	separatorlessBoundary + `(\s*(?:x[-_])?api[-_]?key[ \t]+)[^\s,;&}]+`,
+	separatorlessBoundary + `(\s*(?:x[-_])?api[-_]?key[ \t]+)\\*["']?[^\s,;&}"'\\]+`,
 )
 
 // bareBearerCredential redacts the token68 credential after a standalone
@@ -1568,8 +1568,8 @@ type credentialAssignmentStep struct {
 	lineValue bool
 	// accept, when set, rejects matches whose value does not have the shape of
 	// a credential, so that rules without a key=value separator do not
-	// redact ordinary prose.
-	accept func(credential string) bool
+	// redact ordinary prose. value[start:end] is the first word of the value.
+	accept func(value string, start, end int) bool
 }
 
 var credentialAssignmentStepList = []credentialAssignmentStep{
@@ -1578,13 +1578,13 @@ var credentialAssignmentStepList = []credentialAssignmentStep{
 	{expression: quotedKeySchemeSecretValue, prefixGroup: 1},
 	{expression: quotedKeyBareSecretValue, prefixGroup: 1},
 	{expression: strongCredentialAssignment, prefixGroup: 2, openValue: true, lineValue: true},
-	{expression: separatorlessAuthorization, prefixGroup: 2, openValue: true, lineValue: true, accept: startsWithCredentialScheme},
-	{expression: separatorlessCookie, prefixGroup: 2, openValue: true, lineValue: true, accept: looksLikeCookieValue},
-	{expression: separatorlessAPIKey, prefixGroup: 2, openValue: true, accept: looksLikeTokenValue},
+	{expression: separatorlessAuthorization, prefixGroup: 2, openValue: true, lineValue: true, accept: looksLikeAuthorizationValue},
+	{expression: separatorlessCookie, prefixGroup: 2, openValue: true, lineValue: true, accept: firstWord(looksLikeCookieValue)},
+	{expression: separatorlessAPIKey, prefixGroup: 2, openValue: true, accept: firstWord(looksLikeTokenValue)},
 	{expression: schemeSecretAssignment, prefixGroup: 2},
 	{expression: bareSecretEquals, prefixGroup: 2, openValue: true},
 	{expression: bareSecretColon, prefixGroup: 2, openValue: true},
-	{expression: bareBearerCredential, prefixGroup: 2, accept: looksLikeTokenValue},
+	{expression: bareBearerCredential, prefixGroup: 2, accept: firstWord(looksLikeTokenValue)},
 }
 
 func credentialAssignmentSteps() []credentialAssignmentStep {
@@ -1617,10 +1617,57 @@ func looksLikeTokenValue(credential string) bool {
 	return !diagnostic
 }
 
-// startsWithCredentialScheme accepts a separator-less Authorization header
-// whose first word, inside any opening quote, is a recognized scheme.
-func startsWithCredentialScheme(word string) bool {
-	return hasRecognizedCredentialScheme(word[quoteOpenerWidth(word, 0):])
+func firstWord(accept func(string) bool) func(string, int, int) bool {
+	return func(value string, start, end int) bool { return accept(value[start:end]) }
+}
+
+// looksLikeAuthorizationValue accepts a separator-less Authorization header
+// whose first word, inside any opening quote, is a recognized scheme, or is
+// a custom scheme word followed by an opaque credential on the same line
+// ("Authorization Custom abc-123..."). Prose such as "authorization failed
+// for lecture 42" has no such credential word.
+func looksLikeAuthorizationValue(value string, start, end int) bool {
+	word := value[start:end]
+	word = word[quoteOpenerWidth(word, 0):]
+	if hasRecognizedCredentialScheme(word) {
+		return true
+	}
+	if word == "" || !isSchemeWord(word) {
+		return false
+	}
+	next := end
+	for next < len(value) && (value[next] == ' ' || value[next] == '\t') {
+		next++
+	}
+	if next == end {
+		return false
+	}
+	return looksLikeOpaqueCredential(value[next:credentialWordEnd(value, next, len(value))])
+}
+
+func isSchemeWord(word string) bool {
+	for index := 0; index < len(word); index++ {
+		if !isCredentialKeyByte(word[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+// minOpaqueCredentialBytes and maxPlainCredentialBytes describe a word that
+// reads as a credential rather than prose: long enough and carrying a digit,
+// or long enough that no ordinary word matches.
+const (
+	minOpaqueCredentialBytes = 8
+	maxPlainCredentialBytes  = 20
+)
+
+func looksLikeOpaqueCredential(word string) bool {
+	word = strings.TrimRight(word, `"'`)
+	if len(word) >= maxPlainCredentialBytes {
+		return true
+	}
+	return len(word) >= minOpaqueCredentialBytes && strings.ContainsAny(word, "0123456789")
 }
 
 // looksLikeCookieValue accepts a separator-less cookie header only when its
@@ -1668,14 +1715,22 @@ func nextCredentialMatch(value string, step credentialAssignmentStep, from int) 
 		// the match so the scan always advances.
 		return credentialMatch{matchStart: index[0], prefixEnd: index[1], resume: max(index[1], from+1)}, true
 	}
-	if step.accept != nil && !step.accept(value[prefixEnd:index[1]]) {
+	if step.accept != nil && !step.accept(value, prefixEnd, index[1]) {
 		// A rejected separator-less rule keeps its value visible. Its
 		// expression matched only the first word, so resuming after that word
 		// keeps the scan linear and still finds a later credential.
 		return credentialMatch{matchStart: index[0], prefixEnd: prefixEnd, start: prefixEnd, end: index[1], resume: index[1]}, true
 	}
-	if step.lineValue {
-		index[1] = lineValueEnd(value, index[1])
+	if step.lineValue && quoteOpenerWidth(value, prefixEnd) == 0 {
+		// A line value ends at a line break. When the assignment itself sits
+		// inside a quoted string ({"error":"Authorization Bearer ..."}), it
+		// also ends at that string's closing quote, so the delimiters and
+		// the rest of the line stay intact.
+		var boundaryQuote byte
+		if index[3]-index[2] == 1 && (value[index[2]] == '"' || value[index[2]] == '\'') {
+			boundaryQuote = value[index[2]]
+		}
+		index[1] = lineValueEnd(value, prefixEnd, boundaryQuote)
 	}
 	match := credentialMatch{matchStart: index[0], prefixEnd: prefixEnd, start: prefixEnd, end: index[1], resume: index[1]}
 	if step.openValue {
@@ -1717,10 +1772,14 @@ func openCredentialValue(value string, step credentialAssignmentStep, match cred
 	return match
 }
 
-// lineValueEnd extends a value that runs to the end of its line, stopping at
-// a line break or a query separator like the strong assignment expression.
-func lineValueEnd(value string, end int) int {
+// lineValueEnd finds the end of a value that runs to the end of its line,
+// stopping at a line break, a query separator like the strong assignment
+// expression, or an unescaped boundaryQuote when it is not zero.
+func lineValueEnd(value string, end int, boundaryQuote byte) int {
 	for end < len(value) && value[end] != '\r' && value[end] != '\n' && value[end] != '&' {
+		if boundaryQuote != 0 && value[end] == boundaryQuote && !isEscapedByte(value, end) {
+			break
+		}
 		end++
 	}
 	return end
@@ -2116,46 +2175,66 @@ func isQuotedValueStart(value string, start int) bool {
 	return quoteOpenerWidth(value, start) > 0
 }
 
+// maxQuoteEscapeDepth bounds how many backslashes may escape a quote that
+// opens a value, as in JSON nested inside JSON (password=\\\"...\\\").
+const maxQuoteEscapeDepth = 8
+
 // quoteOpenerWidth returns the width of a quote that opens a value at start:
-// 1 for '"' or '\”, 2 for a backslash-escaped quote as written inside a JSON
-// or C string literal, and 0 when the value is not quoted.
+// 1 for '"' or '\”, or 1 plus the number of backslashes for a quote escaped
+// once or more, as written inside (nested) JSON or C string literals. It is 0
+// when the value is not quoted.
 func quoteOpenerWidth(value string, start int) int {
 	if start < 0 || start >= len(value) {
 		return 0
 	}
-	switch value[start] {
-	case '"', '\'':
-		return 1
-	case '\\':
-		if start+1 < len(value) && (value[start+1] == '"' || value[start+1] == '\'') && !isEscapedByte(value, start) {
-			return 2
-		}
+	run := 0
+	for start+run < len(value) && value[start+run] == '\\' && run <= maxQuoteEscapeDepth {
+		run++
 	}
-	return 0
+	if run > maxQuoteEscapeDepth || start+run >= len(value) {
+		return 0
+	}
+	if quote := value[start+run]; quote != '"' && quote != '\'' {
+		return 0
+	}
+	if run > 0 && start > 0 && value[start-1] == '\\' {
+		// The backslashes continue an earlier run, so they do not open a value.
+		return 0
+	}
+	return run + 1
 }
 
 // quotedValueClose finds the closing delimiter of the quoted value that opens
 // at start and returns where it begins and its width. A plain quote closes at
-// the next unescaped quote of its kind. An escaped quote closes at the next
-// escaped quote of its kind, or, without a width, where an unescaped one ends
-// the enclosing string. An unterminated value runs to the end of the text.
+// the next unescaped quote of its kind. A quote escaped by k backslashes
+// closes at the next quote of its kind escaped by exactly k backslashes, or,
+// without a width, where a quote escaped by fewer ends an enclosing string.
+// An unterminated value runs to the end of the text.
 func quotedValueClose(value string, start int) (int, int) {
 	width := quoteOpenerWidth(value, start)
 	if width == 0 {
 		return start, 0
 	}
-	quote := value[start+width-1]
+	depth := width - 1
+	quote := value[start+depth]
 	for index := start + width; index < len(value); index++ {
 		if value[index] != quote {
 			continue
 		}
-		escaped := isEscapedByte(value, index)
+		if depth == 0 {
+			if !isEscapedByte(value, index) {
+				return index, 1
+			}
+			continue
+		}
+		backslashes := 0
+		for backslashes <= depth && index-backslashes-1 >= start+width && value[index-backslashes-1] == '\\' {
+			backslashes++
+		}
 		switch {
-		case width == 1 && !escaped:
-			return index, 1
-		case width == 2 && escaped:
-			return index - 1, 2
-		case width == 2:
+		case backslashes == depth:
+			return index - depth, width
+		case backslashes < depth:
 			return index, 0
 		}
 	}
