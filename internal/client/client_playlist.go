@@ -225,8 +225,8 @@ func parsePlaylistKey(baseURL *url.URL, line string) (string, error) {
 		return "", errors.New("unsupported HLS encryption method: only AES-128 is supported")
 	}
 	if iv, hasIV := attributes["IV"]; hasIV {
-		if err := validatePlaylistKeyIV(iv); err != nil {
-			return "", err
+		if ivErr := validatePlaylistKeyIV(iv); ivErr != nil {
+			return "", ivErr
 		}
 	}
 	uri, ok := attributes["URI"]

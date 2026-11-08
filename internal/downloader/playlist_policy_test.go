@@ -58,10 +58,10 @@ func TestKeyedPlaylistWithoutSegmentsFetchesNoKey(t *testing.T) {
 		t.Fatalf("KeyURL = %q, want none for a playlist without segments", playlist.KeyURL)
 	}
 
-	if _, err := d.DownloadPlaylist(t.Context(), playlist, nil, nil); err != nil {
+	if _, err = d.DownloadPlaylist(t.Context(), playlist, nil, nil); err != nil {
 		t.Fatalf("DownloadPlaylist() error = %v", err)
 	}
-	if _, err := d.DownloadAndJoinPlaylist(t.Context(), playlist, nil, nil); !errors.Is(err, ErrNoSelectedMedia) {
+	if _, err = d.DownloadAndJoinPlaylist(t.Context(), playlist, nil, nil); !errors.Is(err, ErrNoSelectedMedia) {
 		t.Fatalf("DownloadAndJoinPlaylist() error = %v, want ErrNoSelectedMedia", err)
 	}
 	stream, err := d.StartPlaybackStream(t.Context(), playlist)

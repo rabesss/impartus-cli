@@ -212,7 +212,7 @@ func hasEncodedTokenFragment(value string, windows tokenWindows) bool {
 // and of the JSON string escapes (\uXXXX, \", \\, \/ and the control
 // escapes) when json is set. Invalid escapes are kept as they are.
 func decodeErrorBodyLayer(value string, percent, json bool) (string, bool) {
-	if !(percent && strings.IndexByte(value, '%') >= 0) && !(json && strings.IndexByte(value, '\\') >= 0) {
+	if (!percent || strings.IndexByte(value, '%') < 0) && (!json || strings.IndexByte(value, '\\') < 0) {
 		return value, false
 	}
 	var out strings.Builder
