@@ -27,6 +27,7 @@ type resumeServer struct {
 	fail     map[string]int
 	requests map[string]int
 	server   *httptest.Server
+	clear    bool // serve chunks unencrypted
 }
 
 func newResumeServer(t *testing.T, chunkCount int) *resumeServer {
@@ -46,12 +47,15 @@ func (s *resumeServer) serve(w http.ResponseWriter, r *http.Request) {
 	status, failing := s.fail[r.URL.Path]
 	key := append([]byte(nil), s.key...)
 	plaintext, known := s.chunks[r.URL.Path]
+	clear := s.clear
 	s.mu.Unlock()
 	switch {
 	case failing:
 		http.Error(w, "unavailable", status)
 	case r.URL.Path == "/key":
 		_, _ = w.Write(fakeKeyResponse(key)) //nolint:errcheck
+	case known && clear:
+		_, _ = w.Write(plaintext) //nolint:errcheck
 	case known:
 		_, _ = w.Write(encryptCBCZeroIV(s.t, plaintext, key)) //nolint:errcheck
 	default:

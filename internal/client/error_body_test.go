@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"unicode/utf16"
 )
 
 // longTestBearer is a 900-byte placeholder bearer, longer than every error
@@ -159,5 +160,40 @@ func TestReadSanitizedErrorBodySanitizesReadError(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), token) {
 		t.Fatalf("read error exposed the token: %v", err)
+	}
+}
+
+func TestReadSanitizedErrorBodyOmitsSurrogatePairTokenFragment(t *testing.T) {
+	// Four non-BMP characters are 16 UTF-8 bytes; JSON spells each as a
+	// surrogate pair.
+	token := strings.Repeat("\U0001F600", 4) + longTestBearer()[:200]
+	var escaped strings.Builder
+	for _, r := range token[:16] {
+		high, low := utf16.EncodeRune(r)
+		fmt.Fprintf(&escaped, `\u%04x\u%04x`, high, low)
+	}
+	got, err := ReadSanitizedErrorBody(strings.NewReader(`{"error":"`+escaped.String()+`"}`), 512, token)
+	if err != nil {
+		t.Fatalf("ReadSanitizedErrorBody() error = %v", err)
+	}
+	if got != UpstreamErrorBodyOmitted {
+		t.Fatalf("ReadSanitizedErrorBody() = %q, want %q", got, UpstreamErrorBodyOmitted)
+	}
+}
+
+func TestReadSanitizedErrorBodyKeepsBodyForTokenOver4KiB(t *testing.T) {
+	token := strings.Repeat(longTestBearer(), 6)[:5000]
+	const body = `{"error":"quota exceeded"}`
+	got, err := ReadSanitizedErrorBody(strings.NewReader(body), 512, token)
+	if err != nil || got != body {
+		t.Fatalf("ReadSanitizedErrorBody() = %q, %v; want %q", got, err, body)
+	}
+	got, err = ReadSanitizedErrorBody(strings.NewReader("echo "+token[1000:1100]+" access_token=other-secret"), 512, token)
+	if err != nil {
+		t.Fatalf("ReadSanitizedErrorBody() error = %v", err)
+	}
+	assertNoTokenFragment(t, got, token)
+	if strings.Contains(got, "other-secret") {
+		t.Fatalf("ReadSanitizedErrorBody() = %q kept a generic credential", got)
 	}
 }

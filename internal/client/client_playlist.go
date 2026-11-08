@@ -17,8 +17,6 @@ import (
 )
 
 var invalidFileNameRe = regexp.MustCompile(`[<>:"/\\|?*\n\r]`)
-var uriValueRe = regexp.MustCompile(`URI="([^"]+)"`)
-var methodValueRe = regexp.MustCompile(`(?:^#EXT-X-KEY:|,)\s*METHOD=([^,]*)`)
 
 const (
 	maxPlaylistResponseSize int64 = 10 * 1024 * 1024
@@ -190,31 +188,89 @@ func parsePlaylistWithBase(scanner *bufio.Scanner, baseURL *url.URL, id int, tit
 
 // parsePlaylistKey returns the resolved key URI an #EXT-X-KEY line puts in
 // force, or "" when it switches encryption off. Segments are decrypted whole
-// with AES-CBC, so SAMPLE-AES variants are refused rather than mangled. Other
-// methods are treated as AES-128 for compatibility with upstreams that send a
-// non-standard METHOD value.
+// with AES-CBC, so only AES-128 is accepted, together with the non-standard
+// ENCRYPTION spelling some upstreams send and a missing METHOD (the legacy
+// behaviour). Every other method is refused rather than mangled.
 func parsePlaylistKey(baseURL *url.URL, line string) (string, error) {
-	method := ""
-	if match := methodValueRe.FindStringSubmatch(line); len(match) == 2 {
-		method = strings.ToUpper(strings.Trim(strings.TrimSpace(match[1]), `"`))
+	attributes, err := parseHLSAttributes(strings.TrimPrefix(line, "#EXT-X-KEY:"))
+	if err != nil {
+		return "", fmt.Errorf("invalid playlist key: %w", err)
 	}
-	if method == "NONE" {
+	method, hasMethod := attributes["METHOD"]
+	switch method = strings.ToUpper(strings.TrimSpace(method)); {
+	case method == "NONE":
 		return "", nil
-	}
-	if strings.HasPrefix(method, "SAMPLE-AES") {
+	case !hasMethod, method == "AES-128", method == "ENCRYPTION":
+	default:
 		// The METHOD value is upstream text, so it is not echoed: a crafted
-		// playlist could put credential material after the prefix.
-		return "", errors.New("unsupported HLS encryption method: SAMPLE-AES is not supported")
+		// playlist could put credential material in it.
+		return "", errors.New("unsupported HLS encryption method: only AES-128 is supported")
 	}
-	match := uriValueRe.FindStringSubmatch(line)
-	if len(match) != 2 {
+	uri, ok := attributes["URI"]
+	if !ok {
 		return "", errors.New("invalid playlist key: encrypted key has no URI")
 	}
-	keyURL, err := resolveMediaReference(baseURL, match[1])
+	keyURL, err := resolveMediaReference(baseURL, uri)
 	if err != nil {
 		return "", fmt.Errorf("invalid playlist key URI: %w", err)
 	}
 	return keyURL, nil
+}
+
+// parseHLSAttributes parses an HLS attribute list (NAME=value pairs separated
+// by commas, where a value may be a quoted string containing commas and '=').
+// Names are upper-cased. A repeated name, a pair with no '=', or an
+// unterminated quoted string is an error, so an ambiguous key line cannot be
+// read two ways.
+func parseHLSAttributes(list string) (map[string]string, error) {
+	attributes := make(map[string]string)
+	for i := 0; i < len(list); {
+		for i < len(list) && (list[i] == ' ' || list[i] == '\t') {
+			i++
+		}
+		if i == len(list) {
+			break
+		}
+		eq := strings.IndexByte(list[i:], '=')
+		if eq < 0 {
+			return nil, errors.New("malformed attribute list")
+		}
+		name := strings.ToUpper(strings.TrimSpace(list[i : i+eq]))
+		if name == "" || strings.ContainsAny(name, ",\"") {
+			return nil, errors.New("malformed attribute list")
+		}
+		i += eq + 1
+		var value string
+		if i < len(list) && list[i] == '"' {
+			closing := strings.IndexByte(list[i+1:], '"')
+			if closing < 0 {
+				return nil, errors.New("unterminated quoted attribute")
+			}
+			value = list[i+1 : i+1+closing]
+			i += closing + 2
+			for i < len(list) && (list[i] == ' ' || list[i] == '\t') {
+				i++
+			}
+			if i < len(list) && list[i] != ',' {
+				return nil, errors.New("malformed attribute list")
+			}
+		} else {
+			comma := strings.IndexByte(list[i:], ',')
+			if comma < 0 {
+				comma = len(list) - i
+			}
+			value = strings.TrimSpace(list[i : i+comma])
+			i += comma
+		}
+		if _, dup := attributes[name]; dup {
+			return nil, errors.New("repeated attribute")
+		}
+		attributes[name] = value
+		if i < len(list) && list[i] == ',' {
+			i++
+		}
+	}
+	return attributes, nil
 }
 
 func resolveMediaReference(baseURL *url.URL, rawReference string) (string, error) {

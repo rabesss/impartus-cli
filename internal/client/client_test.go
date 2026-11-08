@@ -956,12 +956,6 @@ func TestLectures_SelectForDownloadTTIDInScope(t *testing.T) {
 }
 
 func TestPrecompiledRegexes(t *testing.T) {
-	if !uriValueRe.MatchString(`URI="https://example.com/key"`) {
-		t.Error("uriValueRe should match URI= pattern")
-	}
-	if uriValueRe.MatchString(`not a uri pattern`) {
-		t.Error("uriValueRe should not match non-URI pattern")
-	}
 	if !resolutionRe.MatchString("1920x1080") {
 		t.Error("resolutionRe should match resolution pattern")
 	}

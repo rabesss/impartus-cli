@@ -89,31 +89,36 @@ func TestDownloadPlaylistCopiesClearSegments(t *testing.T) {
 	}
 }
 
-func TestDownloadAndJoinResumesClearPlaylist(t *testing.T) {
-	server, _ := clearHLSServer(t)
-	cfg := loadDownloadSpeedConfig(t, server.URL, t.TempDir())
-	cfg.Views = "first"
-	d := New(cfg, client.New(server.Client(), nil))
-	playlist := client.ParsedPlaylist{ID: 8, SeqNo: 1, FirstViewURLs: []string{server.URL + "/hls/seg0.ts"}}
+func TestResumeClearPlaylistFetchesOnlyMissingChunks(t *testing.T) {
+	forEachDownloadPath(t, func(t *testing.T, pipeline bool) {
+		paths := []string{"/c0.ts", "/c1.ts", "/c2.ts"}
+		h := newResumeHarness(t, pipeline, 3)
+		h.server.clear = true
+		playlist := h.server.playlist(paths...)
+		playlist.KeyURL = ""
 
-	workspace, err := d.openLectureWorkspace(playlist)
-	if err != nil {
-		t.Fatalf("openLectureWorkspace: %v", err)
-	}
-	if workspace.resume == nil {
-		workspace.close(d, false)
-		t.Skip("resumable workspaces are not enabled in this configuration")
-	}
-	invocation := *d
-	invocationConfig := *d.config
-	invocationConfig.TempDirLocation = workspace.dir
-	invocation.config = &invocationConfig
-	invocation.resume = workspace.resume
-	if _, err := invocation.DownloadPlaylist(t.Context(), playlist, nil, nil); err != nil {
-		workspace.close(d, false)
-		t.Fatalf("DownloadPlaylist(clear, resumable) error = %v", err)
-	}
-	workspace.close(d, false)
+		h.server.fail["/c1.ts"] = http.StatusNotFound
+		if _, err := h.run(t, playlist, nil); err == nil {
+			t.Fatal("first run error = nil, want chunk 1 failure")
+		}
+		onlyResumeWorkspace(t, h.tempBase, 42)
+
+		delete(h.server.fail, "/c1.ts")
+		h.server.resetCounts()
+		result, err := h.run(t, playlist, nil)
+		if err != nil {
+			t.Fatalf("second run error = %v", err)
+		}
+		for path, wantCount := range map[string]int{"/key": 0, "/c0.ts": 0, "/c1.ts": 1, "/c2.ts": 0} {
+			if got := h.server.count(path); got != wantCount {
+				t.Fatalf("second run %s requests = %d, want %d", path, got, wantCount)
+			}
+		}
+		if got, want := readOutput(t, result), h.server.plaintext(paths...); !bytes.Equal(got, want) {
+			t.Fatalf("resumed clear output = %q, want %q", got, want)
+		}
+		assertOnlyWorkspaceSentinel(t, h.tempBase)
+	})
 }
 
 func TestStartPlaybackStreamServesClearSegments(t *testing.T) {

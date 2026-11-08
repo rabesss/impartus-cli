@@ -4,6 +4,8 @@ import (
 	"io"
 	"net/url"
 	"strings"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/rabesss/impartus-cli/internal/secrets"
 )
@@ -16,6 +18,10 @@ const UpstreamErrorBodyOmitted = "upstream response body omitted"
 // ReadSanitizedErrorBody treats as leaked token material. Shorter runs are
 // indistinguishable from ordinary text.
 const minTokenFragment = 16
+
+// maxWholeTokenRedactionSize is the largest token secrets.RedactWithToken
+// matches by spelling instead of replacing the whole value.
+const maxWholeTokenRedactionSize = 4 * 1024
 
 // ReadSanitizedErrorBody reads an upstream error body of at most limit bytes
 // and returns it with credentials and the caller's token redacted. A larger
@@ -33,7 +39,18 @@ func ReadSanitizedErrorBody(body io.Reader, limit int64, token string) (string, 
 	if int64(len(contents)) > limit {
 		return UpstreamErrorBodyOmitted, nil
 	}
-	redacted := redactTokenFragments(secrets.RedactWithToken(strings.TrimSpace(string(contents)), token), token)
+	trimmed := strings.TrimSpace(string(contents))
+	var redacted string
+	if len(strings.TrimSpace(token)) > maxWholeTokenRedactionSize {
+		// RedactWithToken replaces any body with a fixed marker for a token
+		// this large. Every whole-token spelling it would remove holds a
+		// minTokenFragment run that redactTokenFragments or
+		// hasEncodedTokenFragment catches, so scrub the generic credentials
+		// and rely on those instead.
+		redacted = redactTokenFragments(secrets.Scrub(trimmed), token)
+	} else {
+		redacted = redactTokenFragments(secrets.RedactWithToken(trimmed, token), token)
+	}
 	if hasEncodedTokenFragment(redacted, token) {
 		// Part of the token survives behind percent or JSON escapes that a
 		// byte-level redaction cannot map back to the body, so drop it all.
@@ -99,11 +116,18 @@ func decodeErrorBodyLayer(value string) (string, bool) {
 			out.WriteByte(unhex(value[i+1])<<4 | unhex(value[i+2]))
 			i += 2
 			changed = true
-		case c == '\\' && i+5 < len(value) && value[i+1] == 'u' &&
-			isHexDigit(value[i+2]) && isHexDigit(value[i+3]) && isHexDigit(value[i+4]) && isHexDigit(value[i+5]):
-			r := rune(unhex(value[i+2]))<<12 | rune(unhex(value[i+3]))<<8 | rune(unhex(value[i+4]))<<4 | rune(unhex(value[i+5]))
-			out.WriteRune(r)
+		case c == '\\' && i+5 < len(value) && value[i+1] == 'u' && isHex4(value[i+2:i+6]):
+			r := unhex4(value[i+2 : i+6])
 			i += 5
+			// A JSON decoder joins a UTF-16 surrogate pair into one
+			// character, so this view must too.
+			if utf16.IsSurrogate(r) && i+6 < len(value) && value[i+1] == '\\' && value[i+2] == 'u' && isHex4(value[i+3:i+7]) {
+				if joined := utf16.DecodeRune(r, unhex4(value[i+3:i+7])); joined != utf8.RuneError {
+					r = joined
+					i += 6
+				}
+			}
+			out.WriteRune(r)
 			changed = true
 		case c == '\\' && i+1 < len(value) && strings.IndexByte(`"\/bfnrt`, value[i+1]) >= 0:
 			out.WriteByte(jsonEscapeByte(value[i+1]))
@@ -134,6 +158,14 @@ func jsonEscapeByte(c byte) byte {
 	default:
 		return c
 	}
+}
+
+func isHex4(s string) bool {
+	return len(s) == 4 && isHexDigit(s[0]) && isHexDigit(s[1]) && isHexDigit(s[2]) && isHexDigit(s[3])
+}
+
+func unhex4(s string) rune {
+	return rune(unhex(s[0]))<<12 | rune(unhex(s[1]))<<8 | rune(unhex(s[2]))<<4 | rune(unhex(s[3]))
 }
 
 func isHexDigit(c byte) bool {

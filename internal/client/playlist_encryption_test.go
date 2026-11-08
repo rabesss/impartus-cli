@@ -52,6 +52,18 @@ func TestParsePlaylistEncryptionStates(t *testing.T) {
 			wantSegs: 1,
 		},
 		{
+			name:     "METHOD inside a quoted URI is not the method",
+			playlist: "#EXTM3U\n#EXT-X-KEY:URI=\"key.bin?a=1,METHOD=NONE\",METHOD=AES-128\nseg0.ts\n",
+			wantKey:  "https://media.example.test/hls/key.bin?a=1,METHOD=NONE",
+			wantSegs: 1,
+		},
+		{
+			name:     "missing METHOD with a URI keeps the key",
+			playlist: "#EXTM3U\n#EXT-X-KEY:URI=\"key.bin\"\nseg0.ts\n",
+			wantKey:  "https://media.example.test/hls/key.bin",
+			wantSegs: 1,
+		},
+		{
 			name:     "key without segments is kept",
 			playlist: "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n",
 			wantKey:  "https://media.example.test/hls/key.bin",
@@ -89,6 +101,21 @@ func TestParsePlaylistRejectsUnsupportedEncryption(t *testing.T) {
 			name:     "SAMPLE-AES-CTR",
 			playlist: "#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES-CTR,URI=\"key.bin\"\nseg0.ts\n",
 			want:     "unsupported HLS encryption method",
+		},
+		{
+			name:     "unknown method",
+			playlist: "#EXTM3U\n#EXT-X-KEY:METHOD=AES-256-GCM,URI=\"key.bin\"\nseg0.ts\n",
+			want:     "unsupported HLS encryption method",
+		},
+		{
+			name:     "repeated METHOD",
+			playlist: "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\",METHOD=NONE\nseg0.ts\n",
+			want:     "repeated attribute",
+		},
+		{
+			name:     "unterminated quoted URI",
+			playlist: "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\nseg0.ts\n",
+			want:     "unterminated",
 		},
 		{
 			name:     "encrypted key with no URI",
