@@ -13,7 +13,7 @@ import (
 )
 
 func TestRetryableNativeWinsockErrors(t *testing.T) {
-	for _, errno := range []syscall.Errno{syscall.WSAECONNRESET, syscall.WSAECONNABORTED, 10061, 10051, 10052, 10065} {
+	for _, errno := range []syscall.Errno{syscall.WSAECONNRESET, syscall.WSAECONNABORTED, 10061, 10051, 10052, 10065, 10060} {
 		err := secrets.SanitizeErrorWithToken(&net.OpError{Op: "read", Err: os.NewSyscallError("wsarecv", errno)}, "secret")
 		if !retry.Retryable(err) {
 			t.Errorf("Retryable(Winsock %d) = false, want true", uintptr(errno))

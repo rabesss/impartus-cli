@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log"
 	"net/http"
@@ -266,4 +267,24 @@ func TestRetryDiagnosticsDoNotLeakToken(t *testing.T) {
 			t.Fatalf("retry diagnostics leaked the token: %q", output)
 		}
 	})
+}
+
+func TestPlaybackKeyFetchHasWallClockDeadline(t *testing.T) {
+	saved := playbackKeyDeadline
+	playbackKeyDeadline = 50 * time.Millisecond
+	t.Cleanup(func() { playbackKeyDeadline = saved })
+
+	h := newRetryHarness(t, false, 3*time.Minute)
+	// A key endpoint that hangs until the client gives up.
+	h.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	})
+
+	_, err := h.d.fetchPlaybackDecryptionKey(t.Context(), h.server.URL+"/key")
+	if err == nil || !strings.Contains(err.Error(), "did not finish within 50ms") {
+		t.Fatalf("fetchPlaybackDecryptionKey() error = %v, want the playback deadline", err)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("fetchPlaybackDecryptionKey() error = %v, want context.DeadlineExceeded", err)
+	}
 }

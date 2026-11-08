@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,14 +26,27 @@ func (d *Downloader) fetchDecryptionKey(ctx context.Context, keyURL string) ([]b
 // download retry budget.
 const playbackKeyRetryBudget = 15 * time.Second
 
+// playbackKeyDeadline caps the whole playback key fetch, attempts included.
+// The retry budget only charges backoff, so without it a key endpoint that
+// hangs until the HTTP timeout would stall playback for several full
+// attempts. A var so tests can shorten it.
+var playbackKeyDeadline = 2 * time.Minute
+
 // fetchPlaybackDecryptionKey fetches the key for interactive playback with
-// the retry budget capped at playbackKeyRetryBudget.
+// the retry budget capped at playbackKeyRetryBudget and the whole fetch
+// bounded by playbackKeyDeadline.
 func (d *Downloader) fetchPlaybackDecryptionKey(ctx context.Context, keyURL string) ([]byte, error) {
 	policy := d.retry
 	if policy.Budget > playbackKeyRetryBudget {
 		policy.Budget = playbackKeyRetryBudget
 	}
-	return d.fetchDecryptionKeyWithPolicy(ctx, keyURL, policy)
+	fetchCtx, cancel := context.WithTimeout(ctx, playbackKeyDeadline)
+	defer cancel()
+	key, err := d.fetchDecryptionKeyWithPolicy(fetchCtx, keyURL, policy)
+	if err != nil && ctx.Err() == nil && errors.Is(fetchCtx.Err(), context.DeadlineExceeded) {
+		return nil, fmt.Errorf("decryption key request did not finish within %s: %w", playbackKeyDeadline, err)
+	}
+	return key, err
 }
 
 func (d *Downloader) fetchDecryptionKeyWithPolicy(ctx context.Context, keyURL string, policy retry.Policy) ([]byte, error) {

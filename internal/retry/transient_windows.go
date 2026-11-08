@@ -14,4 +14,5 @@ var platformTransientErrors = []error{
 	syscall.Errno(10051), // WSAENETUNREACH
 	syscall.Errno(10052), // WSAENETRESET
 	syscall.Errno(10065), // WSAEHOSTUNREACH
+	syscall.Errno(10060), // WSAETIMEDOUT: Errno.Timeout only matches Go's invented ETIMEDOUT
 }
