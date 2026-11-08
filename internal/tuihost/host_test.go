@@ -90,6 +90,7 @@ func TestRunCancellationKillsChildAndCleansBootstrap(t *testing.T) {
 		t.Fatalf("os.Executable() error = %v", err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	var output synchronizedBuffer
 	done := make(chan error, 1)
 	go func() {
@@ -102,8 +103,13 @@ func TestRunCancellationKillsChildAndCleansBootstrap(t *testing.T) {
 		})
 	}()
 	// The helper prints its bootstrap directory only after consuming the
-	// bootstrap, so the marker proves consumption without a wall-clock budget.
-	consumed := output.waitFor("impartus-tui-session-")
+	// bootstrap, so the complete fourth line proves consumption without a
+	// wall-clock budget. Waiting for the newline keeps a partial write of the
+	// directory from passing as the whole line.
+	consumed := output.waitUntil(func(text string) bool {
+		lines := strings.SplitAfter(text, "\n")
+		return len(lines) > 4 && strings.Contains(lines[3], "impartus-tui-session-")
+	})
 	hangGuard := testdeadline.Guard(t)
 	select {
 	case <-consumed:
@@ -215,7 +221,7 @@ func hasArgument(arguments []string, name string) bool {
 }
 
 // synchronizedBuffer collects child output from os/exec copier goroutines and
-// lets a test wait for a marker without polling.
+// lets a test wait for a condition on it without polling.
 type synchronizedBuffer struct {
 	mu      sync.Mutex
 	buffer  bytes.Buffer
@@ -223,18 +229,21 @@ type synchronizedBuffer struct {
 }
 
 type outputWaiter struct {
-	marker string
-	ready  chan struct{}
+	satisfied func(output string) bool
+	ready     chan struct{}
 }
 
 func (buffer *synchronizedBuffer) Write(content []byte) (int, error) {
 	buffer.mu.Lock()
 	defer buffer.mu.Unlock()
 	written, err := buffer.buffer.Write(content)
+	if len(buffer.waiters) == 0 {
+		return written, err
+	}
 	text := buffer.buffer.String()
 	pending := buffer.waiters[:0]
 	for _, waiter := range buffer.waiters {
-		if strings.Contains(text, waiter.marker) {
+		if waiter.satisfied(text) {
 			close(waiter.ready)
 			continue
 		}
@@ -250,16 +259,17 @@ func (buffer *synchronizedBuffer) String() string {
 	return buffer.buffer.String()
 }
 
-// waitFor returns a channel that is closed once the output contains marker,
-// including when it already does.
-func (buffer *synchronizedBuffer) waitFor(marker string) <-chan struct{} {
+// waitUntil returns a channel that is closed once satisfied reports true for
+// the output so far, including when it already does. satisfied runs under the
+// buffer lock and must not call back into the buffer.
+func (buffer *synchronizedBuffer) waitUntil(satisfied func(output string) bool) <-chan struct{} {
 	buffer.mu.Lock()
 	defer buffer.mu.Unlock()
 	ready := make(chan struct{})
-	if strings.Contains(buffer.buffer.String(), marker) {
+	if satisfied(buffer.buffer.String()) {
 		close(ready)
 		return ready
 	}
-	buffer.waiters = append(buffer.waiters, outputWaiter{marker: marker, ready: ready})
+	buffer.waiters = append(buffer.waiters, outputWaiter{satisfied: satisfied, ready: ready})
 	return ready
 }

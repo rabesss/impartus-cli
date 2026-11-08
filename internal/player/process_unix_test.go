@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -233,6 +234,9 @@ func TestLoadRejectsNonLoopbackCapabilityWithoutLeakingIt(t *testing.T) {
 
 func TestCloseKillsAndReapsMPVThatIgnoresQuit(t *testing.T) {
 	options := fakeMPVOptions(t, "ignore-quit", filepath.Join(t.TempDir(), "argv.txt"), filepath.Join(t.TempDir(), "load.txt"))
+	// These limits drive the escalation under test: the child ignores quit and
+	// SIGTERM, so Close always waits QuitTimeout and then KillTimeout/2 before
+	// SIGKILL. A deadline-sized KillTimeout would stall that step for minutes.
 	options.QuitTimeout = 50 * time.Millisecond
 	options.KillTimeout = time.Second
 	session, err := Start(context.Background(), options)
@@ -297,6 +301,7 @@ func TestStartTimesOutAndReapsWhenSocketNeverAppears(t *testing.T) {
 	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
 		t.Fatalf("timed-out child was not reaped: %v", err)
 	}
+	assertRuntimeDirectoryEmpty(t, options)
 }
 
 func TestStartCancellationReapsChildAndCleansSocket(t *testing.T) {
@@ -316,11 +321,19 @@ func TestStartCancellationReapsChildAndCleansSocket(t *testing.T) {
 		assertStartupCancellationReaped(t, options, err, onlyStartedPID(t, startedPIDs))
 	})
 
-	t.Run("while the child waits for IPC", func(t *testing.T) {
+	t.Run("while Start waits for IPC", func(t *testing.T) {
 		options := startupCancellationOptions(t)
 		readyPath := filepath.Join(options.RuntimeBase, "ready.sock")
 		childReady := awaitHelperReady(t, readyPath)
 		options.testEnvironment = append(options.testEnvironment, "IMPARTUS_FAKE_MPV_READY="+readyPath)
+		// The hook fires on Start's goroutine once a connect attempt has found no
+		// socket. The no-socket helper never creates one and ConnectTimeout is an
+		// hour, so from then on Start stays in the connect loop until canceled.
+		connecting := make(chan struct{})
+		var connectingOnce sync.Once
+		options.testConnectWaitHook = func() { connectingOnce.Do(func() { close(connecting) }) }
+		// The loop below sets its copy to nil once received; the hook keeps its own.
+		parentConnecting := (<-chan struct{})(connecting)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		var startedPIDs []int
@@ -333,22 +346,50 @@ func TestStartCancellationReapsChildAndCleansSocket(t *testing.T) {
 			}
 			startDone <- err
 		}()
-		select {
-		case readyErr := <-childReady:
-			if readyErr != nil {
+		hangGuard := testdeadline.Guard(t)
+		for childReady != nil || parentConnecting != nil {
+			select {
+			case readyErr := <-childReady:
+				if readyErr != nil {
+					cancel()
+					t.Fatalf("readiness handshake: %v (%s)", readyErr, startResultWithin(t, startDone))
+				}
+				childReady = nil
+			case <-parentConnecting:
+				parentConnecting = nil
+			case err := <-startDone:
+				t.Fatalf("Start() returned before the helper was ready and Start was connecting: %v", err)
+			case <-hangGuard:
 				cancel()
-				t.Fatalf("readiness handshake: %v (Start() error = %v)", readyErr, <-startDone)
+				t.Fatalf("helper readiness or the connect loop was not reached before the test deadline (%s)", startResultWithin(t, startDone))
 			}
-		case err := <-startDone:
-			t.Fatalf("Start() returned before the helper reported readiness: %v", err)
-		case <-testdeadline.Guard(t):
-			cancel()
-			t.Fatalf("helper never reported readiness before the test deadline (Start() error = %v)", <-startDone)
 		}
 		cancel()
-		err := <-startDone
+		var err error
+		select {
+		case err = <-startDone:
+		case <-hangGuard:
+			t.Fatal("Start() did not return after cancellation before the test deadline")
+		}
 		assertStartupCancellationReaped(t, options, err, onlyStartedPID(t, startedPIDs))
 	})
+}
+
+// startResultWithin describes Start's result for a failure message. It waits
+// at most a second, and no longer than the budget left before the test
+// deadline: once the hang guard has fired that is about zero, so a stuck Start
+// cannot hold the test past go test's timeout.
+func startResultWithin(t *testing.T, startDone <-chan error) string {
+	t.Helper()
+	bound := min(time.Second, testdeadline.Budget(t, time.Second))
+	timer := time.NewTimer(bound)
+	defer timer.Stop()
+	select {
+	case err := <-startDone:
+		return fmt.Sprintf("Start() error = %v", err)
+	case <-timer.C:
+		return fmt.Sprintf("Start() still running after %s", bound)
+	}
 }
 
 // startupCancellationOptions configures a helper whose socket never appears,
@@ -364,11 +405,22 @@ func startupCancellationOptions(t *testing.T) Options {
 
 // startupKillTimeout bounds the reap wait without making it semantic.
 // abortStartup can wait KillTimeout twice (after the group SIGKILL and again
-// after Process.Kill), so half the deadline budget lets a real reap hang fail
-// with "could not be reaped" before go test's own timeout panics.
+// after Process.Kill), so a third of the deadline budget lets a real reap hang
+// fail with "could not be reaped" before the test's hang guard fires and well
+// before go test's own timeout panics.
 func startupKillTimeout(t *testing.T) time.Duration {
 	t.Helper()
-	return testdeadline.Budget(t, 2*time.Minute) / 2
+	return deadlineShare(t, 3)
+}
+
+// deadlineShare returns 1/parts of the time left before the test deadline, for
+// a limit that only expires on failure. Callers size parts so the waits that
+// can run one after another fit the budget together. The result is never
+// zero: Options would replace zero with a multi-second production default that
+// could outlast the deadline, while one nanosecond just fails at once.
+func deadlineShare(t *testing.T, parts time.Duration) time.Duration {
+	t.Helper()
+	return max(testdeadline.Budget(t, 2*time.Minute)/parts, time.Nanosecond)
 }
 
 func assertStartupCancellationReaped(t *testing.T, options Options, err error, pid int) {
@@ -382,14 +434,20 @@ func assertStartupCancellationReaped(t *testing.T, options Options, err error, p
 	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
 		t.Fatalf("canceled child was not reaped: %v", err)
 	}
-	// The shared XDG child directory is kept by design; no per-session socket
-	// may remain in it.
+	assertRuntimeDirectoryEmpty(t, options)
+}
+
+// assertRuntimeDirectoryEmpty checks that a failed startup left nothing in the
+// runtime directory. The shared XDG child directory is kept by design; no
+// per-session socket may remain in it.
+func assertRuntimeDirectoryEmpty(t *testing.T, options Options) {
+	t.Helper()
 	entries, readErr := os.ReadDir(filepath.Join(options.RuntimeBase, "impartus"))
 	if readErr != nil {
 		t.Fatalf("read runtime directory: %v", readErr)
 	}
 	if len(entries) != 0 {
-		t.Fatalf("runtime directory still holds %d entries after canceled startup", len(entries))
+		t.Fatalf("runtime directory still holds %d entries after failed startup", len(entries))
 	}
 }
 
@@ -487,7 +545,10 @@ func TestEventsAndWaitForEndObserveTheSameTerminalEvent(t *testing.T) {
 	if err := session.Load(context.Background(), "http://127.0.0.1:1234/token/master.m3u8"); err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	waitCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	// WaitForEnd and the UI event share half the remaining budget, so a
+	// failure here still leaves time for cleanupSession's Close (QuitTimeout
+	// twice plus up to 1.5x the KillTimeout) before go test's timeout.
+	waitCtx, cancel := context.WithTimeout(context.Background(), deadlineShare(t, 2))
 	defer cancel()
 	if waitErr := session.WaitForEnd(waitCtx); waitErr != nil {
 		t.Fatalf("WaitForEnd() error = %v", waitErr)
@@ -497,8 +558,8 @@ func TestEventsAndWaitForEndObserveTheSameTerminalEvent(t *testing.T) {
 		if event.Reason != "eof" {
 			t.Fatalf("UI terminal event = %+v", event)
 		}
-	case <-time.After(time.Second):
-		t.Fatal("UI did not receive terminal event consumed by WaitForEnd")
+	case <-waitCtx.Done():
+		t.Fatal("UI did not receive terminal event consumed by WaitForEnd within its deadline share")
 	}
 }
 
@@ -512,7 +573,7 @@ func TestWaitForEndAcceptsQuitEventBeforeImmediateIPCDisconnect(t *testing.T) {
 	if err := session.Load(context.Background(), "http://127.0.0.1:1234/token/master.m3u8"); err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	waitCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	waitCtx, cancel := context.WithTimeout(context.Background(), deadlineShare(t, 2))
 	defer cancel()
 	if waitErr := session.WaitForEnd(waitCtx); waitErr != nil {
 		t.Fatalf("WaitForEnd() error = %v, want clean quit before disconnect", waitErr)
@@ -586,13 +647,23 @@ func fakeMPVOptions(t *testing.T, mode, argvPath, loadPath string) Options {
 		t.Fatal(err)
 	}
 	childPIDPath := filepath.Join(t.TempDir(), "child-pid.txt")
+	// Connect, command and kill limits only expire on failure for every mode
+	// whose Start should succeed, so they share the deadline budget rather
+	// than a fixed second that heavy CPU contention can exceed. The waits that
+	// can run back to back must fit together: connect gets a quarter; Start
+	// sends one observe_property command per property, each with a fresh
+	// CommandTimeout, so the commands split a quarter between them (plus one
+	// share for a test's own command); abortStartup can wait 2x KillTimeout
+	// and Close 2x QuitTimeout plus 1.5x KillTimeout, hence the 1/8 kill share.
+	// QuitTimeout only chooses between graceful quit and the kill path, and
+	// both pass, so it stays short. Tests that exercise a limit override it.
 	return Options{
 		Binary:         os.Args[0],
 		RuntimeBase:    runtimeBase,
-		ConnectTimeout: time.Second,
-		CommandTimeout: time.Second,
+		ConnectTimeout: deadlineShare(t, 4),
+		CommandTimeout: deadlineShare(t, 4*time.Duration(len(ObservedProperties)+1)),
 		QuitTimeout:    200 * time.Millisecond,
-		KillTimeout:    time.Second,
+		KillTimeout:    deadlineShare(t, 8),
 		testArgs:       []string{"-test.run=^TestMPVHelperProcess$", "--"},
 		testEnvironment: []string{
 			"IMPARTUS_FAKE_MPV=1",
@@ -622,8 +693,12 @@ func runFakeMPV() int {
 	}
 	if mode == "no-socket" {
 		if readyPath := os.Getenv("IMPARTUS_FAKE_MPV_READY"); readyPath != "" {
+			// The helper has no test deadline. Connecting to a listening Unix
+			// socket does not wait for Accept, so this only bounds a hang.
+			dialCtx, cancelDial := context.WithTimeout(context.Background(), time.Minute)
 			var dialer net.Dialer
-			ready, err := dialer.DialContext(context.Background(), "unix", readyPath)
+			ready, err := dialer.DialContext(dialCtx, "unix", readyPath)
+			cancelDial()
 			if err != nil {
 				return 16
 			}
@@ -777,6 +852,10 @@ func waitForProcessGone(t *testing.T, pid int) error {
 	}
 }
 
+// processGone reports whether pid has exited. The /proc zombie check is
+// Linux-only; elsewhere (macOS) the read fails and only ESRCH counts, which is
+// enough because the orphaned grandchild this checks is reparented and reaped
+// by init or a subreaper.
 func processGone(pid int) bool {
 	if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
 		return true

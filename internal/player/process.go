@@ -62,6 +62,11 @@ type Options struct {
 	// its reaper goroutine has been launched, before Start can time out or be
 	// canceled. It runs on Start's goroutine and must return promptly.
 	testStartedHook func(pid int)
+	// testConnectWaitHook runs after each connect attempt that did not yield a
+	// connection (no socket yet, or one that is not ready), before the loop
+	// waits for its next tick. It runs on Start's
+	// goroutine and must return promptly.
+	testConnectWaitHook func()
 }
 
 type runtimeReservation struct {
@@ -265,6 +270,9 @@ func (session *Session) connect(ctx context.Context) (net.Conn, error) {
 		}
 		if exists && connection != nil {
 			return connection, nil
+		}
+		if session.options.testConnectWaitHook != nil {
+			session.options.testConnectWaitHook()
 		}
 		select {
 		case <-connectCtx.Done():

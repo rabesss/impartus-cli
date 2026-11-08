@@ -162,24 +162,9 @@ jobs:
         id: govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
-          # Run govulncheck and capture output; do not mask exit code
-          set +e
-          govulncheck ./... 2>&1 | tee govulncheck-results.txt
-          GOVULN_EXIT=$?
-          set -e
-          echo "govulncheck exit code: $GOVULN_EXIT"
-          
-          # Check for vulnerabilities
-          if grep -q "No vulnerabilities found" govulncheck-results.txt; then
-            echo "✓ No vulnerabilities found"
-          else
-            echo "Vulnerabilities detected - see output above"
-            # Fail on high-severity findings
-            if [ "$GOVULN_EXIT" -ne 0 ]; then
-              echo "::error::Vulnerabilities detected by govulncheck"
-              exit 1
-            fi
-          fi
+          # The helper streams and logs the output and exits with govulncheck's
+          # own status (nonzero on findings or errors), so the step fails then.
+          bash scripts/run-logged.sh govulncheck-results.txt govulncheck ./...
 
       - name: Upload govulncheck results
         if: always()
