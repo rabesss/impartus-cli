@@ -175,6 +175,9 @@ jobs:
       - name: Verify CLI entrypoint
         run: docker run --rm impartus:permission-test --help
 
+      - name: Smoke test CLI and ffmpeg
+        run: scripts/container-smoke.sh impartus:permission-test linux/amd64
+
   build:
     name: Build
     runs-on: ubuntu-latest
