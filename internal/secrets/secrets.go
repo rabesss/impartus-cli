@@ -1650,7 +1650,15 @@ func looksLikeAuthorizationValue(value string, start, end int) bool {
 	if hasRecognizedCredentialScheme(word) {
 		return true
 	}
-	if word == "" || !isSchemeWord(word) || isAuthorizationProseWord(word) {
+	if word == "" || isAuthorizationProseWord(word) {
+		return false
+	}
+	// A credential with no scheme word ("Authorization eyJhbGci...") fails
+	// closed.
+	if looksLikeOpaqueCredential(word) {
+		return true
+	}
+	if !isSchemeWord(word) {
 		return false
 	}
 	next := end
@@ -1686,9 +1694,21 @@ func isSchemeWord(word string) bool {
 	return true
 }
 
-// maxPlainCredentialBytes is the length at which a word reads as a
-// credential even when it is plain letters, since no ordinary word is as long.
-const maxPlainCredentialBytes = 20
+// minOpaqueCredentialBytes and maxPlainCredentialBytes describe a word that
+// reads as a credential even with no scheme before it: long enough and
+// carrying a digit, or long enough that no ordinary word matches.
+const (
+	minOpaqueCredentialBytes = 8
+	maxPlainCredentialBytes  = 20
+)
+
+func looksLikeOpaqueCredential(word string) bool {
+	word = strings.Trim(word, `"'\`)
+	if len(word) >= maxPlainCredentialBytes {
+		return true
+	}
+	return len(word) >= minOpaqueCredentialBytes && strings.ContainsAny(word, "0123456789")
+}
 
 // looksLikeCredentialWord reports whether word reads as a credential rather
 // than prose: it carries a digit, punctuation or an inner capital letter, or
