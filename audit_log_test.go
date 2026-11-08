@@ -110,6 +110,25 @@ func TestRunLoggedPreservesNonzeroProducerStatus(t *testing.T) {
 	}
 }
 
+// TestRunLoggedSucceedsWithClosedStderr checks that the success line on
+// stderr cannot turn a successful run into a failure.
+func TestRunLoggedSucceedsWithClosedStderr(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "audit.txt")
+	command := runLoggedCommand(t, logPath, "bash", "-c", "echo No vulnerabilities found.")
+	if command.Args[3] != `"$@"` {
+		t.Fatalf("runLoggedCommand arguments changed: %q", command.Args)
+	}
+	command.Args[3] = `"$@" 2>&-`
+	var stdout strings.Builder
+	command.Stdout = &stdout
+	if status := exitStatus(t, command.Run()); status != 0 {
+		t.Fatalf("status = %d, want 0 with stderr closed", status)
+	}
+	if log := readLog(t, logPath); log != "No vulnerabilities found.\n" {
+		t.Fatalf("log = %q", log)
+	}
+}
+
 func TestRunLoggedPassesSuccessfulProducer(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "audit.txt")
 	result := runLogged(t, logPath, "bash", "-c", "echo No vulnerabilities found.")
@@ -302,7 +321,7 @@ func TestSecurityReportDownloadsGovulncheckLogBeforeReadingIt(t *testing.T) {
 		t.Errorf("security-report needs = %v, want it to wait for dependency-audit", job.Needs)
 	}
 	if job.If != "always()" {
-		t.Errorf("security-report if = %q, want always() so failed scans are still summarised", job.If)
+		t.Errorf("security-report if = %q, want always() so failed scans are still summarized", job.If)
 	}
 	download, summary := -1, -1
 	for index, step := range job.Steps {
@@ -332,7 +351,7 @@ func TestSecurityReportDownloadsGovulncheckLogBeforeReadingIt(t *testing.T) {
 		t.Fatal("security-report never downloads the govulncheck-results artifact")
 	}
 	if summary < 0 {
-		t.Fatal("security-report no longer summarises govulncheck-results.txt")
+		t.Fatal("security-report no longer summarizes govulncheck-results.txt")
 	}
 	if download > summary {
 		t.Errorf("download step %d runs after the summary step %d that reads the log", download, summary)
@@ -390,7 +409,9 @@ func TestSecurityReportClassifiesGovulncheckResult(t *testing.T) {
 		{name: "clean scan", download: "success", audit: "success", log: clean, hasLog: true, want: "✓ No Go vulnerabilities detected"},
 		{name: "findings fail the audit", download: "success", audit: "failure", log: "Vulnerability #1: GO-0000-0000\n", hasLog: true, want: "⚠️ govulncheck reported vulnerabilities or failed (Dependency Audit: failure)"},
 		{name: "failed audit with a clean line", download: "success", audit: "failure", log: clean, hasLog: true, want: "⚠️ govulncheck reported vulnerabilities or failed (Dependency Audit: failure)"},
-		{name: "passing audit without the clean line", download: "success", audit: "success", log: "unexpected\n", hasLog: true, want: "⚠️ govulncheck passed without its clean-scan line"},
+		{name: "passing audit without the clean line", download: "success", audit: "success", log: "unexpected\n", hasLog: true, want: "⚠️ govulncheck passed (no called vulnerabilities) but printed no clean-scan line"},
+		{name: "cancelled audit leaves a log", download: "success", audit: "cancelled", log: clean, hasLog: true, want: "⚠️ Dependency Audit cancelled - no govulncheck verdict"},
+		{name: "skipped audit leaves a log", download: "success", audit: "skipped", log: clean, hasLog: true, want: "⚠️ Dependency Audit skipped - no govulncheck verdict"},
 		{name: "missing artifact", download: "failure", audit: "failure", want: "⚠️ govulncheck log unavailable (Dependency Audit: failure)"},
 		{name: "failed download leaves a file", download: "failure", audit: "success", log: clean, hasLog: true, want: "⚠️ govulncheck log unavailable (Dependency Audit: success)"},
 		{name: "download succeeded without the file", download: "success", audit: "success", want: "⚠️ govulncheck log unavailable (Dependency Audit: success)"},

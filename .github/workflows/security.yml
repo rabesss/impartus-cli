@@ -249,7 +249,11 @@ jobs:
           elif [ "$DEPENDENCY_AUDIT_RESULT" = "success" ] && grep -q "No vulnerabilities found" govulncheck-results.txt; then
             echo "✓ No Go vulnerabilities detected" >> $GITHUB_STEP_SUMMARY
           elif [ "$DEPENDENCY_AUDIT_RESULT" = "success" ]; then
-            echo "⚠️ govulncheck passed without its clean-scan line - review govulncheck-results artifact" >> $GITHUB_STEP_SUMMARY
+            # govulncheck exits 0 when its findings are only in code the module
+            # never calls, and then prints no clean-scan line.
+            echo "⚠️ govulncheck passed (no called vulnerabilities) but printed no clean-scan line - review govulncheck-results artifact" >> $GITHUB_STEP_SUMMARY
+          elif [ "$DEPENDENCY_AUDIT_RESULT" = "cancelled" ] || [ "$DEPENDENCY_AUDIT_RESULT" = "skipped" ]; then
+            echo "⚠️ Dependency Audit $DEPENDENCY_AUDIT_RESULT - no govulncheck verdict" >> $GITHUB_STEP_SUMMARY
           else
             echo "⚠️ govulncheck reported vulnerabilities or failed (Dependency Audit: $DEPENDENCY_AUDIT_RESULT) - review govulncheck-results artifact" >> $GITHUB_STEP_SUMMARY
           fi

@@ -266,8 +266,15 @@ func TestCloseKillsAndReapsMPVThatIgnoresQuit(t *testing.T) {
 		}
 	})
 
+	closeStarted := time.Now()
 	if err := session.Close(context.Background()); err != nil {
 		t.Fatalf("Close() error = %v", err)
+	}
+	// Close waits KillTimeout/2 after SIGTERM unless it uses testTermGrace, so
+	// a Close that took that long did not use the short grace. KillTimeout is
+	// a deadline share, so this bound is loose even on a loaded machine.
+	if elapsed := time.Since(closeStarted); elapsed >= options.KillTimeout/2 {
+		t.Fatalf("Close() took %v, want under KillTimeout/2 = %v (testTermGrace not used)", elapsed, options.KillTimeout/2)
 	}
 	if err := syscall.Kill(session.ProcessID(), 0); !errors.Is(err, syscall.ESRCH) {
 		t.Fatalf("ignored-quit child was not killed and reaped: %v", err)
@@ -423,7 +430,7 @@ func startupKillTimeout(t *testing.T) time.Duration {
 // could outlast the deadline, while one nanosecond just fails at once.
 func deadlineShare(t *testing.T, parts int) time.Duration {
 	t.Helper()
-	return max(testdeadline.Budget(t, 2*time.Minute)/time.Duration(parts), time.Nanosecond)
+	return max(testdeadline.Budget(t, 2*time.Minute)/time.Duration(max(parts, 1)), time.Nanosecond)
 }
 
 func assertStartupCancellationReaped(t *testing.T, options Options, err error, pid int) {
