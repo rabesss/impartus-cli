@@ -19,6 +19,12 @@ const UpstreamErrorBodyOmitted = "upstream response body omitted"
 // indistinguishable from ordinary text.
 const minTokenFragment = 16
 
+// maxFragmentRedactionTokenSize is the largest bearer, after any Bearer
+// prefix is removed, whose fragments ReadSanitizedErrorBody searches for.
+// Fragment matching costs time in proportion to the token's length for every
+// body, so a body is omitted rather than searched for an outsized token.
+const maxFragmentRedactionTokenSize = 64 * 1024
+
 // maxWholeTokenRedactionSize is the largest token secrets.RedactWithToken
 // matches by spelling instead of replacing the whole value.
 const maxWholeTokenRedactionSize = 4 * 1024
@@ -29,14 +35,17 @@ const maxWholeTokenRedactionSize = 4 * 1024
 // credential could start before the cap and continue past it. Besides whole
 // token spellings, any run of minTokenFragment or more bytes that also occurs
 // in the token is redacted, so an upstream that echoes a truncated or partial
-// bearer cannot leak part of it. The token's length does not matter: a body
-// that carries no token material is kept.
+// bearer cannot leak part of it. A body that carries no token material is
+// kept whatever the token's length, up to maxFragmentRedactionTokenSize.
 func ReadSanitizedErrorBody(body io.Reader, limit int64, token string) (string, error) {
 	contents, err := io.ReadAll(io.LimitReader(body, limit+1))
 	if err != nil {
 		return "", secrets.SanitizeErrorWithToken(err, token)
 	}
 	if int64(len(contents)) > limit {
+		return UpstreamErrorBodyOmitted, nil
+	}
+	if len(normalizeBearerToken(token)) > maxFragmentRedactionTokenSize {
 		return UpstreamErrorBodyOmitted, nil
 	}
 	trimmed := strings.TrimSpace(string(contents))

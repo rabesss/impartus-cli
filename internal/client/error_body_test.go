@@ -197,3 +197,14 @@ func TestReadSanitizedErrorBodyKeepsBodyForTokenOver4KiB(t *testing.T) {
 		t.Fatalf("ReadSanitizedErrorBody() = %q kept a generic credential", got)
 	}
 }
+
+func TestReadSanitizedErrorBodyOmitsBodyForOutsizedToken(t *testing.T) {
+	token := strings.Repeat(longTestBearer(), (maxFragmentRedactionTokenSize/len(longTestBearer()))+2)
+	if len(token) <= maxFragmentRedactionTokenSize {
+		t.Fatalf("test token is %d bytes, want more than %d", len(token), maxFragmentRedactionTokenSize)
+	}
+	got, err := ReadSanitizedErrorBody(strings.NewReader(`{"error":"quota exceeded"}`), 512, "Bearer "+token)
+	if err != nil || got != UpstreamErrorBodyOmitted {
+		t.Fatalf("ReadSanitizedErrorBody(outsized token) = %q, %v; want %q", got, err, UpstreamErrorBodyOmitted)
+	}
+}

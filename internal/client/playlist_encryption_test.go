@@ -134,6 +134,16 @@ func TestParsePlaylistRejectsUnsupportedEncryption(t *testing.T) {
 			want:     "malformed attribute list",
 		},
 		{
+			name:     "bare key tag",
+			playlist: "#EXTM3U\n#EXT-X-KEY\nseg0.ts\n",
+			want:     "malformed EXT-X-KEY tag",
+		},
+		{
+			name:     "key tag without a colon",
+			playlist: "#EXTM3U\n#EXT-X-KEY METHOD=AES-128,URI=\"key.bin\"\nseg0.ts\n",
+			want:     "malformed EXT-X-KEY tag",
+		},
+		{
 			name:     "encrypted key with no URI",
 			playlist: "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128\nseg0.ts\n",
 			want:     "no URI",

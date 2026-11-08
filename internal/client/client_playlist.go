@@ -130,7 +130,7 @@ func parsePlaylistWithBase(scanner *bufio.Scanner, baseURL *url.URL, id int, tit
 		if line == "" {
 			continue
 		}
-		if strings.HasPrefix(line, "#EXT-X-KEY:") {
+		if strings.HasPrefix(line, "#EXT-X-KEY") {
 			keyURL, err := parsePlaylistKey(baseURL, line)
 			if err != nil {
 				return ParsedPlaylist{}, err
@@ -201,7 +201,12 @@ func applySegmentKey(playlist *ParsedPlaylist, segmentIndex int, keyURL string) 
 // ENCRYPTION spelling some upstreams send and a missing METHOD (the legacy
 // behavior). Every other method is refused rather than mangled.
 func parsePlaylistKey(baseURL *url.URL, line string) (string, error) {
-	attributes, err := parseHLSAttributes(strings.TrimPrefix(line, "#EXT-X-KEY:"))
+	list, ok := strings.CutPrefix(line, "#EXT-X-KEY:")
+	if !ok {
+		// A bare or misspelled key tag must not read as a clear playlist.
+		return "", errors.New("invalid playlist key: malformed EXT-X-KEY tag")
+	}
+	attributes, err := parseHLSAttributes(list)
 	if err != nil {
 		return "", fmt.Errorf("invalid playlist key: %w", err)
 	}
