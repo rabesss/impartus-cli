@@ -185,7 +185,9 @@ func TestClientRejectsOversizedInboundFrame(t *testing.T) {
 		t.Fatal("client did not reject oversized inbound frame")
 	}
 	select {
-	case <-writeDone:
+	case writeErr := <-writeDone:
+		// The write may fail once the client closes the pipe; it only has to unblock.
+		t.Logf("oversized frame write returned %v", writeErr)
 	case <-time.After(time.Second):
 		t.Fatal("oversized frame writer did not unblock")
 	}

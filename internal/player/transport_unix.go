@@ -118,7 +118,7 @@ func validatePrivateDirectory(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve runtime directory: %w", err)
 	}
-	leafInfo, err := os.Lstat(absolute)
+	leafInfo, err := os.Lstat(absolute) // #nosec G703 -- the cleaned runtime directory; a symlink is rejected below
 	if err != nil {
 		return "", err
 	}
@@ -129,7 +129,7 @@ func validatePrivateDirectory(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve runtime directory symlinks: %w", err)
 	}
-	info, err := os.Lstat(resolved)
+	info, err := os.Lstat(resolved) // #nosec G703 -- the runtime directory with symlinks resolved
 	if err != nil {
 		return "", err
 	}

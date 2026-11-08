@@ -30,7 +30,7 @@ func TestFilterLecturesInteractiveAllowsUnresolvedInstituteForPlayback(t *testin
 	defer server.Close()
 
 	inputPath := t.TempDir() + "/stdin"
-	if err := os.WriteFile(inputPath, []byte("1\n2\nn\nn\n"), 0o600); err != nil {
+	if err := os.WriteFile(inputPath, []byte("1\n2\nn\nn\n"), 0o600); err != nil { //nolint:dupword // scripted answers to two yes/no prompts
 		t.Fatalf("write interactive input: %v", err)
 	}
 	input, err := os.Open(inputPath)

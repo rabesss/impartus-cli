@@ -44,16 +44,18 @@ func TryAcquire(path string) (*Lock, error) {
 		return nil, fmt.Errorf("resolve lock path: %w", resolveErr)
 	}
 	parent := filepath.Dir(absolute)
+	// #nosec G703 -- absolute is the caller's lock path, cleaned and made absolute above.
 	if mkdirErr := os.MkdirAll(parent, 0o700); mkdirErr != nil {
 		return nil, fmt.Errorf("create lock directory: %w", mkdirErr)
 	}
-	parentInfo, err := os.Lstat(parent)
+	parentInfo, err := os.Lstat(parent) // #nosec G703 -- parent of the cleaned lock path
 	if err != nil {
 		return nil, fmt.Errorf("inspect lock directory: %w", err)
 	}
 	if parentInfo.Mode()&os.ModeSymlink != 0 || !parentInfo.IsDir() {
 		return nil, errors.New("lock directory must be a real directory")
 	}
+	// #nosec G703 -- the cleaned lock path; a symlink is rejected here.
 	if info, statErr := os.Lstat(absolute); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
 		return nil, errors.New("lock path must not be a symlink")
 	} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {

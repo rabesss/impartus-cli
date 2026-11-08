@@ -256,7 +256,7 @@ func waitLegacyPlayback(ctx context.Context, failures <-chan error, finished <-c
 		if kill != nil {
 			_ = kill() //nolint:errcheck // failure is reported below; finished reaps the process
 		}
-		<-finished
+		<-finished //nolint:errcheck // reap the process; the stream failure is the error reported
 		return fmt.Errorf("legacy playback failed: %w", failure)
 	case runErr := <-finished:
 		select {

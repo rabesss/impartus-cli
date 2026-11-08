@@ -26,7 +26,9 @@ func TestOpenCompletedFileDescriptorDoesNotBlockOnFIFO(t *testing.T) {
 		done <- err
 	}()
 	select {
-	case <-done:
+	case err := <-done:
+		// Either outcome is fine; the test only checks that the call returns.
+		t.Logf("openCompletedFileDescriptor returned %v", err)
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("openCompletedFileDescriptor blocked on a FIFO path swap")
 	}
