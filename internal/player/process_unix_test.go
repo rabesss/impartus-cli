@@ -281,7 +281,7 @@ func TestStartSurfacesSilentProcessDeath(t *testing.T) {
 func TestStartTimesOutAndReapsWhenSocketNeverAppears(t *testing.T) {
 	options := fakeMPVOptions(t, "no-socket", filepath.Join(t.TempDir(), "argv.txt"), filepath.Join(t.TempDir(), "load.txt"))
 	options.ConnectTimeout = 60 * time.Millisecond
-	options.KillTimeout = testdeadline.Budget(t, time.Minute)
+	options.KillTimeout = startupKillTimeout(t)
 	// The hook runs on Start's goroutine before Start returns, so the PID is
 	// known even if the timeout fires before the helper process runs at all.
 	var startedPIDs []int
@@ -358,8 +358,17 @@ func startupCancellationOptions(t *testing.T) Options {
 	t.Helper()
 	options := fakeMPVOptions(t, "no-socket", filepath.Join(t.TempDir(), "argv.txt"), filepath.Join(t.TempDir(), "load.txt"))
 	options.ConnectTimeout = time.Hour
-	options.KillTimeout = testdeadline.Budget(t, time.Minute)
+	options.KillTimeout = startupKillTimeout(t)
 	return options
+}
+
+// startupKillTimeout bounds the reap wait without making it semantic.
+// abortStartup can wait KillTimeout twice (after the group SIGKILL and again
+// after Process.Kill), so half the deadline budget lets a real reap hang fail
+// with "could not be reaped" before go test's own timeout panics.
+func startupKillTimeout(t *testing.T) time.Duration {
+	t.Helper()
+	return testdeadline.Budget(t, 2*time.Minute) / 2
 }
 
 func assertStartupCancellationReaped(t *testing.T, options Options, err error, pid int) {

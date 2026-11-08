@@ -59,8 +59,8 @@ type Options struct {
 	testSocketName   string
 	testChildPIDFile string
 	// testStartedHook receives the child PID once the process is started and
-	// its reaper is running, before Start can time out or be canceled. It must
-	// return promptly.
+	// its reaper goroutine has been launched, before Start can time out or be
+	// canceled. It runs on Start's goroutine and must return promptly.
 	testStartedHook func(pid int)
 }
 

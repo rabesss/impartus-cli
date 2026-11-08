@@ -231,9 +231,10 @@ func (buffer *synchronizedBuffer) Write(content []byte) (int, error) {
 	buffer.mu.Lock()
 	defer buffer.mu.Unlock()
 	written, err := buffer.buffer.Write(content)
+	text := buffer.buffer.String()
 	pending := buffer.waiters[:0]
 	for _, waiter := range buffer.waiters {
-		if strings.Contains(buffer.buffer.String(), waiter.marker) {
+		if strings.Contains(text, waiter.marker) {
 			close(waiter.ready)
 			continue
 		}
