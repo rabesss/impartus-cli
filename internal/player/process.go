@@ -58,8 +58,9 @@ type Options struct {
 	testEnvironment  []string
 	testSocketName   string
 	testChildPIDFile string
-	// testStartedHook receives the child PID right after the process starts,
-	// before Start can time out, cancel, or reap it.
+	// testStartedHook receives the child PID once the process is started and
+	// its reaper is running, before Start can time out or be canceled. It must
+	// return promptly.
 	testStartedHook func(pid int)
 }
 
@@ -184,9 +185,6 @@ func Start(ctx context.Context, options Options) (*Session, error) {
 	if startErr := command.Start(); startErr != nil {
 		return nil, errors.Join(fmt.Errorf("start mpv: %w", startErr), runtime.cleanup())
 	}
-	if options.testStartedHook != nil {
-		options.testStartedHook(command.Process.Pid)
-	}
 
 	session := &Session{
 		options:     options,
@@ -198,6 +196,9 @@ func Start(ctx context.Context, options Options) (*Session, error) {
 		playbackEnd: make(chan error, 1),
 	}
 	go session.reapProcess()
+	if options.testStartedHook != nil {
+		options.testStartedHook(command.Process.Pid)
+	}
 	if isolationErr := verifyProcessIsolation(command.Process.Pid); isolationErr != nil {
 		killErr := command.Process.Kill()
 		if errors.Is(killErr, os.ErrProcessDone) {

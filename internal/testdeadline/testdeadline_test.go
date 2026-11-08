@@ -41,3 +41,16 @@ func TestGuardDelayLeavesMarginBeforeDeadline(t *testing.T) {
 		}
 	}
 }
+
+func TestBudgetUsesFallbackWithoutDeadline(t *testing.T) {
+	if got := Budget(deadlineT{T: t}, time.Minute); got != time.Minute {
+		t.Fatalf("Budget() without a deadline = %v, want fallback", got)
+	}
+}
+
+func TestBudgetLeavesMarginBeforeDeadline(t *testing.T) {
+	got := Budget(deadlineT{T: t, deadline: time.Now().Add(time.Hour), ok: true}, time.Second)
+	if got <= time.Hour-2*maxMargin || got > time.Hour-maxMargin {
+		t.Fatalf("Budget() = %v, want just under %v", got, time.Hour-maxMargin)
+	}
+}

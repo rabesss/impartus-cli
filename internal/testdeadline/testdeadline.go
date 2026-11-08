@@ -31,6 +31,19 @@ func Guard(t T) <-chan time.Time {
 	return timer.C
 }
 
+// Budget returns how long a non-semantic upper bound (one that only expires
+// on failure, such as waiting for a killed child to be reaped) may last: the
+// time left before t's deadline less the Guard margin, or fallback when the
+// binary has no deadline.
+func Budget(t T, fallback time.Duration) time.Duration {
+	t.Helper()
+	deadline, ok := t.Deadline()
+	if !ok {
+		return fallback
+	}
+	return guardDelay(time.Until(deadline))
+}
+
 // guardDelay returns how long to wait when remaining time is left before the
 // deadline: all of it except a margin of 10%, capped at maxMargin.
 func guardDelay(remaining time.Duration) time.Duration {

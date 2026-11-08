@@ -121,8 +121,13 @@ func TestRunCancellationKillsChildAndCleansBootstrap(t *testing.T) {
 	case <-hangGuard:
 		t.Fatal("Run() did not stop the child after cancellation before the test deadline")
 	}
-	directory := strings.Split(strings.TrimSpace(output.String()), "\n")[0]
-	if _, statErr := os.Stat(directory); !os.IsNotExist(statErr) {
+	// The consuming helper prints the base URL, protocol, session ID and then
+	// the bootstrap directory.
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) < 4 || !filepath.IsAbs(lines[3]) || !strings.Contains(lines[3], "impartus-tui-session-") {
+		t.Fatalf("child output = %q, want the bootstrap directory on line four", output.String())
+	}
+	if _, statErr := os.Stat(lines[3]); !os.IsNotExist(statErr) {
 		t.Fatalf("canceled bootstrap directory remained: %v", statErr)
 	}
 }
