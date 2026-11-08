@@ -383,14 +383,19 @@ func withholdBearerFromURL(rawURL, token string) (*url.URL, error) {
 // strictOriginRefusal reports a request or redirect hop that strict mode
 // refuses before sending. The error names the origin to add to mediaOrigins.
 // An origin that carries any representation of the bearer (for example in a
-// hostname label) is never echoed; the generic policy error is returned.
+// hostname label) is never echoed: the refusal keeps its type and
+// classification but leaves Origin empty.
+// requestOriginKey lower-cases the host, so the raw host is checked with the
+// bearer as given, and the folded origin with the folded bearer.
 func strictOriginRefusal(destination *url.URL, token string) error {
 	origin, err := requestOriginKey(destination)
 	if err != nil {
 		return err
 	}
-	if containsTokenRepresentation(origin, token) {
-		return newMediaOriginError(ErrMediaOrigin)
+	if containsTokenRepresentation(origin, token) ||
+		containsTokenRepresentation(destination.Host, token) ||
+		(token != "" && containsTokenRepresentation(origin, strings.ToLower(token))) {
+		return &UnconfiguredMediaOriginError{Strict: true}
 	}
 	return &UnconfiguredMediaOriginError{Origin: origin, Strict: true}
 }

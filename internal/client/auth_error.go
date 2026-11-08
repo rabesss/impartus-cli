@@ -36,8 +36,10 @@ func (e *AuthenticationError) Unwrap() error {
 //
 // Strict is set when strictMediaOrigins refused the request (or a redirect
 // hop) before it was sent. Origin is then the refused destination and
-// StatusCode and RespondingOrigin are unset. A strict refusal also matches
-// ErrMediaOrigin, since it is a media-origin policy decision.
+// StatusCode and RespondingOrigin are unset. Origin is empty when the refused
+// origin carries the bearer (for example in a hostname label) and so cannot
+// be shown. A strict refusal also matches ErrMediaOrigin, since it is a
+// media-origin policy decision.
 type UnconfiguredMediaOriginError struct {
 	Origin           string
 	RespondingOrigin string
@@ -47,6 +49,9 @@ type UnconfiguredMediaOriginError struct {
 
 func (e *UnconfiguredMediaOriginError) Error() string {
 	if e.Strict {
+		if e.Origin == "" {
+			return "media origin (withheld: it contains the login token) is not in mediaOrigins (IMPARTUS_MEDIA_ORIGINS); strictMediaOrigins refused the request before it was sent"
+		}
 		return fmt.Sprintf(
 			"media origin %s is not in mediaOrigins (IMPARTUS_MEDIA_ORIGINS); strictMediaOrigins refused the request before it was sent",
 			e.Origin,

@@ -108,7 +108,7 @@ func TestStrictMediaOriginsAllowsConfiguredOrigins(t *testing.T) {
 		t.Fatalf("configured origin error = %v", err)
 	}
 	_ = resp.Body.Close() //nolint:errcheck
-	if got, _ := authorization.Load().(string); got != "Bearer "+token {
+	if got, ok := authorization.Load().(string); !ok || got != "Bearer "+token {
 		t.Fatalf("Authorization = %q, want bearer on configured origin", got)
 	}
 }
@@ -138,7 +138,7 @@ func TestNonStrictMediaOriginsStillContactsUnconfiguredOriginWithoutBearer(t *te
 			t.Fatalf("non-strict error = %v", err)
 		}
 		_ = resp.Body.Close() //nolint:errcheck
-		if got, _ := authorization.Load().(string); got != "" {
+		if got, ok := authorization.Load().(string); !ok || got != "" {
 			t.Fatalf("Authorization = %q, want none on unconfigured origin", got)
 		}
 	}
@@ -218,19 +218,61 @@ func TestStrictMediaOriginsDoesNotEchoBearerInOriginHost(t *testing.T) {
 	if resp != nil {
 		_ = resp.Body.Close() //nolint:errcheck
 	}
-	if err == nil || !errors.Is(err, ErrMediaOrigin) {
-		t.Fatalf("error = %v, want ErrMediaOrigin", err)
-	}
-	var originErr *UnconfiguredMediaOriginError
-	if errors.As(err, &originErr) {
-		t.Fatalf("error = %+v, must not carry an origin containing the bearer", originErr)
-	}
-	if strings.Contains(err.Error(), token) {
-		t.Fatalf("error %q leaks the bearer", err)
-	}
+	requireStrictBearerHostRefusal(t, err, token)
 	if transport.request != nil {
 		t.Fatalf("request sent to %s, want none", transport.request.URL)
 	}
+}
+
+// requireStrictBearerHostRefusal checks that a strict refusal of an origin
+// whose hostname carries the bearer, in any letter case, keeps its type and
+// classification but never names that origin (which requestOriginKey
+// lower-cases).
+func requireStrictBearerHostRefusal(t *testing.T, err error, token string) {
+	t.Helper()
+	if err == nil || !errors.Is(err, ErrMediaOrigin) || !errors.Is(err, ErrUnconfiguredMediaOrigin) {
+		t.Fatalf("error = %v, want ErrMediaOrigin and ErrUnconfiguredMediaOrigin", err)
+	}
+	if errors.Is(err, ErrAuthentication) {
+		t.Fatalf("error = %v, must not be an authentication failure", err)
+	}
+	var originErr *UnconfiguredMediaOriginError
+	if !errors.As(err, &originErr) || !originErr.Strict || originErr.Origin != "" {
+		t.Fatalf("error = %#v, want a strict refusal with the origin withheld", originErr)
+	}
+	if !strings.Contains(err.Error(), "withheld") {
+		t.Fatalf("error %q does not say the origin was withheld", err)
+	}
+	if strings.Contains(strings.ToLower(err.Error()), strings.ToLower(token)) {
+		t.Fatalf("error %q leaks the bearer (case-folded)", err)
+	}
+}
+
+func TestStrictMediaOriginsDoesNotEchoMixedCaseBearerInOriginHost(t *testing.T) {
+	const token = "MiXeDHostBearer"
+	transport := &mediaOriginCaptureTransport{}
+	c := New(&http.Client{Transport: transport}, nil)
+	resp, err := c.GetAuthorizedWithMediaPolicy(context.Background(), "https://"+token+".cdn.example.test/seg.ts", token, MediaRequestPolicy{Origins: []string{strictTestConfiguredOrigin}, Strict: true})
+	if resp != nil {
+		_ = resp.Body.Close() //nolint:errcheck
+	}
+	requireStrictBearerHostRefusal(t, err, token)
+	if transport.request != nil {
+		t.Fatalf("request sent to %s, want none", transport.request.URL)
+	}
+}
+
+func TestStrictMediaOriginsDoesNotEchoMixedCaseBearerInRedirectHost(t *testing.T) {
+	const token = "MiXeDRedirectBearer"
+	source := httptest.NewServer(http.RedirectHandler("https://"+token+".cdn.example.test/segment.ts", http.StatusFound))
+	defer source.Close()
+
+	c := New(source.Client(), nil)
+	resp, err := c.GetAuthorizedWithMediaPolicy(context.Background(), source.URL+"/playlist.m3u8", token, MediaRequestPolicy{Origins: []string{source.URL}, Strict: true})
+	if resp != nil {
+		_ = resp.Body.Close() //nolint:errcheck
+	}
+	requireStrictBearerHostRefusal(t, err, token)
 }
 
 func TestGetPlaylistsStrictMediaOriginsRefusesUnconfiguredPlaylistOrigin(t *testing.T) {

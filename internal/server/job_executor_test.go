@@ -245,6 +245,18 @@ func TestContainsAny(t *testing.T) {
 	}
 }
 
+func TestSanitizeUpstreamErrDoesNotReportMediaOriginPolicyAsAuthentication(t *testing.T) {
+	err := fmt.Errorf("chunk 0 request refused by the media origin policy: %w", client.ErrMediaOrigin)
+	if got := sanitizeUpstreamErr(err); got != mediaOriginPolicyRefusal {
+		t.Fatalf("sanitizeUpstreamErr() = %q, want %q", got, mediaOriginPolicyRefusal)
+	}
+	withheld := fmt.Errorf("chunk 0 request refused: %w", &client.UnconfiguredMediaOriginError{Strict: true})
+	got := sanitizeUpstreamErr(withheld)
+	if strings.Contains(got, "authentication failed") || !strings.Contains(got, "withheld") {
+		t.Fatalf("sanitizeUpstreamErr() = %q, want the withheld strict refusal", got)
+	}
+}
+
 func TestSanitizeUpstreamErrExplainsStrictOriginRefusal(t *testing.T) {
 	const urlMarker = "strict-chunk-path-marker"
 	keyResponse := append([]byte{0, 0}, []byte("fedcba9876543210")...)

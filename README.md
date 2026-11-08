@@ -301,15 +301,17 @@ Only the settings listed below have environment-variable overrides. Settings abs
 
 #### Strict media origins
 
-By default, a media request to an origin outside `baseUrl` and `mediaOrigins`
-is still sent, but without the login (the bearer token is withheld). Public
-CDN segments keep working, and a 401 or 403 from such an origin is reported as
-"not in mediaOrigins" rather than as a login failure.
+By default, a media request whose URL names an origin outside `baseUrl` and
+`mediaOrigins` is still sent, but without the login (the bearer token is
+withheld). Public CDN segments keep working, and a 401 or 403 from such an
+origin is reported as "not in mediaOrigins" rather than as a login failure. A
+redirect from a listed origin to an unlisted one is already refused by default,
+with a generic error.
 
 Set `strictMediaOrigins: true` (or `IMPARTUS_STRICT_MEDIA_ORIGINS=true`) to
-refuse those requests before anything is sent, including redirects to an
-unlisted origin. The error names only the refused `scheme://host[:port]`, for
-example:
+refuse requests to unlisted origins before anything is sent. Refused requests
+and redirects then return an error that names only the refused
+`scheme://host[:port]`, for example:
 
 ```text
 media origin https://cdn.example.com is not in mediaOrigins (IMPARTUS_MEDIA_ORIGINS); strictMediaOrigins refused the request before it was sent

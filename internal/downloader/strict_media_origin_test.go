@@ -183,3 +183,94 @@ func TestPlaybackStreamStrictMediaOriginsReportsRefusedSegmentOrigin(t *testing.
 		t.Fatalf("unconfigured segment origin hits = %d, want 0", got)
 	}
 }
+
+// assertWithheldStrictRefusal checks a strict refusal whose origin carries the
+// bearer: typed and classified, origin withheld, and no trace of the URL.
+func assertWithheldStrictRefusal(t *testing.T, err error, token string) {
+	t.Helper()
+	var originErr *client.UnconfiguredMediaOriginError
+	if !errors.As(err, &originErr) || !originErr.Strict || originErr.Origin != "" {
+		t.Fatalf("error = %v, want a strict refusal with the origin withheld", err)
+	}
+	if !errors.Is(err, client.ErrMediaOrigin) || errors.Is(err, client.ErrAuthentication) {
+		t.Fatalf("error = %v, want ErrMediaOrigin and not ErrAuthentication", err)
+	}
+	for _, leaked := range []string{strings.ToLower(token), strictPathMarker, strictQueryMarker} {
+		if strings.Contains(strings.ToLower(err.Error()), leaked) {
+			t.Fatalf("error = %q, leaks %q", err, leaked)
+		}
+	}
+}
+
+func TestDownloadChunkStrictMediaOriginsWithholdsBearerOrigin(t *testing.T) {
+	d := testLimitDownloader(t.TempDir(), client.New(nil, nil))
+	d.config.StrictMediaOrigins = true
+	d.config.Token = "MiXeDChunkBearer"
+	_, _, _, err := d.doDownloadChunkWithLimit(t.Context(), strictMediaURL("https://"+d.config.Token+".cdn.example.test"), 1, 0, "left", true, 8)
+	assertWithheldStrictRefusal(t, err, d.config.Token)
+}
+
+func TestDownloadChunkStrictMediaOriginsDropsURLOnOtherPolicyRefusal(t *testing.T) {
+	var redirectedHits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/"+strictPathMarker+"/") {
+			// A same-origin redirect whose Location carries the bearer: the
+			// redirect credential boundary refuses it with the generic
+			// policy error, not a typed strict refusal.
+			http.Redirect(w, r, "/placeholder-token/next.ts", http.StatusFound)
+			return
+		}
+		redirectedHits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	d := testLimitDownloader(t.TempDir(), client.New(server.Client(), nil))
+	d.config.StrictMediaOrigins = true
+	d.mediaOrigins = []string{server.URL}
+	_, _, _, err := d.doDownloadChunkWithLimit(t.Context(), strictMediaURL(server.URL), 1, 0, "left", true, 8)
+	if err == nil || !errors.Is(err, client.ErrMediaOrigin) {
+		t.Fatalf("error = %v, want ErrMediaOrigin", err)
+	}
+	for _, leaked := range []string{d.config.Token, strictPathMarker, strictQueryMarker} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("error = %q, leaks %q", err, leaked)
+		}
+	}
+	if got := redirectedHits.Load(); got != 0 {
+		t.Fatalf("redirect destination hits = %d, want 0", got)
+	}
+}
+
+func TestPlaybackStreamStrictMediaOriginsReportsWithheldBearerOrigin(t *testing.T) {
+	const token = "MiXeDPlaybackBearer"
+	key := []byte("0123456789abcdef")
+	configured := newPlayTestUpstream(t, key, http.StatusOK)
+	defer configured.Close()
+
+	d := New(&config.Config{BaseURL: configured.URL, Views: "left", Token: token, StrictMediaOrigins: true}, client.New(nil, nil))
+	stream, err := d.StartPlaybackStream(context.Background(), client.ParsedPlaylist{
+		KeyURL:        configured.URL + "/key",
+		FirstViewURLs: []string{strictMediaURL("https://" + token + ".cdn.example.test")},
+	})
+	if err != nil {
+		t.Fatalf("StartPlaybackStream() error = %v", err)
+	}
+	defer stream.Cleanup()
+
+	segmentURL := strings.TrimSuffix(stream.URL, "master.m3u8") + "segment/left/0"
+	resp, err := http.Get(segmentURL) //nolint:noctx // test-only local request
+	if err != nil {
+		t.Fatalf("request segment: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadGateway)
+	}
+	select {
+	case failure := <-stream.Failures:
+		assertWithheldStrictRefusal(t, failure, token)
+	default:
+		t.Fatal("playback stream did not report the strict origin refusal")
+	}
+}
