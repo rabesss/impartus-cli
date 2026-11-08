@@ -24,15 +24,12 @@ const (
 	DefaultMaxDelay = 30 * time.Second
 )
 
-// Clock abstracts time so tests can run without real sleeps.
+// Clock abstracts waiting so tests can run without real sleeps.
 type Clock interface {
-	Now() time.Time
 	Sleep(ctx context.Context, d time.Duration) error
 }
 
 type realClock struct{}
-
-func (realClock) Now() time.Time { return time.Now() }
 
 func (realClock) Sleep(ctx context.Context, d time.Duration) error {
 	if d <= 0 {
@@ -237,6 +234,11 @@ func Retryable(err error) bool {
 		io.EOF, // connection closed before any response on these idempotent requests
 		io.ErrUnexpectedEOF,
 	} {
+		if errors.Is(err, transient) {
+			return true
+		}
+	}
+	for _, transient := range platformTransientErrors {
 		if errors.Is(err, transient) {
 			return true
 		}
