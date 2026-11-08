@@ -271,10 +271,18 @@ func TestCloseKillsAndReapsMPVThatIgnoresQuit(t *testing.T) {
 		t.Fatalf("Close() error = %v", err)
 	}
 	// Close waits KillTimeout/2 after SIGTERM unless it uses testTermGrace, so
-	// a Close that took that long did not use the short grace. KillTimeout is
-	// a deadline share, so this bound is loose even on a loaded machine.
-	if elapsed := time.Since(closeStarted); elapsed >= options.KillTimeout/2 {
-		t.Fatalf("Close() took %v, want under KillTimeout/2 = %v (testTermGrace not used)", elapsed, options.KillTimeout/2)
+	// a Close that took that long most likely did not use the short grace.
+	// KillTimeout is a deadline share (about 36s under CI's 5m timeout), so
+	// the bound is loose even on a loaded machine. It is checked only while it
+	// is far above the short waits, so a nearly spent test deadline cannot
+	// make a correct Close fail it.
+	untilTermGraceExpires := options.KillTimeout / 2
+	elapsed := time.Since(closeStarted)
+	switch {
+	case untilTermGraceExpires < 10*(options.QuitTimeout+options.testTermGrace):
+		t.Logf("Close() took %v; KillTimeout/2 = %v is too short to check that Close used testTermGrace", elapsed, untilTermGraceExpires)
+	case elapsed >= untilTermGraceExpires:
+		t.Fatalf("Close() took %v, want under KillTimeout/2 = %v: Close did not use testTermGrace, or the machine stalled", elapsed, untilTermGraceExpires)
 	}
 	if err := syscall.Kill(session.ProcessID(), 0); !errors.Is(err, syscall.ESRCH) {
 		t.Fatalf("ignored-quit child was not killed and reaped: %v", err)

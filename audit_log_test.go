@@ -401,6 +401,7 @@ func TestSecurityReportClassifiesGovulncheckResult(t *testing.T) {
 		t.Fatalf("summary script uses an expression the test does not substitute:\n%s", script)
 	}
 	const clean = "No vulnerabilities found.\n"
+	const actionsCancelled = "cancelled" //nolint:misspell // GitHub Actions spells this job result value with two Ls.
 	for _, test := range []struct {
 		name, download, audit, log string
 		hasLog                     bool
@@ -410,7 +411,7 @@ func TestSecurityReportClassifiesGovulncheckResult(t *testing.T) {
 		{name: "findings fail the audit", download: "success", audit: "failure", log: "Vulnerability #1: GO-0000-0000\n", hasLog: true, want: "⚠️ govulncheck reported vulnerabilities or failed (Dependency Audit: failure)"},
 		{name: "failed audit with a clean line", download: "success", audit: "failure", log: clean, hasLog: true, want: "⚠️ govulncheck reported vulnerabilities or failed (Dependency Audit: failure)"},
 		{name: "passing audit without the clean line", download: "success", audit: "success", log: "unexpected\n", hasLog: true, want: "⚠️ govulncheck passed (no called vulnerabilities) but printed no clean-scan line"},
-		{name: "cancelled audit leaves a log", download: "success", audit: "cancelled", log: clean, hasLog: true, want: "⚠️ Dependency Audit cancelled - no govulncheck verdict"},
+		{name: "canceled audit leaves a log", download: "success", audit: actionsCancelled, log: clean, hasLog: true, want: "⚠️ Dependency Audit " + actionsCancelled + " - no govulncheck verdict"},
 		{name: "skipped audit leaves a log", download: "success", audit: "skipped", log: clean, hasLog: true, want: "⚠️ Dependency Audit skipped - no govulncheck verdict"},
 		{name: "missing artifact", download: "failure", audit: "failure", want: "⚠️ govulncheck log unavailable (Dependency Audit: failure)"},
 		{name: "failed download leaves a file", download: "failure", audit: "success", log: clean, hasLog: true, want: "⚠️ govulncheck log unavailable (Dependency Audit: success)"},
