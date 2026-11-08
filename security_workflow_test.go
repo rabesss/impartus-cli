@@ -36,8 +36,11 @@ func TestGosecStepFailsOnInternalErrors(t *testing.T) {
 	run := gosecScanStep(t).Run
 
 	required := []string{
-		// A missing or invalid report fails instead of skipping every gate.
-		"if ! jq -e . gosec-results.json",
+		// A stale, missing or incomplete report fails instead of skipping every gate.
+		"rm -f gosec-results.json",
+		`if ! jq -e 'has("Golang errors") and has("Issues") and (.Stats.files // 0) > 0' gosec-results.json`,
+		// A non-zero exit must be explained by findings.
+		`if [ "$GOSEC_EXIT" -ne 0 ] && [ "$ISSUES" -eq 0 ]`,
 		// Packages gosec could not type-check fail the job.
 		`.["Golang errors"]`,
 		`if [ "$GOLANG_ERRORS" -ne 0 ]`,
@@ -47,6 +50,9 @@ func TestGosecStepFailsOnInternalErrors(t *testing.T) {
 		if !strings.Contains(run, snippet) {
 			t.Errorf("gosec step is missing %q:\n%s", snippet, run)
 		}
+	}
+	if strings.Index(run, "rm -f gosec-results.json") > strings.Index(run, "gosec -fmt json") {
+		t.Error("remove the old report before running gosec, not after")
 	}
 	if strings.Contains(run, "if [ -f gosec-results.json ]") {
 		t.Error("gosec step must not skip its gates when the report is missing")

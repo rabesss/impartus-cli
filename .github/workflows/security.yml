@@ -57,6 +57,8 @@ jobs:
       - name: Run gosec security scanner
         run: |
           # gosec exits non-zero on any finding; the gates below decide.
+          # Remove any old report so a failed run cannot reuse it.
+          rm -f gosec-results.json gosec-results.sarif
           set +e
           gosec -fmt json -out=gosec-results.json -stdout ./... 2>&1
           GOSEC_EXIT=$?
@@ -64,9 +66,10 @@ jobs:
 
           echo "gosec exit code: $GOSEC_EXIT"
 
-          # No report, or an unreadable one, means gosec did not run.
-          if ! jq -e . gosec-results.json >/dev/null; then
-            echo "::error::gosec did not write a valid gosec-results.json"
+          # No report, an unreadable one, or one that scanned no files means
+          # gosec did not run.
+          if ! jq -e 'has("Golang errors") and has("Issues") and (.Stats.files // 0) > 0' gosec-results.json >/dev/null; then
+            echo "::error::gosec did not write a complete gosec-results.json"
             exit 1
           fi
 
@@ -81,6 +84,10 @@ jobs:
 
           ISSUES=$(jq '.Issues // [] | length' gosec-results.json)
           echo "Security issues found: $ISSUES"
+          if [ "$GOSEC_EXIT" -ne 0 ] && [ "$ISSUES" -eq 0 ]; then
+            echo "::error::gosec exited $GOSEC_EXIT without reporting any finding"
+            exit 1
+          fi
 
           # Fail on high-severity findings
           HIGH_SEV=$(jq '[.Issues // [] | .[] | select(.severity == "HIGH" or .severity == "CRITICAL")] | length' gosec-results.json)
