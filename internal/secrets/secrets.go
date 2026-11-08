@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -103,17 +104,22 @@ var strongCredentialAssignment = regexp.MustCompile(
 
 // Header dumps sometimes separate the name from the value with whitespace
 // only ("Authorization Bearer ...", "Cookie a=b"). These forms are accepted at
-// the start of the text or of a line/list item, and only when the value has
-// the shape of a credential (see separatorlessValueAccepted), so prose such
-// as "authorization failed" or "cookie consent" stays readable.
+// the start of the text or after a structural delimiter, and only when the
+// first word of the value has the shape of a credential (see the step's
+// accept function), so prose such as "authorization failed" or "cookie
+// consent" stays readable. The expressions match only that first word; an
+// accepted Authorization or Cookie value is then extended to the end of the
+// line, so a rejected one never costs a scan of the rest of the line.
+const separatorlessBoundary = `(?i)(^|[\r\n,;:=(\[{"'])`
+
 var separatorlessAuthorization = regexp.MustCompile(
-	`(?i)(^|[\r\n,;:])(\s*(?:proxy[-_]?)?authorization[ \t]+)[^\r\n&]+`,
+	separatorlessBoundary + `(\s*(?:proxy[-_]?)?authorization[ \t]+)[^\s&]+`,
 )
 var separatorlessCookie = regexp.MustCompile(
-	`(?i)(^|[\r\n,;:])(\s*(?:set[-_]?)?cookie2?[ \t]+)[^\r\n&]+`,
+	separatorlessBoundary + `(\s*(?:set[-_]?)?cookie2?[ \t]+)[^\s&]+`,
 )
 var separatorlessAPIKey = regexp.MustCompile(
-	`(?i)(^|[\r\n,;:])(\s*(?:x[-_])?api[-_]?key[ \t]+)[^\s,;&}]+`,
+	separatorlessBoundary + `(\s*(?:x[-_])?api[-_]?key[ \t]+)[^\s,;&}]+`,
 )
 
 // bareBearerCredential redacts the token68 credential after a standalone
@@ -1572,7 +1578,7 @@ var credentialAssignmentStepList = []credentialAssignmentStep{
 	{expression: quotedKeySchemeSecretValue, prefixGroup: 1},
 	{expression: quotedKeyBareSecretValue, prefixGroup: 1},
 	{expression: strongCredentialAssignment, prefixGroup: 2, openValue: true, lineValue: true},
-	{expression: separatorlessAuthorization, prefixGroup: 2, openValue: true, lineValue: true, accept: hasRecognizedCredentialScheme},
+	{expression: separatorlessAuthorization, prefixGroup: 2, openValue: true, lineValue: true, accept: startsWithCredentialScheme},
 	{expression: separatorlessCookie, prefixGroup: 2, openValue: true, lineValue: true, accept: looksLikeCookieValue},
 	{expression: separatorlessAPIKey, prefixGroup: 2, openValue: true, accept: looksLikeTokenValue},
 	{expression: schemeSecretAssignment, prefixGroup: 2},
@@ -1585,27 +1591,36 @@ func credentialAssignmentSteps() []credentialAssignmentStep {
 	return credentialAssignmentStepList
 }
 
-// maxPlainWordBytes bounds the plain-word exemption in looksLikeTokenValue.
-// Real bearer tokens and API keys carry digits or punctuation, or are long.
-const maxPlainWordBytes = 20
+// diagnosticCredentialWords are the words that follow "bearer" or "api key"
+// in diagnostics rather than a credential ("bearer token missing", "api-key
+// required"). Every other value fails closed, including short words, because
+// a short alphabetic credential is still a credential.
+var diagnosticCredentialWords = map[string]struct{}{
+	"auth": {}, "authentication": {}, "authorization": {}, "credential": {},
+	"credentials": {}, "error": {}, "expired": {}, "header": {}, "headers": {},
+	"invalid": {}, "is": {}, "key": {}, "missing": {}, "not": {}, "prefix": {},
+	"realm": {}, "redacted": {}, "required": {}, "scheme": {}, "token": {},
+	"tokens": {}, "value": {}, "was": {},
+}
 
-// looksLikeTokenValue rejects the marker and short words made only of ASCII
-// letters, so that "bearer token" or "api-key missing" are not redacted.
+// looksLikeTokenValue rejects the marker and the known diagnostic words above.
 func looksLikeTokenValue(credential string) bool {
 	credential = strings.TrimSpace(credential)
-	if credential == "" || credential == "REDACTED" {
+	if credential == "" {
 		return false
 	}
-	if len(credential) >= maxPlainWordBytes {
+	end := credentialWordEnd(credential, 0, len(credential))
+	if end != len(credential) {
 		return true
 	}
-	for index := 0; index < len(credential); index++ {
-		character := credential[index] | 0x20
-		if character < 'a' || character > 'z' {
-			return true
-		}
-	}
-	return false
+	_, diagnostic := diagnosticCredentialWords[strings.ToLower(credential)]
+	return !diagnostic
+}
+
+// startsWithCredentialScheme accepts a separator-less Authorization header
+// whose first word, inside any opening quote, is a recognised scheme.
+func startsWithCredentialScheme(word string) bool {
+	return hasRecognizedCredentialScheme(word[quoteOpenerWidth(word, 0):])
 }
 
 // looksLikeCookieValue accepts a separator-less cookie header only when its
@@ -1653,6 +1668,15 @@ func nextCredentialMatch(value string, step credentialAssignmentStep, from int) 
 		// the match so the scan always advances.
 		return credentialMatch{matchStart: index[0], prefixEnd: index[1], resume: max(index[1], from+1)}, true
 	}
+	if step.accept != nil && !step.accept(value[prefixEnd:index[1]]) {
+		// A rejected separator-less rule keeps its value visible. Its
+		// expression matched only the first word, so resuming after that word
+		// keeps the scan linear and still finds a later credential.
+		return credentialMatch{matchStart: index[0], prefixEnd: prefixEnd, start: prefixEnd, end: index[1], resume: index[1]}, true
+	}
+	if step.lineValue {
+		index[1] = lineValueEnd(value, index[1])
+	}
 	match := credentialMatch{matchStart: index[0], prefixEnd: prefixEnd, start: prefixEnd, end: index[1], resume: index[1]}
 	if width := quoteOpenerWidth(value, prefixEnd); step.openValue && width > 0 {
 		closeStart, closeWidth := quotedValueClose(value, prefixEnd)
@@ -1678,20 +1702,17 @@ func nextCredentialMatch(value string, step credentialAssignmentStep, from int) 
 		match.end = extendUnmatchedQuote(value, prefixEnd, index[1])
 		match.resume = match.end
 	}
-	credential := value[match.start:match.end]
-	match.accepted = match.end > match.start && (step.accept == nil || step.accept(credential))
-	if !match.accepted && step.accept != nil {
-		// A rejected separator-less rule keeps its value visible; search its
-		// value again so a later credential on the same line is still found.
-		// A quoted value is skipped whole, but never past the end of the
-		// match, so an unterminated quote is not rescanned at every line.
-		match.resume = prefixEnd
-		if match.opener != "" {
-			match.resume = min(match.resume+len(match.opener)+(match.end-match.start)+len(match.closer), index[1])
-			match.resume = max(match.resume, prefixEnd)
-		}
-	}
+	match.accepted = match.end > match.start
 	return match, true
+}
+
+// lineValueEnd extends a value that runs to the end of its line, stopping at
+// a line break or a query separator like the strong assignment expression.
+func lineValueEnd(value string, end int) int {
+	for end < len(value) && value[end] != '\r' && value[end] != '\n' && value[end] != '&' {
+		end++
+	}
+	return end
 }
 
 // startsAssignment reports whether text begins with a key followed by '=' or
@@ -1818,6 +1839,7 @@ func credentialValueRangesForView(view encodedView) ([]credentialValueRange, Red
 func regexCredentialValueRanges(value string, canonical []credentialValueRange) ([]credentialValueRange, RedactionEvidence) {
 	ranges := make([]credentialValueRange, 0, 8)
 	var evidence RedactionEvidence
+	coverage := newCredentialRangeCoverage(canonical)
 	for _, step := range credentialAssignmentSteps() {
 		for from := 0; from < len(value); {
 			match, ok := nextCredentialMatch(value, step, from)
@@ -1836,11 +1858,12 @@ func regexCredentialValueRanges(value string, canonical []credentialValueRange) 
 					start = credentialStart
 				}
 			}
-			if match.opener != "" && overlapsCredentialRange(canonical, start, match.end) {
-				// The canonical scanner already claimed this quoted value, and
-				// for authorization keys it keeps a recognised scheme visible.
-				// When it did not (for example, a key glued to a non-ASCII
-				// letter), this pass claims the whole quoted value itself.
+			if match.opener != "" && coverage.covers(value, start, match.end) {
+				// The canonical scanner already claimed this whole quoted value,
+				// and for authorization keys it keeps a recognised scheme
+				// visible. When it did not (for example, a key glued to a
+				// non-ASCII letter, or only a nested assignment inside the
+				// value), this pass claims the whole quoted value itself.
 				continue
 			}
 			credential := value[start:match.end]
@@ -1859,13 +1882,39 @@ func regexCredentialValueRanges(value string, canonical []credentialValueRange) 
 	return ranges, evidence
 }
 
-func overlapsCredentialRange(ranges []credentialValueRange, start, end int) bool {
-	for _, candidate := range ranges {
-		if candidate.start < end && start < candidate.end {
-			return true
-		}
+// credentialRangeCoverage answers whether one range covers a span. Ranges are
+// sorted by start with a running maximum end, so each query is a binary
+// search rather than a scan of every range.
+type credentialRangeCoverage struct {
+	starts  []int
+	maxEnds []int
+}
+
+func newCredentialRangeCoverage(ranges []credentialValueRange) credentialRangeCoverage {
+	sorted := slices.Clone(ranges)
+	slices.SortFunc(sorted, func(left, right credentialValueRange) int {
+		return left.start - right.start
+	})
+	coverage := credentialRangeCoverage{starts: make([]int, len(sorted)), maxEnds: make([]int, len(sorted))}
+	maxEnd := 0
+	for index, candidate := range sorted {
+		maxEnd = max(maxEnd, candidate.end)
+		coverage.starts[index] = candidate.start
+		coverage.maxEnds[index] = maxEnd
 	}
-	return false
+	return coverage
+}
+
+// covers reports whether one range spans value[start:end]. A recognised
+// scheme word and the space after it may stay outside the range, as the
+// canonical scanner keeps them visible for authorization keys.
+func (coverage credentialRangeCoverage) covers(value string, start, end int) bool {
+	limit := start
+	if hasRecognizedCredentialScheme(value[start:end]) {
+		limit = skipCredentialSpace(value[:end], credentialWordEnd(value, skipCredentialSpace(value[:end], start), end))
+	}
+	count, _ := slices.BinarySearch(coverage.starts, limit+1)
+	return count > 0 && coverage.maxEnds[count-1] >= end
 }
 
 func credentialPrefixEnd(index []int, group, valueLength int) (int, bool) {
@@ -1878,7 +1927,7 @@ func credentialPrefixEnd(index []int, group, valueLength int) (int, bool) {
 }
 
 func shouldSkipCredentialRange(expression *regexp.Regexp, credential string) bool {
-	if expression == strongCredentialAssignment || expression == separatorlessAuthorization {
+	if expression == strongCredentialAssignment {
 		return hasRecognizedCredentialScheme(credential)
 	}
 	return (expression == bareSecretEquals || expression == bareSecretColon) &&

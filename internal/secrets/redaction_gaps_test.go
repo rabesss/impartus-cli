@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -96,6 +97,10 @@ func TestScrubSeparatorlessAndCompoundKeys(t *testing.T) {
 		// Non-credential *_key names and prose stay readable.
 		{"cache_key=lecture-42 sort_key=title", "cache_key=lecture-42 sort_key=title"},
 		{"bearer token missing", "bearer token missing"},
+		{"api-key required", "api-key required"},
+		// Short alphabetic credentials still fail closed.
+		{"Bearer huntertwo", "Bearer REDACTED"},
+		{"X-Api-Key huntertwo", "X-Api-Key REDACTED"},
 		{"Bearer REDACTED", "Bearer REDACTED"},
 		{"cookie consent banner dismissed", "cookie consent banner dismissed"},
 		{"authorization failed for lecture 42", "authorization failed for lecture 42"},
@@ -106,9 +111,28 @@ func TestScrubSeparatorlessAndCompoundKeys(t *testing.T) {
 			if got := Scrub(test.input); got != test.want {
 				t.Fatalf("Scrub(%q) = %q, want %q", test.input, got, test.want)
 			}
+			if test.want == test.input {
+				return
+			}
+			secret := "secret-abc123"
+			if !strings.Contains(test.input, secret) {
+				secret = "huntertwo"
+			}
 			wrapped := SanitizeError(errors.New("upstream: " + test.input)).Error()
-			if strings.Contains(wrapped, "secret-abc123") {
+			if strings.Contains(wrapped, secret) {
 				t.Fatalf("SanitizeError kept the credential: %q", wrapped)
+			}
+			// Wrapped, percent-encoded and JSON-encoded views redact the value
+			// and record evidence for it.
+			for _, view := range []string{
+				"headers: " + test.input,
+				"next=" + url.PathEscape(test.input),
+				`{"error":` + strconv.Quote(test.input) + `}`,
+			} {
+				got, evidence := ScrubWithEvidence(view)
+				if strings.Contains(got, secret) || evidence.Count() == 0 {
+					t.Fatalf("ScrubWithEvidence(%q) = %q with %d evidence values", view, got, evidence.Count())
+				}
 			}
 		})
 	}
@@ -141,6 +165,9 @@ func TestScrubPercentEncodedQuotedValueAfterNonASCIIPrefix(t *testing.T) {
 		{"xtoken%3D%22secret-one%20secret-two%22", "xtoken%3D%22REDACTED%22"},
 		{`étoken="secret-one secret-two"`, ""},
 		{`étoken='secret-one secret-two' keep=1`, ""},
+		// A nested assignment inside the quoted value does not stand in for
+		// the outer value.
+		{"%C3%A9token%3D%22password%3Dsecret-one%20secret-two%22", "%C3%A9token%3D%22REDACTED%22"},
 	} {
 		t.Run(test.input, func(t *testing.T) {
 			got := Scrub(test.input)
@@ -224,10 +251,10 @@ func TestScrubRejectedSeparatorlessHeadersStayLinear(t *testing.T) {
 	// one input, each opening a quote that never closes, must not rescan the
 	// rest of the input every time. Compare against a benign input of the same
 	// size and shape whose keys do not match any rule.
-	build := func(key string) string {
+	build := func(separator, key string) string {
 		var builder strings.Builder
-		for builder.Len() < maxScrubInputSize/4 {
-			builder.WriteString("\n" + key + ` "plain words`)
+		for builder.Len() < maxScrubInputSize/8 {
+			builder.WriteString(separator + key + ` "plain words`)
 		}
 		return builder.String()
 	}
@@ -240,13 +267,15 @@ func TestScrubRejectedSeparatorlessHeadersStayLinear(t *testing.T) {
 		}
 		return best
 	}
-	for _, key := range []string{"authorization", "cookie", "x-api-key"} {
-		t.Run(key, func(t *testing.T) {
-			hostile := fastest(build(key))
-			benign := fastest(build("xyzzy"))
-			if limit := 20*benign + 150*time.Millisecond; hostile > limit {
-				t.Fatalf("Scrub took %v on hostile input, want at most %v (benign input took %v)", hostile, limit, benign)
-			}
-		})
+	for _, separator := range []string{"\n", ",", ";"} {
+		for _, key := range []string{"authorization", "cookie", "x-api-key"} {
+			t.Run(strconv.Quote(separator)+"/"+key, func(t *testing.T) {
+				hostile := fastest(build(separator, key))
+				benign := fastest(build(separator, "xyzzy"))
+				if limit := 20*benign + 150*time.Millisecond; hostile > limit {
+					t.Fatalf("Scrub took %v on hostile input, want at most %v (benign input took %v)", hostile, limit, benign)
+				}
+			})
+		}
 	}
 }
