@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"net/url"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -66,5 +67,33 @@ func TestContainsTokenDetectsMarkerSpelledToken(t *testing.T) {
 		if !ContainsToken(value, "REDACTED") {
 			t.Errorf("ContainsToken(%.40q, REDACTED) = false", value)
 		}
+	}
+}
+
+func TestDecodeJSONEscapesMatchesEncodedView(t *testing.T) {
+	for _, value := range []string{`plain`, `a\u0062c`, `\"q\" \\ \/ \n`, `\ud83d\ude00x`, `bad \u12 tail\`} {
+		view := decodeEncodedViewLayer(rawEncodedView(value), false)
+		got, changed := decodeJSONEscapes(value)
+		if got != view.text || changed != view.changed {
+			t.Errorf("decodeJSONEscapes(%q) = %q, %v; encoded view = %q, %v", value, got, changed, view.text, view.changed)
+		}
+	}
+}
+
+func TestContainsTokenLargeValueAllocationIsBounded(t *testing.T) {
+	const token = "secret-bearer-abc123"
+	value := strings.Repeat(`a\n%41`, (4<<20)/6)
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	if ContainsToken(value, token) {
+		t.Fatal("ContainsToken() = true, want false")
+	}
+	runtime.ReadMemStats(&after)
+	// Each of the few decoded views costs about one or two bytes per input
+	// byte. Per-byte source spans cost sixteen per view and pushed this past
+	// thirty times the input.
+	if grown, limit := after.TotalAlloc-before.TotalAlloc, uint64(16*len(value)); grown > limit {
+		t.Fatalf("ContainsToken(%d bytes) allocated %d bytes, want at most %d", len(value), grown, limit)
 	}
 }

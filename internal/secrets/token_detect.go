@@ -55,16 +55,41 @@ func matchesTokenVariantsDirect(value string, variants []string) bool {
 	if !strings.Contains(value, "\\") {
 		return false
 	}
-	view := decodeEncodedViewLayer(rawEncodedView(value), false)
-	if !view.changed {
+	view, changed := decodeJSONEscapes(value)
+	if !changed {
 		return false
 	}
 	for _, variant := range variants {
-		if variant != "" && strings.Contains(view.text, variant) {
+		if variant != "" && strings.Contains(view, variant) {
 			return true
 		}
 	}
 	return false
+}
+
+// decodeJSONEscapes decodes one layer of JSON string escapes, like
+// decodeEncodedViewLayer without percent decoding, but keeps no per-byte
+// source spans. A detector only needs the text, and the spans would cost
+// sixteen bytes per input byte on the large values it accepts.
+func decodeJSONEscapes(value string) (string, bool) {
+	decoded := make([]byte, 0, len(value))
+	changed := false
+	for index := 0; index < len(value); {
+		var width int
+		var ok bool
+		decoded, width, ok = appendJSONEscape(decoded, value, index)
+		if ok {
+			index += width
+			changed = true
+			continue
+		}
+		decoded = append(decoded, value[index])
+		index++
+	}
+	if !changed {
+		return value, false
+	}
+	return string(decoded), true
 }
 
 // ScrubInputTooLarge reports whether Scrub replaces s with a fixed marker
