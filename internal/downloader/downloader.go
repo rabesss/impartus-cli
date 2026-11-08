@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
+	"github.com/rabesss/impartus-cli/internal/retry"
 	"github.com/rabesss/impartus-cli/internal/secrets"
 	"github.com/rabesss/impartus-cli/internal/selection"
 )
@@ -105,7 +105,7 @@ type Downloader struct {
 	client         *client.Client
 	diagnostics    *log.Logger
 	rateLimiter    *RateLimiter
-	maxRetries     int
+	retry          retry.Policy
 	ffmpegPath     string
 	playlistSlots  chan struct{}
 	mediaOriginErr error
@@ -147,7 +147,7 @@ func newDownloader(cfg *config.Config, apiClient *client.Client, diagnostics *lo
 		client:         apiClient,
 		diagnostics:    diagnostics,
 		rateLimiter:    NewRateLimiterFromConfig(cfg),
-		maxRetries:     3,
+		retry:          retry.Default(cfg.RetryBudgetDuration()),
 		playlistSlots:  playlistSlots,
 		ffmpegPath:     "ffmpeg",
 		mediaOriginErr: mediaOriginErr,
@@ -406,41 +406,6 @@ func (d *Downloader) JoinLectureOutput(ctx context.Context, file M3U8File) (Join
 	return d.joinVideoOutput(ctx, file)
 }
 
-func (d *Downloader) fetchDecryptionKey(ctx context.Context, keyURL string) ([]byte, error) {
-	if d.mediaOriginErr != nil {
-		return nil, d.mediaOriginErr
-	}
-	if err := d.rateLimiter.WaitForAPI(ctx); err != nil {
-		return nil, err
-	}
-	resp, err := d.client.GetAuthorizedWithTokenForOrigins(ctx, keyURL, d.config.Token, d.mediaOrigins...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { closeErr := resp.Body.Close(); _ = closeErr }()
-	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, fmt.Errorf("decryption key request failed with status %d: %w", resp.StatusCode, &client.AuthenticationError{
-			Operation:  "decryption key",
-			StatusCode: resp.StatusCode,
-		})
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("decryption key request failed with status %d", resp.StatusCode)
-	}
-	keyURLContent, err := io.ReadAll(io.LimitReader(resp.Body, maxDecryptionKeyResponseSize+1))
-	if err != nil {
-		zeroKey(keyURLContent)
-		return nil, fmt.Errorf("failed to read decryption key response: %w", secrets.SanitizeErrorWithToken(err, d.config.Token))
-	}
-	if int64(len(keyURLContent)) > maxDecryptionKeyResponseSize {
-		zeroKey(keyURLContent)
-		return nil, fmt.Errorf("decryption key response exceeds max size %d bytes", maxDecryptionKeyResponseSize)
-	}
-	derivedKey := deriveDecryptionKey(keyURLContent)
-	zeroKey(keyURLContent) // zero raw key material after deriving
-	return derivedKey, nil
-}
-
 // downloadViewChunks returns the downloaded chunk paths, the failure count
 // and the failure cause from chunkFailureCause.
 func (d *Downloader) downloadViewChunks(ctx context.Context, p *mpb.Progress, tracker *ProgressTracker, playlist client.ParsedPlaylist, urls []string, vc viewConfig, decryptionKey []byte) ([]string, int, error) {
@@ -496,7 +461,7 @@ func (d *Downloader) newViewBar(p *mpb.Progress, total, seqNo int, label string)
 }
 
 func (d *Downloader) downloadAndDecryptChunk(ctx context.Context, chunkURL string, playlistID, chunkIndex int, view string, decryptionKey []byte, tracker *ProgressTracker) (string, error) {
-	filePath, err := d.downloadWithRetry(ctx, chunkURL, playlistID, chunkIndex, view, d.maxRetries, tracker)
+	filePath, err := d.downloadWithRetry(ctx, chunkURL, playlistID, chunkIndex, view, tracker)
 	if err != nil {
 		return "", fmt.Errorf("download failed for chunk %d: %w", chunkIndex, err)
 	}

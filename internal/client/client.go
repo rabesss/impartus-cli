@@ -13,8 +13,10 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/rabesss/impartus-cli/internal/config"
+	"github.com/rabesss/impartus-cli/internal/retry"
 	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
@@ -25,6 +27,11 @@ type Client struct {
 	UserAgentProvider func() string
 	tokenMu           sync.RWMutex
 	token             string
+
+	// retryClock and retryJitter are package-private test hooks for the
+	// request retry policy; nil means the real clock and full jitter.
+	retryClock  retry.Clock
+	retryJitter func(time.Duration) time.Duration
 }
 
 const defaultUserAgent = "impartus-downloader"
@@ -321,10 +328,13 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 		return nil, err
 	}
 
+	retryPolicy := c.requestRetryPolicy(cfg)
 	parsedPlaylists := make([]ParsedPlaylist, 0, len(lectures))
 	unavailableQualities := make(map[string]struct{})
 	for _, lecture := range lectures {
-		streamInfos, err := c.getStreamInfosWithPolicy(ctx, baseURL, token, lecture, policy)
+		streamInfos, err := retryRequest(ctx, retryPolicy, "stream info", func(ctx context.Context) ([]StreamInfo, error) {
+			return c.getStreamInfosWithPolicy(ctx, baseURL, token, lecture, policy)
+		})
 		if err != nil {
 			return parsedPlaylists, err
 		}
@@ -337,7 +347,9 @@ func (c *Client) GetPlaylists(ctx context.Context, cfg *config.Config, lectures 
 			continue
 		}
 
-		parsed, err := c.getPlaylistWithPolicy(ctx, streamURL, token, lecture, policy)
+		parsed, err := retryRequest(ctx, retryPolicy, "playlist", func(ctx context.Context) (ParsedPlaylist, error) {
+			return c.getPlaylistWithPolicy(ctx, streamURL, token, lecture, policy)
+		})
 		if err != nil {
 			return parsedPlaylists, err
 		}
@@ -379,9 +391,9 @@ func (c *Client) getPlaylistWithPolicy(ctx context.Context, streamURL, token str
 		body, readErr := readSanitizedErrorBody(resp.Body, token)
 		_ = resp.Body.Close() //nolint:errcheck
 		if readErr != nil {
-			return ParsedPlaylist{}, fmt.Errorf("playlist request failed with status %d and unreadable body: %w", resp.StatusCode, readErr)
+			return ParsedPlaylist{}, retry.NewStatusError(resp, time.Now(), fmt.Errorf("playlist request failed with status %d and unreadable body: %w", resp.StatusCode, readErr))
 		}
-		return ParsedPlaylist{}, fmt.Errorf("playlist request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return ParsedPlaylist{}, retry.NewStatusError(resp, time.Now(), fmt.Errorf("playlist request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
 	}
 
 	body, readErr := readResponseBodyWithLimit(resp.Body, maxPlaylistResponseSize)

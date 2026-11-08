@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/rabesss/impartus-cli/internal/config"
+	"github.com/rabesss/impartus-cli/internal/retry"
 )
 
 func TestJoinChunksPublishesFinalOutputAtomically(t *testing.T) {
@@ -282,8 +283,8 @@ func TestNewDownloader(t *testing.T) {
 				t.Error("rateLimiter should not be nil")
 			}
 
-			if d.maxRetries != 3 {
-				t.Errorf("maxRetries = %d, want 3", d.maxRetries)
+			if d.retry.Budget != retry.DefaultBudget {
+				t.Errorf("retry budget = %v, want %v", d.retry.Budget, retry.DefaultBudget)
 			}
 
 			if d.ffmpegPath != tt.ffmpegPath {

@@ -226,7 +226,6 @@ func workspaceTestDownloader(tempBase, downloadDir string, ts *httptest.Server, 
 		client:      client.New(ts.Client(), nil),
 		rateLimiter: NewRateLimiter(1000.0, 1000.0, false),
 		ffmpegPath:  ffmpegPath,
-		maxRetries:  1,
 	}
 }
 

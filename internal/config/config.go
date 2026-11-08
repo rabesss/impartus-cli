@@ -70,7 +70,11 @@ type Config struct {
 	DecryptWorkersPerLecture  int            `json:"decryptWorkersPerLecture"`
 	ProgressTracking          ProgressConfig `json:"progressTracking"`
 	HTTPTimeout               string         `json:"httpTimeout"`
-	ListenAddr                string         `json:"listenAddr,omitempty"`
+	// RetryBudget bounds how long one upstream request (a media chunk, stream
+	// info, playlist or key) keeps retrying transient failures. "0s" disables
+	// retries.
+	RetryBudget string `json:"retryBudget,omitempty"`
+	ListenAddr  string `json:"listenAddr,omitempty"`
 	// AllowRemoteAccess must be explicitly enabled to bind a non-loopback
 	// ListenAddr (e.g. 0.0.0.0). Defaults to false for safety.
 	AllowRemoteAccess bool `json:"allowRemoteAccess,omitempty"`
@@ -138,6 +142,9 @@ func (c *Config) applyProgressDefaults() {
 	if c.HTTPTimeout == "" {
 		c.HTTPTimeout = "10m"
 	}
+	if c.RetryBudget == "" {
+		c.RetryBudget = DefaultRetryBudget
+	}
 	if c.Views == "" {
 		c.Views = "both"
 	} else {
@@ -196,6 +203,9 @@ func (c *Config) validateWithoutCredentials() error {
 		return err
 	}
 	if err := c.validateTimeout(); err != nil {
+		return err
+	}
+	if err := c.validateRetryBudget(); err != nil {
 		return err
 	}
 	return c.validateWatch()
@@ -456,6 +466,7 @@ func applyEnvOverrides(cfg *Config) error {
 	applyStringEnv("IMPARTUS_TEMP_DIR_LOCATION", &cfg.TempDirLocation)
 	applyStringEnv("IMPARTUS_AUDIO_FORMAT", &cfg.AudioFormat)
 	applyStringEnv("IMPARTUS_HTTP_TIMEOUT", &cfg.HTTPTimeout)
+	applyStringEnv("IMPARTUS_RETRY_BUDGET", &cfg.RetryBudget)
 	applyStringEnv("IMPARTUS_LISTEN_ADDR", &cfg.ListenAddr)
 	for _, apply := range []func() error{
 		func() error { return applyBoolEnv("IMPARTUS_AUDIO_ONLY", &cfg.AudioOnly) },

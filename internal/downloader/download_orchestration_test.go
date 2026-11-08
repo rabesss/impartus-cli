@@ -8,11 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
+	"github.com/rabesss/impartus-cli/internal/retry"
+	"github.com/rabesss/impartus-cli/internal/retry/retrytest"
 )
 
 func TestDownloadAndJoinPlaylistRejectsMissingSelectedMediaBeforeCreatingWorkspace(t *testing.T) {
@@ -279,31 +282,43 @@ func TestDownloadWithRetryHonoursCancellationDuringBackoff(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go func() {
-		time.Sleep(25 * time.Millisecond)
-		cancel()
-	}()
+	var requests atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		http.Error(w, "upstream failed", http.StatusServiceUnavailable)
+	}))
+	defer ts.Close()
 
+	clock := &cancelOnSleepClock{Clock: retrytest.NewClock(), cancel: cancel}
 	d := &Downloader{
 		config: &config.Config{
 			TempDirLocation: t.TempDir(),
 			Token:           "token",
 		},
-		client:      client.New(&http.Client{}, nil),
+		client:      client.New(ts.Client(), nil),
 		rateLimiter: NewRateLimiter(100.0, 50.0, false),
+		retry:       retry.Policy{Budget: time.Minute, BaseDelay: time.Second, MaxDelay: time.Second, Clock: clock, Jitter: retrytest.MaxJitter},
 	}
 
-	start := time.Now()
-	_, err := d.downloadWithRetry(ctx, "://bad-url", 1, 0, "left", 2, nil)
-	if err == nil {
-		t.Fatal("expected cancellation error")
-	}
-	if err != context.Canceled {
+	_, err := d.downloadWithRetry(ctx, ts.URL+"/chunk.ts", 1, 0, "left", nil)
+	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
-	if elapsed := time.Since(start); elapsed >= 500*time.Millisecond {
-		t.Fatalf("expected cancellation during backoff before 500ms, took %v", elapsed)
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("chunk requests = %d, want 1 before cancellation", got)
 	}
+}
+
+// cancelOnSleepClock cancels the download context when the retry policy
+// starts its backoff, so cancellation lands during the wait.
+type cancelOnSleepClock struct {
+	retry.Clock
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnSleepClock) Sleep(ctx context.Context, d time.Duration) error {
+	c.cancel()
+	return c.Clock.Sleep(ctx, d)
 }
 
 func TestDownloadAndJoinPlaylistEndToEnd(t *testing.T) {
@@ -338,7 +353,6 @@ func TestDownloadAndJoinPlaylistEndToEnd(t *testing.T) {
 		client:      client.New(ts.Client(), nil),
 		rateLimiter: NewRateLimiter(100.0, 50.0, false),
 		ffmpegPath:  ffmpegPath,
-		maxRetries:  1,
 	}
 
 	result, err := d.DownloadAndJoinPlaylist(context.Background(), client.ParsedPlaylist{

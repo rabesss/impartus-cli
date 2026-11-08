@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/rabesss/impartus-cli/internal/client"
+	"github.com/rabesss/impartus-cli/internal/retry"
 	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
@@ -116,6 +116,10 @@ func chunkResponseError(resp *http.Response, url, token string) error {
 	if resp.StatusCode == http.StatusOK {
 		return nil
 	}
+	return retry.NewStatusError(resp, time.Now(), chunkStatusError(resp, url, token))
+}
+
+func chunkStatusError(resp *http.Response, url, token string) error {
 	if int64(len(strings.TrimSpace(token))) > chunkErrorBodyLimit {
 		return fmt.Errorf("chunk request failed with status %d for URL %s: %s", resp.StatusCode, secrets.RedactURLWithToken(url, token), chunkErrorBodyOmitted)
 	}
@@ -138,69 +142,42 @@ func (d *Downloader) downloadURL(ctx context.Context, url string, id int, chunk 
 	return filePath, bytesWritten, err
 }
 
-// downloadChunkWithRetry performs a download with exponential backoff retry logic.
-// When toMemory is true, it returns data in the byte slice; otherwise it writes to a file.
-func (d *Downloader) downloadChunkWithRetry(ctx context.Context, url string, id int, chunk int, view string, maxRetries int, tracker *ProgressTracker, toMemory bool) (string, []byte, error) {
-	if maxRetries < 1 {
-		maxRetries = 1
+// downloadChunkWithRetry downloads one chunk under the downloader's retry
+// policy: transient failures (5xx including 516, 429, timeouts, connection
+// resets) are retried with jittered exponential backoff within the retry
+// budget, and permanent failures (401, other 4xx, origin policy, size limits)
+// fail at once. When toMemory is true, it returns data in the byte slice;
+// otherwise it writes to a file.
+func (d *Downloader) downloadChunkWithRetry(ctx context.Context, url string, id int, chunk int, view string, tracker *ProgressTracker, toMemory bool) (string, []byte, error) {
+	var filePath string
+	var data []byte
+	var bytesDownloaded int64
+	policy := d.retry
+	policy.OnRetry = func(attempt int, delay time.Duration, err error) {
+		d.logDiagnostic("retrying %s view chunk %d after attempt %d in %s: %s", view, chunk, attempt, delay.Round(time.Millisecond), secrets.ScrubError(err))
 	}
-	var lastErr error
-	baseDelay := 1 * time.Second
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		filePath, data, bytesDownloaded, err := d.doDownloadChunk(ctx, url, id, chunk, view, toMemory)
-		if err == nil {
-			if tracker != nil {
-				ChunkCompleted(tracker, bytesDownloaded)
-			}
-			return filePath, data, nil
+	attempts, err := policy.Do(ctx, func(ctx context.Context) error {
+		var attemptErr error
+		filePath, data, bytesDownloaded, attemptErr = d.doDownloadChunk(ctx, url, id, chunk, view, toMemory)
+		return attemptErr
+	})
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+			return "", nil, err
 		}
-
-		lastErr = err
-		if attempt < maxRetries-1 {
-			delay := retryDelay(baseDelay, attempt)
-			if waitErr := waitForRetry(ctx, delay); waitErr != nil {
-				return "", nil, waitErr
-			}
-		}
+		return "", nil, fmt.Errorf("failed after %d attempts: %w", attempts, err)
 	}
-	return "", nil, fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
+	if tracker != nil {
+		ChunkCompleted(tracker, bytesDownloaded)
+	}
+	return filePath, data, nil
 }
 
-func (d *Downloader) downloadWithRetry(ctx context.Context, url string, id int, chunk int, view string, maxRetries int, tracker *ProgressTracker) (string, error) {
-	filePath, _, err := d.downloadChunkWithRetry(ctx, url, id, chunk, view, maxRetries, tracker, false)
+func (d *Downloader) downloadWithRetry(ctx context.Context, url string, id int, chunk int, view string, tracker *ProgressTracker) (string, error) {
+	filePath, _, err := d.downloadChunkWithRetry(ctx, url, id, chunk, view, tracker, false)
 	return filePath, err
 }
 
-func (d *Downloader) downloadBytesWithRetry(ctx context.Context, url string, id int, chunk int, view string, maxRetries int, tracker *ProgressTracker) (string, []byte, error) {
-	return d.downloadChunkWithRetry(ctx, url, id, chunk, view, maxRetries, tracker, true)
-}
-
-func retryDelay(baseDelay time.Duration, attempt int) time.Duration {
-	if attempt <= 0 {
-		return baseDelay
-	}
-	// Double step-by-step, clamping at the maximum representable duration so the
-	// backoff can never overflow int64 (time.Duration). Small attempts keep
-	// their exact exponential value; large attempts plateau harmlessly.
-	const maxDur = time.Duration(math.MaxInt64)
-	d := baseDelay
-	for i := 0; i < attempt; i++ {
-		if d > maxDur/2 {
-			return maxDur
-		}
-		d <<= 1
-	}
-	return d
-}
-
-func waitForRetry(ctx context.Context, delay time.Duration) error {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
+func (d *Downloader) downloadBytesWithRetry(ctx context.Context, url string, id int, chunk int, view string, tracker *ProgressTracker) (string, []byte, error) {
+	return d.downloadChunkWithRetry(ctx, url, id, chunk, view, tracker, true)
 }

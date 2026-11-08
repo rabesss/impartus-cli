@@ -15,6 +15,7 @@ import (
 
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/config"
+	"github.com/rabesss/impartus-cli/internal/retry"
 )
 
 func TestPlayServerWorkflow(t *testing.T) {
@@ -561,6 +562,7 @@ func TestHandleSegmentRefusesKeyAfterConcurrentShutdown(t *testing.T) {
 func TestPlayServerStartupErrorRedactsKeyURLToken(t *testing.T) {
 	const secret = "do-not-leak"
 	d := New(&config.Config{Views: "left"}, client.New(nil, nil))
+	d.retry = retry.Policy{} // connection refused is transient; skip the backoff here
 	_, cleanup, err := d.StartPlayServer(context.Background(), client.ParsedPlaylist{
 		KeyURL:        "http://127.0.0.1:1/key?token=" + secret,
 		FirstViewURLs: []string{"https://example.invalid/segment"},

@@ -10,7 +10,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/rabesss/impartus-cli/internal/retry"
 	"github.com/rabesss/impartus-cli/internal/secrets"
 )
 
@@ -77,9 +79,9 @@ func (c *Client) getStreamInfosWithPolicy(ctx context.Context, baseURL, token st
 	if resp.StatusCode != http.StatusOK {
 		body, readErr := readSanitizedErrorBody(resp.Body, token)
 		if readErr != nil {
-			return nil, fmt.Errorf("stream info request failed with status %d and unreadable body: %w", resp.StatusCode, readErr)
+			return nil, retry.NewStatusError(resp, time.Now(), fmt.Errorf("stream info request failed with status %d and unreadable body: %w", resp.StatusCode, readErr))
 		}
-		return nil, fmt.Errorf("stream info request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, retry.NewStatusError(resp, time.Now(), fmt.Errorf("stream info request failed with status %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
 	}
 
 	body, err := readResponseBodyWithLimit(resp.Body, maxStreamInfoResponseSize)
