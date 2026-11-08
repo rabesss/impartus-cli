@@ -1,6 +1,6 @@
 module github.com/rabesss/impartus-cli
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/charmbracelet/x/ansi v0.11.9
