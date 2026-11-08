@@ -25,7 +25,11 @@ updates:
       development-dependencies:
         dependency-type: "development"
 
-  # Enable version updates for Docker base images
+  # Enable version updates for Docker base images.
+  # The Dockerfile pins dated tags (debian:bookworm-YYYYMMDD-slim@sha256) rather
+  # than rolling ones. For a rolling tag Dependabot records the tag itself as the
+  # version, so one closed digest PR (#75) suppressed every later debian refresh
+  # (#304). A dated tag gives each Debian refresh its own version.
   - package-ecosystem: "docker"
     directory: "/"
     schedule:

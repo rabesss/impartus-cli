@@ -30,6 +30,16 @@ make security
 - Do not commit account details, local configs, generated job state, downloaded media, or private logs.
 - Prefer tests with local fixtures and mocked upstream responses.
 
+## Bumping Go
+
+`go.mod`'s `toolchain` line is the only Go version. CI, security scans and
+release builds read it through `actions/setup-go`, and the Dockerfile's
+`golang:<version>-bookworm` build image must match it. To bump Go, change the
+`toolchain` line and the Dockerfile tag and digest in the same PR;
+`container_build_test.go` fails if they differ. A Dependabot golang image bump
+therefore needs the matching `toolchain` change before it can merge. Raise the
+`go` line only when the code needs newer language features.
+
 ## Code Style
 
 - Follow Go naming conventions.

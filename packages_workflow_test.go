@@ -312,6 +312,8 @@ func TestPackagesWorkflowScanOutcomesGateCredentialsAndPublish(t *testing.T) {
 		"- name: Build multi-platform OCI image for security gate",
 		"- name: Scan linux/amd64 image before publish",
 		"- name: Scan linux/arm64 image before publish",
+		"- name: Smoke test linux/amd64 image before publish",
+		"- name: Smoke test linux/arm64 image before publish",
 		"- name: Upload Trivy image reports",
 		"- name: Set up ORAS",
 		"- name: Log in to GHCR",
@@ -329,14 +331,29 @@ func TestPackagesWorkflowScanOutcomesGateCredentialsAndPublish(t *testing.T) {
 		previous = position
 	}
 
-	scanGate := "steps.scan_amd64.outcome == 'success' && steps.scan_arm64.outcome == 'success'"
-	if got := strings.Count(workflow, scanGate); got != 3 {
-		t.Errorf("explicit two-platform scan gate count = %d, want ORAS setup, login, and publish gates", got)
+	imageGate := "always() && steps.scan_amd64.outcome == 'success' && steps.scan_arm64.outcome == 'success' && steps.smoke_amd64.outcome == 'success' && steps.smoke_arm64.outcome == 'success'"
+	gates := map[string]string{
+		"id: oras":    "if: ${{ " + imageGate + " }}",
+		"id: login":   "if: ${{ " + imageGate + " && steps.oras.outcome == 'success' }}",
+		"id: publish": "if: ${{ " + imageGate + " && steps.oras.outcome == 'success' && steps.login.outcome == 'success' }}",
+	}
+	for id, gate := range gates {
+		position := strings.Index(workflow, id+"\n")
+		if position == -1 {
+			t.Fatalf("packages workflow is missing step %q", id)
+		}
+		next := strings.TrimSpace(strings.SplitN(workflow[position+len(id)+1:], "\n", 2)[0])
+		if next != gate {
+			t.Errorf("step %q gate = %q, want %q", id, next, gate)
+		}
+	}
+	if got := strings.Count(workflow, imageGate); got != 3 {
+		t.Errorf("explicit scan and smoke gate count = %d, want ORAS setup, login, and publish gates", got)
 	}
 	if strings.Contains(workflow, "success()") {
 		t.Error("generic success() gate makes report-upload outcomes affect publication")
 	}
-	if got := strings.Count(workflow, "if: ${{ always()"); got < 6 {
+	if got := strings.Count(workflow, "if: ${{ always()"); got < 8 {
 		t.Errorf("always-run condition count = %d, want scans/reports and explicit outcome gates", got)
 	}
 }
@@ -352,5 +369,61 @@ func TestPackagesWorkflowActionsUseImmutablePins(t *testing.T) {
 		if !pinnedUse.MatchString(line) {
 			t.Errorf("action is not pinned to an immutable commit: %q", strings.TrimSpace(line))
 		}
+	}
+}
+
+func TestPackagesWorkflowSmokeTestsEachScannedPlatform(t *testing.T) {
+	workflow := readPackagesWorkflow(t)
+
+	required := []string{
+		"- name: Stage container smoke test",
+		`install -D -m 0755 scripts/container-smoke.sh "$RUNNER_TEMP/impartus-tooling/container-smoke.sh"`,
+		"id: smoke_amd64",
+		"skopeo copy --override-os linux --override-arch amd64 oci:/tmp/impartus-image:prepublish-scan docker-daemon:impartus-smoke:amd64",
+		`"$RUNNER_TEMP/impartus-tooling/container-smoke.sh" impartus-smoke:amd64 linux/amd64`,
+		"id: smoke_arm64",
+		"skopeo copy --override-os linux --override-arch arm64 oci:/tmp/impartus-image:prepublish-scan docker-daemon:impartus-smoke:arm64",
+		`"$RUNNER_TEMP/impartus-tooling/container-smoke.sh" impartus-smoke:arm64 linux/arm64`,
+		"severity: 'CRITICAL,HIGH,MEDIUM'",
+	}
+	for _, snippet := range required {
+		if !strings.Contains(workflow, snippet) {
+			t.Errorf("packages workflow is missing %q", snippet)
+		}
+	}
+
+	// The script is staged from the workflow tooling checkout so historical
+	// release tags, which predate it, are smoke tested too.
+	ordered := []string{
+		"- name: Checkout workflow tooling",
+		"- name: Stage container smoke test",
+		"- name: Checkout selected source",
+		"- name: Build multi-platform OCI image for security gate",
+		"- name: Smoke test linux/amd64 image before publish",
+	}
+	previous := -1
+	for _, step := range ordered {
+		position := strings.Index(workflow, step)
+		if position == -1 {
+			t.Fatalf("packages workflow is missing ordered step %q", step)
+		}
+		if position <= previous {
+			t.Fatalf("step %q is out of order", step)
+		}
+		previous = position
+	}
+
+	for _, id := range []string{"id: smoke_amd64", "id: smoke_arm64"} {
+		position := strings.Index(workflow, id+"\n")
+		if position == -1 {
+			t.Fatalf("packages workflow is missing step %q", id)
+		}
+		next := strings.TrimSpace(strings.SplitN(workflow[position+len(id)+1:], "\n", 2)[0])
+		if want := "if: ${{ always() && steps.build.outcome == 'success' }}"; next != want {
+			t.Errorf("step %q gate = %q, want %q", id, next, want)
+		}
+	}
+	if strings.Contains(workflow, "scripts/container-smoke.sh\" impartus-smoke") {
+		t.Error("smoke steps must run the staged script, not the selected source's copy")
 	}
 }

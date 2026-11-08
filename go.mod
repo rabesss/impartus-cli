@@ -2,6 +2,8 @@ module github.com/rabesss/impartus-cli
 
 go 1.26.10
 
+toolchain go1.27.3
+
 require (
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/creack/pty v1.1.24
