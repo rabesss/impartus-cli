@@ -543,9 +543,12 @@ per-lecture workspace under `tempDirLocation` (`IMPARTUS_TEMP_DIR`). Running the
 same download again with the same temporary directory reuses those chunks and
 fetches only the missing ones. The download starts over if the lecture's
 playlist or decryption key has changed, or if you switch between pipelined and
-serial downloads. A workspace that other users can access is never reused. A
-successful download removes its workspace; workspaces left unused for 7 days
-are removed by later downloads.
+serial downloads. On Linux and macOS, a workspace that another user owns or
+can access is never reused. Windows does not check workspace ownership, so keep
+`tempDirLocation` in a folder only you can write to. A successful download
+removes its workspace. On Windows an open file can stop that, and the emptied
+workspace stays until the 7-day cleanup. Later downloads remove workspaces left
+unused for 7 days.
 
 ### Durable Watch
 
