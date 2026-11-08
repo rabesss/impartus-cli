@@ -185,12 +185,16 @@ jobs:
       # missing when that job failed before writing the log, which the summary
       # reports instead of failing here.
       - name: Download govulncheck results
+        id: govulncheck-log
         continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: govulncheck-results
 
       - name: Create Security Report Summary
+        env:
+          GOVULNCHECK_DOWNLOAD: ${{ steps.govulncheck-log.outcome }}
+          DEPENDENCY_AUDIT_RESULT: ${{ needs.dependency-audit.result }}
         run: |
           echo "## Security Scan Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -235,16 +239,19 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
           fi
           
-          # Check govulncheck results (downloaded from the dependency-audit job)
+          # Check govulncheck results, downloaded from the dependency-audit job.
+          # The audit step exits nonzero on findings or scan errors, so only a
+          # successful job with a verified download and the clean-scan line
+          # counts as clean.
           echo "### Go Vulnerability Check" >> $GITHUB_STEP_SUMMARY
-          if [ -f govulncheck-results.txt ]; then
-            if grep -q "No vulnerabilities found" govulncheck-results.txt; then
-              echo "✓ No Go vulnerabilities detected" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "⚠️ Go vulnerabilities detected - review govulncheck-results artifact" >> $GITHUB_STEP_SUMMARY
-            fi
+          if [ "$GOVULNCHECK_DOWNLOAD" != "success" ] || [ ! -f govulncheck-results.txt ]; then
+            echo "⚠️ govulncheck log unavailable (Dependency Audit: $DEPENDENCY_AUDIT_RESULT)" >> $GITHUB_STEP_SUMMARY
+          elif [ "$DEPENDENCY_AUDIT_RESULT" = "success" ] && grep -q "No vulnerabilities found" govulncheck-results.txt; then
+            echo "✓ No Go vulnerabilities detected" >> $GITHUB_STEP_SUMMARY
+          elif [ "$DEPENDENCY_AUDIT_RESULT" = "success" ]; then
+            echo "⚠️ govulncheck passed without its clean-scan line - review govulncheck-results artifact" >> $GITHUB_STEP_SUMMARY
           else
-            echo "⚠️ govulncheck log unavailable (Dependency Audit: ${{ needs.dependency-audit.result }})" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ govulncheck reported vulnerabilities or failed (Dependency Audit: $DEPENDENCY_AUDIT_RESULT) - review govulncheck-results artifact" >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
           

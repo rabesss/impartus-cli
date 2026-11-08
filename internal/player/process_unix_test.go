@@ -556,16 +556,15 @@ func TestEventsAndWaitForEndObserveTheSameTerminalEvent(t *testing.T) {
 	if waitErr := session.WaitForEnd(waitCtx); waitErr != nil {
 		t.Fatalf("WaitForEnd() error = %v", waitErr)
 	}
-	// Take an event that is already there before looking at the context: a
-	// select with both cases ready picks one at random, so an event that
-	// arrived just as the deadline share ran out could be reported as missing.
+	// A select with both cases ready picks one at random, so when the deadline
+	// wins, take an event that is already there before reporting it missing.
 	var event Event
 	select {
 	case event = <-eventSeen:
-	default:
+	case <-waitCtx.Done():
 		select {
 		case event = <-eventSeen:
-		case <-waitCtx.Done():
+		default:
 			t.Fatal("UI did not receive terminal event consumed by WaitForEnd within its deadline share")
 		}
 	}
