@@ -265,12 +265,9 @@ type workflowStep struct {
 
 func readSecurityWorkflow(t *testing.T) workflowFile {
 	t.Helper()
-	content, err := os.ReadFile(".github/workflows/security.yml")
-	if err != nil {
-		t.Fatalf("read security workflow: %v", err)
-	}
+	content := readRepoFile(t, ".github/workflows/security.yml")
 	var workflow workflowFile
-	if err := yaml.Unmarshal(content, &workflow); err != nil {
+	if err := yaml.Unmarshal([]byte(content), &workflow); err != nil {
 		t.Fatalf("parse security workflow: %v", err)
 	}
 	return workflow
