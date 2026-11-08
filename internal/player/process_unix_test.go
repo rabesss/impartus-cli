@@ -405,11 +405,12 @@ func startupCancellationOptions(t *testing.T) Options {
 
 // startupKillTimeout bounds the reap wait without making it semantic.
 // abortStartup can wait KillTimeout twice (after the group SIGKILL and again
-// after Process.Kill), so half the deadline budget lets a real reap hang fail
-// with "could not be reaped" before go test's own timeout panics.
+// after Process.Kill), so a third of the deadline budget lets a real reap hang
+// fail with "could not be reaped" before the test's hang guard fires and well
+// before go test's own timeout panics.
 func startupKillTimeout(t *testing.T) time.Duration {
 	t.Helper()
-	return deadlineShare(t, 2)
+	return deadlineShare(t, 3)
 }
 
 // deadlineShare returns 1/parts of the time left before the test deadline, for
@@ -546,7 +547,7 @@ func TestEventsAndWaitForEndObserveTheSameTerminalEvent(t *testing.T) {
 	}
 	// WaitForEnd and the UI event share half the remaining budget, so a
 	// failure here still leaves time for cleanupSession's Close (QuitTimeout
-	// plus up to 1.5x the Budget/8 KillTimeout) before go test's timeout.
+	// twice plus up to 1.5x the KillTimeout) before go test's timeout.
 	waitCtx, cancel := context.WithTimeout(context.Background(), deadlineShare(t, 2))
 	defer cancel()
 	if waitErr := session.WaitForEnd(waitCtx); waitErr != nil {
@@ -648,15 +649,19 @@ func fakeMPVOptions(t *testing.T, mode, argvPath, loadPath string) Options {
 	childPIDPath := filepath.Join(t.TempDir(), "child-pid.txt")
 	// Connect, command and kill limits only expire on failure for every mode
 	// whose Start should succeed, so they share the deadline budget rather
-	// than a fixed second that heavy CPU contention can exceed. Close can wait
-	// 1.5x KillTimeout and abortStartup 2x, hence the smaller kill share.
+	// than a fixed second that heavy CPU contention can exceed. The waits that
+	// can run back to back must fit together: connect gets a quarter; Start
+	// sends one observe_property command per property, each with a fresh
+	// CommandTimeout, so the commands split a quarter between them (plus one
+	// share for a test's own command); abortStartup can wait 2x KillTimeout
+	// and Close 2x QuitTimeout plus 1.5x KillTimeout, hence the 1/8 kill share.
 	// QuitTimeout only chooses between graceful quit and the kill path, and
 	// both pass, so it stays short. Tests that exercise a limit override it.
 	return Options{
 		Binary:         os.Args[0],
 		RuntimeBase:    runtimeBase,
 		ConnectTimeout: deadlineShare(t, 4),
-		CommandTimeout: deadlineShare(t, 4),
+		CommandTimeout: deadlineShare(t, 4*time.Duration(len(ObservedProperties)+1)),
 		QuitTimeout:    200 * time.Millisecond,
 		KillTimeout:    deadlineShare(t, 8),
 		testArgs:       []string{"-test.run=^TestMPVHelperProcess$", "--"},

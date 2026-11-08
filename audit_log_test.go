@@ -174,6 +174,16 @@ func TestRunLoggedKeepsProducerAndLogWhenStdoutCloses(t *testing.T) {
 	}
 }
 
+func TestRunLoggedKeepsProducerSIGPIPEBehaviour(t *testing.T) {
+	// Only tee ignores SIGPIPE; a producer killed by it must still fail with
+	// its own signal status rather than survive and report success.
+	logPath := filepath.Join(t.TempDir(), "audit.txt")
+	result := runLogged(t, logPath, "bash", "-c", "kill -PIPE $$; exit 0")
+	if result.status != 128+13 {
+		t.Fatalf("status = %d, want 141 from the producer's SIGPIPE\nstderr:\n%s", result.status, result.stderr)
+	}
+}
+
 func TestRunLoggedPassesArgumentsVerbatim(t *testing.T) {
 	directory := t.TempDir()
 	logPath := filepath.Join(directory, "-audit.txt")

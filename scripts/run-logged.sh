@@ -21,14 +21,14 @@ log_file=$1
 shift
 
 # If stdout goes away (a closed reader), SIGPIPE would kill tee and then the
-# command, losing both the log and the command's status. Ignored signals are
-# inherited, so with SIGPIPE ignored tee gets EPIPE instead and keeps writing
-# the log (GNU and BSD tee alike), and the command keeps its own status.
-trap '' PIPE
-
+# command, losing both the log and the command's status. tee runs with SIGPIPE
+# ignored (an ignored signal survives exec), so it gets EPIPE instead and keeps
+# draining the command into the log (GNU and BSD tee alike). Only tee's
+# subshell ignores it: the command keeps its own SIGPIPE behaviour and status.
+#
 # errexit stays off (only nounset is set), so a failing command cannot end the
 # script before PIPESTATUS is read.
-"$@" 2>&1 | tee -- "$log_file"
+"$@" 2>&1 | (trap '' PIPE && exec tee -- "$log_file")
 statuses=("${PIPESTATUS[@]}")
 
 command_status=${statuses[0]}
