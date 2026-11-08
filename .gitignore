@@ -49,6 +49,7 @@
 !/scripts/test-desloppify-golangci-lint-adapter.sh
 !/scripts/run-quality-gate.sh
 !/scripts/test-quality-gate.sh
+!/scripts/run-logged.sh
 !/scripts/gen-tui-protocol.go
 
 # ...even if they are in subdirectories
