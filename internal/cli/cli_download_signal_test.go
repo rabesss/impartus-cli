@@ -109,8 +109,8 @@ func testDownloadSIGINTKeepsResumableWorkspace(t *testing.T, mode string) {
 	if err != nil {
 		t.Fatalf("resumable workspace lock still held after exit: %v", err)
 	}
-	if err := lock.Close(); err != nil {
-		t.Fatalf("release workspace lock: %v", err)
+	if closeErr := lock.Close(); closeErr != nil {
+		t.Fatalf("release workspace lock: %v", closeErr)
 	}
 	partials, err := filepath.Glob(filepath.Join(workspaces[0], "*.part"))
 	if err != nil || len(partials) != 0 {

@@ -86,7 +86,7 @@ func (d *Downloader) resumeFingerprint(playlist client.ParsedPlaylist) string {
 func writeFingerprintField(h hash.Hash, value string) {
 	var size [8]byte
 	binary.BigEndian.PutUint64(size[:], uint64(len(value)))
-	_, _ = h.Write(size[:])         //nolint:errcheck // hash writes never fail
+	_, _ = h.Write(size[:])         // hash writes never fail
 	_, _ = io.WriteString(h, value) //nolint:errcheck // hash writes never fail
 }
 
@@ -113,6 +113,7 @@ func (d *Downloader) openLectureWorkspace(playlist client.ParsedPlaylist) (*lect
 	return &lectureWorkspace{dir: dir, lectureID: playlist.ID}, nil
 }
 
+//nolint:gocyclo // Keep the workspace validation and lock sequence together.
 func (d *Downloader) tryResumeWorkspace(dir string, lectureID int, fingerprint string) (*lectureWorkspace, string) {
 	info, err := os.Lstat(dir)
 	switch {
@@ -133,8 +134,8 @@ func (d *Downloader) tryResumeWorkspace(dir string, lectureID int, fingerprint s
 	default:
 		return nil, secrets.ScrubError(err)
 	}
-	if err := validatePrivateWorkspace(info); err != nil {
-		return nil, err.Error()
+	if validationErr := validatePrivateWorkspace(info); validationErr != nil {
+		return nil, validationErr.Error()
 	}
 	if beforeWorkspaceLockHook != nil {
 		beforeWorkspaceLockHook(dir)
@@ -155,7 +156,7 @@ func (d *Downloader) tryResumeWorkspace(dir string, lectureID int, fingerprint s
 	}
 	// Likewise the directory must still be the private one validated above:
 	// it may have been renamed away and replaced before we took the lock.
-	if err := revalidateWorkspace(dir, info); err != nil {
+	if validationErr := revalidateWorkspace(dir, info); validationErr != nil {
 		_ = lock.Close() //nolint:errcheck // nothing was written under it
 		return nil, "workspace was replaced while opening it"
 	}
@@ -303,7 +304,7 @@ func (r *resumeState) verifyKey(key []byte) (discarded bool, err error) {
 	}
 	h := sha256.New()
 	_, _ = io.WriteString(h, "impartus-resume-key-v1\x00") //nolint:errcheck // hash writes never fail
-	_, _ = h.Write(key)                                    //nolint:errcheck // hash writes never fail
+	_, _ = h.Write(key)                                    // hash writes never fail
 	keyHash := hex.EncodeToString(h.Sum(nil))
 	if r.meta.KeyHash == keyHash {
 		return false, nil
@@ -415,6 +416,8 @@ func trashPath(base string, lectureID int) (string, error) {
 // resumeTTL and this lecture's workspaces for an older playlist. It skips the
 // current workspace, symlinks, directories without valid resume metadata and
 // workspaces another download holds. Failures are diagnostics only.
+//
+//nolint:gocyclo // Keep eligibility checks and the lock recheck in one sequence.
 func (d *Downloader) sweepResumeWorkspaces(base string, lectureID int, fingerprint, current string, now time.Time) {
 	entries, err := os.ReadDir(base)
 	if err != nil {
@@ -432,8 +435,8 @@ func (d *Downloader) sweepResumeWorkspaces(base string, lectureID int, fingerpri
 			continue // not ours to remove
 		}
 		if trashDirPattern.MatchString(name) {
-			if err := os.RemoveAll(dir); err != nil {
-				d.logDiagnostic("warning: failed to remove discarded workspace: %s", secrets.ScrubError(err))
+			if removeErr := os.RemoveAll(dir); removeErr != nil {
+				d.logDiagnostic("warning: failed to remove discarded workspace: %s", secrets.ScrubError(removeErr))
 			}
 			continue
 		}
@@ -442,8 +445,8 @@ func (d *Downloader) sweepResumeWorkspaces(base string, lectureID int, fingerpri
 			continue
 		}
 		removable := func() bool {
-			meta, metaInfo, err := readResumeMeta(dir)
-			if err != nil {
+			meta, metaInfo, metaErr := readResumeMeta(dir)
+			if metaErr != nil {
 				return false
 			}
 			stale := now.Sub(metaInfo.ModTime()) > resumeTTL

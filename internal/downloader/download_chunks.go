@@ -50,6 +50,7 @@ func (d *Downloader) doDownloadChunk(ctx context.Context, url string, id int, ch
 	return d.doDownloadChunkWithLimit(ctx, url, id, chunk, view, toMemory, maxChunkSize)
 }
 
+//nolint:gocyclo // Keep response, size and staging-file checks in one flow.
 func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, id int, chunk int, view string, toMemory bool, limit int64) (string, []byte, int64, error) {
 	if d.mediaOriginErr != nil {
 		return "", nil, 0, d.mediaOriginErr

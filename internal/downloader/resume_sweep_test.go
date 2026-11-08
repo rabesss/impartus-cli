@@ -96,8 +96,8 @@ func TestDiscardWorkspaceEmptiesItWhenRenameFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(base, 0o500); err != nil { // renames in base now fail
-		t.Fatal(err)
+	if chmodErr := os.Chmod(base, 0o500); chmodErr != nil { // renames in base now fail
+		t.Fatal(chmodErr)
 	}
 	t.Cleanup(func() { _ = os.Chmod(base, 0o700) }) //nolint:errcheck
 
@@ -151,7 +151,10 @@ func TestKeyChangeSyncsChunkRemovalBeforeNewKeyHash(t *testing.T) {
 	saved := syncWorkspaceDirHook
 	syncWorkspaceDirHook = func(dir string) error {
 		synced++
-		if chunks, _ := filepath.Glob(filepath.Join(dir, "*.ts")); len(chunks) != 0 {
+		chunks, globErr := filepath.Glob(filepath.Join(dir, "*.ts"))
+		if globErr != nil {
+			t.Errorf("glob chunks at directory sync: %v", globErr)
+		} else if len(chunks) != 0 {
 			t.Errorf("chunks %v still present at the directory sync", chunks)
 		}
 		if meta, _, err := readResumeMeta(dir); err != nil || meta.KeyHash != oldMeta.KeyHash {

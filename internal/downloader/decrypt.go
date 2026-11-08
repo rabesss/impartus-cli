@@ -138,8 +138,8 @@ func writeChunkAtomically(path string, data []byte, durable bool) (err error) {
 	partial := path + ".part"
 	// Never write through whatever is already at the staging path: remove it
 	// and create a new file exclusively, which also refuses a symlink.
-	if err := os.Remove(partial); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+	if removeErr := os.Remove(partial); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		return removeErr
 	}
 	// G304/G703: path components are from validated config and sanitized input
 	// #nosec G304 G703
