@@ -563,12 +563,10 @@ func RedactWithToken(value, token string) string {
 // ContainsToken reports whether value carries any representation of token
 // that RedactWithToken would remove. Unlike RedactWithToken it ignores other
 // credential-shaped text, so request policy can tell the caller's own token
-// apart from unrelated parameters such as a CDN signature.
+// apart from unrelated parameters such as a CDN signature, and it does not
+// report a large value as carrying the token because of its size alone.
 func ContainsToken(value, token string) bool {
-	if value == "" || strings.TrimSpace(token) == "" {
-		return false
-	}
-	return replaceTokenVariants(value, token) != value
+	return containsTokenVariant(value, token)
 }
 
 // SanitizeErrorWithToken scrubs an error chain and then removes every known

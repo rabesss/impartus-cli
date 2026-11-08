@@ -224,7 +224,13 @@ func containsTokenRepresentation(value, token string) bool {
 		return false
 	}
 	for depth := 0; depth < 3; depth++ {
-		if secrets.RedactWithToken(value, token) != value {
+		if secrets.ContainsToken(value, token) {
+			return true
+		}
+		// Other credential-shaped text also counts, but Scrub replaces any
+		// oversized value with a fixed marker, which is not evidence of a
+		// credential. A large component is judged by the bearer alone.
+		if !secrets.ScrubInputTooLarge(value) && secrets.Scrub(value) != value {
 			return true
 		}
 		decoded, err := url.PathUnescape(value)

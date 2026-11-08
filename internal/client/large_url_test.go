@@ -1,0 +1,98 @@
+package client
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+)
+
+const largeURLTestToken = "secret-bearer-abc123"
+
+func TestContainsTokenRepresentationIgnoresSizeAlone(t *testing.T) {
+	long := strings.Repeat("a", 70*1024)
+	tests := []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "large without token", value: "/" + long, want: false},
+		{name: "large with token", value: "/" + long + "/" + largeURLTestToken, want: true},
+		{name: "large with percent-encoded token", value: "/" + long + "/" + url.PathEscape("x/"+largeURLTestToken) + "%2F" + strings.ReplaceAll(largeURLTestToken, "b", "%62"), want: true},
+		{name: "large with bearer prefix", value: long + "Bearer " + largeURLTestToken, want: true},
+		{name: "small credential assignment", value: "/seg?access_token=unrelated-credential", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := containsTokenRepresentation(tt.value, largeURLTestToken); got != tt.want {
+				t.Fatalf("containsTokenRepresentation() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestQueryCarriesBearerIgnoresSizeAlone(t *testing.T) {
+	long := strings.Repeat("a", 70*1024)
+	if queryCarriesBearer("p="+long, largeURLTestToken) {
+		t.Fatal("queryCarriesBearer(70 KiB without token) = true, want false")
+	}
+	if !queryCarriesBearer("p="+long+url.QueryEscape(largeURLTestToken), largeURLTestToken) {
+		t.Fatal("queryCarriesBearer(70 KiB with token) = false, want true")
+	}
+}
+
+func TestGetAuthorizedForwardsLargeURLComponentsToUnconfiguredOrigin(t *testing.T) {
+	long := strings.Repeat("a", 70*1024)
+	var seen *http.Request
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Clone(context.Background())
+	}))
+	defer server.Close()
+	server.Config.MaxHeaderBytes = 1 << 20
+
+	tests := []struct {
+		name      string
+		rawURL    string
+		wantPath  string
+		wantQuery string
+	}{
+		{name: "long path", rawURL: server.URL + "/" + long + "/seg.ts", wantPath: "/" + long + "/seg.ts"},
+		{name: "long query parameter", rawURL: server.URL + "/seg.ts?p=" + long, wantPath: "/seg.ts", wantQuery: "p=" + long},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			seen = nil
+			resp, err := New(server.Client(), nil).GetAuthorizedWithTokenForOrigins(context.Background(), tt.rawURL, largeURLTestToken, "https://api.example.test")
+			if err != nil {
+				t.Fatalf("GetAuthorizedWithTokenForOrigins() error = %v", err)
+			}
+			_ = resp.Body.Close() //nolint:errcheck
+			if seen == nil {
+				t.Fatal("request was not sent")
+			}
+			if seen.URL.Path != tt.wantPath || seen.URL.RawQuery != tt.wantQuery {
+				t.Fatalf("server saw path %d bytes, query %d bytes; want %d and %d", len(seen.URL.Path), len(seen.URL.RawQuery), len(tt.wantPath), len(tt.wantQuery))
+			}
+			if seen.Header.Get("Authorization") != "" {
+				t.Fatal("unconfigured origin received Authorization")
+			}
+		})
+	}
+}
+
+func TestGetAuthorizedStillRefusesLargePathCarryingToken(t *testing.T) {
+	transport := &mediaOriginCaptureTransport{}
+	rawURL := "https://media.example.test/" + strings.Repeat("a", 70*1024) + "/" + largeURLTestToken + "/seg.ts"
+	resp, err := New(&http.Client{Transport: transport}, nil).GetAuthorizedWithTokenForOrigins(context.Background(), rawURL, largeURLTestToken, "https://api.example.test")
+	if resp != nil {
+		_ = resp.Body.Close() //nolint:errcheck
+	}
+	if err == nil {
+		t.Fatal("GetAuthorizedWithTokenForOrigins() error = nil, want a refusal for a token-carrying path")
+	}
+	if transport.request != nil {
+		t.Fatal("token-carrying path was sent")
+	}
+}
