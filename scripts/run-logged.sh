@@ -44,3 +44,8 @@ fi
 if [ "$tee_status" -ne 0 ]; then
   exit 1
 fi
+# One line on stderr, so the streamed output and the log stay exactly the
+# command's own output. A failed write there must not turn a successful run
+# into a failure, so the exit status stays 0.
+printf 'run-logged: %s succeeded; log saved to %s\n' "$1" "$log_file" >&2 || true
+exit 0

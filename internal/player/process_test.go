@@ -292,3 +292,16 @@ func TestWaitForEndCancellationClosesIPCAndDrainsInFlightFailure(t *testing.T) {
 		t.Fatal("WaitForEnd did not return after the terminal handler drained")
 	}
 }
+
+func TestTermGraceDefaultsToHalfTheKillTimeout(t *testing.T) {
+	t.Parallel()
+
+	options := Options{KillTimeout: 4 * time.Second}
+	if got := options.termGrace(); got != 2*time.Second {
+		t.Fatalf("termGrace() = %v, want KillTimeout/2", got)
+	}
+	options.testTermGrace = 50 * time.Millisecond
+	if got := options.termGrace(); got != 50*time.Millisecond {
+		t.Fatalf("termGrace() = %v, want the test override", got)
+	}
+}

@@ -58,6 +58,10 @@ type Options struct {
 	testEnvironment  []string
 	testSocketName   string
 	testChildPIDFile string
+	// testTermGrace, when positive, replaces KillTimeout/2 as the wait after
+	// SIGTERM in Close, so a test of a child that ignores SIGTERM can keep that
+	// step short while KillTimeout bounds the reap after SIGKILL.
+	testTermGrace time.Duration
 	// testStartedHook receives the child PID once the process is started and
 	// its reaper goroutine has been launched, before Start can time out or be
 	// canceled. It runs on Start's goroutine and must return promptly.
@@ -595,7 +599,7 @@ func (session *Session) closeInternal() error {
 			return session.killExactChildAndReap(err)
 		}
 		killed = true
-		if !waitForDone(session.processDone, session.options.KillTimeout/2) {
+		if !waitForDone(session.processDone, session.options.termGrace()) {
 			if err := signalProcessGroup(session.ProcessID(), true); err != nil {
 				return session.killExactChildAndReap(err)
 			}
@@ -615,6 +619,14 @@ func (session *Session) closeInternal() error {
 		return cleanupErr
 	}
 	return errors.Join(session.processError(), cleanupErr)
+}
+
+// termGrace is how long Close waits after SIGTERM before it sends SIGKILL.
+func (options Options) termGrace() time.Duration {
+	if options.testTermGrace > 0 {
+		return options.testTermGrace
+	}
+	return options.KillTimeout / 2
 }
 
 func (session *Session) requestQuit() {
