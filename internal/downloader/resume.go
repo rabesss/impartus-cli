@@ -46,8 +46,9 @@ type resumeMeta struct {
 
 // resumeState is the resumable workspace a download writes into.
 type resumeState struct {
-	dir  string
-	meta resumeMeta
+	dir   string
+	ident os.FileInfo // the directory validated under the lock
+	meta  resumeMeta
 }
 
 // lectureWorkspace is where one DownloadAndJoinPlaylist call keeps its
@@ -135,6 +136,9 @@ func (d *Downloader) tryResumeWorkspace(dir string, lectureID int, fingerprint s
 	if err := validatePrivateWorkspace(info); err != nil {
 		return nil, err.Error()
 	}
+	if beforeWorkspaceLockHook != nil {
+		beforeWorkspaceLockHook(dir)
+	}
 	lockPath := filepath.Join(dir, resumeLockName)
 	lock, err := lockfile.TryAcquire(lockPath)
 	if errors.Is(err, lockfile.ErrLocked) {
@@ -149,12 +153,13 @@ func (d *Downloader) tryResumeWorkspace(dir string, lectureID int, fingerprint s
 		_ = lock.Close() //nolint:errcheck // nothing was written under it
 		return nil, "workspace was removed while opening it"
 	}
-	// Likewise the directory itself must still be the one validated above.
-	if now, err := os.Lstat(dir); err != nil || !os.SameFile(info, now) {
+	// Likewise the directory must still be the private one validated above:
+	// it may have been renamed away and replaced before we took the lock.
+	if err := revalidateWorkspace(dir, info); err != nil {
 		_ = lock.Close() //nolint:errcheck // nothing was written under it
 		return nil, "workspace was replaced while opening it"
 	}
-	state, err := loadResumeState(dir, fingerprint)
+	state, err := loadResumeState(dir, info, fingerprint)
 	if err != nil {
 		_ = lock.Close() //nolint:errcheck // the load error is the one to report
 		return nil, secrets.ScrubError(err)
@@ -165,15 +170,15 @@ func (d *Downloader) tryResumeWorkspace(dir string, lectureID int, fingerprint s
 // loadResumeState reuses a workspace whose resume.json matches fingerprint
 // and resets any other to empty. Writing resume.json also refreshes its
 // mtime, which the TTL sweep counts from.
-func loadResumeState(dir, fingerprint string) (*resumeState, error) {
+func loadResumeState(dir string, ident os.FileInfo, fingerprint string) (*resumeState, error) {
 	meta, _, err := readResumeMeta(dir)
 	if err != nil || meta.Version != resumeFormatVersion || meta.Fingerprint != fingerprint {
-		if clearErr := clearWorkspaceDurably(dir, false); clearErr != nil {
+		if clearErr := clearWorkspaceDurably(dir, ident, false); clearErr != nil {
 			return nil, clearErr
 		}
 		meta = resumeMeta{Version: resumeFormatVersion, Fingerprint: fingerprint}
 	}
-	state := &resumeState{dir: dir, meta: meta}
+	state := &resumeState{dir: dir, ident: ident, meta: meta}
 	return state, state.save()
 }
 
@@ -234,12 +239,33 @@ func clearWorkspace(dir string, keepMeta bool) error {
 	return errors.Join(errs...)
 }
 
-// syncWorkspaceDirHook lets tests observe the directory sync.
-var syncWorkspaceDirHook = syncWorkspaceDir
+// Test hooks: syncWorkspaceDirHook observes the directory sync, and
+// beforeWorkspaceLockHook runs between validating a workspace and locking it.
+var (
+	syncWorkspaceDirHook    = syncWorkspaceDir
+	beforeWorkspaceLockHook func(dir string)
+)
+
+// revalidateWorkspace confirms dir is still the private directory ident
+// describes. It runs after locking and before every recursive removal, so a
+// directory or symlink swapped in at the path is never trusted or cleared.
+func revalidateWorkspace(dir string, ident os.FileInfo) error {
+	now, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if now.Mode()&os.ModeSymlink != 0 || !now.IsDir() || !os.SameFile(ident, now) {
+		return errors.New("workspace was replaced")
+	}
+	return validatePrivateWorkspace(now)
+}
 
 // clearWorkspaceDurably clears dir and syncs it before the caller publishes
 // new resume metadata, so old chunks can never survive under it.
-func clearWorkspaceDurably(dir string, keepMeta bool) error {
+func clearWorkspaceDurably(dir string, ident os.FileInfo, keepMeta bool) error {
+	if err := revalidateWorkspace(dir, ident); err != nil {
+		return err
+	}
 	if err := clearWorkspace(dir, keepMeta); err != nil {
 		return err
 	}
@@ -257,7 +283,7 @@ func (r *resumeState) verifyKey(key []byte) (discarded bool, err error) {
 		return false, nil
 	}
 	discarded = r.meta.KeyHash != ""
-	if err := clearWorkspaceDurably(r.dir, true); err != nil {
+	if err := clearWorkspaceDurably(r.dir, r.ident, true); err != nil {
 		return discarded, err
 	}
 	r.meta.KeyHash = keyHash
@@ -294,13 +320,18 @@ func (w *lectureWorkspace) close(d *Downloader, succeeded bool) {
 		}
 		return
 	}
-	d.discardWorkspace(w.dir, w.lectureID, w.lock)
+	d.discardWorkspace(w.dir, w.resume.ident, w.lectureID, w.lock)
 }
 
 // discardWorkspace renames a locked workspace out of the way before
 // releasing the lock, so it never deletes a workspace another download has
 // just created at the same path, then removes it.
-func (d *Downloader) discardWorkspace(dir string, lectureID int, lock *lockfile.Lock) {
+func (d *Downloader) discardWorkspace(dir string, ident os.FileInfo, lectureID int, lock *lockfile.Lock) {
+	if err := revalidateWorkspace(dir, ident); err != nil {
+		_ = lock.Close() //nolint:errcheck // not ours to remove any more
+		d.logDiagnostic("warning: workspace for lecture %d changed before removal; leaving it: %s", lectureID, secrets.ScrubError(err))
+		return
+	}
 	trash, err := trashPath(filepath.Dir(dir), lectureID)
 	if err != nil {
 		_ = lock.Close() //nolint:errcheck // leaving the workspace for the sweep
@@ -309,10 +340,9 @@ func (d *Downloader) discardWorkspace(dir string, lectureID int, lock *lockfile.
 	}
 	renameErr := os.Rename(dir, trash)
 	if renameErr != nil {
-		// Windows refuses to rename a directory holding an open file. Empty
-		// it while still holding the lock instead; the small remainder is
-		// swept once it has been unused for resumeTTL.
-		if clearErr := clearWorkspace(dir, true); clearErr != nil {
+		// Windows refuses to rename a directory holding an open file (the
+		// lock). Empty it while still holding the lock instead.
+		if clearErr := clearWorkspace(dir, !lockDeleteFailsWhileHeld); clearErr != nil {
 			d.logDiagnostic("warning: failed to remove workspace for lecture %d: %s", lectureID, secrets.ScrubError(errors.Join(renameErr, clearErr)))
 		} else {
 			d.logDiagnostic("lecture %d: emptied workspace in place after it could not be moved aside: %s", lectureID, secrets.ScrubError(renameErr))
@@ -322,6 +352,16 @@ func (d *Downloader) discardWorkspace(dir string, lectureID int, lock *lockfile.
 		d.logDiagnostic("warning: failed to release workspace lock for lecture %d: %s", lectureID, secrets.ScrubError(closeErr))
 	}
 	if renameErr != nil {
+		if lockDeleteFailsWhileHeld {
+			// The emptied workspace holds only the lock. Removing the lock
+			// fails while another download holds it, and removing the
+			// directory fails once anything else is in it, so neither can
+			// pull a workspace out from under a newer download.
+			if os.Remove(filepath.Join(dir, resumeLockName)) == nil {
+				_ = os.Remove(dir) //nolint:errcheck // best effort; a non-empty directory is in use
+			}
+		}
+		// Elsewhere lock and resume.json stay, and the TTL sweep retries.
 		return
 	}
 	if err := os.RemoveAll(trash); err != nil {
@@ -385,12 +425,13 @@ func (d *Downloader) sweepResumeWorkspaces(base string, lectureID int, fingerpri
 			continue // in use, or not lockable: leave it
 		}
 		// Recheck under the lock: another download may have moved the
-		// workspace away, or used and refreshed it, since the first check.
-		if !lock.HoldsPath(lockPath) || !removable() {
+		// workspace away, replaced it, or used and refreshed it, since the
+		// first check.
+		if !lock.HoldsPath(lockPath) || revalidateWorkspace(dir, info) != nil || !removable() {
 			_ = lock.Close() //nolint:errcheck // nothing was changed under it
 			continue
 		}
 		owner, _ := strconv.Atoi(match[1]) //nolint:errcheck // the pattern guarantees digits
-		d.discardWorkspace(dir, owner, lock)
+		d.discardWorkspace(dir, info, owner, lock)
 	}
 }

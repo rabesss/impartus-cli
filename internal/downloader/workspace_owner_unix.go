@@ -35,3 +35,7 @@ func syncWorkspaceDir(dir string) error {
 	}
 	return errors.Join(directory.Sync(), directory.Close())
 }
+
+// lockDeleteFailsWhileHeld reports whether deleting a held lock file fails.
+// On Unix an unlink succeeds regardless, so a lock is never deleted.
+const lockDeleteFailsWhileHeld = false

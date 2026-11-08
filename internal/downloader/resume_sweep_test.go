@@ -101,7 +101,11 @@ func TestDiscardWorkspaceEmptiesItWhenRenameFails(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(base, 0o700) }) //nolint:errcheck
 
-	New(nil, nil).discardWorkspace(dir, 5, lock)
+	info, err := os.Lstat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	New(nil, nil).discardWorkspace(dir, info, 5, lock)
 
 	if got := dirNames(t, dir); !slicesEqual(got, []string{resumeLockName, resumeMetaName}) {
 		t.Fatalf("workspace after failed rename = %v, want only lock and metadata", got)
@@ -166,5 +170,81 @@ func TestKeyChangeSyncsChunkRemovalBeforeNewKeyHash(t *testing.T) {
 	}
 	if synced != 1 {
 		t.Fatalf("directory syncs = %d, want 1 for the key change", synced)
+	}
+}
+
+// A workspace renamed away and replaced between validation and locking must
+// not be adopted, even when the replacement is private to this user.
+func TestResumeRefusesWorkspaceReplacedBeforeLock(t *testing.T) {
+	paths := []string{"/c0.ts", "/c1.ts"}
+	h := newResumeHarness(t, false, 2)
+	h.server.fail["/c1.ts"] = http.StatusNotFound
+	if _, err := h.run(t, h.server.playlist(paths...), nil); err == nil {
+		t.Fatal("first run error = nil, want failure")
+	}
+	delete(h.server.fail, "/c1.ts")
+
+	var replacement string
+	beforeWorkspaceLockHook = func(dir string) {
+		replacement = dir
+		if err := os.Rename(dir, dir+".moved"); err != nil {
+			t.Error(err)
+		}
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Error(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "marker"), []byte("x"), 0o600); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { beforeWorkspaceLockHook = nil })
+
+	if _, err := h.run(t, h.server.playlist(paths...), nil); err != nil {
+		t.Fatalf("second run error = %v, want success in a one-off workspace", err)
+	}
+	if replacement == "" {
+		t.Fatal("hook never ran")
+	}
+	if _, err := os.Stat(filepath.Join(replacement, "marker")); err != nil {
+		t.Fatalf("replacement workspace was cleared: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(replacement, resumeMetaName)); !os.IsNotExist(err) {
+		t.Fatalf("replacement workspace was adopted (resume.json: %v)", err)
+	}
+}
+
+// A workspace swapped for a symlink after it was locked must never be
+// cleared through the link.
+func TestKeyChangeRefusesToClearSwappedWorkspace(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "lecture-9-resume-0000000000000009")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ident, err := os.Lstat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &resumeState{dir: dir, ident: ident, meta: resumeMeta{Version: resumeFormatVersion, Fingerprint: "f", KeyHash: "old"}}
+	victimDir := filepath.Join(base, "victim")
+	if err := os.Mkdir(victimDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(victimDir, "keep.txt")
+	if err := os.WriteFile(victim, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(dir, dir+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victimDir, dir); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if _, err := state.verifyKey([]byte("0123456789abcdef")); err == nil {
+		t.Fatal("verifyKey() error = nil, want a replaced-workspace error")
+	}
+	if _, err := os.Stat(victim); err != nil {
+		t.Fatalf("file behind the swapped workspace was removed: %v", err)
 	}
 }
