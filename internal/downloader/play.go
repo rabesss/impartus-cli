@@ -111,6 +111,11 @@ func (d *Downloader) StartPlaybackStream(ctx context.Context, playlist client.Pa
 	if playlist.KeyURL != "" {
 		decryptionKey, err := d.fetchPlaybackDecryptionKey(ctx, playlist.KeyURL)
 		if err != nil {
+			if strictErr := strictOriginRefusal(err); strictErr != nil {
+				// Keep the typed refusal so callers report the origin to
+				// configure rather than a generic key failure.
+				return PlaybackStream{}, fmt.Errorf("failed to fetch decryption key: %w", strictErr)
+			}
 			return PlaybackStream{}, fmt.Errorf("failed to fetch decryption key: %w", sanitizedPlaybackError(err))
 		}
 		keyStore = newPlaybackKey(decryptionKey)
@@ -251,7 +256,7 @@ func (d *Downloader) handleSegment(playlist client.ParsedPlaylist, keyStore *pla
 			return
 		}
 
-		resp, err := d.client.GetAuthorizedWithTokenForOrigins(r.Context(), realURL, d.config.Token, d.mediaOrigins...)
+		resp, err := d.client.GetAuthorizedWithMediaPolicy(r.Context(), realURL, d.config.Token, d.mediaPolicy())
 		if err != nil {
 			// A refusal by an origin outside mediaOrigins is not an
 			// authorization failure: the segment was sent without the login.

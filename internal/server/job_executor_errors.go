@@ -50,6 +50,11 @@ func sanitizeUpstreamErr(err error) string {
 	if errors.Is(err, client.ErrAuthentication) {
 		return "upstream authentication failed"
 	}
+	// Any other media-origin policy refusal is not a login failure either,
+	// although ErrMediaOrigin's text mentions authorization.
+	if errors.Is(err, client.ErrMediaOrigin) {
+		return mediaOriginPolicyRefusal
+	}
 	// HTTP status code errors — extract status code from formatted error messages
 	errStr := err.Error()
 	if match := httpStatusRe.FindStringSubmatch(errStr); len(match) > 1 {
@@ -61,6 +66,10 @@ func sanitizeUpstreamErr(err error) string {
 	}
 	return "upstream API error"
 }
+
+// mediaOriginPolicyRefusal is the job error for a media URL rejected by the
+// media origin policy, without the URL, which may carry signing material.
+const mediaOriginPolicyRefusal = "media URL rejected by the media URL policy (check mediaOrigins / IMPARTUS_MEDIA_ORIGINS and that the URL is HTTPS without credentials)"
 
 func containsAny(s string, substrs []string) bool {
 	for _, sub := range substrs {

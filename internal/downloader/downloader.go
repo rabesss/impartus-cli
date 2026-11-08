@@ -158,6 +158,23 @@ func newDownloader(cfg *config.Config, apiClient *client.Client, diagnostics *lo
 	}
 }
 
+// strictOriginRefusal returns the strictMediaOrigins refusal in err, if any.
+// It carries only the refused scheme://host[:port], so it is safe to report.
+func strictOriginRefusal(err error) *client.UnconfiguredMediaOriginError {
+	var originErr *client.UnconfiguredMediaOriginError
+	if errors.As(err, &originErr) && originErr.Strict {
+		return originErr
+	}
+	return nil
+}
+
+// mediaPolicy is the request-scoped origin policy for playlist, segment and
+// key requests: the API base URL plus mediaOrigins, refused before sending
+// when strictMediaOrigins is set.
+func (d *Downloader) mediaPolicy() client.MediaRequestPolicy {
+	return client.MediaRequestPolicy{Origins: d.mediaOrigins, Strict: d.config.StrictMediaOrigins}
+}
+
 func (d *Downloader) logDiagnostic(format string, args ...any) {
 	diagnostics := d.diagnostics
 	if diagnostics == nil {

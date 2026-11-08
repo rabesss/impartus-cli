@@ -58,8 +58,17 @@ func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, i
 		return "", nil, 0, err
 	}
 
-	resp, err := d.client.GetAuthorizedWithTokenForOrigins(ctx, url, d.config.Token, d.mediaOrigins...)
+	resp, err := d.client.GetAuthorizedWithMediaPolicy(ctx, url, d.config.Token, d.mediaPolicy())
 	if err != nil {
+		if strictErr := strictOriginRefusal(err); strictErr != nil {
+			// Nothing was sent. Report only the refused origin, never the
+			// chunk URL, whose path or query may carry signing material.
+			return "", nil, 0, fmt.Errorf("chunk %d request refused: %w", chunk, strictErr)
+		}
+		if d.config.StrictMediaOrigins && errors.Is(err, client.ErrMediaOrigin) {
+			// Any other strict-mode policy refusal also drops the chunk URL.
+			return "", nil, 0, fmt.Errorf("chunk %d request refused by the media origin policy: %w", chunk, err)
+		}
 		return "", nil, 0, fmt.Errorf("chunk request failed for URL %s: %w", secrets.RedactURLWithToken(url, d.config.Token), err)
 	}
 	defer func() { closeErr := resp.Body.Close(); _ = closeErr }()
