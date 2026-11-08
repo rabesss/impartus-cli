@@ -136,15 +136,20 @@ func (d *Downloader) decryptChunkBytes(filePath string, infile []byte, key []byt
 // fsyncs the data before the rename.
 func writeChunkAtomically(path string, data []byte, durable bool) (err error) {
 	partial := path + ".part"
+	// Never write through whatever is already at the staging path: remove it
+	// and create a new file exclusively, which also refuses a symlink.
+	if err := os.Remove(partial); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	// G304/G703: path components are from validated config and sanitized input
 	// #nosec G304 G703
-	file, err := os.OpenFile(partial, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	file, err := os.OpenFile(partial, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if err != nil {
-			_ = os.Remove(partial) //nolint:errcheck // best effort; the next attempt truncates it
+			_ = os.Remove(partial) //nolint:errcheck // best effort; the next attempt replaces it
 		}
 	}()
 	if _, err = file.Write(data); err != nil {

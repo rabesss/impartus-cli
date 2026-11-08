@@ -83,9 +83,14 @@ func (d *Downloader) doDownloadChunkWithLimit(ctx context.Context, url string, i
 		}
 		return outFilepath, data, int64(len(data)), nil
 	}
+	// A resumable workspace may hold an earlier attempt's file here; replace
+	// it with a new file rather than writing through whatever is there.
+	if removeErr := os.Remove(outFilepath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		return "", nil, 0, fmt.Errorf("could not replace file for chunk %d: %w", chunk, removeErr)
+	}
 	// G304: file paths are constructed from validated config and internal data
 	// #nosec G304
-	outFile, createErr := os.Create(outFilepath)
+	outFile, createErr := os.OpenFile(outFilepath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if createErr != nil {
 		return "", nil, 0, fmt.Errorf("could not create file for chunk %d: %w", chunk, createErr)
 	}

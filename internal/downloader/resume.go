@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"time"
 
@@ -124,8 +123,17 @@ func (d *Downloader) tryResumeWorkspace(dir string, lectureID int, fingerprint s
 		if mkErr := os.Mkdir(dir, 0o700); mkErr != nil && !errors.Is(mkErr, os.ErrExist) {
 			return nil, secrets.ScrubError(mkErr)
 		}
+		if info, err = os.Lstat(dir); err != nil {
+			return nil, secrets.ScrubError(err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return nil, "workspace path is not a real directory"
+		}
 	default:
 		return nil, secrets.ScrubError(err)
+	}
+	if err := validatePrivateWorkspace(info); err != nil {
+		return nil, err.Error()
 	}
 	lockPath := filepath.Join(dir, resumeLockName)
 	lock, err := lockfile.TryAcquire(lockPath)
@@ -272,16 +280,18 @@ func (d *Downloader) discardWorkspace(dir string, lectureID int, lock *lockfile.
 		return
 	}
 	renameErr := os.Rename(dir, trash)
+	if renameErr != nil {
+		// Windows refuses to rename a directory holding an open file. Empty
+		// it while still holding the lock instead; the small remainder is
+		// swept once it has been unused for resumeTTL.
+		if clearErr := clearWorkspace(dir, true); clearErr != nil {
+			d.logDiagnostic("warning: failed to remove workspace for lecture %d: %s", lectureID, secrets.ScrubError(clearErr))
+		}
+	}
 	if closeErr := lock.Close(); closeErr != nil {
 		d.logDiagnostic("warning: failed to release workspace lock for lecture %d: %s", lectureID, secrets.ScrubError(closeErr))
 	}
-	if renameErr != nil && runtime.GOOS == "windows" {
-		// Windows refuses to rename a directory holding an open file. If
-		// another download opened the lock meanwhile, this fails again.
-		renameErr = os.Rename(dir, trash)
-	}
 	if renameErr != nil {
-		d.logDiagnostic("warning: failed to remove workspace for lecture %d (removed after %s unused): %s", lectureID, resumeTTL, secrets.ScrubError(renameErr))
 		return
 	}
 	if err := os.RemoveAll(trash); err != nil {
@@ -313,6 +323,10 @@ func (d *Downloader) sweepResumeWorkspaces(base string, lectureID int, fingerpri
 			continue
 		}
 		dir := filepath.Join(base, name)
+		info, err := entry.Info()
+		if err != nil || validatePrivateWorkspace(info) != nil {
+			continue // not ours to remove
+		}
 		if trashDirPattern.MatchString(name) {
 			if err := os.RemoveAll(dir); err != nil {
 				d.logDiagnostic("warning: failed to remove discarded workspace: %s", secrets.ScrubError(err))
@@ -323,13 +337,16 @@ func (d *Downloader) sweepResumeWorkspaces(base string, lectureID int, fingerpri
 		if match == nil {
 			continue
 		}
-		meta, info, err := readResumeMeta(dir)
-		if err != nil {
-			continue
+		removable := func() bool {
+			meta, metaInfo, err := readResumeMeta(dir)
+			if err != nil {
+				return false
+			}
+			stale := now.Sub(metaInfo.ModTime()) > resumeTTL
+			replaced := match[1] == strconv.Itoa(lectureID) && meta.Fingerprint != fingerprint
+			return stale || replaced
 		}
-		stale := now.Sub(info.ModTime()) > resumeTTL
-		replaced := match[1] == strconv.Itoa(lectureID) && meta.Fingerprint != fingerprint
-		if !stale && !replaced {
+		if !removable() {
 			continue
 		}
 		lockPath := filepath.Join(dir, resumeLockName)
@@ -337,8 +354,10 @@ func (d *Downloader) sweepResumeWorkspaces(base string, lectureID int, fingerpri
 		if err != nil {
 			continue // in use, or not lockable: leave it
 		}
-		if !lock.HoldsPath(lockPath) {
-			_ = lock.Close() //nolint:errcheck // someone else already moved it
+		// Recheck under the lock: another download may have moved the
+		// workspace away, or used and refreshed it, since the first check.
+		if !lock.HoldsPath(lockPath) || !removable() {
+			_ = lock.Close() //nolint:errcheck // nothing was changed under it
 			continue
 		}
 		owner, _ := strconv.Atoi(match[1]) //nolint:errcheck // the pattern guarantees digits

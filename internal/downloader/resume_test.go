@@ -8,11 +8,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/rabesss/impartus-cli/internal/client"
 	"github.com/rabesss/impartus-cli/internal/lockfile"
@@ -310,7 +309,11 @@ func TestResumedChunksReportRealSizes(t *testing.T) {
 			t.Fatalf("second run error = %v", err)
 		}
 		wantResumed := int64(len(h.server.plaintext("/c0.ts", "/c2.ts")))
-		if got := atomic.LoadInt64(&tracker.resumedBytes); got != wantResumed {
+		network := atomic.LoadInt64(&tracker.networkBytes)
+		if network <= 0 {
+			t.Fatalf("network bytes = %d, want chunk 1's bytes", network)
+		}
+		if got := atomic.LoadInt64(&tracker.downloadedBytes) - network; got != wantResumed {
 			t.Fatalf("resumed bytes = %d, want %d", got, wantResumed)
 		}
 		if got := atomic.LoadInt32(&tracker.completedChunks); got != 3 {
@@ -342,76 +345,82 @@ func TestResumeRefusesSymlinkedWorkspace(t *testing.T) {
 	}
 }
 
-func TestSweepResumeWorkspaces(t *testing.T) {
-	base := t.TempDir()
-	now := time.Now()
-	makeWorkspace := func(name, fingerprint string, age time.Duration) string {
-		t.Helper()
-		dir := filepath.Join(base, name)
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if fingerprint != "" {
-			meta := filepath.Join(dir, resumeMetaName)
-			data := fmt.Sprintf(`{"version":1,"fingerprint":%q}`, fingerprint)
-			if err := os.WriteFile(meta, []byte(data), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Chtimes(meta, now.Add(-age), now.Add(-age)); err != nil {
-				t.Fatal(err)
-			}
-		}
-		return dir
+// A workspace another local user could have planted (group or world
+// writable) must never be trusted, so nothing is written through a symlink
+// planted in it.
+func TestResumeRefusesSharedWritableWorkspace(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix permission bits")
 	}
-	const old, recent = 8 * 24 * time.Hour, 6 * 24 * time.Hour
-	makeWorkspace("lecture-1-resume-0000000000000001", "fp1", old)           // stale: removed
-	makeWorkspace("lecture-2-resume-0000000000000002", "fp2", recent)        // fresh: kept
-	locked := makeWorkspace("lecture-3-resume-0000000000000003", "fp3", old) // stale but in use: kept
-	makeWorkspace("lecture-4-resume-0000000000000004", "", old)              // no metadata: kept
-	makeWorkspace(".lecture-5-trash-00000000000000aa", "", 0)                // trash: removed
-	makeWorkspace("lecture-7-resume-0000000000000007", "fp7", old)           // current: kept
-	makeWorkspace("lecture-9-resume-0000000000000009", "fp9-old", recent)    // same lecture, old playlist: removed
-	makeWorkspace("lecture-10-resume-000000000000000a", "fp10", recent)      // other lecture: kept
-	makeWorkspace("unrelated", "fpx", old)                                   // not ours: kept
-	symlinkTarget := makeWorkspace(filepath.Join("..", filepath.Base(t.TempDir()), "target"), "fp6", old)
-	if err := os.Symlink(symlinkTarget, filepath.Join(base, "lecture-6-resume-0000000000000006")); err != nil {
+	h := newResumeHarness(t, false, 1)
+	playlist := h.server.playlist("/c0.ts")
+	fingerprint := h.d.resumeFingerprint(playlist)
+	dir := filepath.Join(h.tempBase, fmt.Sprintf("lecture-42-resume-%s", fingerprint[:16]))
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o777); err != nil { // #nosec G302 -- simulating a planted directory
+		t.Fatal(err)
+	}
+	meta := fmt.Sprintf(`{"version":1,"fingerprint":%q}`, fingerprint)
+	if err := os.WriteFile(filepath.Join(dir, resumeMetaName), []byte(meta), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(victim, []byte("precious"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(dir, resumeMetaName+".part")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	lock, err := lockfile.TryAcquire(filepath.Join(locked, resumeLockName))
+
+	if _, err := h.run(t, playlist, nil); err != nil {
+		t.Fatalf("run error = %v, want success in a one-off workspace", err)
+	}
+	if data, err := os.ReadFile(victim); err != nil || string(data) != "precious" {
+		t.Fatalf("victim file = %q (err %v), want it untouched", data, err)
+	}
+	if got := dirNames(t, dir); !slicesEqual(got, []string{resumeMetaName, resumeMetaName + ".part"}) {
+		t.Fatalf("planted workspace = %v, want it left as planted", got)
+	}
+}
+
+// A second download of a lecture whose workspace another download holds uses
+// a one-off workspace and leaves the held workspace alone.
+func TestResumeFallsBackWhenWorkspaceIsLocked(t *testing.T) {
+	paths := []string{"/c0.ts", "/c1.ts"}
+	h := newResumeHarness(t, false, 2)
+	playlist := h.server.playlist(paths...)
+	h.server.fail["/c1.ts"] = http.StatusNotFound
+	if _, err := h.run(t, playlist, nil); err == nil {
+		t.Fatal("first run error = nil, want failure")
+	}
+	workspace := onlyResumeWorkspace(t, h.tempBase, 42)
+	held := dirNames(t, workspace)
+	lock, err := lockfile.TryAcquire(filepath.Join(workspace, resumeLockName))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = lock.Close() }() //nolint:errcheck
 
-	var logs strings.Builder
-	d := NewWithDiagnosticWriter(nil, nil, &logs)
-	d.sweepResumeWorkspaces(base, 9, "fp9-new", "lecture-7-resume-0000000000000007", now)
-
-	want := []string{
-		"lecture-10-resume-000000000000000a",
-		"lecture-2-resume-0000000000000002",
-		"lecture-3-resume-0000000000000003",
-		"lecture-4-resume-0000000000000004",
-		"lecture-6-resume-0000000000000006",
-		"lecture-7-resume-0000000000000007",
-		"unrelated",
+	delete(h.server.fail, "/c1.ts")
+	h.server.resetCounts()
+	result, err := h.run(t, playlist, nil)
+	if err != nil {
+		t.Fatalf("second run error = %v", err)
 	}
-	if got := dirNames(t, base); !slicesEqual(got, want) {
-		t.Fatalf("after sweep = %v, want %v (logs: %s)", got, want, logs.String())
-	}
-	if _, err := os.Stat(filepath.Join(symlinkTarget, resumeMetaName)); err != nil {
-		t.Fatalf("symlink target was touched: %v", err)
-	}
-}
-
-func slicesEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
+	for _, path := range paths {
+		if got := h.server.count(path); got != 1 {
+			t.Fatalf("%s requests = %d, want 1 in a one-off workspace", path, got)
 		}
 	}
-	return true
+	if got := readOutput(t, result); !bytes.Equal(got, h.server.plaintext(paths...)) {
+		t.Fatalf("output = %q, want %q", got, h.server.plaintext(paths...))
+	}
+	if got := dirNames(t, workspace); !slicesEqual(got, held) {
+		t.Fatalf("held workspace = %v, want unchanged %v", got, held)
+	}
+	if got := dirNames(t, h.tempBase); len(got) != 2 {
+		t.Fatalf("temp base = %v, want the sentinel and the held workspace only", got)
+	}
 }
