@@ -302,7 +302,7 @@ func TestScrubRedactsAdjacentQuotedAssignmentsWithoutSeparator(t *testing.T) {
 
 	// A key inside a quoted value is part of that value, not a new assignment.
 	const nested = `password="pw-one sig=pw-two" next=1`
-	if got, want := Scrub(nested), "password=REDACTED next=1"; got != want {
+	if got, want := Scrub(nested), `password="REDACTED" next=1`; got != want {
 		t.Fatalf("Scrub(%q) = %q, want %q", nested, got, want)
 	}
 }

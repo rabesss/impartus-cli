@@ -6,11 +6,13 @@
 package secrets
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net"
 	"net/url"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -32,7 +34,11 @@ var sensitiveParams = map[string]bool{
 	"auth":                true,
 	"authorization":       true,
 	"cookie":              true,
+	"cookie2":             true,
 	"set-cookie":          true,
+	"set-cookie2":         true,
+	"set_cookie2":         true,
+	"setcookie2":          true,
 	"x-api-key":           true,
 	"x_api_key":           true,
 	"api-key":             true,
@@ -73,6 +79,12 @@ var httpsSchemeRe = regexp.MustCompile(`(?i)https?://`)
 // Building the regex from sensitiveParams keeps sig/signature and future keys
 // from drifting between URL and body sanitization.
 var sensitiveAssignmentKey = buildSensitiveAssignmentKey()
+
+// credentialKeySuffix lists the compound *_key names that carry credentials.
+// It is explicit so that unrelated names such as cache_key or sort_key are not
+// redacted.
+const credentialKeySuffix = `[a-z0-9_-]*(?:api|private|secret|access|signing|encryption)[_-]?key` // #nosec G101 -- a key-name pattern, not a credential
+
 var credentialSchemes = []string{"bearer", "basic", "token", "apikey", "oauth"}
 var quotedSecretValue = regexp.MustCompile(
 	`(?i)(\b` + sensitiveAssignmentKey + `\s*["']\s*[:=]\s*")((?:\\.|[^"\\])*)`,
@@ -86,17 +98,56 @@ var quotedKeySchemeSecretValue = regexp.MustCompile(
 var quotedKeyBareSecretValue = regexp.MustCompile(
 	`(?i)(\b` + sensitiveAssignmentKey + `\s*["']\s*[:=]\s*)[^\s"',;&}][^\s,;&}]*`,
 )
+
+// strongCredentialAssignment matches only the first byte of the value; the
+// shared matcher finds where the value ends (its closing quote or the end of
+// the line). Matching through the end of the line here would rescan the rest
+// of the line for every short quoted header on it.
 var strongCredentialAssignment = regexp.MustCompile(
-	`(?i)(^|[^/\\a-z0-9_-])((?:authorization|proxy[-_]?authorization|auth|(?:x[-_])?api[-_]?key|cookie|set[-_]?cookie)\s*[:=]\s*)[^\r\n&]+`,
+	`(?i)(^|[^/\\a-z0-9_-])((?:authorization|proxy[-_]?authorization|auth|(?:x[-_])?api[-_]?key|cookie2?|set[-_]?cookie2?)\s*[:=]\s*)[^\r\n&]`,
+)
+
+// Header dumps sometimes separate the name from the value with whitespace
+// only ("Authorization Bearer ...", "Cookie a=b"). These forms are accepted at
+// the start of the text or after whitespace or a structural delimiter, and only when the
+// first word of the value has the shape of a credential (see the step's
+// accept function), so prose such as "authorization failed" or "cookie
+// consent" stays readable. The expressions match only that first word; an
+// accepted Authorization or Cookie value is then extended to the end of the
+// line, so a rejected one never costs a scan of the rest of the line.
+const separatorlessBoundary = `(?i)(^|[\s,;:=(\[{"'])`
+
+var separatorlessAuthorization = regexp.MustCompile(
+	separatorlessBoundary + `(\s*(?:proxy[-_]?)?authorization[ \t]+)[^\s&]+`,
+)
+var separatorlessCookie = regexp.MustCompile(
+	separatorlessBoundary + `(\s*(?:set[-_]?)?cookie2?[ \t]+)[^\s&]+`,
+)
+var separatorlessAPIKey = regexp.MustCompile(
+	separatorlessBoundary + `(\s*(?:x[-_])?api[-_]?key[ \t]+)[^\s,;&}]`,
+)
+
+// bareBearerCredential redacts the credential after a standalone "Bearer"
+// scheme word that has no key in front of it. Like the separator-less api key
+// it matches only the first byte; the value runs on through any quote or
+// backslash inside it to the next delimiter.
+var bareBearerCredential = regexp.MustCompile(
+	`(?i)(^|[^a-z0-9_-])(bearer[ \t]+)[^\s,;&}]`,
 )
 var schemeSecretAssignment = regexp.MustCompile(
 	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*[:=]\s*)(?:` + strings.Join(credentialSchemes, "|") + `)\s+[^\s,;&}]+`,
 )
+
+// bareSecretEquals and bareSecretColon match only the first byte of the
+// value. The value runs on to the next byte that openValueStop accepts, and
+// the shared matcher finds that end only when it needs it: a quoted value
+// resumes at its closing quote, so matching the whole run here would rescan
+// the rest of a line of glued quoted assignments for each one.
 var bareSecretEquals = regexp.MustCompile(
-	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*=\s*)[^\s,;&}]+`,
+	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*=\s*)[^\s,;&}]`,
 )
 var bareSecretColon = regexp.MustCompile(
-	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*:\s*)[^\s,;&}]+`,
+	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*:\s*)[^\s,;&}]`,
 )
 
 // RedactionEvidence records credential values recognized during a scrub. The
@@ -128,7 +179,9 @@ func (evidence RedactionEvidence) HasVisibleValueIn(candidate string, normalize 
 	visible := normalize(candidate)
 	for _, value := range evidence.values {
 		credential := normalize(value)
-		if credential != "" && containsVisibleCredential(visible, credential) {
+		// A view can see the marker through extra bytes (for example a
+		// colored "REDACTED"); once normalized it is the marker, not a value.
+		if credential != "" && credential != "REDACTED" && containsVisibleCredential(visible, credential) {
 			return true
 		}
 	}
@@ -201,7 +254,7 @@ func buildSensitiveAssignmentKey() string {
 	for key := range sensitiveParams {
 		keys = append(keys, regexp.QuoteMeta(key))
 	}
-	keys = append(keys, "authorization", "password", "cookie", `set[-_]?cookie`, `(?:x[_-])?api[_-]?key`, `[a-z0-9_-]+(?:token|password|secret|signature)`)
+	keys = append(keys, "authorization", "password", "cookie2?", `set[-_]?cookie2?`, `(?:x[_-])?api[_-]?key`, `[a-z0-9_-]+(?:token|password|secret|signature)`, credentialKeySuffix)
 	sort.Strings(keys)
 	return `(?:` + strings.Join(keys, "|") + `)`
 }
@@ -667,7 +720,7 @@ func replaceTokenVariants(value, token string) string {
 
 const (
 	maxTokenVariantInputSize = 4 * 1024
-	maxTokenVariantCount     = 64
+	maxTokenVariantCount     = 128
 )
 
 const maxEncodedTokenViewSize = 64 * 1024
@@ -695,9 +748,11 @@ func tokenVariants(token string) []string {
 		return nil
 	}
 	values := []string{trimmed}
+	bare := trimmed
 	fields := strings.Fields(trimmed)
 	if len(fields) >= 2 && strings.EqualFold(fields[0], "bearer") {
-		values = append(values, strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0])))
+		bare = strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0]))
+		values = append(values, bare)
 	} else if len(trimmed) <= maxTokenVariantInputSize {
 		values = append(values, "Bearer "+trimmed)
 	}
@@ -727,12 +782,40 @@ func tokenVariants(token string) []string {
 			break
 		}
 	}
+	appendBase64TokenVariants(values, bare, &variants, seen)
 	// Replace longer encodings first. This prevents a shorter representation
 	// from consuming part of a longer, still-secret representation.
 	sort.SliceStable(variants, func(left, right int) bool {
 		return len(variants[left]) > len(variants[right])
 	})
 	return variants
+}
+
+// appendBase64TokenVariants adds the variants of a bearer that a media URL
+// carries base64- or base64url-encoded in a query value or path segment, which
+// decodes trivially back to the token. Each base spelling's whole-value
+// encodings get one URL/JSON escaping level, so padded and alphabet bytes
+// (=, +, /) also match when escaped. Matching stays whole-value: no alignment
+// inside larger base64 blobs. The scheme is case-insensitive, so the encoded
+// header value may spell it in any common case.
+func appendBase64TokenVariants(values []string, bare string, variants *[]string, seen map[string]struct{}) {
+	base64Values := slices.Clone(values)
+	for _, scheme := range []string{"Bearer ", "bearer ", "BEARER "} {
+		if !slices.Contains(base64Values, scheme+bare) {
+			base64Values = append(base64Values, scheme+bare)
+		}
+	}
+	for _, value := range base64Values {
+		for _, encoded := range base64TokenEncodings(value) {
+			if len(*variants) >= maxTokenVariantCount {
+				return
+			}
+			expandTokenVariantFrontier(
+				expandTokenVariantFrontier([]string{encoded}, 1, variants, seen),
+				2, variants, seen,
+			)
+		}
+	}
 }
 
 func expandTokenVariantFrontier(
@@ -763,6 +846,25 @@ func expandTokenVariantFrontier(
 		)
 	}
 	return next
+}
+
+// base64TokenEncodings returns the standard and URL-safe base64 spellings of
+// value, padded and unpadded. Padding-free values are listed once.
+func base64TokenEncodings(value string) []string {
+	encodings := make([]string, 0, 4)
+	for _, encoding := range []*base64.Encoding{
+		base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding,
+	} {
+		encoded := encoding.EncodeToString([]byte(value))
+		duplicate := false
+		for _, existing := range encodings {
+			duplicate = duplicate || existing == encoded
+		}
+		if !duplicate {
+			encodings = append(encodings, encoded)
+		}
+	}
+	return encodings
 }
 
 func fullyPercentEncodeToken(value string) string {
@@ -1475,26 +1577,419 @@ func scrubWithEvidenceDepth(s string, depth int) (string, RedactionEvidence) {
 	return scrubbed, evidence
 }
 
+// credentialAssignmentStep is one free-form credential rule. The text of the
+// match up to the end of capture group prefixGroup is kept; the rest of the
+// match is the credential value that is replaced.
 type credentialAssignmentStep struct {
 	expression  *regexp.Regexp
 	prefixGroup int
-	replacement string
 	// openValue marks expressions whose value pattern can begin with a quote
 	// but stops at the first space or delimiter inside it.
 	openValue bool
+	// lineValue marks expressions whose unquoted value runs to the end of the
+	// line. A quoted value still ends at its closing quote.
+	lineValue bool
+	// valueRun marks an expression that matches only the first byte of an
+	// open value; the value runs on to the next openValueStop byte.
+	valueRun bool
+	// enclosed marks an expression whose first group may be a quote that
+	// opens a string around the whole assignment ({"error":"X-Api-Key k"}).
+	// The value then also ends at that string's unescaped closing quote.
+	enclosed bool
+	// accept, when set, rejects matches whose value does not have the shape of
+	// a credential, so that rules without a key=value separator do not
+	// redact ordinary prose. value[start:end] is the first word of the value.
+	accept func(value string, start, end int) bool
+}
+
+var credentialAssignmentStepList = []credentialAssignmentStep{
+	{expression: quotedSecretValue, prefixGroup: 1},
+	{expression: singleQuotedSecretValue, prefixGroup: 1},
+	{expression: quotedKeySchemeSecretValue, prefixGroup: 1},
+	{expression: quotedKeyBareSecretValue, prefixGroup: 1},
+	{expression: strongCredentialAssignment, prefixGroup: 2, openValue: true, lineValue: true, enclosed: true},
+	{expression: separatorlessAuthorization, prefixGroup: 2, openValue: true, lineValue: true, enclosed: true, accept: looksLikeAuthorizationValue},
+	{expression: separatorlessCookie, prefixGroup: 2, openValue: true, lineValue: true, enclosed: true, accept: firstWord(looksLikeCookieValue)},
+	{expression: separatorlessAPIKey, prefixGroup: 2, openValue: true, valueRun: true, enclosed: true, accept: firstWord(looksLikeTokenValue)},
+	{expression: schemeSecretAssignment, prefixGroup: 2},
+	{expression: bareSecretEquals, prefixGroup: 2, openValue: true, valueRun: true},
+	{expression: bareSecretColon, prefixGroup: 2, openValue: true, valueRun: true},
+	{expression: bareBearerCredential, prefixGroup: 2, openValue: true, valueRun: true, enclosed: true, accept: firstWord(looksLikeTokenValue)},
 }
 
 func credentialAssignmentSteps() []credentialAssignmentStep {
-	return []credentialAssignmentStep{
-		{quotedSecretValue, 1, "${1}REDACTED", false},
-		{singleQuotedSecretValue, 1, "${1}REDACTED", false},
-		{quotedKeySchemeSecretValue, 1, "${1}REDACTED", false},
-		{quotedKeyBareSecretValue, 1, "${1}REDACTED", false},
-		{strongCredentialAssignment, 2, "${1}${2}REDACTED", true},
-		{schemeSecretAssignment, 2, "${1}${2}REDACTED", false},
-		{bareSecretEquals, 2, "${1}${2}REDACTED", true},
-		{bareSecretColon, 2, "${1}${2}REDACTED", true},
+	return credentialAssignmentStepList
+}
+
+// diagnosticCredentialWords are the words that follow "bearer" or "api key"
+// in diagnostics rather than a credential ("bearer token missing", "api-key
+// required"). Every other value fails closed, including short words, because
+// a short alphabetic credential is still a credential.
+var diagnosticCredentialWords = map[string]struct{}{
+	"auth": {}, "authentication": {}, "authorization": {}, "credential": {},
+	"credentials": {}, "error": {}, "expired": {}, "header": {}, "headers": {},
+	"invalid": {}, "is": {}, "key": {}, "missing": {}, "not": {}, "prefix": {},
+	"realm": {}, "redacted": {}, "required": {}, "scheme": {}, "token": {},
+	"tokens": {}, "value": {}, "was": {},
+}
+
+// looksLikeTokenValue rejects the marker and the known diagnostic words above.
+func looksLikeTokenValue(credential string) bool {
+	credential = trimWordPunctuation(strings.TrimSpace(credential))
+	if credential == "" {
+		return false
 	}
+	end := credentialWordEnd(credential, 0, len(credential))
+	if end != len(credential) {
+		return true
+	}
+	_, diagnostic := diagnosticCredentialWords[strings.ToLower(credential)]
+	return !diagnostic
+}
+
+func firstWord(accept func(string) bool) func(string, int, int) bool {
+	return func(value string, start, end int) bool { return accept(value[start:end]) }
+}
+
+// looksLikeAuthorizationValue accepts a separator-less Authorization header
+// whose first word, inside any opening quote, is a recognized scheme, is an
+// opaque credential, or is a custom scheme word followed by another word on
+// the same line ("Authorization Custom fake-secret"). Prose such as
+// "authorization failed for lecture 42" starts with a diagnostic or function
+// word instead of a scheme.
+func looksLikeAuthorizationValue(value string, start, end int) bool {
+	word := value[start:end]
+	word = word[quoteOpenerWidth(word, 0):]
+	if hasRecognizedCredentialScheme(word) {
+		return true
+	}
+	if word == "" || isAuthorizationProseWord(word) {
+		return false
+	}
+	// A credential with no scheme word ("Authorization eyJhbGci...") fails
+	// closed.
+	if looksLikeOpaqueCredential(word) {
+		return true
+	}
+	if !isSchemeWord(word) {
+		return false
+	}
+	next := end
+	for next < len(value) && (value[next] == ' ' || value[next] == '\t') {
+		next++
+	}
+	if next == end {
+		return false
+	}
+	return trimWordPunctuation(value[next:credentialWordEnd(value, next, len(value))]) != ""
+}
+
+// authorizationProseWords start an "authorization ..." diagnostic rather than
+// a custom scheme ("authorization failed request123").
+var authorizationProseWords = map[string]struct{}{
+	"a": {}, "an": {}, "and": {}, "are": {}, "as": {}, "at": {}, "be": {},
+	"by": {}, "can": {}, "cannot": {}, "check": {}, "checks": {}, "could": {},
+	"denied": {}, "did": {}, "does": {}, "errors": {}, "failed": {},
+	"fails": {}, "failure": {}, "for": {}, "from": {}, "granted": {},
+	"had": {}, "has": {}, "have": {}, "in": {}, "may": {}, "must": {},
+	"needed": {}, "needs": {}, "of": {}, "ok": {}, "on": {}, "or": {},
+	"passed": {}, "refused": {}, "rejected": {}, "should": {},
+	"succeeded": {}, "the": {}, "to": {}, "via": {}, "will": {}, "with": {},
+}
+
+// trimWordPunctuation drops quotes and the sentence punctuation that prose
+// puts around a word ("(token)", "denied.").
+func trimWordPunctuation(word string) string {
+	return strings.Trim(word, `"'\()[]<>.,:;!?`)
+}
+
+func isAuthorizationProseWord(word string) bool {
+	word = strings.ToLower(trimWordPunctuation(word))
+	_, prose := authorizationProseWords[word]
+	_, diagnostic := diagnosticCredentialWords[word]
+	return prose || diagnostic
+}
+
+func isSchemeWord(word string) bool {
+	for index := 0; index < len(word); index++ {
+		if !isCredentialKeyByte(word[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+// minOpaqueCredentialBytes and maxPlainCredentialBytes describe a word that
+// reads as a credential even with no scheme before it: long enough and
+// carrying a digit or mixed case, or long enough that no ordinary word
+// matches.
+const (
+	minOpaqueCredentialBytes = 8
+	maxPlainCredentialBytes  = 20
+)
+
+func looksLikeOpaqueCredential(word string) bool {
+	word = strings.Trim(word, `"'\`)
+	if len(word) >= maxPlainCredentialBytes {
+		return true
+	}
+	return len(word) >= minOpaqueCredentialBytes && (strings.ContainsAny(word, "0123456789") || hasInnerCapital(word))
+}
+
+// hasInnerCapital reports whether an ASCII capital letter follows a lowercase
+// one, as in mixed-case tokens ("fakeABCdef") but not in "Lecture" or "HTTP".
+func hasInnerCapital(word string) bool {
+	for index := 1; index < len(word); index++ {
+		if word[index] >= 'A' && word[index] <= 'Z' && word[index-1] >= 'a' && word[index-1] <= 'z' {
+			return true
+		}
+	}
+	return false
+}
+
+// looksLikeCookieValue accepts a separator-less cookie header only when its
+// first word is a name=value pair or the value is quoted.
+func looksLikeCookieValue(credential string) bool {
+	credential = strings.TrimSpace(credential)
+	if isQuotedValueStart(credential, 0) {
+		return true
+	}
+	end := credentialWordEnd(credential, 0, len(credential))
+	return strings.Contains(credential[:end], "=")
+}
+
+// credentialMatch is one assignment that a step recognized. value[start:end]
+// is the credential that is replaced; opener and closer are the quote
+// delimiters around a quoted value, which the replacement keeps.
+type credentialMatch struct {
+	matchStart int
+	prefixEnd  int
+	start      int
+	end        int
+	opener     string
+	closer     string
+	// resume is where the next search for the same step starts.
+	resume   int
+	accepted bool
+	// boundaryQuote is the quote that ends a string enclosing the whole
+	// assignment ({"error":"Cookie a=b"}), or zero.
+	boundaryQuote byte
+}
+
+// nextCredentialMatch finds the next match of step in value at or after from.
+// The plain replacement pass and the decoded-view range pass both use it, so
+// they agree on where a quoted or nested value ends.
+func nextCredentialMatch(value string, step credentialAssignmentStep, from int) (credentialMatch, bool) {
+	index := step.expression.FindStringSubmatchIndex(value[from:])
+	if index == nil {
+		return credentialMatch{}, false
+	}
+	for position := range index {
+		if index[position] >= 0 {
+			index[position] += from
+		}
+	}
+	prefixEnd, ok := credentialPrefixEnd(index, step.prefixGroup, len(value))
+	if !ok {
+		// Every step requires a non-empty value after its prefix; resume after
+		// the match so the scan always advances.
+		return credentialMatch{matchStart: index[0], prefixEnd: index[1], resume: max(index[1], from+1)}, true
+	}
+	// When the assignment itself sits inside a quoted string ({"error":
+	// "Authorization Bearer ..."}), its value ends at that string's closing
+	// quote, so the delimiters and the rest of the line stay intact.
+	var boundaryQuote byte
+	if step.enclosed && index[3]-index[2] == 1 && (value[index[2]] == '"' || value[index[2]] == '\'') {
+		boundaryQuote = value[index[2]]
+	}
+	if step.accept != nil {
+		wordEnd := index[1]
+		if step.valueRun {
+			wordEnd = step.valueEnd(value, prefixEnd, index[1], boundaryQuote)
+		}
+		if !step.accept(value, prefixEnd, wordEnd) {
+			// A rejected separator-less rule keeps its value visible. Its
+			// first word is checked only once, so resuming after that word
+			// keeps the scan linear and still finds a later credential.
+			return credentialMatch{matchStart: index[0], prefixEnd: prefixEnd, start: prefixEnd, end: wordEnd, resume: wordEnd}, true
+		}
+	}
+	// A line value ends at a line break or the enclosing string's quote.
+	if step.lineValue && quoteOpenerWidth(value, prefixEnd) == 0 {
+		index[1] = lineValueEnd(value, prefixEnd, boundaryQuote)
+	}
+	match := credentialMatch{matchStart: index[0], prefixEnd: prefixEnd, start: prefixEnd, end: index[1], resume: index[1], boundaryQuote: boundaryQuote}
+	if step.openValue {
+		match = openCredentialValue(value, step, match)
+	}
+	match.accepted = match.end > match.start
+	return match, true
+}
+
+// openCredentialValue sets where an open value ends. A value that is exactly
+// one quoted string keeps its delimiters; any other value runs through a
+// quote that a nested assignment leaves open.
+func openCredentialValue(value string, step credentialAssignmentStep, match credentialMatch) credentialMatch {
+	prefixEnd := match.prefixEnd
+	width := quoteOpenerWidth(value, prefixEnd)
+	if width == 0 {
+		match.end = extendUnmatchedQuote(value, prefixEnd, step.valueEnd(value, prefixEnd, match.end, match.boundaryQuote))
+		match.resume = match.end
+		return match
+	}
+	closeStart, closeWidth := quotedValueClose(value, prefixEnd)
+	closeEnd := closeStart + closeWidth
+	if step.quotedValueStands(value, prefixEnd, closeStart, closeEnd, match.end) {
+		// Replace only the contents and keep the delimiters, so later passes
+		// see a quoted REDACTED marker instead of an open value that runs on
+		// to the next break.
+		match.start = prefixEnd + width
+		match.end = closeStart
+		match.opener = value[prefixEnd:match.start]
+		match.closer = value[closeStart:closeEnd]
+		match.resume = closeEnd
+		return match
+	}
+	// Text that is not another assignment is glued to the closing quote
+	// (password="a"b...), so the quotes may be part of the value. Keep the
+	// whole match redacted, through any quote it leaves open; a line value
+	// runs on to the end of its line.
+	if step.lineValue {
+		match.end = lineValueEnd(value, closeEnd, match.boundaryQuote)
+	} else {
+		match.end = extendUnmatchedQuote(value, prefixEnd, step.valueEnd(value, prefixEnd, match.end, match.boundaryQuote))
+	}
+	match.resume = match.end
+	return match
+}
+
+// valueEnd returns where an open value that starts at start ends. matchEnd is
+// the end of the expression's match, which is the whole value unless the
+// expression matched only its first byte. Such a value also ends at an
+// unescaped boundaryQuote when it is not zero.
+func (step credentialAssignmentStep) valueEnd(value string, start, matchEnd int, boundaryQuote byte) int {
+	if !step.valueRun {
+		return matchEnd
+	}
+	end := start
+	for end < len(value) && !openValueStop(value[end]) {
+		if boundaryQuote != 0 && value[end] == boundaryQuote && !isEscapedByte(value, end) {
+			break
+		}
+		end++
+	}
+	return end
+}
+
+// quotedValueStands reports whether a quoted value that closes at closeEnd is
+// the whole value: the open value ends at or before its closing quote, or
+// another assignment is glued to that quote. For a valueRun step it looks no
+// further than the key after the quote, so the scan stays linear.
+func (step credentialAssignmentStep) quotedValueStands(value string, start, closeStart, closeEnd, matchEnd int) bool {
+	switch {
+	case step.lineValue:
+		return lineQuotedValueStands(value, closeStart, closeEnd)
+	case !step.valueRun:
+		return closeEnd >= matchEnd || startsAssignment(value[closeEnd:matchEnd])
+	case closeEnd >= len(value) || openValueStop(value[closeEnd]) || containsOpenValueStop(value[start:closeEnd]):
+		return true
+	}
+	keyEnd := closeEnd
+	for keyEnd < len(value) && isCredentialKeyByte(value[keyEnd]) {
+		keyEnd++
+	}
+	return keyEnd > closeEnd && keyEnd < len(value) && (value[keyEnd] == '=' || value[keyEnd] == ':')
+}
+
+// lineQuotedValueStands reports whether a quoted line value is the whole
+// value: its quote is unterminated or ends an enclosing string, or a
+// delimiter, another quote or another assignment follows its closing quote.
+// Other glued text may be part of the value, so the value then runs on to the
+// end of the line.
+func lineQuotedValueStands(value string, closeStart, closeEnd int) bool {
+	return closeEnd == closeStart || closeEnd >= len(value) || openValueStop(value[closeEnd]) ||
+		strings.IndexByte(`"'\`, value[closeEnd]) >= 0 || startsAssignment(value[closeEnd:])
+}
+
+func containsOpenValueStop(text string) bool {
+	for index := 0; index < len(text); index++ {
+		if openValueStop(text[index]) {
+			return true
+		}
+	}
+	return false
+}
+
+// openValueStop reports whether character ends a bare value, matching the
+// [^\s,;&}] class of the bare assignment expressions.
+func openValueStop(character byte) bool {
+	switch character {
+	case '\t', '\n', '\f', '\r', ' ', ',', ';', '&', '}':
+		return true
+	}
+	return false
+}
+
+// lineValueEnd finds the end of a value that runs to the end of its line,
+// stopping at a line break, a query separator like the strong assignment
+// expression, or an unescaped boundaryQuote when it is not zero.
+func lineValueEnd(value string, end int, boundaryQuote byte) int {
+	for end < len(value) && value[end] != '\r' && value[end] != '\n' && value[end] != '&' {
+		if boundaryQuote != 0 && value[end] == boundaryQuote && !isEscapedByte(value, end) {
+			break
+		}
+		end++
+	}
+	return end
+}
+
+// startsAssignment reports whether text begins with a key followed by '=' or
+// ':', as when a second assignment is glued to a closing quote.
+func startsAssignment(text string) bool {
+	index := 0
+	for index < len(text) && isCredentialKeyByte(text[index]) {
+		index++
+	}
+	if index == 0 {
+		return false
+	}
+	for index < len(text) && (text[index] == ' ' || text[index] == '\t') {
+		index++
+	}
+	return index < len(text) && (text[index] == '=' || text[index] == ':')
+}
+
+func isCredentialKeyByte(character byte) bool {
+	lower := character | 0x20
+	return lower >= 'a' && lower <= 'z' || character >= '0' && character <= '9' || character == '_' || character == '-' || character == '.'
+}
+
+// extendUnmatchedQuote extends an open value that ends inside a quote opened
+// by a nested assignment (password=abc"sig="x y") through that quote's
+// closing partner. Only a quote right after '=' or ':', possibly escaped
+// (sig=\"x y\"), counts as an opener, so apostrophes in prose ("don't") do
+// not extend the value.
+func extendUnmatchedQuote(value string, start, end int) int {
+	for index := start; index < end; index++ {
+		character := value[index]
+		if character != '"' && character != '\'' {
+			continue
+		}
+		opener := index
+		for opener > start && index-opener <= maxQuoteEscapeDepth && value[opener-1] == '\\' {
+			opener--
+		}
+		if opener <= start || (value[opener-1] != '=' && value[opener-1] != ':') || quoteOpenerWidth(value, opener) == 0 {
+			continue
+		}
+		closeStart, closeWidth := quotedValueClose(value, opener)
+		if closeEnd := closeStart + closeWidth; closeEnd >= end {
+			return max(end, closeEnd)
+		} else if closeEnd > index {
+			index = closeEnd - 1
+		}
+	}
+	return end
 }
 
 const (
@@ -1558,8 +2053,8 @@ func scrubEncodedAssignmentsWithEvidence(value string) (string, RedactionEvidenc
 }
 
 func credentialValueRangesForView(view encodedView) ([]credentialValueRange, RedactionEvidence) {
-	ranges, evidence := regexCredentialValueRanges(view.text)
 	canonicalRanges := canonicalCredentialValueRanges(view.text)
+	ranges, evidence := regexCredentialValueRanges(view.text, canonicalRanges)
 	ranges = append(ranges, canonicalRanges...)
 	for _, candidate := range canonicalRanges {
 		if candidate.start >= 0 && candidate.end <= len(view.text) && candidate.end > candidate.start {
@@ -1569,49 +2064,85 @@ func credentialValueRangesForView(view encodedView) ([]credentialValueRange, Red
 	return ranges, evidence
 }
 
-func regexCredentialValueRanges(value string) ([]credentialValueRange, RedactionEvidence) {
+func regexCredentialValueRanges(value string, canonical []credentialValueRange) ([]credentialValueRange, RedactionEvidence) {
 	ranges := make([]credentialValueRange, 0, 8)
 	var evidence RedactionEvidence
+	coverage := newCredentialRangeCoverage(canonical)
 	for _, step := range credentialAssignmentSteps() {
-		indices := step.expression.FindAllStringSubmatchIndex(value, -1)
-		for _, index := range indices {
-			prefixEnd, ok := credentialPrefixEnd(index, step.prefixGroup, len(value))
+		for from := 0; from < len(value); {
+			match, ok := nextCredentialMatch(value, step, from)
 			if !ok {
+				break
+			}
+			from = match.resume
+			if !match.accepted {
 				continue
 			}
+			start := match.start
 			if step.expression == schemeSecretAssignment || step.expression == quotedKeySchemeSecretValue {
 				// Only the start is used here, so keep the credential end lookup
 				// inside this match rather than scanning on to the next break.
-				if credentialStart, _, ok := recognizedSchemeCredentialRange(value[:index[1]], prefixEnd, index[1], newBreakCursor(valueBreaks)); ok {
-					prefixEnd = credentialStart
+				if credentialStart, _, ok := recognizedSchemeCredentialRange(value[:match.end], start, match.end, newBreakCursor(valueBreaks)); ok {
+					start = credentialStart
 				}
 			}
-			if isQuotedValueStart(value, prefixEnd) {
-				// The canonical scanner handles the complete quoted value, including
-				// spaces and escaped delimiters. A regex match would otherwise claim
-				// only the first word and leave the remainder visible.
+			if match.opener != "" && coverage.covers(value, start, match.end) {
+				// The canonical scanner already claimed this whole quoted value,
+				// and for authorization keys it keeps a recognized scheme
+				// visible. When it did not (for example, a key glued to a
+				// non-ASCII letter, or only a nested assignment inside the
+				// value), this pass claims the whole quoted value itself.
 				continue
 			}
-			credential := value[prefixEnd:index[1]]
+			credential := value[start:match.end]
 			if shouldSkipCredentialRange(step.expression, credential) {
 				// The broad authorization fallback protects custom schemes. A
 				// standard scheme has a precise matcher below, so keep its safe
 				// suffix/context instead of discarding the rest of the line.
 				continue
 			}
-			if (step.expression == bareSecretEquals || step.expression == bareSecretColon) && IsCredentialScheme(strings.TrimSpace(credential)) {
-				// The scheme-specific matcher redacts the following credential;
-				// treating the scheme word itself as the credential would lose
-				// useful diagnostic context.
-				continue
-			}
 			if credential != "REDACTED" {
-				ranges = append(ranges, credentialValueRange{start: prefixEnd, end: index[1]})
+				ranges = append(ranges, credentialValueRange{start: start, end: match.end})
 				evidence.values = append(evidence.values, credential)
 			}
 		}
 	}
 	return ranges, evidence
+}
+
+// credentialRangeCoverage answers whether one range covers a span. Ranges are
+// sorted by start with a running maximum end, so each query is a binary
+// search rather than a scan of every range.
+type credentialRangeCoverage struct {
+	starts  []int
+	maxEnds []int
+}
+
+func newCredentialRangeCoverage(ranges []credentialValueRange) credentialRangeCoverage {
+	sorted := slices.Clone(ranges)
+	slices.SortFunc(sorted, func(left, right credentialValueRange) int {
+		return left.start - right.start
+	})
+	coverage := credentialRangeCoverage{starts: make([]int, len(sorted)), maxEnds: make([]int, len(sorted))}
+	maxEnd := 0
+	for index, candidate := range sorted {
+		maxEnd = max(maxEnd, candidate.end)
+		coverage.starts[index] = candidate.start
+		coverage.maxEnds[index] = maxEnd
+	}
+	return coverage
+}
+
+// covers reports whether one range spans value[start:end]. A recognized
+// scheme word and the space after it may stay outside the range, as the
+// canonical scanner keeps them visible for authorization keys.
+func (coverage credentialRangeCoverage) covers(value string, start, end int) bool {
+	limit := start
+	if hasRecognizedCredentialScheme(value[start:end]) {
+		limit = skipCredentialSpace(value[:end], credentialWordEnd(value, skipCredentialSpace(value[:end], start), end))
+	}
+	count, _ := slices.BinarySearch(coverage.starts, limit+1)
+	return count > 0 && coverage.maxEnds[count-1] >= end
 }
 
 func credentialPrefixEnd(index []int, group, valueLength int) (int, bool) {
@@ -1750,15 +2281,18 @@ func canonicalCredentialRangeAt(value string, delimiter int, ends assignmentEnds
 	if valueStart >= len(value) {
 		return credentialValueRange{}, false
 	}
-	valueQuoted := isQuotedValueStart(value, valueStart)
+	openerWidth := quoteOpenerWidth(value, valueStart)
+	valueQuoted := openerWidth > 0
 	valueEnd := ends.value.valueEnd(value, valueStart, valueQuoted)
+	opener := valueStart - 1
 	if valueQuoted {
 		// Keep the string delimiters byte-for-byte; only the value inside
 		// them is a replacement candidate.
-		valueStart++
+		opener = valueStart
+		valueStart += openerWidth
 	}
 	if isAuthorizationKey(key) {
-		valueStart, valueEnd = authorizationValueRange(value, valueStart, valueEnd, quoted || valueQuoted, ends)
+		valueStart, valueEnd = authorizationValueRange(value, opener, valueStart, valueEnd, quoted || valueQuoted, ends)
 	}
 	if valueEnd <= valueStart || value[valueStart:valueEnd] == "REDACTED" {
 		return credentialValueRange{}, false
@@ -1796,14 +2330,80 @@ func skipCredentialSpace(value string, start int) int {
 }
 
 func isQuotedValueStart(value string, start int) bool {
-	return start < len(value) && (value[start] == '"' || value[start] == '\'')
+	return quoteOpenerWidth(value, start) > 0
+}
+
+// maxQuoteEscapeDepth bounds how many backslashes may escape a quote that
+// opens a value, as in JSON nested inside JSON (password=\\\"...\\\").
+const maxQuoteEscapeDepth = 8
+
+// quoteOpenerWidth returns the width of a quote that opens a value at start:
+// 1 for '"' or '\”, or 1 plus the number of backslashes for a quote escaped
+// once or more, as written inside (nested) JSON or C string literals. It is 0
+// when the value is not quoted.
+func quoteOpenerWidth(value string, start int) int {
+	if start < 0 || start >= len(value) {
+		return 0
+	}
+	run := 0
+	for start+run < len(value) && value[start+run] == '\\' && run <= maxQuoteEscapeDepth {
+		run++
+	}
+	if run > maxQuoteEscapeDepth || start+run >= len(value) {
+		return 0
+	}
+	if quote := value[start+run]; quote != '"' && quote != '\'' {
+		return 0
+	}
+	if run > 0 && start > 0 && value[start-1] == '\\' {
+		// The backslashes continue an earlier run, so they do not open a value.
+		return 0
+	}
+	return run + 1
+}
+
+// quotedValueClose finds the closing delimiter of the quoted value that opens
+// at start and returns where it begins and its width. A plain quote closes at
+// the next unescaped quote of its kind. A quote escaped by k backslashes
+// closes at the next quote of its kind escaped by exactly k backslashes, or,
+// without a width, where a quote escaped by fewer ends an enclosing string.
+// An unterminated value runs to the end of the text.
+func quotedValueClose(value string, start int) (int, int) {
+	width := quoteOpenerWidth(value, start)
+	if width == 0 {
+		return start, 0
+	}
+	depth := width - 1
+	quote := value[start+depth]
+	for index := start + width; index < len(value); index++ {
+		if value[index] != quote {
+			continue
+		}
+		if depth == 0 {
+			if !isEscapedByte(value, index) {
+				return index, 1
+			}
+			continue
+		}
+		backslashes := 0
+		for backslashes <= depth && index-backslashes-1 >= start+width && value[index-backslashes-1] == '\\' {
+			backslashes++
+		}
+		switch {
+		case backslashes == depth:
+			return index - depth, width
+		case backslashes < depth:
+			return index, 0
+		}
+	}
+	return len(value), 0
 }
 
 func isAuthorizationKey(value string) bool {
 	return value == "authorization" || value == "proxy-authorization" || value == "auth"
 }
 
-func authorizationValueRange(value string, start, end int, quoted bool, ends assignmentEnds) (int, int) {
+func authorizationValueRange(value string, opener, start, end int, quoted bool, ends assignmentEnds) (int, int) {
 	if !quoted {
 		end = ends.authorization.next(value, start)
 	}
@@ -1811,7 +2411,7 @@ func authorizationValueRange(value string, start, end int, quoted bool, ends ass
 		return schemeStart, schemeEnd
 	}
 	if quoted {
-		return start, ends.value.valueEnd(value, start-1, true)
+		return start, ends.value.valueEnd(value, opener, true)
 	}
 	return start, end
 }
@@ -1947,21 +2547,16 @@ func canonicalCredentialKey(value string) string {
 	return canonical.String()
 }
 
-var canonicalCredentialSuffix = regexp.MustCompile(`^[a-z0-9_-]+(?:token|password|secret|signature)$`)
+var canonicalCredentialSuffix = regexp.MustCompile(`^(?:[a-z0-9_-]+(?:token|password|secret|signature)|` + credentialKeySuffix + `)$`)
 
 func isCanonicalCredentialKey(value string) bool {
 	return isSensitiveParam(value) || canonicalCredentialSuffix.MatchString(value)
 }
 
 func assignmentValueEnd(value string, start int, quoted bool) int {
-	if quoted && start < len(value) && (value[start] == '"' || value[start] == '\'') {
-		quote := value[start]
-		for index := start + 1; index < len(value); index++ {
-			if value[index] == quote && !isEscapedByte(value, index) {
-				return index
-			}
-		}
-		return len(value)
+	if quoted && isQuotedValueStart(value, start) {
+		end, _ := quotedValueClose(value, start)
+		return end
 	}
 	for index := start; index < len(value); index++ {
 		switch value[index] {
@@ -1976,50 +2571,40 @@ func replaceCredentialValues(value string, step credentialAssignmentStep) (strin
 	var evidence RedactionEvidence
 	var scrubbed strings.Builder
 	last := 0
-	// Search again from the end of each replacement rather than from the end of
-	// each match. A quoted value is replaced through its closing quote, so a
-	// key inside it is never seen, and a key right after that quote is found
-	// with the start of the remaining text standing in for the quote as its
-	// boundary. Any other match ends before a byte that cannot start a key, so
-	// resuming there finds the same matches as one search over the whole text.
+	// Search again from where each match says to resume rather than from the
+	// end of each match. A quoted value is replaced through its closing quote,
+	// so a key inside it is never seen, and a key right after that quote is
+	// found with the start of the remaining text standing in for the quote as
+	// its boundary. Any other match ends before a byte that cannot start a key,
+	// so resuming there finds the same matches as one search over the whole
+	// text.
 	for last < len(value) {
-		index := step.expression.FindStringSubmatchIndex(value[last:])
-		if index == nil {
+		match, ok := nextCredentialMatch(value, step, last)
+		if !ok {
 			break
 		}
-		for position := range index {
-			if index[position] >= 0 {
-				index[position] += last
-			}
+		if !match.accepted {
+			scrubbed.WriteString(value[last:match.resume])
+			last = match.resume
+			continue
 		}
-		scrubbed.WriteString(value[last:index[0]])
-		scrubbed.Write(step.expression.ExpandString(nil, step.replacement, value, index))
-		prefixEnd := index[step.prefixGroup*2+1]
-		end := quotedCredentialEnd(value, step, prefixEnd, index[1])
-		credential := value[prefixEnd:end]
-		if credential != "REDACTED" {
+		scrubbed.WriteString(value[last:match.prefixEnd])
+		scrubbed.WriteString(match.opener)
+		scrubbed.WriteString("REDACTED")
+		scrubbed.WriteString(match.closer)
+		switch credential := value[match.start:match.end]; {
+		case credential != "REDACTED":
 			evidence.values = append(evidence.values, credential)
+		case match.opener != "":
+			// A quoted marker is still a recognized assignment. Count it, as
+			// callers compare counts across views, but record no value: the
+			// marker itself stays visible in the output by design.
+			evidence.values = append(evidence.values, "")
 		}
-		last = end
+		last = match.resume
 	}
 	scrubbed.WriteString(value[last:])
 	return scrubbed.String(), evidence
-}
-
-// quotedCredentialEnd extends an open-value match through the closing quote
-// when the value is quoted. Such a match stops at the first space or delimiter
-// inside the quotes, so replacing only the match would consume the opening
-// quote and leave the rest of the value visible to every later pass. An
-// unterminated quote extends to the end of the text.
-func quotedCredentialEnd(value string, step credentialAssignmentStep, prefixEnd, matchEnd int) int {
-	if !step.openValue || !isQuotedValueStart(value, prefixEnd) {
-		return matchEnd
-	}
-	end := assignmentValueEnd(value, prefixEnd, true)
-	if end < len(value) {
-		end++ // the closing quote
-	}
-	return max(matchEnd, end)
 }
 
 // ScrubError returns the error's message with embedded credentials scrubbed.
