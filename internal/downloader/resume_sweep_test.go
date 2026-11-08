@@ -293,3 +293,26 @@ func TestClearWorkspaceIgnoresSwapAfterChecks(t *testing.T) {
 		})
 	}
 }
+
+func TestMalformedKeyKeepsCompletedChunks(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "lecture-9-resume-0000000000000009")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	chunk := filepath.Join(dir, "9_left_0000.ts")
+	if err := os.WriteFile(chunk, []byte("chunk"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ident, err := os.Lstat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &resumeState{dir: dir, ident: ident, meta: resumeMeta{Version: resumeFormatVersion, Fingerprint: "f", KeyHash: "old"}}
+
+	if _, err := state.verifyKey(nil); err == nil {
+		t.Fatal("verifyKey(empty key) error = nil, want an invalid key error")
+	}
+	if _, err := os.Stat(chunk); err != nil {
+		t.Fatalf("completed chunk was discarded for a malformed key: %v", err)
+	}
+}

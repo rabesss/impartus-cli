@@ -296,6 +296,11 @@ func clearWorkspaceDurably(dir string, ident os.FileInfo, keepMeta bool) error {
 // verifyKey runs after the key fetch and before any chunk is reused. Chunks
 // decrypted with a different key are discarded.
 func (r *resumeState) verifyKey(key []byte) (discarded bool, err error) {
+	// A malformed key (an empty 200 response, say) must fail the download
+	// without discarding chunks decrypted with the real one.
+	if n := len(key); n != 16 && n != 24 && n != 32 {
+		return false, fmt.Errorf("invalid AES key length: %d", n)
+	}
 	h := sha256.New()
 	_, _ = io.WriteString(h, "impartus-resume-key-v1\x00") //nolint:errcheck // hash writes never fail
 	_, _ = h.Write(key)                                    //nolint:errcheck // hash writes never fail
