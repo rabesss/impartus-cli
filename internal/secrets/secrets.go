@@ -109,13 +109,13 @@ var strongCredentialAssignment = regexp.MustCompile(
 
 // Header dumps sometimes separate the name from the value with whitespace
 // only ("Authorization Bearer ...", "Cookie a=b"). These forms are accepted at
-// the start of the text or after a structural delimiter, and only when the
+// the start of the text or after whitespace or a structural delimiter, and only when the
 // first word of the value has the shape of a credential (see the step's
 // accept function), so prose such as "authorization failed" or "cookie
 // consent" stays readable. The expressions match only that first word; an
 // accepted Authorization or Cookie value is then extended to the end of the
 // line, so a rejected one never costs a scan of the rest of the line.
-const separatorlessBoundary = `(?i)(^|[\r\n,;:=(\[{"'])`
+const separatorlessBoundary = `(?i)(^|[\s,;:=(\[{"'])`
 
 var separatorlessAuthorization = regexp.MustCompile(
 	separatorlessBoundary + `(\s*(?:proxy[-_]?)?authorization[ \t]+)[^\s&]+`,
@@ -127,10 +127,12 @@ var separatorlessAPIKey = regexp.MustCompile(
 	separatorlessBoundary + `(\s*(?:x[-_])?api[-_]?key[ \t]+)[^\s,;&}]`,
 )
 
-// bareBearerCredential redacts the token68 credential after a standalone
-// "Bearer" scheme word that has no key in front of it.
+// bareBearerCredential redacts the credential after a standalone "Bearer"
+// scheme word that has no key in front of it. Like the separator-less api key
+// it matches only the first byte; the value runs on through any quote or
+// backslash inside it to the next delimiter.
 var bareBearerCredential = regexp.MustCompile(
-	`(?i)(^|[^a-z0-9_-])(bearer[ \t]+)[a-z0-9._~+/-]+=*`,
+	`(?i)(^|[^a-z0-9_-])(bearer[ \t]+)[^\s,;&}]`,
 )
 var schemeSecretAssignment = regexp.MustCompile(
 	`(?i)(^|[^/\\a-z0-9_-])(` + sensitiveAssignmentKey + `\s*[:=]\s*)(?:` + strings.Join(credentialSchemes, "|") + `)\s+[^\s,;&}]+`,
@@ -1602,7 +1604,7 @@ var credentialAssignmentStepList = []credentialAssignmentStep{
 	{expression: schemeSecretAssignment, prefixGroup: 2},
 	{expression: bareSecretEquals, prefixGroup: 2, openValue: true, valueRun: true},
 	{expression: bareSecretColon, prefixGroup: 2, openValue: true, valueRun: true},
-	{expression: bareBearerCredential, prefixGroup: 2, accept: firstWord(looksLikeTokenValue)},
+	{expression: bareBearerCredential, prefixGroup: 2, openValue: true, valueRun: true, enclosed: true, accept: firstWord(looksLikeTokenValue)},
 }
 
 func credentialAssignmentSteps() []credentialAssignmentStep {
@@ -1623,7 +1625,7 @@ var diagnosticCredentialWords = map[string]struct{}{
 
 // looksLikeTokenValue rejects the marker and the known diagnostic words above.
 func looksLikeTokenValue(credential string) bool {
-	credential = strings.TrimSpace(credential)
+	credential = trimWordPunctuation(strings.TrimSpace(credential))
 	if credential == "" {
 		return false
 	}
@@ -1640,10 +1642,11 @@ func firstWord(accept func(string) bool) func(string, int, int) bool {
 }
 
 // looksLikeAuthorizationValue accepts a separator-less Authorization header
-// whose first word, inside any opening quote, is a recognized scheme, or is
-// a custom scheme word followed by a credential-shaped word on the same line
-// ("Authorization Custom fake-secret"). Prose such as "authorization failed
-// for lecture 42" starts with a diagnostic word instead of a scheme.
+// whose first word, inside any opening quote, is a recognized scheme, is an
+// opaque credential, or is a custom scheme word followed by another word on
+// the same line ("Authorization Custom fake-secret"). Prose such as
+// "authorization failed for lecture 42" starts with a diagnostic or function
+// word instead of a scheme.
 func looksLikeAuthorizationValue(value string, start, end int) bool {
 	word := value[start:end]
 	word = word[quoteOpenerWidth(word, 0):]
@@ -1668,18 +1671,30 @@ func looksLikeAuthorizationValue(value string, start, end int) bool {
 	if next == end {
 		return false
 	}
-	return looksLikeCredentialWord(value[next:credentialWordEnd(value, next, len(value))])
+	return trimWordPunctuation(value[next:credentialWordEnd(value, next, len(value))]) != ""
 }
 
 // authorizationProseWords start an "authorization ..." diagnostic rather than
 // a custom scheme ("authorization failed request123").
 var authorizationProseWords = map[string]struct{}{
-	"denied": {}, "failed": {}, "failure": {}, "for": {}, "granted": {},
-	"needed": {}, "refused": {}, "rejected": {}, "succeeded": {}, "with": {},
+	"a": {}, "an": {}, "and": {}, "are": {}, "as": {}, "at": {}, "be": {},
+	"by": {}, "can": {}, "cannot": {}, "check": {}, "checks": {}, "could": {},
+	"denied": {}, "did": {}, "does": {}, "errors": {}, "failed": {},
+	"fails": {}, "failure": {}, "for": {}, "from": {}, "granted": {},
+	"had": {}, "has": {}, "have": {}, "in": {}, "may": {}, "must": {},
+	"needed": {}, "needs": {}, "of": {}, "ok": {}, "on": {}, "or": {},
+	"passed": {}, "refused": {}, "rejected": {}, "should": {},
+	"succeeded": {}, "the": {}, "to": {}, "via": {}, "will": {}, "with": {},
+}
+
+// trimWordPunctuation drops quotes and the sentence punctuation that prose
+// puts around a word ("(token)", "denied.").
+func trimWordPunctuation(word string) string {
+	return strings.Trim(word, `"'\()[]<>.,:;!?`)
 }
 
 func isAuthorizationProseWord(word string) bool {
-	word = strings.ToLower(word)
+	word = strings.ToLower(trimWordPunctuation(word))
 	_, prose := authorizationProseWords[word]
 	_, diagnostic := diagnosticCredentialWords[word]
 	return prose || diagnostic
@@ -1708,24 +1723,6 @@ func looksLikeOpaqueCredential(word string) bool {
 		return true
 	}
 	return len(word) >= minOpaqueCredentialBytes && strings.ContainsAny(word, "0123456789")
-}
-
-// looksLikeCredentialWord reports whether word reads as a credential rather
-// than prose: it carries a digit, punctuation or an inner capital letter, or
-// it is longer than ordinary words.
-func looksLikeCredentialWord(word string) bool {
-	word = strings.Trim(word, `"'\`)
-	if len(word) >= maxPlainCredentialBytes {
-		return true
-	}
-	for index := 0; index < len(word); index++ {
-		character := word[index]
-		upper := character >= 'A' && character <= 'Z'
-		if !upper && (character < 'a' || character > 'z') || upper && index > 0 {
-			return true
-		}
-	}
-	return false
 }
 
 // looksLikeCookieValue accepts a separator-less cookie header only when its

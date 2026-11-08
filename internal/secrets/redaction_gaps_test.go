@@ -167,6 +167,21 @@ func TestScrubSeparatorlessValuesWithQuotesAndEscapes(t *testing.T) {
 		{`Authorization ZmFrZUFBQTpmYWtlQkJC==`, `Authorization REDACTED`},
 		{`{"error":"Authorization fakeAAA-123"} rest`, `{"error":"Authorization REDACTED"} rest`},
 		{`Authorization misconfigured.`, `Authorization misconfigured.`},
+		{`Authorization Custom fakeaaaaaaaaaaa`, `Authorization REDACTED`},
+		{`request X-Api-Key fakeAAA-123 failed`, `request X-Api-Key REDACTED failed`},
+		{`request Authorization Custom fakeAAA-123`, `request Authorization REDACTED`},
+		{`request failed Cookie session=fakeAAA`, `request failed Cookie REDACTED`},
+		{`Bearer fakeAAA\fakeBBB rest`, `Bearer REDACTED rest`},
+		{`Bearer fakeAAA"fakeBBB rest`, `Bearer REDACTED rest`},
+		{`Bearer fake'AAA'fakeBBB rest`, `Bearer REDACTED rest`},
+		{`Bearer "fakeAAA" rest`, `Bearer "REDACTED" rest`},
+		{`Bearer "fakeAAA fakeBBB" rest`, `Bearer "REDACTED" rest`},
+		{`{"error":"Bearer fakeAAA\\fakeBBB"} rest`, `{"error":"Bearer REDACTED"} rest`},
+		{`your authorization has expired`, `your authorization has expired`},
+		{`see the cookie consent banner`, `see the cookie consent banner`},
+		{`check the api-key header`, `check the api-key header`},
+		{`(it needs a bearer token)`, `(it needs a bearer token)`},
+		{`servers accept bearer tokens.`, `servers accept bearer tokens.`},
 		{`Authorization failed request123`, `Authorization failed request123`},
 		{`authorization denied for lecture 42`, `authorization denied for lecture 42`},
 		{`authorization succeeded for user`, `authorization succeeded for user`},
@@ -328,7 +343,7 @@ func TestScrubRejectedSeparatorlessHeadersStayLinear(t *testing.T) {
 		return builder.String()
 	}
 	fastest := fastestScrub
-	for _, separator := range []string{"\n", ",", ";"} {
+	for _, separator := range []string{"\n", ",", ";", " "} {
 		for _, key := range []string{"authorization", "cookie", "x-api-key"} {
 			t.Run(strconv.Quote(separator)+"/"+key, func(t *testing.T) {
 				hostile := fastest(build(separator, key))
@@ -361,6 +376,9 @@ func TestScrubRepeatedAcceptedAssignmentsStayLinear(t *testing.T) {
 		{`,x-api-key k\"z`, `,zqzqzqzqz k\"z`},
 		{`,x-api-key required`, `,zqzqzqzqz required`},
 		{"\nauthorization Custom k-1", "\nzqzqzqzqzqzqz Custom k-1"},
+		{` bearer k\"z`, ` zqzqzq k\"z`},
+		{` bearer token`, ` zqzqzq token`},
+		{` authorization has k`, ` zqzqzqzqzqzqz has k`},
 		{`"authorization failed k-1"`, `"zqzqzqzqzqzqz failed k-1"`},
 	} {
 		t.Run(test.hostile, func(t *testing.T) {
