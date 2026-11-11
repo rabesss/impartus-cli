@@ -19,7 +19,12 @@ Every record contains:
 
 Optional `status`, `target`, `lecture`, `artifact`, `outputs`, `details`, and
 `error` fields carry event-specific data. URLs, credentials, playlist keys, and
-provider routing are never part of this contract.
+provider routing are never part of this contract. Before writing a record, the
+writer scrubs credential-bearing text from every serialized string, including
+nested artifact fields and `details` values and object keys. This does not
+modify caller-owned data or change non-string JSON values. `details` follows
+Go's `encoding/json` serialization rules, including custom marshalers;
+unsupported or cyclic values fail without writing a partial record.
 
 ## Event order
 
