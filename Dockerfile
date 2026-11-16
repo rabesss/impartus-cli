@@ -5,7 +5,7 @@
 # both, plus the digest, in one change.
 # The build stage runs on the build host and cross-compiles for each target
 # platform, so arm64 images do not compile Go under QEMU.
-FROM --platform=$BUILDPLATFORM golang:1.26.10-bookworm@sha256:5de7c99eb78ca5e515a4c340235d0955ec5964a5071c492c15503d7c267da473 AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.11-bookworm@sha256:dc40a13b61304647ed7e5d581d246b86413dfc29d63c6d018310feb93cd98fc0 AS build
 
 ARG VERSION=dev
 ARG BUILD_DATE=""
